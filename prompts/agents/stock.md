@@ -1,12 +1,12 @@
-# 🎞 자료 리서처 — Pexels 스톡 요청
+# 🎞 자료 리서처 — 무료 스톡 요청(Pixabay · Unsplash · Coverr · Pexels)
 
 감독 브리프:
 {{brief}}
 
-감독의 비트 중 visual 이 stock_video · stock_photo 인 것(과 필요하면 몇 개 더)을 **Pexels 검색 요청**으로 만든다. 영상당 3~10개.
+감독의 비트 중 visual 이 stock_video · stock_photo 인 것(과 필요하면 몇 개 더)을 **무료 스톡 검색 요청**으로 만든다(앱이 연결된 스톡 사이트를 한 번에 검색한다). 영상당 3~10개.
 
-- `query_en`: Pexels 는 영어 검색이 정확하다. 구체적인 명사와 장면으로 쓴다(예: "designer sketching product on paper close up", "busy seoul crosswalk aerial"). 추상어(innovation, success)는 피한다.
-- `query_ko`: 한국어 대체 검색어.
+- `query_en`: 스톡 사이트는 영어 검색이 가장 정확하다. 구체적인 명사와 장면으로 쓴다(예: "designer sketching product on paper close up", "busy seoul crosswalk aerial"). 추상어(innovation, success)는 피한다.
+- `query_ko`: 한국어 대체 검색어(Pixabay 는 한국어 검색도 된다).
 - `kind`: 움직임이 의미 있으면 video, 정물·구도가 중요하면 photo.
 - `layout`: 풀스크린 컷어웨이(2.5~6초), 칠판 패널(split), 화자 PiP(pip) 중 하나.
 - `purpose`: 이 장면이 설명에 기여하는 바.

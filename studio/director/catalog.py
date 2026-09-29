@@ -87,7 +87,7 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "spec_json=MotionSpec JSON(모션 DSL 참고)",
              ("fullscreen", "split"), 4.0, 12.0, 8),
     Template("broll", "스톡 B-roll",
-             "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
+             "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(무료 스톡: Pixabay·Unsplash·Coverr·Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
              "image=영어 검색어(구체적 명사·장면), title=한국어 검색어(화면 라벨로도 씀), subtitle=video|photo, body=이 장면의 목적",
              ("fullscreen", "split", "pip"), 2.5, 7.0, 5),
 ]}

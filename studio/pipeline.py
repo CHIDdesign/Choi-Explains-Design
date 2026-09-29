@@ -33,7 +33,7 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .render.assets import copy_fonts, make_grain, make_sfx
 from .render.props import Episode, long_props, short_props
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
-from .stock.pexels import Pexels, PexelsError
+from .stock.providers import StockHub
 from .stock.research import StockResearcher
 from .settings import Settings
 from .text.align import ScriptAligner, build_utterances
@@ -53,7 +53,7 @@ STAGES: list[tuple[str, str, float]] = [
     ("director", "편집 계획(AI 스튜디오)", 9),
     ("proxy", "렌더용 프록시·오디오 컷", 10),
     ("broll", "자료 사진 확보", 2),
-    ("stock", "스톡 영상·사진(Pexels)", 3),
+    ("stock", "스톡 영상·사진(Pixabay 등)", 3),
     ("qa", "아트 디렉터 검수", 5),
     ("render", "렌더링(Remotion)", 36),
     ("export", "자막·XML·리포트 내보내기", 2),
@@ -86,7 +86,7 @@ class JobSpec:
     caption_preset: str = "auto"        # auto(🔤 자막 디자이너 선택) | editorial | documentary | glass | boxed
     short_caption_preset: str = "auto"  # auto | kinetic | clean | boxed
     studio_mode: bool = True            # 멀티 에이전트 스튜디오(끄면 단일 디렉터)
-    fetch_stock: bool = True            # Pexels 스톡 영상·사진
+    fetch_stock: bool = True            # 무료 스톡 영상·사진(Pixabay·Unsplash·Coverr·Pexels)
     motion_scenes: bool = True          # 🎨 모션 디자이너가 직접 설계하는 장면
     qa_rounds: int = 1                  # 🧐 아트 디렉터 검수 라운드(0 = 끔)
     direction: str = ""                 # 사용자 편집 지시(모든 에이전트에게 최우선 전달)
@@ -303,7 +303,9 @@ class Pipeline:
         return self.studio
 
     def _stock_enabled(self) -> bool:
-        return self.spec.fetch_stock and bool(self.settings.pexels_api_key)
+        s = self.settings
+        return self.spec.fetch_stock and any([s.pixabay_api_key, s.unsplash_access_key, s.coverr_api_key,
+                                              s.pexels_api_key])
 
     def stage_director(self) -> None:
         assert self.info
@@ -485,30 +487,27 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_stock(self) -> None:
-        """🎞 B-roll 요청 → Pexels 검색 → (Claude 비전으로) 선택 → 다운로드·정리."""
+        """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등) → (Claude 비전으로) 선택 → 다운로드·정리."""
         lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
         if not n:
             return
         if not self._stock_enabled():
-            why = "옵션 꺼짐" if not self.spec.fetch_stock else "Pexels API 키 없음(설정 → 스톡)"
+            why = "옵션 꺼짐" if not self.spec.fetch_stock else "스톡 API 키 없음(설정 → 스톡에 Pixabay 키 입력)"
             self.log(f"🎞 스톡 B-roll {n}건 건너뜀: {why}")
             for gl in lists:
                 gl[:] = [g for g in gl if g["template"] != "broll" or g.get("src")]
             return
-        try:
-            px = Pexels(self.settings.pexels_api_key, log=self.log, cache_dir=self.work / "pexels_cache")
-        except PexelsError as e:
-            self.log(f"🎞 {e}")
-            return
+        hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
         studio = self._ensure_studio()
         pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
-        res = StockResearcher(px, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
+        res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
                               cancel=self.cancel)
         res.run(lists, progress=self._sp("stock"))
         self.broll_log += res.credits
-        if px.remaining is not None:
-            self.log(f"🎞 Pexels 남은 호출 {px.remaining}회(시간당)")
+        left = hub.remaining()
+        if left:
+            self.log("🎞 남은 호출: " + " · ".join(f"{k} {v}회" for k, v in left.items()))
 
     # ------------------------------------------------------------------
     def stage_qa(self) -> None:

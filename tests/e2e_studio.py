@@ -1,6 +1,6 @@
-"""AI 스튜디오 전체 흐름 E2E — 가짜 Claude API + 가짜 Pexels 서버(네트워크·API 키 불필요).
+"""AI 스튜디오 전체 흐름 E2E — 가짜 Claude API + 가짜 Pixabay·Unsplash 서버(네트워크·API 키 불필요).
 
-🎬 총괄 감독 → (✂️🎨🎞🔤📱✍️ 병렬) → 🎞 Pexels 검색·비전 선택·다운로드 → 🧐 아트 디렉터 스틸 검수
+🎬 총괄 감독 → (✂️🎨🎞🔤📱✍️ 병렬) → 🎞 Pixabay·Unsplash 검색·비전 선택·다운로드 → 🧐 아트 디렉터 스틸 검수
 → 🎨 장면 수정 → Remotion 렌더 → 내보내기까지 실제로 실행한다.
 
     python tests/e2e_studio.py [--browser /path/to/chrome] [--keep]
@@ -28,7 +28,8 @@ import e2e_synthetic as base  # noqa: E402
 from e2e_synthetic import make_media, make_words  # noqa: E402
 from studio import pipeline as pl  # noqa: E402
 from studio.settings import Settings  # noqa: E402
-from studio.stock import pexels as pexels_mod  # noqa: E402
+from studio.stock import pixabay as pixabay_mod  # noqa: E402
+from studio.stock import unsplash as unsplash_mod  # noqa: E402
 
 # 모션 장면·스톡 컷이 들어갈 여유 구간(대본 태그 없는 문장들)을 끝부분 앞에 추가
 EXTRA = [
@@ -115,7 +116,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
              "query_ko": "질문", "layout": "split", "purpose": "질문의 상징", "must_show": "물음표"}]}
     if agent == "stock_pick":
         n = len(re.findall(r"^- R\d+", instruction, re.M))
-        return {"picks": [{"request": i + 1, "candidate": 2 if i == 0 else 1, "reason": "톤이 맞음"} for i in range(n)]}
+        return {"picks": [{"request": i + 1, "candidate": 2, "reason": "톤이 맞음"} for i in range(n)]}
     if agent == "captions":
         return {"emphasis": [{"seg": s_aff, "word": "어포던스라는", "type": "term"},
                              {"seg": s_q, "word": "세", "type": "number"}],
@@ -180,15 +181,27 @@ class ClaudeHandler(BaseHTTPRequestHandler):
 
 
 # ---------------------------------------------------------------------------
-# 가짜 Pexels
+# 가짜 스톡(Pixabay + Unsplash)
 # ---------------------------------------------------------------------------
 
-class PexelsHandler(BaseHTTPRequestHandler):
+class StockHandler(BaseHTTPRequestHandler):
+    """가짜 Pixabay(/pixabay/…) + Unsplash(/unsplash/…) + 파일 서버."""
     base = ""
     files: dict[str, bytes] = {}
+    tracked: list[str] = []
+
+    def _json(self, data) -> None:
+        raw = json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("X-RateLimit-Remaining", "99")
+        self.end_headers()
+        self.wfile.write(raw)
 
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
+        q = parse_qs(u.query)
+        b = self.base
         if u.path in self.files:
             data = self.files[u.path]
             self.send_response(200)
@@ -197,32 +210,37 @@ class PexelsHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        assert self.headers.get("Authorization") == "px-test", "Pexels 키 헤더 누락"
-        q = parse_qs(u.query)
-        b = self.base
-        if u.path == "/videos/search":
-            vids = [{"id": 1000 + i, "url": f"https://www.pexels.com/video/{1000 + i}/", "image": f"{b}/thumb{i % 2}.jpg",
-                     "duration": 4 + i, "width": 1920, "height": 1080, "user": {"name": f"작가{i}", "url": "https://pexels.com/@a"},
-                     "video_files": [{"link": f"{b}/v.mp4", "file_type": "video/mp4", "width": 1920, "height": 1080,
-                                      "fps": 30, "quality": "hd"},
-                                     {"link": f"{b}/v.mp4", "file_type": "video/mp4", "width": 3840, "height": 2160,
-                                      "fps": 30, "quality": "uhd"}]} for i in range(3)]
-            data = {"videos": vids, "query": q.get("query", [""])[0]}
-        elif u.path == "/v1/search":
-            data = {"photos": [{"id": 2000 + i, "url": f"https://www.pexels.com/photo/{2000 + i}/", "width": 3000,
-                                "height": 2000, "photographer": f"사진가{i}", "photographer_url": "https://pexels.com/@p",
-                                "alt": "question", "src": {"original": f"{b}/p.jpg", "medium": f"{b}/thumb{i % 2}.jpg"}}
-                               for i in range(3)]}
-        else:
-            self.send_response(404)
-            self.end_headers()
+        if u.path.startswith("/pixabay/"):
+            assert q.get("key") == ["pb-test"], "Pixabay 키 누락"
+            if u.path == "/pixabay/videos/":
+                self._json({"total": 3, "totalHits": 3, "hits": [
+                    {"id": 1000 + i, "pageURL": f"https://pixabay.com/videos/id-{1000 + i}/", "type": "film",
+                     "tags": "sketch", "duration": 4 + i, "user": f"작가{i}", "user_id": i,
+                     "videos": {"large": {"url": f"{b}/v.mp4", "width": 1920, "height": 1080, "size": 1,
+                                          "thumbnail": f"{b}/thumb{i % 2}.jpg"},
+                                "medium": {"url": f"{b}/v.mp4", "width": 1280, "height": 720, "size": 1,
+                                           "thumbnail": f"{b}/thumb{i % 2}.jpg"}}} for i in range(3)]})
+            else:
+                self._json({"total": 3, "totalHits": 3, "hits": [
+                    {"id": 2000 + i, "pageURL": f"https://pixabay.com/photos/id-{2000 + i}/", "tags": "question",
+                     "webformatURL": f"{b}/thumb{i % 2}.jpg", "largeImageURL": f"{b}/p.jpg", "imageWidth": 2400,
+                     "imageHeight": 1600, "user": f"사진가{i}", "user_id": i} for i in range(3)]})
             return
-        raw = json.dumps(data, ensure_ascii=False).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.send_header("X-Ratelimit-Remaining", "199")
+        if u.path.startswith("/unsplash/"):
+            assert self.headers.get("Authorization") == "Client-ID us-test", "Unsplash 키 헤더 누락"
+            if u.path == "/unsplash/search/photos":
+                self._json({"total": 3, "results": [
+                    {"id": f"us{i}", "width": 6000, "height": 4000, "alt_description": "question",
+                     "urls": {"raw": f"{b}/u.jpg?ixid=1", "small": f"{b}/thumb{(i + 1) % 2}.jpg"},
+                     "links": {"html": f"https://unsplash.com/photos/us{i}",
+                               "download_location": f"{b}/unsplash/photos/us{i}/download"},
+                     "user": {"name": f"Jane {i}", "links": {"html": "https://unsplash.com/@jane"}}} for i in range(3)]})
+            elif u.path.endswith("/download"):
+                StockHandler.tracked.append(u.path)
+                self._json({"url": "ok"})
+            return
+        self.send_response(404)
         self.end_headers()
-        self.wfile.write(raw)
 
     def log_message(self, *a):
         pass
@@ -268,11 +286,13 @@ def main() -> int:
 
     claude = start(ClaudeHandler)
     os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{claude.server_port}"
-    px = start(PexelsHandler)
-    PexelsHandler.base = f"http://127.0.0.1:{px.server_port}"
-    PexelsHandler.files = {"/v.mp4": clip.read_bytes(), "/p.jpg": _jpeg((40, 60, 90), (2400, 1600)),
+    px = start(StockHandler)
+    StockHandler.base = f"http://127.0.0.1:{px.server_port}"
+    StockHandler.files = {"/v.mp4": clip.read_bytes(), "/p.jpg": _jpeg((40, 60, 90), (2400, 1600)),
                            "/thumb0.jpg": _jpeg((200, 90, 40)), "/thumb1.jpg": _jpeg((30, 120, 80))}
-    pexels_mod.API = PexelsHandler.base
+    StockHandler.files["/u.jpg"] = StockHandler.files["/p.jpg"]
+    pixabay_mod.API = StockHandler.base + "/pixabay"
+    unsplash_mod.API = StockHandler.base + "/unsplash"
 
     def fake_transcribe(*_a, **_k):
         return {"words": words, "segments": [], "info": {"model": "synthetic", "duration": duration}}
@@ -280,7 +300,8 @@ def main() -> int:
 
     settings = Settings()
     settings.anthropic_api_key = "sk-ant-test"
-    settings.pexels_api_key = "px-test"
+    settings.pixabay_api_key = "pb-test"
+    settings.unsplash_access_key = "us-test"
     settings.projects_dir = str(work)
     settings.render.browser_executable = args.browser
     settings.render.gl = "swangle" if sys.platform != "win32" else "angle"
@@ -315,7 +336,7 @@ def main() -> int:
     brolls = [g for g in lp["graphics"] if g["template"] == "broll"]
     for g in brolls:
         assert (job / "render" / "public_src" / g["data"]["src"]).exists(), g
-        assert "Pexels" in g["data"]["credit"], g
+        assert "Pixabay" in g["data"]["credit"] or "Unsplash" in g["data"]["credit"], g
     assert any(g["data"]["kind"] == "video" for g in brolls) and any(g["data"]["kind"] == "photo" for g in brolls)
     ems = [w.get("em") for c in lp["captions"] for line in c["lines"] for w in line if w.get("em")]
     assert "term" in ems, ems
@@ -328,7 +349,8 @@ def main() -> int:
     assert plan["long"]["qa"]["rounds"], plan["long"].get("qa")
     assert plan["director"].startswith("AI 스튜디오")
     upload = next(out.glob("*_업로드정보.txt")).read_text(encoding="utf-8")
-    assert "Pexels" in upload, upload[-500:]
+    assert "Pixabay" in upload and "Unsplash" in upload, upload[-500:]
+    assert StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계
     report = next(out.glob("*_편집리포트.md")).read_text(encoding="utf-8")
     assert "AI 스튜디오 브리프" in report and "아트 디렉터 검수" in report and "🎨 모션 디자이너" in report
     assert any(f.endswith("_롱폼.mp4") for f in files) and any("숏폼1" in f and f.endswith(".mp4") for f in files)

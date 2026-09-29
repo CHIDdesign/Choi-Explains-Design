@@ -1,7 +1,8 @@
-"""🎞 자료 리서처: B-roll 요청 → Pexels 검색 → 후보 컨택트 시트 → Claude 가 보고 선택 → 다운로드·정리.
+"""🎞 자료 리서처: B-roll 요청 → 무료 스톡 검색(Pixabay·Pexels·Coverr·Unsplash) → 후보 컨택트 시트
+→ Claude 가 보고 선택 → 다운로드·정리.
 
 - 요청마다 후보 최대 6개를 한 장의 시트(C1~C6 라벨)로 묶어 비전으로 보낸다(이미지 수·토큰 절약).
-- 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
+- 제공처별 후보를 번갈아 섞는다. 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
   그 B-roll 은 쓰지 않는다(틀린 B-roll 보다 없는 게 낫다).
 - 결과는 work/stock.json 에 캐시 → 재실행 때 검색·선택·다운로드를 반복하지 않는다.
 """
@@ -13,7 +14,8 @@ from typing import Any, Callable, Optional
 
 from ..media.ffmpeg import FFmpeg
 from ..util import CancelToken, LogFn, noop_log, read_json, text_hash, write_json
-from .pexels import Pexels, PexelsError, StockCandidate
+from .base import StockCandidate, StockError
+from .providers import StockHub
 from .process import prepare_photo, prepare_video
 
 PickFn = Callable[[str, list[tuple[str, bytes, str]]], list[dict[str, Any]]]
@@ -52,10 +54,10 @@ def contact_sheet(thumbs: list[tuple[str, Optional[bytes]]]) -> bytes:
 
 
 class StockResearcher:
-    def __init__(self, pexels: Pexels, ff: FFmpeg, *, work: Path, public: Path, fps: int = 30,
+    def __init__(self, hub: StockHub, ff: FFmpeg, *, work: Path, public: Path, fps: int = 30,
                  pick: Optional[PickFn] = None, log: LogFn = noop_log, cancel: Optional[CancelToken] = None,
                  per_request: int = 6):
-        self.px = pexels
+        self.hub = hub
         self.ff = ff
         self.work = work
         self.public = public
@@ -70,26 +72,7 @@ class StockResearcher:
 
     # ------------------------------------------------------------------
     def search(self, st: dict[str, Any]) -> list[StockCandidate]:
-        n = self.per_request
-        qe, qk = st.get("query_en", ""), st.get("query_ko", "")
-        out: list[StockCandidate] = []
-        if st.get("kind", "video") == "video":
-            if qe:
-                out += self.px.search_videos(qe, per_page=n)
-            if len(out) < 2 and qk:
-                out += self.px.search_videos(qk, per_page=n, locale="ko-KR")
-        if len(out) < 2:
-            if qe:
-                out += self.px.search_photos(qe, per_page=n)
-            if len(out) < 2 and qk:
-                out += self.px.search_photos(qk, per_page=n, locale="ko-KR")
-        seen: set[tuple[str, int]] = set()
-        uniq = []
-        for c in out:
-            if (c.kind, c.id) not in seen:
-                seen.add((c.kind, c.id))
-                uniq.append(c)
-        return uniq[:n]
+        return self.hub.search(st, self.per_request)
 
     def _thumb(self, c: StockCandidate) -> Optional[bytes]:
         import requests
@@ -112,7 +95,7 @@ class StockResearcher:
                     reqs.setdefault(request_key(g["stock"]), g["stock"])
         if not reqs:
             return
-        self.log(f"🎞 Pexels 스톡 요청 {len(reqs)}건")
+        self.log(f"🎞 스톡 요청 {len(reqs)}건 · 검색처: {', '.join(self.hub.names) or '없음'}")
         todo = [k for k in reqs if not self._cached_ok(k)]
         # 1) 검색
         cands: dict[str, list[StockCandidate]] = {}
@@ -121,8 +104,8 @@ class StockResearcher:
                 self.cancel.check()
             try:
                 cands[k] = self.search(reqs[k])
-            except PexelsError as e:
-                self.log(f"🎞 Pexels: {e}")
+            except StockError as e:
+                self.log(f"🎞 {e}")
                 break
             except Exception as e:  # noqa: BLE001 - 네트워크 오류는 그 요청만 건너뜀
                 self.log(f"🎞 검색 실패 '{reqs[k].get('query_en')}': {e}")
@@ -135,7 +118,8 @@ class StockResearcher:
             sheets, lines = [], []
             for n, k in enumerate(live, 1):
                 st = reqs[k]
-                thumbs = [(f"C{j}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"), self._thumb(c))
+                thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
+                           self._thumb(c))
                           for j, c in enumerate(cands[k], 1)]
                 sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
                 lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
@@ -188,7 +172,7 @@ class StockResearcher:
                 keep.append(g)
                 if res["src"] not in used:
                     used.add(res["src"])
-                    self.credits.append({"query": g["stock"].get("query_en"), "origin": "Pexels",
+                    self.credits.append({"query": g["stock"].get("query_en"), "origin": res.get("provider", "stock"),
                                          "credit": res["credit"], "url": res["url"], "author_url": res.get("author_url", "")})
             gl[:] = keep
         self.log(f"🎞 스톡 확보 {len(used)}건")
@@ -206,16 +190,16 @@ class StockResearcher:
         out_dir = self.public / "broll"
         out_dir.mkdir(parents=True, exist_ok=True)
         if c.kind == "video":
-            raw = self.px.download(c.download, raw_dir / f"pexels_{c.id}.mp4")
-            dst = out_dir / f"v{c.id}.mp4"
+            raw = self.hub.download(c, raw_dir / f"{c.key}.mp4")
+            dst = out_dir / f"{c.key}.mp4"
             if not dst.exists():
                 prepare_video(self.ff, raw, dst, need=NEED_SEC, fps=self.fps, src_duration=c.duration, log=self.log,
                               cancel=self.cancel)
         else:
-            raw = self.px.download(c.download, raw_dir / f"pexels_{c.id}.jpg")
-            dst = out_dir / f"p{c.id}.jpg"
+            raw = self.hub.download(c, raw_dir / f"{c.key}.jpg")
+            dst = out_dir / f"{c.key}.jpg"
             if not dst.exists():
                 prepare_photo(raw, dst)
-        self.log(f"🎞 {c.kind} {c.id} · {c.credit}")
+        self.log(f"🎞 {c.provider} {c.kind} {c.id} · {c.credit}")
         return {"src": f"broll/{dst.name}", "kind": c.kind, "credit": c.credit, "url": c.url,
-                "author_url": c.author_url}
+                "author_url": c.author_url, "provider": c.provider}

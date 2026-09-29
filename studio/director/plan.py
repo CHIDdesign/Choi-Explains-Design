@@ -170,7 +170,7 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
             return None
         out["spec"] = spec
     if tn == "broll":
-        # 🎞 Pexels 요청 — 단일 디렉터 모드에서는 image=영어 검색어, subtitle=video|photo, title=한국어 검색어
+        # 🎞 스톡 요청 — 단일 디렉터 모드에서는 image=영어 검색어, subtitle=video|photo, title=한국어 검색어
         st = g.get("stock") if isinstance(g.get("stock"), dict) else {}
         kind = st.get("kind") or (out["subtitle"] if out["subtitle"] in ("video", "photo") else "video")
         stock = {"kind": kind if kind in ("video", "photo") else "video",

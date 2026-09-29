@@ -11,7 +11,7 @@
   - `visual`: 필요한 시각 수단.
     - template: 목록·단계·비교 같은 표준 도식
     - motion: 템플릿으로 안 되는 개념을 움직임으로
-    - stock_video / stock_photo: 구체적 장면·사물·분위기(Pexels)
+    - stock_video / stock_photo: 구체적 장면·사물·분위기(무료 스톡: Pixabay 등)
     - photo: 고유명사 실물(위키미디어)
     - keyword: 개념 명명 한 장
     - none: 화자만

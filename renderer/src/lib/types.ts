@@ -17,7 +17,7 @@ export type TemplateName =
   | 'pyramid'
   | 'photo'
   | 'motion' // 모션 디자이너 에이전트가 설계한 장면(MotionSpec)
-  | 'broll' // 스톡 영상/사진(Pexels 등)
+  | 'broll' // 스톡 영상/사진(Pixabay·Unsplash·Coverr·Pexels)
   // 자동 템플릿(디렉터가 직접 고르지 않음)
   | 'title'
   | 'lower_third';

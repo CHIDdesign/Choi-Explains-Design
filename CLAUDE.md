@@ -5,7 +5,7 @@
 ## 구조
 - `studio/pipeline.py` — 단계 오케스트레이션(probe → audio → asr → align → face → director → proxy → broll → stock → qa → render → export), 단계별 캐시는 `projects/<job>/work/`.
 - `studio/agents/` — 🎬 AI 스튜디오. `studio.py`(감독 → 병렬 전문가 → `merge_plan` → 기존 LONG_PLAN 모양), `schemas.py`(에이전트별 스키마). 프롬프트는 `prompts/system_studio.md` + `prompts/agents/*.md`.
-- `studio/stock/` — Pexels(`pexels.py`), 후보 시트·비전 선택·다운로드(`research.py`), 소재 정리(`process.py`). 결과 캐시 `work/stock.json`.
+- `studio/stock/` — 제공처(`pixabay.py` 기본, `unsplash.py`, `coverr.py`, `pexels.py`; 공통 `base.py`), 통합 검색 `providers.py`(StockHub), 후보 시트·비전 선택·다운로드(`research.py`), 소재 정리(`process.py`). 결과 캐시 `work/stock.json`.
 - `studio/motion/spec.py` — 모션 DSL 검증(화이트리스트·범위 제한). 렌더러는 `renderer/src/components/motion/MotionScene.tsx`, 문법 문서는 `prompts/motion_dsl.md` — 세 곳을 같이 바꾼다.
 - `studio/text/align.py` — ASR↔대본 정렬, 리테이크/NG 제거, 태그 고정. 동작 변경 시 `tests/test_core.py` 갱신.
 - `studio/director/` — `catalog.py`(템플릿 목록, TS 와 동기화), `schema.py`(구조화 출력 스키마: 모든 object 는 additionalProperties=false + 전체 required), `plan.py`(검증·시간 변환), `claude.py`(API 호출), `fallback.py`(키 없을 때).
@@ -25,5 +25,5 @@
 - `python -m pytest tests -q`
 - `cd renderer && npx tsc --noEmit`
 - `python tests/e2e_synthetic.py --browser <chrome-headless-shell>` (Whisper 없이 전체 파이프라인)
-- `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude·Pexels 로 스튜디오·스톡·검수 전체)
+- `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude·Pixabay·Unsplash 로 스튜디오·스톡·검수 전체)
 - 템플릿 시각 확인: `cd renderer && npx remotion render src/index.ts LongForm out/f --sequence --frames=160,330 --image-format=jpeg`

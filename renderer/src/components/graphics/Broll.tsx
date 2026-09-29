@@ -8,7 +8,7 @@ import type {TemplateProps} from './common';
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
 /**
- * 스톡 B-roll(Pexels 영상/사진) — "Keep it stupid cinematic": 꽉 찬 화면, 아주 느린 푸시인, 작은 ▣ 크레딧.
+ * 스톡 B-roll(Pixabay·Unsplash·Coverr·Pexels 영상/사진) — "Keep it stupid cinematic": 꽉 찬 화면, 아주 느린 푸시인, 작은 ▣ 크레딧.
  * 사진은 켄번즈(방향 지정), 영상은 1.00→1.04 푸시인. 패널 레이아웃에서는 액자형.
  */
 export const BrollCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, layout, compact}) => {

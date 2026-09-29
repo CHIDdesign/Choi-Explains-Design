@@ -7,7 +7,7 @@
 - 비주얼: **Musicbed/Filmsupply 2026 Commercial Filmmaking Trend Report** 의 에디토리얼 문법(표지형 타이틀, 러닝 헤더, 초대형 타이포, 시그널 레드) — [docs/디자인_시스템.md](docs/디자인_시스템.md)
 - 숏폼: 공개된 후킹·리텐션 연구와 크리에이터 노하우를 규칙으로 정리해 적용 — [docs/research/숏폼_후킹_리서치.md](docs/research/숏폼_후킹_리서치.md)
 - **🎬 AI 스튜디오**: 총괄 감독 에이전트가 ✂️ 편집 · 🎨 모션 · 🎞 자료 · 🔤 자막 · 📱 숏폼 · ✍️ 카피 에이전트를 동시에 굴리고, 🧐 아트 디렉터가 렌더된 화면을 직접 보고 고칩니다 — [docs/AI_스튜디오.md](docs/AI_스튜디오.md)
-- **모션 그래픽 자동 생성**(모션 DSL) + **Pexels 무료 스톡 영상·사진 자동 검색·선택** + **하이엔드 자막 프리셋**(에디토리얼·다큐·글래스·박스 / 키네틱·클린·박스)
+- **모션 그래픽 자동 생성**(모션 DSL) + **무료 스톡 영상·사진 자동 검색·선택(Pixabay·Unsplash·Coverr·Pexels)** + **하이엔드 자막 프리셋**(에디토리얼·다큐·글래스·박스 / 키네틱·클린·박스)
 - GitHub 디자인 스킬(motion-framer, animate-skill, video-editing-skill, Remotion 공식 스킬 등) 원칙을 에이전트에게 주입 — [docs/스킬_출처.md](docs/스킬_출처.md)
 
 ---
@@ -24,7 +24,7 @@
 | 편집 판단 | **🎬 AI 스튜디오**: 총괄 감독의 브리프 → 전문 에이전트 6명 병렬(추가 컷·펀치인 / 도식·모션 장면 / 스톡 요청 / 자막 강조·프리셋 / 숏폼 훅 / 제목·설명란·썸네일 문구) | **Claude API**(구조화 출력, 프롬프트 캐시 공유) — 키가 없으면 대본 태그 기반 규칙 편집 |
 | 모션 그래픽 | 템플릿으로 안 되는 개념(게슈탈트 근접성, 시선 흐름, 비례 변화 등)을 🎨 모션 디자이너가 **모션 DSL**(텍스트·도형·화살표·점 무리·카운터·막대, 키프레임)로 직접 설계 | Remotion + 검증기(`studio/motion/spec.py`) |
 | 자료 사진 | 고유명사가 나오면 사진: ① 내 이미지 폴더(파일명 매칭) ② 위키미디어 커먼즈(자유 라이선스만, ▣ 출처 표기) | Wikimedia Commons API |
-| 스톡 B-roll | 구체적 장면·사물은 **Pexels** 영상/사진 검색 → 후보 6개를 한 장의 시트로 묶어 Claude 가 **보고** 고름 → 1080p CFR 로 정리. 맞는 게 없으면 넣지 않음. 작가 크레딧 자동 표기 | Pexels API(무료 키) |
+| 스톡 B-roll | 구체적 장면·사물은 **Pixabay**(기본)·Unsplash·Coverr·Pexels 영상/사진을 한 번에 검색 → 후보 6개를 한 장의 시트로 묶어 Claude 가 **보고** 고름 → 1080p CFR 로 정리. 맞는 게 없으면 넣지 않음. 작가 크레딧 자동 표기 | 무료 스톡 API — [docs/스톡_API_가이드.md](docs/스톡_API_가이드.md) |
 | 검수 | 🧐 아트 디렉터가 각 그래픽이 도착한 순간의 스틸과 자막 스틸을 보고 넘침·가독성·과밀을 지적 → 글자 줄이기·레이아웃 변경·삭제·모션 장면 재설계 | Claude 비전 |
 | 그래픽·렌더 | 19종 템플릿, 칠판 패널/풀스크린/오버레이/PiP 레이아웃, 하이엔드 자막 프리셋, 2캠식 줌, BGM 덕킹, 은은한 효과음, 필름 그레인, 엔드카드 | **Remotion**(React) + FFmpeg(NVENC) |
 | 내보내기 | 롱폼·숏폼 MP4, 썸네일 JPG 3종, SRT, Premiere Pro XML(원본 참조 컷 + 챕터/그래픽 마커), 업로드 정보, 편집 리포트 | |
@@ -59,7 +59,7 @@
 3. **`run_studio.bat`** 을 더블클릭하면 창이 열립니다. (오류를 콘솔로 보려면 `run_studio_console.bat`)
 4. 창 오른쪽 위 **설정 → AI** 에 키를 넣습니다.
    - **Claude API 키**(본인 키): [console.anthropic.com](https://console.anthropic.com) 에서 발급. 키가 없어도 동작하지만(대본 태그 기반), AI 스튜디오·모션 장면·검수는 키가 있어야 합니다.
-   - **Pexels API 키**(무료): [pexels.com/ko-kr/api](https://www.pexels.com/ko-kr/api/) 에서 발급. 스톡 영상·사진 자동 검색에 씁니다.
+   - **설정 → 스톡**: **Pixabay API 키**(무료, 추천) — [pixabay.com/api/docs](https://pixabay.com/api/docs/) 에 로그인하면 문서 안에 키가 보입니다. 필요하면 Unsplash(사진)·Coverr(영상)·Pexels 키도 넣을 수 있습니다 → [스톡 API 가이드](docs/스톡_API_가이드.md)
    - 키는 이 PC 의 `user/settings.json` 에만 저장됩니다.
 
 > NVIDIA 드라이버는 최신으로 유지하세요. GPU 가 인식되지 않으면 자동으로 CPU 로 전환됩니다(느리지만 동작).
@@ -79,7 +79,7 @@
 4. **메모 · 주요 장면** 탭에 주제, 강조하고 싶은 장면(원본 시각 "03:20" 처럼 적어도 됨), 참고 도서, 숏폼으로 만들고 싶은 부분을 자유롭게 적습니다.
 5. (선택) **편집 지시** 탭: AI 스튜디오 전체에 주는 지시(예: "모션 그래픽 많이, 스톡은 자연광 톤만").
 6. (선택) 자료 이미지 폴더 · BGM(라이선스 있는 곡) · LUT(.cube).
-7. 오른쪽 **🎬 AI 스튜디오** 상자에서 멀티 에이전트 · Pexels 스톡 · 모션 장면 · 아트 디렉터 검수 라운드를 고르고, **출력 옵션**에서 자막 프리셋(자동 = 🔤 자막 디자이너가 선택)을 고릅니다.
+7. 오른쪽 **🎬 AI 스튜디오** 상자에서 멀티 에이전트 · 무료 스톡 · 모션 장면 · 아트 디렉터 검수 라운드를 고르고, **출력 옵션**에서 자막 프리셋(자동 = 🔤 자막 디자이너가 선택)을 고릅니다.
 8. **전체 제작 ▶**. 끝나면 `결과 폴더 열기`.
 
 ### 결과 폴더(`projects/날짜_제목/output/`)
@@ -110,7 +110,7 @@
   - **단일 디렉터 모드**(AI 스튜디오 끄기): 롱폼 계획 + 숏폼 기획 두 번 호출.
   - 설정에서 `claude-sonnet-5-5` 로 바꾸거나, `user/settings.json` 의 `agent_models`/`agent_effort` 로 에이전트별로 낮출 수 있습니다.
   - 거절(refusal) 시 서버측 자동 폴백(`fallbacks: "default"`)을 켜 두었습니다.
-- Pexels 는 무료입니다(시간당 200회·월 2만 회, 검색 결과는 캐시). 위키미디어·로컬 처리 비용은 없습니다.
+- 스톡 API 는 모두 무료입니다(Pixabay 60초당 100회, Unsplash·Coverr 데모 시간당 50회; 검색 결과는 캐시). 위키미디어·로컬 처리 비용은 없습니다.
 
 ## 작동 구조
 
@@ -136,7 +136,7 @@
 | `studio/` | 파이썬 파이프라인·GUI (`python -m studio`) |
 | `studio/director/` | Claude 호출, 스키마, 규칙 기반 디렉터, 템플릿 카탈로그 |
 | `studio/agents/` | 🎬 AI 스튜디오(감독 → 병렬 전문가 → 합치기, 스톡 선택, 아트 디렉터 검수) |
-| `studio/stock/` | Pexels 클라이언트, 후보 시트·선택·다운로드·정리 |
+| `studio/stock/` | 스톡 클라이언트(Pixabay·Unsplash·Coverr·Pexels)와 통합 검색, 후보 시트·선택·다운로드·정리 |
 | `studio/motion/` | 모션 DSL 검증기 |
 | `prompts/` | 스튜디오 헌장·에이전트 지시문·스타일/후킹 가이드·모션 DSL·디자인 스킬 노트 — 채널 톤을 바꾸려면 여기를 고치세요 |
 | `.claude/skills/` | 포함한 오픈소스 디자인 스킬(MIT) — [docs/스킬_출처.md](docs/스킬_출처.md) |
@@ -156,7 +156,7 @@
 | 자막 용어가 계속 틀림 | 설정 → 용어 사전에 `틀린말=맞는말` 추가, 대본을 넣으면 대본 표기를 따릅니다 |
 | 자료 사진이 엉뚱함 | 이미지 폴더에 원하는 사진을 `검색어.jpg` 로 넣으면 그것을 우선 사용 |
 | 위키미디어 접속 실패 | 사진 없이 진행됩니다(리포트에 표시). 회사/학교망에서 막혔을 수 있습니다 |
-| 스톡 B-roll 이 안 들어감 | 설정에 Pexels 키가 있는지, 🎞 체크가 켜져 있는지 확인. 맞는 후보가 없으면 일부러 넣지 않습니다(리포트의 🎞 로그) |
+| 스톡 B-roll 이 안 들어감 | 설정 → 스톡에 Pixabay 키가 있는지, 🎞 체크가 켜져 있는지 확인. 맞는 후보가 없으면 일부러 넣지 않습니다(리포트의 🎞 로그) |
 | `429`/요청 한도 오류 | 설정 → 동시 에이전트 수를 2로 줄이세요 |
 | 검수가 너무 오래 걸림 | 🧐 검수 라운드를 1 또는 끔으로 |
 
@@ -167,7 +167,7 @@
 - 폰트: Pretendard, Anton, Noto Serif KR — SIL Open Font License.
 - 얼굴 검출: OpenCV Zoo YuNet — MIT (`models/LICENSE_YUNET.txt`).
 - 위키미디어 사진은 CC0/퍼블릭 도메인/CC BY/CC BY-SA 만 쓰고 화면과 설명란에 출처를 넣습니다. CC BY-SA 는 조건을 리포트에서 확인하세요.
-- Pexels 영상·사진은 Pexels 라이선스(무료, 출처 표기 권장)를 따르며 화면 ▣ 와 설명란에 작가 크레딧을 자동으로 넣습니다. 알아볼 수 있는 인물·상표가 크게 나오는 컷은 피하도록 지시했지만 최종 확인은 직접 하세요.
+- 스톡 영상·사진은 각 제공처 라이선스(Pixabay·Unsplash·Pexels 는 상업적 이용 가능, Unsplash·Coverr 는 출처 필수)를 따르며 화면 ▣ 와 설명란에 작가·제공처를 자동으로 넣습니다. Coverr 는 상업 이용 문구가 문서마다 달라 라이선스를 직접 확인하세요. 알아볼 수 있는 인물·상표가 크게 나오는 컷은 피하도록 지시했지만 최종 확인은 직접 하세요.
 - `.claude/skills/` 의 스킬은 각 폴더의 MIT 라이선스를 따릅니다.
 - **BGM 은 직접 라이선스를 받은 곡**을 넣어야 합니다(Musicbed, Artlist, YouTube 오디오 보관함 등).
 
@@ -176,7 +176,7 @@
 ```bash
 python -m pytest tests -q                     # 단위 테스트
 python tests/e2e_synthetic.py --browser <chrome>  # 합성 영상으로 전체 파이프라인(음성 인식은 가짜 결과)
-python tests/e2e_studio.py --browser <chrome>     # 가짜 Claude·Pexels 서버로 AI 스튜디오 전체(에이전트·스톡·검수)
+python tests/e2e_studio.py --browser <chrome>     # 가짜 Claude·Pixabay·Unsplash 서버로 AI 스튜디오 전체(에이전트·스톡·검수)
 cd renderer && npm run studio                 # 템플릿 디자인 미리보기(src/samples.ts)
 python -m studio run --video a.mp4 --title "제목" --script 대본.txt --notes 메모.txt   # CLI
 ```

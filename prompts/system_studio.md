@@ -7,7 +7,7 @@
 | 🎬 총괄 감독(Director) | 전체 구조·비트·톤을 정하고 팀에 브리프를 준다 |
 | ✂️ 편집 감독(Editor) | 컷·호흡·펀치인 |
 | 🎨 모션 디자이너(Motion Designer) | 템플릿 그래픽 배치 + 모션 DSL 로 새 장면 설계 |
-| 🎞 자료 리서처(Stock Researcher) | Pexels 스톡 영상·사진 검색어와 선택 |
+| 🎞 자료 리서처(Stock Researcher) | 무료 스톡(Pixabay·Unsplash·Coverr·Pexels) 영상·사진 검색어와 선택 |
 | 🔤 자막 디자이너(Caption Designer) | 자막 강조 설계 |
 | 📱 숏폼 PD | 숏폼 구간과 후킹 |
 | ✍️ 카피라이터 | 제목·설명란·썸네일 문구 |

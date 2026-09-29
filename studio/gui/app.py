@@ -121,9 +121,6 @@ class SettingsDialog(QDialog):
         self.device = QComboBox()
         self.device.addItems(["auto", "cuda", "cpu"])
         self.device.setCurrentText(s.whisper_device)
-        self.pexels = QLineEdit(s.pexels_api_key)
-        self.pexels.setEchoMode(QLineEdit.Password)
-        self.pexels.setPlaceholderText("Pexels API 키 (pexels.com/ko-kr/api 에서 무료 발급)")
         self.workers = QSpinBox()
         self.workers.setRange(1, 8)
         self.workers.setValue(s.studio_workers)
@@ -132,13 +129,39 @@ class SettingsDialog(QDialog):
         f.addRow("Claude 모델", self.model)
         f.addRow("사고 강도(effort)", self.effort)
         f.addRow("동시 에이전트 수", self.workers)
-        f.addRow("Pexels API 키", self.pexels)
         f.addRow("Whisper 모델", self.whisper)
         f.addRow("Whisper 장치", self.device)
         hint = QLabel("· large-v3: 가장 정확(첫 실행 시 약 3GB 다운로드)\n· large-v3-turbo: 약 3~4배 빠름, 정확도 약간 낮음")
         hint.setObjectName("sub")
         f.addRow("", hint)
         tabs.addTab(ai, "AI")
+        # --- 스톡(무료, 상업적 이용 가능)
+        st = QWidget()
+        fs = QFormLayout(st)
+
+        def key_edit(value: str, hint: str) -> QLineEdit:
+            e = QLineEdit(value)
+            e.setEchoMode(QLineEdit.Password)
+            e.setPlaceholderText(hint)
+            return e
+
+        self.pixabay = key_edit(s.pixabay_api_key, "pixabay.com/api/docs 에 로그인하면 문서 안에 키가 보입니다")
+        self.unsplash = key_edit(s.unsplash_access_key, "unsplash.com/developers → New Application → Access Key")
+        self.coverr = key_edit(s.coverr_api_key, "coverr.co/developers (영상 전용)")
+        self.pexels = key_edit(s.pexels_api_key, "이미 발급받은 키가 있을 때만")
+        fs.addRow("Pixabay API 키 (추천)", self.pixabay)
+        fs.addRow("Unsplash Access Key", self.unsplash)
+        fs.addRow("Coverr API 키", self.coverr)
+        fs.addRow("Pexels API 키", self.pexels)
+        sh = QLabel("키를 넣은 곳을 모두 검색해 후보를 섞고, 🎞 자료 리서처가 썸네일을 보고 고릅니다.\n"
+                    "· Pixabay: 사진+영상, 한국어 검색, 60초당 100회 — 하나만 넣는다면 이것\n"
+                    "· Unsplash: 고해상도 사진(출처 필수, 데모 시간당 50회)\n"
+                    "· Coverr: 시네마틱 영상(출처 필수, 데모 시간당 50회, 상업 이용 조건은 라이선스 확인)\n"
+                    "출처는 화면 ▣ 와 업로드 설명란에 자동으로 들어갑니다.")
+        sh.setObjectName("sub")
+        sh.setWordWrap(True)
+        fs.addRow("", sh)
+        tabs.addTab(st, "스톡")
         # --- 브랜드
         br = QWidget()
         f2 = QFormLayout(br)
@@ -212,6 +235,9 @@ class SettingsDialog(QDialog):
         s.anthropic_api_key = self.key.text().strip()
         s.claude_model = self.model.currentText().strip()
         s.claude_effort = self.effort.currentText()
+        s.pixabay_api_key = self.pixabay.text().strip()
+        s.unsplash_access_key = self.unsplash.text().strip()
+        s.coverr_api_key = self.coverr.text().strip()
         s.pexels_api_key = self.pexels.text().strip()
         s.studio_workers = self.workers.value()
         s.whisper_model = self.whisper.currentText().strip()
@@ -415,7 +441,8 @@ class MainWindow(QMainWindow):
         self.studio_mode = QCheckBox("멀티 에이전트(감독 + 전문가 팀)")
         self.studio_mode.setToolTip("🎬 총괄 감독이 ✂️ 편집 · 🎨 모션 · 🎞 자료 · 🔤 자막 · 📱 숏폼 · ✍️ 카피 에이전트를 동시에 굴립니다.\n"
                                     "끄면 Claude 한 번 호출로 계획합니다(빠르고 저렴).")
-        self.fetch_stock = QCheckBox("🎞 Pexels 스톡 영상·사진")
+        self.fetch_stock = QCheckBox("🎞 무료 스톡 영상·사진")
+        self.fetch_stock.setToolTip("설정 → 스톡에 넣은 키(Pixabay·Unsplash·Coverr·Pexels)로 B-roll 을 자동 검색·선택")
         self.motion_scenes = QCheckBox("🎨 모션 장면 직접 설계")
         self.qa_rounds = QSpinBox()
         self.qa_rounds.setRange(0, 3)
@@ -592,8 +619,9 @@ class MainWindow(QMainWindow):
         if not self.settings.anthropic_api_key:
             self._log("ℹ 설정에서 Claude API 키(본인 키)를 입력하면 🎬 AI 스튜디오(감독 + 전문 에이전트 팀)가 편집을 판단합니다. "
                       "키가 없으면 대본 태그 기반 규칙 편집으로 동작합니다.")
-        if not self.settings.pexels_api_key:
-            self._log("ℹ 설정 → AI 탭에 Pexels API 키(무료)를 넣으면 🎞 스톡 영상·사진을 자동으로 찾아 넣습니다.")
+        st = self.settings
+        if not any([st.pixabay_api_key, st.unsplash_access_key, st.coverr_api_key, st.pexels_api_key]):
+            self._log("ℹ 설정 → 스톡 탭에 Pixabay API 키(무료)를 넣으면 🎞 스톡 영상·사진을 자동으로 찾아 넣습니다.")
 
     def _log(self, msg: str) -> None:
         self.logbox.appendPlainText(msg)

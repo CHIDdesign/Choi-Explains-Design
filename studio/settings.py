@@ -44,7 +44,11 @@ class Settings:
     node_path: str = ""
     projects_dir: str = str(DEFAULT_PROJECTS_DIR)
     wikimedia_contact: str = ""       # Wikimedia API User-Agent 연락처(권장)
-    pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ 무료 발급
+    # 🎞 무료 스톡(상업적 이용 가능) — 키가 있는 곳을 모두 검색
+    pixabay_api_key: str = ""        # https://pixabay.com/api/docs/ (로그인하면 문서에 키가 보임) — 기본 추천
+    unsplash_access_key: str = ""    # https://unsplash.com/developers (사진 전용, 데모 시간당 50회)
+    coverr_api_key: str = ""         # https://coverr.co/developers (영상 전용, 데모 시간당 50회)
+    pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     # 🎬 AI 스튜디오(멀티 에이전트)
     studio_workers: int = 4           # 동시에 일하는 전문 에이전트 수
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}

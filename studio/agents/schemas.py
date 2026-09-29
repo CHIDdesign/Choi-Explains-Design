@@ -48,7 +48,7 @@ MOTION = _obj({
     })},
 })
 
-# 🎞 자료 리서처 — Pexels 요청
+# 🎞 자료 리서처 — 무료 스톡 요청(Pixabay·Unsplash·Coverr·Pexels)
 STOCK = _obj({
     "requests": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT, "start_word": STR,
