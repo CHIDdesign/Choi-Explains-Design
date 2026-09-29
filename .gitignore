@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Remotion
+renderer/node_modules/
+renderer/out/
+renderer/assets/fonts/*.woff2
+renderer/public/
+renderer/.remotion/
+
+# Local user data (API keys, jobs, caches)
+user/
+projects/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,96 @@
+"""사용자 설정(API 키, 브랜드, 경로) — user/settings.json 에 저장."""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field, fields
+from typing import Any
+
+from .paths import DEFAULT_PROJECTS_DIR, SETTINGS_FILE, ensure_user_dirs
+
+
+@dataclass
+class Brand:
+    # 채널 브랜딩. 디자인 시스템의 모든 그래픽이 이 값을 사용한다.
+    name: str = "CHOI EXPLAINS DESIGN"
+    short_name: str = "CHOI"
+    handle: str = ""
+    presenter: str = "최은준"
+    presenter_title: str = "홍익대학교 산업디자인 · 제품디자인"
+    accent: str = "#F93107"   # Musicbed 2026 리포트 표지의 시그널 레드-오렌지
+    ink: str = "#111111"
+    paper: str = "#F4F4F2"
+    year: str = "2026"
+
+
+@dataclass
+class RenderSettings:
+    concurrency: int = 0            # 0 = 자동(코어 수 기반)
+    crf: int = 18
+    x264_preset: str = "medium"
+    gl: str = "angle"               # Windows + NVIDIA 에서 가장 안정적
+    browser_executable: str = ""    # 비우면 Remotion 이 chrome-headless-shell 을 자동 설치/사용
+
+
+@dataclass
+class Settings:
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = "high"
+    whisper_model: str = "large-v3"
+    whisper_device: str = "auto"      # auto | cuda | cpu
+    whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
+    ffmpeg_path: str = ""
+    ffprobe_path: str = ""
+    node_path: str = ""
+    projects_dir: str = str(DEFAULT_PROJECTS_DIR)
+    wikimedia_contact: str = ""       # Wikimedia API User-Agent 연락처(권장)
+    pexels_api_key: str = ""
+    glossary: dict[str, str] = field(default_factory=lambda: {
+        "디자인 띵킹": "디자인 씽킹",
+        "더블 다이어몬드": "더블 다이아몬드",
+        "프로토 타입": "프로토타입",
+    })
+    brand: Brand = field(default_factory=Brand)
+    render: RenderSettings = field(default_factory=RenderSettings)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def load(cls) -> "Settings":
+        if not SETTINGS_FILE.exists():
+            return cls()
+        try:
+            raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return cls()
+        return cls.from_dict(raw)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Settings":
+        s = cls()
+        for f in fields(cls):
+            if f.name not in raw:
+                continue
+            if f.name == "brand":
+                s.brand = _merge(Brand(), raw["brand"])
+            elif f.name == "render":
+                s.render = _merge(RenderSettings(), raw["render"])
+            else:
+                setattr(s, f.name, raw[f.name])
+        return s
+
+    def save(self) -> None:
+        ensure_user_dirs()
+        SETTINGS_FILE.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _merge(obj, raw: dict[str, Any]):
+    if not isinstance(raw, dict):
+        return obj
+    names = {f.name for f in fields(obj)}
+    for k, v in raw.items():
+        if k in names:
+            setattr(obj, k, v)
+    return obj
