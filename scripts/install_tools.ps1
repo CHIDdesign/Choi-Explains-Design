@@ -2,7 +2,8 @@
 #   -Node   : portable Node.js LTS  -> tools\node
 #   -Ffmpeg : portable FFmpeg (GPL build with NVENC + zimg) -> tools\ffmpeg
 #   -Python : official Python 3.12 installer, per-user (%LOCALAPPDATA%\Programs\Python\Python312)
-#   -DiskCheck [-NeedGB n] : print free space; exit 2 = not enough to install, 3 = enough to install but < 20 GB
+#   -DiskCheck [-NeedGB n] [-ExtraPaths "a;b"] : free space + real 256 MB write test per place;
+#                exit 2 = cannot write / not enough space, 3 = enough to install but < 20 GB
 # Called by setup_windows.bat. Messages are ASCII on purpose (Windows PowerShell 5.1 encoding).
 param(
   [string]$Root = (Split-Path -Parent $PSScriptRoot),
@@ -10,7 +11,8 @@ param(
   [switch]$Ffmpeg,
   [switch]$Python,
   [switch]$DiskCheck,
-  [double]$NeedGB = 7
+  [double]$NeedGB = 7,
+  [string]$ExtraPaths = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar
@@ -19,23 +21,44 @@ try {
 } catch {}
 
 if ($DiskCheck) {
-  try {
-    $drive = (Get-Item -LiteralPath $Root).PSDrive
-    $free = [math]::Round($drive.Free / 1GB, 1)
-    Write-Host ("    free space  {0}: {1} GB  (this folder, need ~{2} GB to finish setup)" -f $drive.Name, $free, $NeedGB)
-    $sysFree = $free
-    if ($env:SystemDrive) {
-      $sys = Get-PSDrive -Name ($env:SystemDrive.TrimEnd(':'))
-      $sysFree = [math]::Round($sys.Free / 1GB, 1)
-      if ($sys.Name -ne $drive.Name) { Write-Host ("    free space  {0}: {1} GB  (system drive, need ~1 GB)" -f $sys.Name, $sysFree) }
-    }
-    if ($free -lt $NeedGB -or $sysFree -lt 1) { exit 2 }
-    if ($free -lt 20) { exit 3 }
-    exit 0
-  } catch {
-    Write-Host "    (could not read free space: $($_.Exception.Message))"
-    exit 0
+  # Free space per drive AND a real write test in each place setup writes to.
+  # (Windows can report hundreds of GB free while a user-folder quota or a full C: still blocks writes.)
+  $places = @(@{Name = 'program folder'; Path = $Root; Need = $NeedGB})
+  foreach ($p in ($ExtraPaths -split ';')) {
+    if ($p -and (Test-Path -LiteralPath $p)) { $places += @{Name = $p; Path = $p; Need = 1} }
   }
+  $bad = $false
+  $low = $false
+  foreach ($pl in $places) {
+    try {
+      $drive = (Get-Item -LiteralPath $pl.Path).PSDrive
+      $free = [math]::Round($drive.Free / 1GB, 1)
+    } catch { $free = -1; $drive = $null }
+    $probe = Join-Path $pl.Path ("_choi_write_test_{0}.bin" -f $PID)
+    $ok = $true
+    $why = ''
+    try {
+      $fs = [System.IO.File]::Open($probe, 'Create', 'Write')
+      $buf = New-Object byte[] (4MB)
+      for ($i = 0; $i -lt 64; $i++) { $fs.Write($buf, 0, $buf.Length) }   # 256 MB
+      $fs.Flush()
+      $fs.Close()
+    } catch {
+      $ok = $false
+      $why = $_.Exception.Message
+      try { if ($fs) { $fs.Close() } } catch {}
+    }
+    Remove-Item -Force -LiteralPath $probe -ErrorAction SilentlyContinue
+    $dn = if ($drive) { $drive.Name + ':' } else { '?' }
+    $state = if ($ok) { 'write OK' } else { "WRITE FAILED - $why" }
+    Write-Host ("    {0,-38} drive {1} free {2} GB   {3}" -f $pl.Path, $dn, $free, $state)
+    if (-not $ok) { $bad = $true }
+    elseif ($free -ge 0 -and $free -lt $pl.Need) { $bad = $true }
+    elseif ($pl.Name -eq 'program folder' -and $free -ge 0 -and $free -lt 20) { $low = $true }
+  }
+  if ($bad) { exit 2 }
+  if ($low) { exit 3 }
+  exit 0
 }
 
 $tools = Join-Path $Root 'tools'

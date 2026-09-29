@@ -16,6 +16,7 @@ set "TOOLS=%CD%\tools"
 set "PATH=%TOOLS%\node;%TOOLS%\ffmpeg\bin;%PATH%"
 set "PS=powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\install_tools.ps1""
 rem 무거운 임시 파일·캐시·음성인식 모델은 C 드라이브 사용자 폴더 대신 이 프로그램 폴더 안에 둔다
+set "ORIG_TEMP=%TEMP%"
 if not exist "%TOOLS%\tmp" mkdir "%TOOLS%\tmp"
 set "TEMP=%TOOLS%\tmp"
 set "TMP=%TOOLS%\tmp"
@@ -24,13 +25,15 @@ set "npm_config_cache=%TOOLS%\npm-cache"
 set "HF_HOME=%CD%\models\hf"
 
 rem ---------- 디스크 여유 공간 ----------
-echo [확인] 디스크 여유 공간
-%PS% -DiskCheck -NeedGB 7
+echo [확인] 디스크 여유 공간 · 실제 쓰기 테스트^(각 256MB^)
+%PS% -DiskCheck -NeedGB 7 -ExtraPaths "%ORIG_TEMP%;%USERPROFILE%"
 set "DISK=%errorlevel%"
 if "%DISK%"=="2" (
   echo.
-  echo [중단] 디스크 공간이 부족합니다. 설치를 끝내려면 이 폴더가 있는 드라이브에 7GB 이상,
-  echo        영상 작업까지 하려면 20GB 이상 비어 있어야 합니다^(4K 원본 한 편에 작업 파일 3~5GB^).
+  echo [중단] 위 표에서 WRITE FAILED 이거나 공간이 모자란 곳이 있습니다.
+  echo        설치를 끝내려면 이 폴더가 있는 드라이브에 7GB 이상, 영상 작업까지 20GB 이상이 필요합니다.
+  echo   - 다른 드라이브에는 공간이 많은데 C: 만 가득 찼거나, 사용자 폴더에 용량 제한^(할당량^)이 있을 수 있습니다.
+  echo     이때는 이 폴더를 여유 있는 드라이브^(예: D:\ChoiStudio^)로 옮겨 다시 실행하면 됩니다.
   echo   - 휴지통 비우기, 다운로드 폴더 정리, Windows 검색에서 '디스크 정리' 실행^(시스템 파일 정리 포함^)
   echo   - 또는 여유가 있는 다른 드라이브^(예: D:\ChoiStudio^)로 이 폴더를 옮긴 뒤 거기서 다시 실행
   echo     ^(옮긴 뒤 이 폴더를 지우면 이미 설치된 용량도 돌려받습니다^)
