@@ -196,6 +196,7 @@ export type LongFormProps = {
   grain: number; // 0 = 끔, 0.04~0.08 권장
   grainFrames: string[];
   showChapterLabel: boolean;
+  peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
 };
 
 export type ShortProps = {
@@ -224,6 +225,7 @@ export type ShortProps = {
   progressBar: boolean;
   grain: number;
   grainFrames: string[];
+  peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
 };
 
 export type ThumbnailProps = {

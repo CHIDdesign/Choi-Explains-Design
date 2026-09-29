@@ -355,8 +355,15 @@ def main() -> int:
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, qa_rounds=2,
                       direction="모션 장면은 크게")
     job = work / "job"
-    res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True)).run()
+    previews: list[str] = []
+    res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
+                      preview=lambda _p, cap: previews.append(cap)).run()
     out = Path(res["output"])
+    # 진행 화면 미리보기: 색보정 전후 → 검수 장면(라운드별) → 렌더 중 프레임
+    print("미리보기:", previews[:2], "…", previews[-2:], f"(총 {len(previews)})")
+    assert previews[0].startswith("자동 색보정")
+    assert any("검수 1라운드 · 장면 1/" in c for c in previews) and any("검수 2라운드" in c for c in previews)
+    assert any(c.startswith("롱폼 렌더링") for c in previews) and any(c.startswith("숏폼 2 렌더링") for c in previews)
     files = sorted(p.name for p in out.iterdir())
     print("\n출력:", json.dumps(files, ensure_ascii=False, indent=1))
     CALLS = load_calls()

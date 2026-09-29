@@ -149,6 +149,7 @@ const main = async () => {
     fs.mkdirSync(path.dirname(r.output), {recursive: true});
     if (r.kind === 'still') {
       await still(composition, inputProps, r.frame || 0, r.output, r.scale);
+      emit({type: 'peek', index: i, frame: r.frame || 0, file: r.output});
       emit({type: 'done', index: i, output: r.output});
       continue;
     }
@@ -156,6 +157,7 @@ const main = async () => {
       const list = r.frames || [];
       for (let k = 0; k < list.length; k++) {
         await still(composition, inputProps, list[k].frame, list[k].output, r.scale);
+        emit({type: 'peek', index: i, frame: list[k].frame, file: list[k].output, k: k + 1, n: list.length});
         emit({type: 'progress', index: i, progress: (k + 1) / list.length});
       }
       emit({type: 'done', index: i, output: r.output});
@@ -166,6 +168,21 @@ const main = async () => {
       ? {hardwareAcceleration: 'if-possible', videoBitrate: r.videoBitrate || (composition.height * (r.scale || 1) >= 2000 ? '40M' : '16M')}
       : {crf: r.crf ?? 18, x264Preset: r.x264Preset || 'medium'};
     let last = -1;
+    // 진행 화면 미리보기: <LivePeek> 가 내보낸 프레임 이미지를 파일로 쓰고 알린다(최근 몇 장만 남김)
+    const peeks = [];
+    const onArtifact = r.peekDir ? (a) => {
+      if (!a.filename.startsWith('peek-') || typeof a.content === 'string') return;
+      try {
+        fs.mkdirSync(r.peekDir, {recursive: true});
+        const file = path.join(r.peekDir, `${i}_${a.frame}.jpg`);
+        fs.writeFileSync(file, a.content);
+        peeks.push(file);
+        while (peeks.length > 6) {
+          try { fs.unlinkSync(peeks.shift()); } catch (e) { /* 창이 읽는 중이면 다음에 */ }
+        }
+        emit({type: 'peek', index: i, frame: a.frame, file});
+      } catch (e) { /* 미리보기는 실패해도 렌더에 영향 없음 */ }
+    } : undefined;
     await renderMedia({
       composition,
       serveUrl,
@@ -183,6 +200,7 @@ const main = async () => {
       pixelFormat: 'yuv420p',
       overwrite: true,
       offthreadVideoCacheSizeInBytes: 2 * 1024 * 1024 * 1024,
+      ...(onArtifact ? {onArtifact} : {}),
       ...quality,
       onProgress: ({progress, renderedFrames, encodedFrames, stitchStage}) => {
         const p = Math.round(progress * 1000) / 1000;

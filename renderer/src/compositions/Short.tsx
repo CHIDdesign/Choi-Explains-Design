@@ -2,6 +2,7 @@ import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ShortCaptions} from '../components/captions/ShortCaptions';
 import {Grain} from '../components/fx/Grain';
+import {LivePeek} from '../components/fx/LivePeek';
 import {TEMPLATE_COMPONENTS} from '../components/graphics';
 import {HookTitle, WindowTitle} from '../components/shorts/HookTitle';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
@@ -127,6 +128,7 @@ export const Short: React.FC<ShortProps> = (props) => {
           <div style={{position: 'absolute', left: 0, top: WINDOW.y + WINDOW.h, height: 6,
             width: (W * frame) / Math.max(1, durationInFrames), background: theme.accent, opacity: 0.85}} />
         ) : null}
+        <LivePeek every={props.peekEvery} />
       </AbsoluteFill>
     );
   }
@@ -179,6 +181,7 @@ export const Short: React.FC<ShortProps> = (props) => {
           background: theme.accent, opacity: 0.8}} />
       ) : null}
       <Grain frame={frame} frames={props.grainFrames} opacity={props.grain} />
+      <LivePeek every={props.peekEvery} />
       {props.voice ? <Audio src={staticFile(props.voice.src)} volume={props.voice.volume} /> : null}
       {props.bgm ? (
         <Audio src={staticFile(props.bgm.src)} loop={props.bgm.loop}

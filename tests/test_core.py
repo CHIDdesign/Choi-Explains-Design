@@ -255,3 +255,8 @@ def test_transcribe_passes_array_and_drops_unknown_options(tmp_path, monkeypatch
     import pytest
     with pytest.raises(TypeError, match="내부 오류"):
         tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8")
+
+
+def test_gpu_expected_follows_explicit_setting():
+    from studio.asr.transcribe import gpu_expected
+    assert gpu_expected("cuda") is True and gpu_expected("cpu") is False

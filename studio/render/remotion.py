@@ -8,7 +8,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from ..paths import RENDERER_DIR, TOOLS_DIR
 from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress, run_process, write_json
@@ -54,11 +54,13 @@ class RenderItem:
     frame: int = 0          # still: 뽑을 프레임
     frames: list[tuple[int, Path]] = field(default_factory=list)  # frames: (프레임, 출력 경로)
     muted: bool = False     # 소리 없이 렌더(음향은 FFmpeg 에서 따로 믹스·마스터링)
+    peek_dir: str = ""      # video: props.peekEvery 프레임마다 지금 프레임을 여기에 jpg 로(진행 화면 미리보기)
 
     def to_job(self) -> dict:
         d = {"kind": self.kind, "composition": self.composition, "props": str(self.props_path),
              "output": str(self.output), "scale": self.scale, "crf": self.crf, "x264Preset": self.x264_preset,
-             "encoder": self.encoder, "frame": int(self.frame), "muted": bool(self.muted)}
+             "encoder": self.encoder, "frame": int(self.frame), "muted": bool(self.muted),
+             "peekDir": str(self.peek_dir)}
         if self.frames:
             d["frames"] = [{"frame": int(f), "output": str(o)} for f, o in self.frames]
         return d
@@ -77,7 +79,9 @@ class RenderJob:
 
 
 def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_log,
-               progress: ProgressFn = noop_progress, cancel: Optional[CancelToken] = None) -> None:
+               progress: ProgressFn = noop_progress, cancel: Optional[CancelToken] = None,
+               on_peek: Optional[Callable[[dict], None]] = None) -> None:
+    """on_peek: 미리보기 이미지가 나올 때마다 {index, frame, file[, k, n]} (렌더 중 프레임·검수 스틸·썸네일)."""
     ensure_renderer_installed()
     data = {
         "publicDir": str(job.public_dir),
@@ -128,6 +132,11 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
             log("[remotion 오류] " + state["err"][:2000])
         elif typ == "log":
             log(f"[remotion] {ev.get('message', '')}")
+        elif typ == "peek" and on_peek is not None:
+            try:
+                on_peek(ev)
+            except Exception:  # noqa: BLE001 - 미리보기 실패가 렌더를 멈추면 안 됨
+                pass
 
     code, tail = run_process([node, str(RENDERER_DIR / "scripts" / "render.mjs"), str(job_file)], cwd=RENDERER_DIR,
                              on_line=on_line, cancel=cancel)

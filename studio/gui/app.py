@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QGridLayout, Q
 
 from .. import __version__
 from ..director.claude_code import auth_status, describe_auth, find_claude, open_login, resolve_backend
+from ..eta import Eta, EtaDisplay, fmt_left
 from ..paths import USER_DIR, ensure_user_dirs
 from ..pipeline import EXTRAS, STAGES, JobSpec, Pipeline, new_job_dir
 from ..settings import Settings
@@ -47,17 +48,20 @@ TEXT_FILTER = "대본 (*.txt *.md *.docx *.hwpx);;모든 파일 (*)"
 class Worker(QObject):
     log = Signal(str)
     progress = Signal(str, float, float)
+    preview = Signal(str, str)          # 이미지 경로, 설명
     finished = Signal(dict)
     failed = Signal(str)
 
     def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, cancel: CancelToken, until: str = "all"):
         super().__init__()
         self.spec, self.settings, self.job_dir, self.cancel, self.until = spec, settings, job_dir, cancel, until
+        self.eta = Eta(USER_DIR / "eta_history.json")   # 창이 1초마다 남은 시간을 읽는다(스레드 안전)
 
     def run(self) -> None:
         try:
             p = Pipeline(self.spec, self.settings, self.job_dir, log=self.log.emit,
-                         progress=lambda k, f, o: self.progress.emit(k, f, o), cancel=self.cancel)
+                         progress=lambda k, f, o: self.progress.emit(k, f, o), cancel=self.cancel, eta=self.eta,
+                         preview=self.preview.emit)
             self.finished.emit(p.run(until=self.until))
         except Cancelled:
             self.failed.emit("취소했습니다.")
@@ -287,6 +291,7 @@ class MainWindow(QMainWindow):
         self.job_dir: Optional[Path] = None
         self.cancel: Optional[CancelToken] = None
         self.thread: Optional[QThread] = None
+        self.worker: Optional[Worker] = None
         self.t_start = 0.0
         self.video_seconds = 0.0
         self._build()
@@ -428,12 +433,27 @@ class MainWindow(QMainWindow):
         self.logview.setMaximumBlockCount(4000)
         lv.addWidget(self.logview, 1)
         right.addWidget(logbox, 3)
+        # 실시간 미리보기: 색보정 전후 → 자료 사진 → 검수 장면 → 렌더 중인 프레임 → 썸네일 순으로 바뀐다
+        self.peek_box = QFrame()
+        self.peek_box.setObjectName("panel")
+        pv = QVBoxLayout(self.peek_box)
+        pv.setContentsMargins(18, 14, 18, 14)
+        pv.setSpacing(8)
+        head = QHBoxLayout()
+        head.addWidget(_label("실시간 미리보기", "panelTitle"))
+        head.addStretch(1)
+        self.peek_cap = _label("", "stepHint")
+        head.addWidget(self.peek_cap)
+        pv.addLayout(head)
         self.peek = QLabel()
         self.peek.setObjectName("poster")
         self.peek.setAlignment(Qt.AlignCenter)
-        self.peek.setMinimumHeight(0)
-        self.peek.hide()
-        right.addWidget(self.peek, 2)
+        self.peek.setMinimumHeight(120)
+        self.peek.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        pv.addWidget(self.peek, 1)
+        self.peek_box.hide()
+        self._peek_pix: Optional[QPixmap] = None
+        right.addWidget(self.peek_box, 4)
         body.addLayout(right, 3)
         v.addLayout(body, 1)
         row = QHBoxLayout()
@@ -598,13 +618,15 @@ class MainWindow(QMainWindow):
             self.stage_rows[key].setObjectName("stageTodo")
             self._restyle(self.stage_rows[key])
         self.logview.clear()
-        self.peek.hide()
+        self.peek_box.hide()
+        self._peek_pix = None
         self.p_title.setText(f"「{spec.working_title()}」 만드는 중…")
         self.p_sub.setText("AI 팀이 기획하고, 편집하고, 렌더링까지 합니다.")
         self.bar.setValue(0)
         self.p_pct.setText("0%")
         self.pages.setCurrentIndex(1)
-        self.t_start = time.time()
+        self.t_start = self._t_tick = time.time()
+        self.eta_view = EtaDisplay()
         self.tick.start(1000)
         self._current = ""
         self.thread = QThread(self)
@@ -613,6 +635,7 @@ class MainWindow(QMainWindow):
         self.thread.started.connect(self.worker.run)
         self.worker.log.connect(self._log)
         self.worker.progress.connect(self._on_progress)
+        self.worker.preview.connect(self._on_preview)
         self.worker.finished.connect(self._on_done)
         self.worker.failed.connect(self._on_fail)
         self.worker.finished.connect(self.thread.quit)
@@ -632,17 +655,33 @@ class MainWindow(QMainWindow):
 
     def _log(self, msg: str) -> None:
         self.logview.appendPlainText(msg)
-        if "색보정" in msg and self.job_dir:
-            ba = self.job_dir / "output" / EXTRAS / "색보정_전후.jpg"
-            if ba.exists():
-                pix = QPixmap(str(ba))
-                self.peek.setPixmap(pix.scaledToWidth(min(640, max(320, self.peek.width() or 520)),
-                                                      Qt.SmoothTransformation))
-                self.peek.show()
+
+    def _on_preview(self, path: str, caption: str) -> None:
+        pix = QPixmap(path)
+        if pix.isNull():   # 렌더러가 아직 쓰는 중이거나 이미 지운 파일
+            return
+        self._peek_pix = pix
+        self.peek_cap.setText(caption)
+        self.peek_box.show()
+        self._fit_peek()
+        QTimer.singleShot(0, self._fit_peek)   # 처음 보일 때는 배치가 끝난 뒤 크기에 맞춤
+
+    def _fit_peek(self) -> None:
+        if self._peek_pix is not None and self.peek.width() > 10 and self.peek.height() > 10:
+            self.peek.setPixmap(self._peek_pix.scaled(self.peek.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, e) -> None:  # noqa: N802 - Qt
+        super().resizeEvent(e)
+        if getattr(self, "_peek_pix", None) is not None:
+            self._fit_peek()
+
+    def _set_overall(self, overall: float) -> None:
+        v = max(self.bar.value(), int(overall * 1000))   # 막대는 뒤로 가지 않게
+        self.bar.setValue(v)
+        self.p_pct.setText(f"{v / 10:.0f}%")
 
     def _on_progress(self, key: str, frac: float, overall: float) -> None:
-        self.bar.setValue(int(overall * 1000))
-        self.p_pct.setText(f"{overall * 100:.0f}%")
+        self._set_overall(overall)
         keys = [k for k, _, _ in STAGES]
         if key in keys:
             idx = keys.index(key)
@@ -661,13 +700,13 @@ class MainWindow(QMainWindow):
                     self._restyle(lab)
 
     def _tick(self) -> None:
-        el = time.time() - self.t_start
-        frac = self.bar.value() / 1000
-        eta = ""
-        if frac > 0.08:
-            left = el / frac - el
-            eta = f" · 남은 시간 약 {max(1, int(left / 60))}분"
-        self.p_sub.setText(f"경과 {fmt_ts(el)}{eta}")
+        now = time.time()
+        dt, self._t_tick = now - self._t_tick, now
+        eta = getattr(self.worker, "eta", None)
+        left = self.eta_view.step(eta.remaining() if eta else None, dt)
+        if eta is not None and (f := eta.fraction()) is not None:
+            self._set_overall(f)
+        self.p_sub.setText(f"경과 {fmt_ts(now - self.t_start)} · {fmt_left(left)}")
 
     def _on_done(self, res: dict) -> None:
         for k, label, _ in STAGES:

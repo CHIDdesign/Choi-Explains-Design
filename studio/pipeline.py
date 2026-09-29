@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .agents.studio import Studio
-from .asr.transcribe import load_audio_16k, speech_regions, transcribe
+from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
 from .broll.images import Wikimedia, list_local_images, resolve_image
 from .director import fallback
 from .director.catalog import TEMPLATES
@@ -33,6 +33,7 @@ from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
 from .edit.grammar import EditDecisions, Moment, build_long_edit, build_short_edit
+from .eta import Eta, features
 from .export.premiere import export_xml
 from .export.report import edit_report, write_text, youtube_text
 from .grade import auto as grade
@@ -40,6 +41,7 @@ from .media.audio import build_voice_track
 from .media.ffmpeg import FFmpeg, MediaInfo, hdr_to_sdr_filter, pick_output_fps
 from .media.mix import BgmPlan, SfxCue, mix, mux_final
 from .models import Span, Tag, TimeMap, Utterance, Word
+from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain
 from .render.props import Episode, apply_edit, long_props, short_props, strip_audio, text_graphic_spans
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
@@ -50,7 +52,8 @@ from .stock.research import StockResearcher
 from .text.align import ScriptAligner, build_utterances
 from .text.captions import cues_to_srt
 from .text.script import glossary_terms, parse_script
-from .util import (CancelToken, LogFn, file_fingerprint, noop_log, read_json, slugify, text_hash, write_json)
+from .util import (CancelToken, LogFn, file_fingerprint, fmt_ts, noop_log, read_json, slugify, text_hash,
+                   write_json)
 from .vision.face import track_faces
 
 StageProgress = Callable[[str, float, float], None]  # (단계 키, 단계 진행률, 전체 진행률)
@@ -152,7 +155,9 @@ def new_job_dir(settings: Settings, title: str) -> Path:
 
 class Pipeline:
     def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, *, log: LogFn = noop_log,
-                 progress: Optional[StageProgress] = None, cancel: Optional[CancelToken] = None):
+                 progress: Optional[StageProgress] = None, cancel: Optional[CancelToken] = None,
+                 eta: Optional[Eta] = None, preview: Optional[Callable[[str, str], None]] = None):
+        """preview(이미지 경로, 설명): 진행 화면 미리보기 — 색보정 전후 · 자료 사진 · 검수 장면 · 렌더 중 프레임 · 썸네일."""
         self.spec = spec
         self.settings = settings
         self.dir = Path(job_dir)
@@ -167,6 +172,8 @@ class Pipeline:
         self.log = log
         self._progress = progress or (lambda *_: None)
         self.cancel = cancel or CancelToken()
+        self.eta = eta or Eta(USER_DIR / "eta_history.json")
+        self._preview_cb = preview
         self.ff = FFmpeg(settings.ffmpeg_path, settings.ffprobe_path)
         self.title = spec.working_title()
         self.slug = slugify(self.title, 30)
@@ -194,11 +201,49 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def _stage(self, key: str, frac: float) -> None:
-        idx = [k for k, _, _ in STAGES].index(key)
-        total = sum(w for _, _, w in STAGES)
-        before = sum(w for _, _, w in STAGES[:idx])
-        overall = (before + STAGES[idx][2] * max(0.0, min(1.0, frac))) / total
+        self.eta.update(key, frac)
+        overall = self.eta.fraction()
+        if overall is None:   # 시간 계획 전(영상 확인 중)에는 고정 가중치로
+            idx = [k for k, _, _ in STAGES].index(key)
+            total = sum(w for _, _, w in STAGES)
+            before = sum(w for _, _, w in STAGES[:idx])
+            overall = (before + STAGES[idx][2] * max(0.0, min(1.0, frac))) / total
         self._progress(key, frac, overall)
+
+    def _preview(self, path: Path | str, caption: str) -> None:
+        if self._preview_cb and Path(path).exists():
+            try:
+                self._preview_cb(str(path), caption)
+            except Exception:  # noqa: BLE001 - 미리보기 실패가 작업을 멈추면 안 됨
+                pass
+
+    # ---- 남은 시간 예측(studio/eta.py) ----
+    def _eta_features(self, long_s: Optional[float] = None, shorts_s: Optional[float] = None) -> dict:
+        assert self.info
+        if long_s is None:   # 기획 전: NG·반복을 조금만 걷어낸다고 보고 넉넉히
+            long_s = self.info.duration * 0.85 if self.spec.make_long else 0.0
+        if shorts_s is None:
+            shorts_s = self.spec.shorts_count * self.spec.short_max_sec
+        return features(src_s=self.info.duration, out_fps=self.fps, long_s=long_s, shorts_s=shorts_s,
+                        thumbs=bool(self.spec.thumbnails))
+
+    def _eta_plan(self, keys: list[str]) -> None:
+        ai = self._use_api()
+        gpu = gpu_expected(self.settings.whisper_device, self.log)
+        variants = {"asr": "asr@gpu" if gpu else "asr@cpu",
+                    "director": "director@ai" if ai else "director@rule",
+                    "qa": "qa@ai" if ai else "qa@rule",
+                    "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
+        self.eta.plan(keys, variants, self._eta_features())
+
+    def _eta_refine(self) -> None:
+        """편집본을 만든 뒤: 롱폼·숏폼 길이가 정해졌으니 렌더·믹스 시간을 다시 잡는다."""
+        tm = getattr(self, "timemap", None)
+        long_s = tm.duration if (tm is not None and self.spec.make_long) else 0.0
+        shorts_s = sum(t.duration for t in getattr(self, "short_maps", []) or [])
+        feats = self._eta_features(long_s=long_s, shorts_s=shorts_s)
+        for key in ("render", "master"):
+            self.eta.refine(key, feats)
 
     def _sp(self, key: str):
         return lambda f: self._stage(key, f)
@@ -216,12 +261,21 @@ class Pipeline:
             steps += [("proxy", self.stage_proxy), ("broll", self.stage_broll), ("stock", self.stage_stock),
                       ("sound", self.stage_sound), ("qa", self.stage_qa), ("render", self.stage_render),
                       ("master", self.stage_master), ("export", self.stage_export)]
+        self.eta.begin()
         for key, fn in steps:
             self.cancel.check()
             self.log(f"━━ {STAGE_LABEL[key]}")
+            self.eta.start(key)
             self._stage(key, 0.0)
             fn()
             self._stage(key, 1.0)
+            self.eta.finish(key)
+            if key == "probe":
+                self._eta_plan([k for k, _ in steps])
+            elif key == "proxy":
+                self._eta_refine()
+            elif key == "grade":
+                self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
         mins = (time.time() - t0) / 60
         self.log(f"완료 ({mins:.1f}분) → {self.out}")
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}
@@ -610,6 +664,8 @@ class Pipeline:
                     cache[q] = resolve_image(q, local=local, dst_dir=img_dir, wikimedia=wm, log=self.log)
                     res = cache[q]
                     self.broll_log.append({"query": q, **(res.to_dict() if res else {"origin": "없음"})})
+                    if res is not None:
+                        self._preview(res.path, f"자료 사진 · {q}")
                 res = cache[q]
                 n += 1
                 self._stage("broll", n / total)
@@ -699,7 +755,9 @@ class Pipeline:
                             reuse_bundle=True)
             base = (rnd - 1) / rounds
             run_render(job, self.render_dir / "job_qa.json", node=node, log=self.log, cancel=self.cancel,
-                       progress=lambda f: self._stage("qa", base + 0.5 * f / rounds))
+                       progress=lambda f: self._stage("qa", base + 0.5 * f / rounds),
+                       on_peek=lambda ev, r=rnd: self._preview(
+                           ev["file"], f"🧐 아트 디렉터 검수 {r}라운드 · 장면 {ev.get('k', '')}/{ev.get('n', '')}"))
             stills = [(p.stem, p.read_bytes(), "image/jpeg") for _, p in frames if p.exists()]
             try:
                 res = studio.review(self.ctx, self._qa_text(targets, lp), stills)
@@ -899,16 +957,23 @@ class Pipeline:
         self.long_props: dict = {}
         self.masters = []
         raw_dir = self.render_dir / "raw"
+        # 진행 화면 미리보기: 2초(영상 시간)마다 렌더된 프레임 한 장
+        peek_dir = self.render_dir / "peek"
+        shutil.rmtree(peek_dir, ignore_errors=True)
+        peek_every = max(1, int(round(self.fps * 2)))
+        labels: list[tuple[str, float]] = []   # items 와 같은 순서: (이름, 길이 초)
         if self.spec.make_long:
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
             lp, ed = self._final_long_props(graphics, chapters)
             self.long_props = lp
+            lp["peekEvery"] = peek_every
             p = self.render_dir / "props_long.json"
             write_json(p, lp)
             raw = raw_dir / "long.mp4"
             items.append(RenderItem("video", "LongForm", p, raw, scale=scale, crf=rs.crf, x264_preset=rs.x264_preset,
-                                    weight=lp["duration"], muted=True))
+                                    weight=lp["duration"], muted=True, peek_dir=str(peek_dir)))
+            labels.append(("롱폼", lp["duration"]))
             self.masters.append({"name": "롱폼", "raw": raw, "voice": self.media / "long_voice.wav",
                                  "dst": self.out / f"1_롱폼_{self.slug}.mp4", "edit": ed, "total": lp["duration"],
                                  "moods": MOODS_LONG, "mood": self.plan_long.get("bgm_mood", ""), "short": False})
@@ -933,19 +998,23 @@ class Pipeline:
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
             strip_audio(sp)
+            sp["peekEvery"] = peek_every
             self.short_props.append(sp)
             p = self.render_dir / f"props_short_{i}.json"
             write_json(p, sp)
             name = slugify(s.get("title") or f"short{i}", 20)
             raw = raw_dir / f"short_{i}.mp4"
             items.append(RenderItem("video", "Short", p, raw, scale=1.0, crf=rs.crf, x264_preset=rs.x264_preset,
-                                    weight=sp["duration"], muted=True))
+                                    weight=sp["duration"], muted=True, peek_dir=str(peek_dir)))
+            labels.append((f"숏폼 {i}", sp["duration"]))
             self.masters.append({"name": f"숏폼 {i}", "raw": raw, "voice": self.media / f"short_{i}_voice.wav",
                                  "dst": self.out / f"{i + 1}_숏폼{i}_{name}.mp4", "edit": ed, "total": sp["duration"],
                                  "moods": MOODS_SHORT, "mood": self.plan_long.get("shorts_bgm_mood", ""),
                                  "short": True})
         if self.spec.thumbnails:
-            items += self._thumbnail_items()
+            thumbs = self._thumbnail_items()
+            items += thumbs
+            labels += [(f"썸네일 {k}", 0.0) for k in range(1, len(thumbs) + 1)]
         if not items:
             self.log("렌더할 항목이 없습니다.")
             return
@@ -953,8 +1022,18 @@ class Pipeline:
                         browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency,
                         reuse_bundle=True)
         node = find_node(self.settings.node_path)
+        shown: dict[int, int] = {}
+
+        def on_peek(ev: dict) -> None:
+            i, fr = int(ev.get("index", -1)), int(ev.get("frame", 0))
+            if not 0 <= i < len(labels) or fr < shown.get(i, -1):   # 동시 렌더로 순서가 섞여 오면 앞 프레임은 건너뜀
+                return
+            shown[i] = fr
+            name, total = labels[i]
+            self._preview(ev["file"], f"{name} 렌더링 · {fmt_ts(fr / self.fps)} / {fmt_ts(total)}" if total else name)
+
         run_render(job, self.render_dir / "job.json", node=node, log=self.log, progress=self._sp("render"),
-                   cancel=self.cancel)
+                   cancel=self.cancel, on_peek=on_peek)
 
     # ------------------------------------------------------------------
     def stage_master(self) -> None:

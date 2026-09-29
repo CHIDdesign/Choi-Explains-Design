@@ -272,6 +272,7 @@ def long_props(
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],
         "showChapterLabel": True,
+        "peekEvery": 0,   # 렌더 중 진행 화면 미리보기 간격(프레임). 최종 렌더에서만 켠다
     }
 
 
@@ -358,6 +359,7 @@ def short_props(
         "progressBar": progress_bar,
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],
+        "peekEvery": 0,
     }
 
 

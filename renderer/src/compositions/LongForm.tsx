@@ -4,6 +4,7 @@ import {GraphicLayer, SPLIT_SPEAKER} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
 import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
+import {LivePeek} from '../components/fx/LivePeek';
 import {EndCard} from '../components/layout/EndCard';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
@@ -188,6 +189,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         </Sequence>
       ) : null}
       <Grain frame={frame} frames={props.grainFrames} opacity={props.grain} />
+      <LivePeek every={props.peekEvery} />
 
       {props.voice ? <Audio src={staticFile(props.voice.src)} volume={props.voice.volume} /> : null}
       {props.bgm ? (

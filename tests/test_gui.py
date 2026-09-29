@@ -70,3 +70,37 @@ def test_docx_and_hwpx_script_reading(tmp_path):
     c = tmp_path / "b.txt"
     c.write_bytes("한글 대본".encode("cp949"))
     assert read_text_file(c) == "한글 대본"
+
+
+def test_progress_page_live_preview_and_eta(app, tmp_path):
+    import time as _time
+
+    from PIL import Image
+    from studio.eta import Eta
+    from studio.gui.app import MainWindow
+    img = tmp_path / "0_120.jpg"
+    Image.new("RGB", (320, 180), (200, 40, 20)).save(img)
+    w = MainWindow()
+    w.pages.setCurrentIndex(1)
+    assert w.peek_box.isHidden()
+    w._on_preview(str(tmp_path / "없음.jpg"), "무시")           # 없는 파일은 건너뜀
+    assert w.peek_box.isHidden()
+    w._on_preview(str(img), "롱폼 렌더링 · 00:04 / 06:00")
+    assert not w.peek_box.isHidden() and w.peek_cap.text() == "롱폼 렌더링 · 00:04 / 06:00"
+
+    # 남은 시간: 작업자의 Eta 를 1초마다 읽어 보수적으로 표시하고, 막대는 뒤로 가지 않음
+    class FakeWorker:
+        eta = Eta(None)
+    w.worker = FakeWorker()
+    FakeWorker.eta.begin()
+    FakeWorker.eta.plan(["render"], {}, {"m": 1, "k": 1, "out_s": 60, "frames_k": 1.8, "thumbs": False})
+    from studio.eta import EtaDisplay
+    w.eta_view = EtaDisplay()
+    w.t_start = w._t_tick = _time.time()
+    w._tick()
+    assert "남은 시간 약" in w.p_sub.text()
+    w._on_progress("render", 0.5, 0.3)
+    w._on_progress("render", 0.5, 0.2)
+    assert w.bar.value() == 300
+    w.worker = None
+    w.close()

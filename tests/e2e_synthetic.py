@@ -128,7 +128,17 @@ def main() -> int:
     def log(m: str) -> None:
         print(m, flush=True)
 
-    res = pl.Pipeline(spec, settings, job, log=log).run()
+    previews: list[tuple[str, str]] = []
+    etas: list[float] = []
+
+    def progress(key: str, _f: float, _o: float) -> None:
+        left = eta.remaining()
+        if left is not None:
+            etas.append(left)
+
+    eta = pl.Eta(work / "eta_history.json")
+    res = pl.Pipeline(spec, settings, job, log=log, progress=progress, eta=eta,
+                      preview=lambda path, cap: previews.append((path, cap))).run()
     out = Path(res["output"])
     files = sorted(p.name for p in out.iterdir())
     print("\n출력:", json.dumps(files, ensure_ascii=False, indent=1))
@@ -142,6 +152,19 @@ def main() -> int:
     align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
     statuses = [u["status"] for u in align["utterances"]]
     assert "retake" in statuses and "meta" in statuses, statuses
+    # 실시간 미리보기: 색보정 전후 → 렌더 중 프레임(롱폼·숏폼) → 썸네일
+    caps = [c for _, c in previews]
+    print(f"미리보기 {len(previews)}장:", caps[:3], "…", caps[-4:])
+    assert caps and caps[0].startswith("자동 색보정")
+    assert any(c.startswith("롱폼 렌더링") for c in caps) and any(c.startswith("숏폼 1 렌더링") for c in caps)
+    assert any(c.startswith("썸네일") for c in caps)
+    long_peeks = [c for c in caps if c.startswith("롱폼 렌더링")]
+    assert long_peeks == sorted(long_peeks), "렌더 미리보기가 뒤로 가면 안 됨"
+    # 남은 시간: 계획이 잡힌 뒤로 기록됐고, 이 PC 기록 파일이 생김
+    hist = json.loads((work / "eta_history.json").read_text(encoding="utf-8"))
+    print("남은 시간 예측(분):", [round(x / 60, 1) for x in etas[::max(1, len(etas) // 12)]])
+    print("학습 기록:", {k: v[-1] for k, v in hist["factors"].items()})
+    assert etas and "render" in hist["factors"]
     print("E2E OK")
     return 0
 

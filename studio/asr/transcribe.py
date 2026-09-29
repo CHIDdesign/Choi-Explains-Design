@@ -58,6 +58,14 @@ def cuda_available() -> bool:
         return False
 
 
+def gpu_expected(device: str = "auto", log: LogFn = noop_log) -> bool:
+    """남은 시간 예측용: 이 설정으로 음성 인식이 GPU 를 쓸지(모델은 올리지 않음). DLL 경로 준비가 먼저."""
+    if device != "auto":
+        return device == "cuda"
+    _prepare_windows_cuda(log)
+    return cuda_available()
+
+
 def load_audio_16k(wav_path: str | Path) -> np.ndarray:
     """PCM WAV → 16kHz 모노 float32(-1~1). Whisper·VAD 입력.
 

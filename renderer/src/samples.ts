@@ -62,6 +62,7 @@ export const SAMPLE_LONG: LongFormProps = {
   endcard: {start: 60.5, dur: 3.5},
   grain: 0,
   grainFrames: [],
+  peekEvery: 0,
   showChapterLabel: true,
 };
 
@@ -94,6 +95,7 @@ export const SAMPLE_SHORT: ShortProps = {
   progressBar: false,
   grain: 0,
   grainFrames: [],
+  peekEvery: 0,
 };
 
 export const SAMPLE_THUMB: ThumbnailProps = {
