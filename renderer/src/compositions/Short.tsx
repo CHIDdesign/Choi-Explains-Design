@@ -8,7 +8,7 @@ import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/Talking
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts} from '../design/fonts';
 import {surface as mkSurface} from '../design/surfaces';
-import {FONT, makeTheme} from '../design/tokens';
+import {makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
 import type {Graphic, ShortProps} from '../lib/types';
@@ -17,9 +17,9 @@ import {punchFactor} from './LongForm';
 ensureFonts();
 
 // 1080×1920 세이프존(메타/틱톡 통합 보수값): x 65–940, y 270–1248
-const PANEL: Rect = {x: 0, y: 590, w: 1080, h: 450}; // 상단 도식 패널(L3)
+const PANEL_L3: Rect = {x: 0, y: 590, w: 1080, h: 450}; // 상단 도식 패널(L3)
 const FACE_L3: Rect = {x: 0, y: 1040, w: 1080, h: 880};
-const FRAMED: Rect = {x: 0, y: 640, w: 1080, h: 608}; // L2: 가운데 16:9
+const FRAMED: Rect = {x: 0, y: 600, w: 1080, h: 608}; // L2: 가운데 16:9 (y 600–1208)
 
 const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof makeTheme>; props: ShortProps}> = ({
   g,
@@ -27,6 +27,8 @@ const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof 
   theme,
   props,
 }) => {
+  // 풀프레임(L3): 훅 타이틀과 얼굴 사이 패널 / 3단(L2): 가운데 16:9 프레임을 도식이 대신 채움
+  const PANEL = props.layout === 'framed' ? FRAMED : PANEL_L3;
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const Comp = TEMPLATE_COMPONENTS[g.template];
@@ -102,7 +104,6 @@ export const Short: React.FC<ShortProps> = (props) => {
         <div style={{position: 'absolute', left: 0, top: 0, height: 6, width: (W * frame) / Math.max(1, durationInFrames),
           background: theme.accent, opacity: 0.8}} />
       ) : null}
-      <div style={{position: 'absolute', left: 65, top: 1262, fontFamily: FONT.sans, fontSize: 1, opacity: 0}}>.</div>
       <Grain frame={frame} frames={props.grainFrames} opacity={props.grain} />
       {props.voice ? <Audio src={staticFile(props.voice.src)} volume={props.voice.volume} /> : null}
       {props.bgm ? (

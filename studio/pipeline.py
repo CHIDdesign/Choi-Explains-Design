@@ -266,7 +266,9 @@ class Pipeline:
         brief = self._brief()
         tm0 = self._initial_timemap()
         ctx = shared_context(brief, self.utts, self.tags, tm0, tm0.duration)
-        key = text_hash(ctx, self.spec.shorts_count, self.spec.short_max_sec, self.settings.claude_model, "plan-v1")
+        # 캐시 키는 내용만으로(템포 옵션을 바꿔도 Claude 를 다시 부르지 않도록 편집 시간은 제외)
+        key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
+                        self.spec.short_max_sec, self.settings.claude_model, "plan-v1")
         saved = read_json(self.work / "plan.json", {})
         edited = self.out / "plan.json"
         if saved and edited.exists() and edited.stat().st_mtime > (self.work / "plan.json").stat().st_mtime + 1:

@@ -34,18 +34,28 @@ class Episode:
 # ---------------------------------------------------------------------------
 
 def camera_shots(timemap: TimeMap, total: float, chapter_starts: list[float], seed: int = 1) -> list[dict]:
-    """점프컷 지점에서 와이드(1.0)/미디엄(1.1) 교차 — 2캠처럼 보이게. 샷 안에서는 아주 느린 푸시인."""
+    """와이드(1.0)/미디엄(1.1) 2단 프레이밍 — 2캠 교차처럼.
+
+    - 크게 잘라낸 곳(NG·리테이크 제거, 원본에서 1.5초 이상 건너뜀)은 점프컷이 티 나므로 항상 프레이밍 전환
+    - 짧은 쉼 컷은 마지막 전환 후 12초 이상 지났을 때만 전환(셜록현준 리서치: 20~40초 간격, 논점 전환 시)
+    - 챕터 시작은 와이드로 리셋, 샷 안에서는 아주 느린 푸시인(최대 3.5%)
+    """
     rnd = random.Random(seed)
-    cuts = sorted(set([0.0] + [round(c, 3) for c in timemap.cut_points()] + [round(c, 3) for c in chapter_starts]))
+    big_jumps: set[float] = set()
+    for i in range(1, len(timemap.keeps)):
+        if timemap.keeps[i].start - timemap.keeps[i - 1].end >= 1.5:
+            big_jumps.add(round(timemap.edit_span_of(i).start, 3))
+    cuts = sorted(set([round(c, 3) for c in timemap.cut_points()] + [round(c, 3) for c in chapter_starts]))
+    boundaries = [0.0]
+    for c in cuts:
+        if c <= 0.05:
+            continue
+        since = c - boundaries[-1]
+        if c in chapter_starts or (c in big_jumps and since >= 2.0) or since >= 12.0:
+            boundaries.append(c)
+    boundaries.append(total)
     shots: list[dict] = []
     zoom = 1.0
-    last_change = -99.0
-    boundaries: list[float] = []
-    for c in cuts:
-        if c - last_change >= 4.0 or c in chapter_starts:
-            boundaries.append(c)
-            last_change = c
-    boundaries.append(total)
     for i in range(len(boundaries) - 1):
         a, b = boundaries[i], boundaries[i + 1]
         if b - a < 0.05:
@@ -303,8 +313,9 @@ def short_props(
             pun.append({"t": c["start"], "end": min(total, c["end"] + 1.2), "amount": 0.1})
             break
     if cues and cues[0]["start"] < 1.5:
-        # 첫 1초 시각 훅: 살짝 당긴 프레이밍으로 시작
-        pun.insert(0, {"t": 0.0, "end": min(1.0, total), "amount": 0.08})
+        # 시각 훅: 살짝 당긴 프레이밍으로 시작해 첫 자막 청크가 끝나는 자연스러운 쉼에서 풀어준다
+        release = min(cues[0]["end"], 3.0, total)
+        pun.insert(0, {"t": 0.0, "end": round(max(0.8, release), 3), "amount": 0.08})
     gdicts = [g.to_dict() for g in graphics]
     regions = speech_regions([{"lines": c["lines"]} for c in cues], merge_gap=0.8)
     return {

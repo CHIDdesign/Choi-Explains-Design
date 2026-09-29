@@ -149,3 +149,14 @@ def test_premiere_xml(tmp_path):
     doc = xml.dom.minidom.parse(str(dst))
     assert len(doc.getElementsByTagName("clipitem")) == 4
     assert doc.getElementsByTagName("ntsc")[0].firstChild.data == "TRUE"
+
+
+def test_camera_shots_mask_big_jumps():
+    from studio.render.props import camera_shots
+    tm = TimeMap([Span(0, 5), Span(5.6, 9), Span(12, 20), Span(20.5, 40), Span(41, 60)])
+    shots = camera_shots(tm, tm.duration, [0.0, 30.0])
+    starts = [s["start"] for s in shots]
+    assert 8.4 in starts           # NG 제거(3초 건너뜀) 지점은 프레이밍 전환
+    assert 16.4 not in starts      # 짧은 쉼 컷은 12초 안 지났으면 유지
+    assert 30.0 in starts and shots[starts.index(30.0)]["zoom"] == 1.0  # 챕터는 와이드로
+    assert all(s["zoomEnd"] <= s["zoom"] * 1.036 for s in shots)
