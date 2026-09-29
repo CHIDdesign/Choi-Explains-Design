@@ -81,6 +81,23 @@ def test_punch_callout_and_sfx_rules():
     assert ed.bgm_dips and ed.bgm_dips[0][1] - ed.bgm_dips[0][0] == pytest.approx(1.0)  # 강도 3 직전 음악 비우기
 
 
+def test_centered_speaker_is_reframed_for_callout():
+    """화자가 가운데면 콜아웃 동안 반대쪽으로 옮겨 자리를 만들고, 같은 순간의 펀치인은 뺀다."""
+    tm = TimeMap([Span(0, 60)])
+    moments = [Moment(t=20.0, end=23.0, kind="punchline", intensity=3, word="질문", callout="연필보다\n질문 먼저")]
+    face = [{"t": float(t), "x": 0.5, "y": 0.4, "s": 0.3} for t in range(60)]
+    ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=[], chapters=[], moments=moments,
+                         cues=[_cue(19.9, 22.5, "연필보다 질문")], sentence_starts=[0, 10, 20, 30, 40, 50], face=face)
+    c = ed.callouts[0]
+    shot = next(s for s in ed.camera if s["start"] <= c["start"] + 0.01 < s["end"])
+    assert shot["start"] == pytest.approx(c["start"]) and shot["end"] == pytest.approx(c["end"])
+    assert shot["zoom"] == PARAMS["callout_zoom"]
+    assert (shot["x"] < 0) == (c["side"] == "right")          # 콜아웃 반대쪽으로 화자를 민다
+    assert not any(abs(p["t"] - 20.0) < 0.01 for p in ed.punches)
+    assert any(s["category"] in ("sub_drop", "pop") and abs(s["t"] - 20.0) < 0.01 for s in ed.sfx)
+    assert all(s["end"] - s["start"] >= 0.99 for s in ed.camera[:-1])
+
+
 def test_camera_plan_merges_micro_shots():
     tm = TimeMap([Span(0, 4.6), Span(6.0, 15.4), Span(17.0, 17.2), Span(17.3, 30), Span(31, 40)])
     shots = camera_plan(tm, tm.duration, chapter_starts=[15.6], covers=[], sentence_starts=[2, 8, 12, 20, 25, 33])

@@ -346,8 +346,8 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(28, 24, 28, 24)
         outer.setSpacing(18)
         outer.addWidget(_label("새 영상 만들기", "pageTitle"))
-        outer.addWidget(_label("세 가지만 넣으면 기획 · 컷 편집 · 색보정 · 모션그래픽 · 자막 · 효과음 · 음악 · 렌더링까지 끝내서 "
-                               "롱폼 1편과 숏폼 2편을 드립니다.", "pageSub", wrap=True))
+        outer.addWidget(_label("세 가지를 넣으면 기획, 컷 편집, 색보정, 모션그래픽, 자막, 효과음과 음악, 렌더링을 차례로 "
+                               "진행해 롱폼 1편과 숏폼 2편을 만듭니다.", "pageSub", wrap=True))
         grid = QHBoxLayout()
         grid.setSpacing(16)
         self.topic = QPlainTextEdit()
@@ -708,7 +708,7 @@ class MainWindow(QMainWindow):
         title = res.get("title") or ""
         self.r_title.setText(f"완성! 「{title}」" if title else "완성!")
         took = f"걸린 시간 {fmt_ts(elapsed)} · " if elapsed else ""
-        self.r_sub.setText(took + "후가공 없이 바로 올릴 수 있게 색보정·음향 마스터링(-14 LUFS)까지 끝냈습니다. "
+        self.r_sub.setText(took + "색보정과 음향 마스터링(-14 LUFS)까지 적용했습니다. 올리기 전에 한 번 확인해 보세요. "
                            f"썸네일·자막(.srt)·편집 리포트는 '{EXTRAS}' 폴더에 있습니다.")
         cards = [("롱폼 16:9", res.get("long", ""), False)]
         cards += [(f"숏폼 {i} · 9:16", p, True) for i, p in enumerate(res.get("shorts", []) or [], 1)]

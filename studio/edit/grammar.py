@@ -50,8 +50,11 @@ PARAMS: dict[str, Any] = {
     "sfx_min_gap": 2.0,         # 효과음 사이 최소 2초
     "sfx_per_min": 4,           # ±30초 창에 최대 4개(평균 분당 2개)
     "list_click_max": 6,
-    # 강조 자막
+    # 강조 자막·콜아웃
     "impact_min_gap": 22.0,
+    "callout_center": 0.14,     # 얼굴이 가운데에서 이 비율 안이면 콜아웃 동안 반대쪽으로 리프레이밍
+    "callout_zoom": 1.18,
+    "callout_shift": 0.085,     # 화면 폭 비율(확대 여유 안에서만 실제로 움직인다)
     # 배경음악
     "swell_intro": 1.4,
 }
@@ -137,6 +140,33 @@ def _cap_per_minute(events: list[dict], per_min: int, key: str = "t") -> list[di
         if len(window) < per_min:
             out.append(e)
     return sorted(out, key=lambda e: e[key])
+
+
+def _carve_shot(shots: list[dict], a: float, b: float, new: dict, min_len: float = 1.0) -> list[dict]:
+    """[a, b] 구간을 new 샷으로 바꾼다. 남는 조각이 min_len 보다 짧으면 이웃에 붙인다."""
+    out: list[dict] = []
+    for sh in shots:
+        if sh["end"] <= a or sh["start"] >= b:
+            out.append(dict(sh))
+            continue
+        if sh["start"] < a:
+            out.append({**sh, "end": round(a, 3), "zoomEnd": sh["zoom"]})
+        if sh["end"] > b:
+            out.append({**sh, "start": round(b, 3), "zoom": sh["zoomEnd"]})
+    out.append(dict(new))
+    out.sort(key=lambda s: s["start"])
+    merged: list[dict] = []
+    for sh in out:
+        short = sh["end"] - sh["start"] < min_len and sh is not out[-1] and sh.get("x") != new.get("x")
+        if merged and short and sh["start"] >= b - 1e-6:
+            prev = merged[-1]
+            merged[-1] = {**prev, "end": sh["end"]}
+            continue
+        if merged and short and sh["end"] <= a + 1e-6 and len(merged) >= 1:
+            merged[-1] = {**merged[-1], "end": sh["end"]}
+            continue
+        merged.append(sh)
+    return merged
 
 
 def _merge_shots_near(shots: list[dict], times: list[float], win: float) -> list[dict]:
@@ -328,6 +358,19 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                             "side": "right" if fx < 0.5 else "left"})
         last_callout = p["t"]
         called.add(p["t"])
+    # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 옮겨 자리를 만든다(셜록현준식 리프레이밍).
+    # 이때는 리프레이밍 컷 자체가 펀치인 역할을 하므로 같은 순간의 펀치인은 뺀다(효과음은 유지).
+    reframed: set[float] = set()
+    for c in ed.callouts:
+        fx = _face_x(face or [], c["start"])
+        if abs(fx - 0.5) > P["callout_center"]:
+            continue
+        x = -P["callout_shift"] if c["side"] == "right" else P["callout_shift"]
+        ed.camera = _carve_shot(ed.camera, c["start"], c["end"], {
+            "start": c["start"], "end": c["end"], "zoom": P["callout_zoom"], "zoomEnd": P["callout_zoom"], "x": x})
+        reframed.add(round(c["start"] + 0.08, 3))
+    if reframed:
+        ed.punches = [p for p in ed.punches if round(p["t"], 3) not in reframed]
     last_impact = -1e9
     for p in punches:
         if p["t"] in called:

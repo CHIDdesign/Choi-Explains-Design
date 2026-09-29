@@ -170,6 +170,7 @@ rem ---------- Whisper 모델 미리 받기 ----------
 echo.
 choice /c YN /m "Whisper large-v3 음성인식 모델 약 3GB 를 지금 미리 받을까요"
 if %errorlevel%==1 (
+  echo   약 3GB 를 받습니다^(몇 분~20분^). 'HF_TOKEN' 경고가 나와도 정상이며 토큰은 필요 없습니다.
   python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8'); print('모델 준비 완료')"
 )
 
