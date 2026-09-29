@@ -31,6 +31,7 @@ def _obj(props: dict, required: list[str] | None = None) -> dict:
 STR = {"type": "string"}
 INT = {"type": "integer"}
 BOOL = {"type": "boolean"}
+NUM = {"type": "number"}
 STR_LIST = {"type": "array", "items": STR}
 INT_LIST = {"type": "array", "items": INT}
 

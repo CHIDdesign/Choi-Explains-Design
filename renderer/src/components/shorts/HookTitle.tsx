@@ -52,3 +52,45 @@ export const HookTitle: React.FC<{
     </div>
   );
 };
+
+/**
+ * 셜록현준식 레터박스 제목(검정 바탕 위, y 180~395): 2줄 고정, 1줄 흰색 · 2줄 강조색, 초굵은 고딕.
+ * 강조어가 있으면 그 단어만 강조색(두 줄 모두 흰색 + 핵심 명사만 강조).
+ */
+export const WindowTitle: React.FC<{text: string; highlight: string; frame: number; theme: Theme; width: number}> = ({
+  text,
+  highlight,
+  frame,
+  theme,
+  width,
+}) => {
+  const lines = text.split('\n').filter(Boolean).slice(0, 2);
+  const maxW = width - 90;
+  const size = Math.min(96, ...lines.map((l) => fitSize(l, maxW, 96, 60, -0.035)));
+  const p = enter(frame, 0, 6, EASE_OUT);
+  const lineColor = (i: number) => (lines.length === 2 && i === 1 && !(highlight && lines.join('').includes(highlight))
+    ? theme.accent : '#fff');
+  const renderLine = (l: string) => {
+    if (!highlight || !l.includes(highlight)) return l;
+    const [a, ...rest] = l.split(highlight);
+    return (
+      <>
+        {a}
+        <span style={{color: theme.accent}}>{highlight}</span>
+        {rest.join(highlight)}
+      </>
+    );
+  };
+  const top = lines.length === 1 ? 240 : 182;
+  return (
+    <div style={{position: 'absolute', left: 45, width: maxW, top, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', opacity: interpolate(p, [0, 1], [0.85, 1])}}>
+      {lines.map((l, i) => (
+        <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.13,
+          letterSpacing: '-0.035em', color: lineColor(i), textAlign: 'center', whiteSpace: 'nowrap'}}>
+          {renderLine(l)}
+        </div>
+      ))}
+    </div>
+  );
+};

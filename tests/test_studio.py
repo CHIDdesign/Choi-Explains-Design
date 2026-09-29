@@ -348,8 +348,12 @@ def test_stock_hub_from_settings_order():
     from studio.settings import Settings
     s = Settings()
     s.unsplash_access_key, s.pixabay_api_key, s.coverr_api_key = "u", "p", "c"
-    assert StockHub.from_settings(s).names == ["Pixabay", "Coverr", "Unsplash"]
-    assert StockHub.from_settings(Settings()).names == []
+    assert StockHub.from_settings(s).names == ["Pixabay", "Coverr", "Unsplash", "Openverse"]
+    # 키가 하나도 없어도 Openverse(CC 사진)는 항상 켜져 있다
+    assert StockHub.from_settings(Settings()).names == ["Openverse"]
+    off = Settings()
+    off.keyless_stock = False
+    assert StockHub.from_settings(off).names == []
 
 
 def test_normalize_long_is_idempotent_with_script_tags():

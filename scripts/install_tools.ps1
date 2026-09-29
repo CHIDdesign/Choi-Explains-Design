@@ -4,6 +4,7 @@
 #   -Python : official Python 3.12 installer, per-user (%LOCALAPPDATA%\Programs\Python\Python312)
 #   -DiskCheck [-NeedGB n] [-ExtraPaths "a;b"] : free space + real 256 MB write test per place;
 #                exit 2 = cannot write / not enough space, 3 = enough to install but < 20 GB
+#   -Shortcut -Target <bat> [-Icon <ico>] : desktop shortcut "Choi Studio" that always runs as administrator
 # Called by setup_windows.bat. Messages are ASCII on purpose (Windows PowerShell 5.1 encoding).
 param(
   [string]$Root = (Split-Path -Parent $PSScriptRoot),
@@ -12,7 +13,10 @@ param(
   [switch]$Python,
   [switch]$DiskCheck,
   [double]$NeedGB = 7,
-  [string]$ExtraPaths = ''
+  [string]$ExtraPaths = '',
+  [switch]$Shortcut,
+  [string]$Target = '',
+  [string]$Icon = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar
@@ -150,7 +154,25 @@ function Install-Python {
   Write-Host "[Python] $ver installed -> $env:LOCALAPPDATA\Programs\Python\Python312"
 }
 
+function New-AdminShortcut {
+  # Desktop shortcut with the "Run as administrator" flag (byte 0x15, bit 0x20 of the .lnk file)
+  $desk = [Environment]::GetFolderPath('Desktop')
+  $lnk = Join-Path $desk 'Choi Studio.lnk'
+  $ws = New-Object -ComObject WScript.Shell
+  $sc = $ws.CreateShortcut($lnk)
+  $sc.TargetPath = $Target
+  $sc.WorkingDirectory = Split-Path -Parent $Target
+  if ($Icon -and (Test-Path -LiteralPath $Icon)) { $sc.IconLocation = "$Icon,0" }
+  $sc.Description = 'Choi Studio - topic + video + script -> long-form + 2 shorts'
+  $sc.Save()
+  $bytes = [IO.File]::ReadAllBytes($lnk)
+  $bytes[0x15] = $bytes[0x15] -bor 0x20
+  [IO.File]::WriteAllBytes($lnk, $bytes)
+  Write-Host "[Shortcut] $lnk (runs as administrator)"
+}
+
 try {
+  if ($Shortcut) { New-AdminShortcut; exit 0 }
   if ($Python) { Install-Python }
   if ($Node) { Install-Node }
   if ($Ffmpeg) { Install-Ffmpeg }

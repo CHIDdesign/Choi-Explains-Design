@@ -21,6 +21,25 @@ VOICE_CHAIN = (
 )
 
 
+def voice_chain(denoise_model: Optional[str | Path] = None) -> str:
+    """방송용 보이스 체인. RNNoise 모델이 있으면 신경망 잡음 제거(에어컨·컴퓨터 팬·방 울림에 강함).
+
+    하이패스 80Hz → 잡음 제거 → 박스감(200~250Hz) 정리 → 존재감(3~4kHz) → 공기감(10kHz 셸프)
+    → 디에서 → 컴프레서 3:1 → (라우드니스는 build_voice_track 에서 2-pass)
+    """
+    if denoise_model:
+        from ..edit.assemble import _escape_filter_path
+        dn = f"aresample=48000,arnndn=m={_escape_filter_path(denoise_model)}:mix=0.85,afftdn=nr=4:nf=-45:tn=1,"
+    else:
+        dn = "afftdn=nr=10:nf=-40:tn=1,"
+    return ("highpass=f=80:p=2," + dn +
+            "equalizer=f=230:t=q:w=1.1:g=-2.5,"
+            "equalizer=f=3400:t=q:w=1.3:g=2,"
+            "highshelf=f=9500:g=1.5,"
+            "deesser=i=0.4:m=0.5:f=0.5,"
+            "acompressor=threshold=-21dB:ratio=3:attack=6:release=90:makeup=2:knee=4")
+
+
 def estimate_offset(ref: np.ndarray, other: np.ndarray, rate: int, max_shift_s: float = 20.0) -> float:
     """카메라 오디오(ref) 대비 외부 녹음(other)의 시간 오프셋(초).
 
@@ -56,6 +75,7 @@ def build_voice_track(
     external_audio: Optional[str | Path] = None,
     duration: float,
     enhance: bool = True,
+    denoise_model: Optional[str | Path] = None,
     target_lufs: float = -16.0,
     log: LogFn = noop_log,
     progress: ProgressFn = noop_progress,
@@ -84,7 +104,8 @@ def build_voice_track(
             pre = f"adelay={int(off * 1000)}:all=1,"
         else:
             pre = f"atrim=start={-off:.3f},asetpts=PTS-STARTPTS,"
-    chain = pre + (VOICE_CHAIN + "," if enhance else "")
+    chain = pre + (voice_chain(denoise_model) + "," if enhance else "")
+    info["denoise"] = "rnnoise" if (enhance and denoise_model) else ("afftdn" if enhance else "off")
     fit = f"apad,atrim=0:{duration:.3f}"
 
     # 1-pass: 측정

@@ -120,8 +120,9 @@ export type Graphic = {
 export type EmType = 'keyword' | 'term' | 'number' | 'contrast';
 export type CaptionWord = {text: string; start: number; end: number; em?: boolean | EmType};
 export type LongCaptionPreset = 'editorial' | 'documentary' | 'glass' | 'boxed';
-export type ShortCaptionPreset = 'kinetic' | 'clean' | 'boxed';
-export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]};
+export type ShortCaptionPreset = 'kinetic' | 'clean' | 'boxed' | 'bar';
+// style: 'impact' = 강조 순간(펀치인·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
+export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]; style?: 'impact'};
 
 export type Clip = {
   src: string; // public 기준 경로
@@ -131,10 +132,26 @@ export type Clip = {
 };
 
 export type FaceSample = {t: number; x: number; y: number; s: number};
-export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number};
-export type Punch = {t: number; end: number; amount: number};
+// 점프컷 프레이밍: 컷마다 와이드(1.0) ↔ 타이트(1.12~1.2) 교차, x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
+export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number};
+// 펀치인: 강조 단어에서 카메라를 확 당김. style cut = 하드컷(한 프레임), ease = 5프레임 푸시
+export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease'};
+
+// 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착
+export type TransitionType = 'whip' | 'zoom' | 'blur' | 'push' | 'flash' | 'dip' | 'wipe' | 'leak';
+export type Transition = {
+  t: number;
+  type: TransitionType;
+  dur: number; // 초(전체)
+  dir?: 'left' | 'right' | 'up' | 'down';
+  color?: string; // wipe/dip 색(없으면 테마)
+};
 export type Keyframe = {t: number; v: number};
 export type Chapter = {start: number; title: string; number: string};
+
+// 키워드 콜아웃(셜록현준식): 화자 반대편 빈 공간에 2줄 굵은 글씨 + 작은 맥락 라벨. 자막과 별도 레이어.
+export type Callout = {start: number; end: number; text: string; highlight: string; label: string;
+  side: 'left' | 'right'};
 
 export type Brand = {
   name: string;
@@ -171,6 +188,8 @@ export type LongFormProps = {
   camera: CameraShot[];
   punches: Punch[];
   graphics: Graphic[];
+  transitions: Transition[];
+  callouts: Callout[];
   chapters: Chapter[];
   panelSide: 'left' | 'right';
   endcard: {start: number; dur: number} | null;
@@ -193,12 +212,15 @@ export type ShortProps = {
   captions: CaptionCue[];
   captionPreset: ShortCaptionPreset;
   face: FaceSample[];
+  camera: CameraShot[];
   punches: Punch[];
   graphics: Graphic[];
+  transitions: Transition[];
   hookTitle: string; // 줄바꿈 \n
   hookHighlight: string;
   seriesLabel: string;
-  layout: 'full' | 'framed';
+  // window = 셜록현준식 레터박스(상단 2줄 제목 · 가운데 1080×1030 창 · 창 안 하단 자막 · 로고)
+  layout: 'full' | 'framed' | 'window';
   progressBar: boolean;
   grain: number;
   grainFrames: string[];

@@ -1,5 +1,24 @@
 @echo off
 chcp 65001 >nul
+rem ---- 관리자 권한으로 자동 재실행(더블클릭만 하면 됨) ----
+fltmc >nul 2>&1
+if errorlevel 1 (
+  if /i "%~1"=="--elevated" goto :elev_skip
+  echo 관리자 권한으로 다시 엽니다. '사용자 계정 컨트롤' 창이 뜨면 [예]를 눌러 주세요.
+  set "CHOI_SELF=%~f0"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Process -FilePath $env:CHOI_SELF -ArgumentList '--elevated' -Verb RunAs -ErrorAction Stop } catch { exit 1 }"
+  if errorlevel 1 (
+    echo.
+    echo [안내] 관리자 권한 실행이 취소되었습니다.
+    echo        이 파일을 마우스 오른쪽 버튼으로 눌러 '관리자 권한으로 실행' 을 골라도 됩니다.
+    pause
+  )
+  exit /b
+)
+goto :elev_ok
+:elev_skip
+echo [경고] 관리자 권한을 얻지 못해 일반 권한으로 계속합니다.
+:elev_ok
 cd /d "%~dp0"
 rem 오류 메시지를 콘솔에서 보고 싶을 때 사용
 if not exist ".venv\Scripts\python.exe" (

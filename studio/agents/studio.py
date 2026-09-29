@@ -45,6 +45,7 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick", S.STOCK_PICK, "low", 8000),
     Agent("art_director", "🧐 아트 디렉터", "art_director", S.QA, "high", 24000),
     Agent("motion_revise", "🎨 모션 디자이너(수정)", "motion_revise", S.MOTION_REVISE, "high", 24000),
+    Agent("colorist", "🎨 컬러리스트", "colorist", S.GRADE, "medium", 8000),
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
@@ -56,6 +57,7 @@ def studio_system_prompt() -> str:
         load_prompt("system_studio.md"),
         "\n\n# 채널 스타일 가이드\n\n" + load_prompt("style_guide.md"),
         "\n\n# 숏폼 후킹 가이드\n\n" + load_prompt("hooks.md"),
+        "\n\n" + playbook_block(),
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),
         "\n\n" + load_prompt("motion_dsl.md") + motion_examples_block(),
         "\n\n# 디자인 스킬 노트(오픈소스 스킬에서 정리)\n\n" + load_prompt("skills/motion_principles.md"),
@@ -63,6 +65,15 @@ def studio_system_prompt() -> str:
         "\n\n" + load_prompt("skills/editing_principles.md"),
     ]
     return "\n".join(p for p in parts if p.strip())
+
+
+def playbook_block() -> str:
+    """🎓 편집 플레이북 — 잘 만든 채널들을 연구해 정리한 편집 문법(prompts/playbook/*.md)."""
+    from ..paths import PROMPTS_DIR
+    files = sorted((PROMPTS_DIR / "playbook").glob("*.md"))
+    parts = [f.read_text(encoding="utf-8").strip() for f in files]
+    parts = [p for p in parts if p]
+    return ("# 편집 플레이북(레퍼런스 연구)\n\n" + "\n\n".join(parts)) if parts else ""
 
 
 def motion_examples_block() -> str:
@@ -142,12 +153,21 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
                            body=r.get("purpose", ""), reason="자료 리서처: " + str(r.get("purpose", "")),
                            stock={k: r.get(k, "") for k in ("kind", "query_en", "query_ko", "purpose", "must_show")}))
 
-    emphasis = [{"seg": p.get("seg"), "word": p.get("word", ""), "kind": "punch"} for p in editor.get("punch", []) or []]
+    moments = [m for m in editor.get("moments", []) or [] if isinstance(m, dict)]
+    # 예전 스키마(punch) 호환
+    moments += [{"seg": p.get("seg"), "word": p.get("word", ""), "kind": "punchline", "intensity": 2}
+                for p in editor.get("punch", []) or [] if isinstance(p, dict)]
+    emphasis = [{"seg": m.get("seg"), "word": m.get("word", ""), "kind": "punch"} for m in moments
+                if int(m.get("intensity", 2) or 2) >= 2]
     emphasis += [{"seg": e.get("seg"), "word": e.get("word", ""), "kind": "highlight", "type": e.get("type", "keyword")}
                  for e in caps.get("emphasis", []) or [] if e.get("word")]
 
     chapters = [{"seg": c.get("start_seg"), "title": c.get("title", "")} for c in brief.get("structure", []) or []]
     raw_long = {
+        "title": brief.get("title", ""),
+        "moments": moments,
+        "bgm_mood": brief.get("bgm_mood", ""),
+        "shorts_bgm_mood": brief.get("shorts_bgm_mood", ""),
         "summary": brief.get("logline", ""),
         "hook_segs": brief.get("hook_segs", []) or [],
         "title_card_seg": brief.get("title_card_seg", -1),
@@ -258,7 +278,7 @@ class Studio:
         r = self.results
         parts = []
         if "editor" in r:
-            parts.append(f"✂️ 추가 컷 {len(r['editor'].get('drop', []))} · 펀치인 {len(r['editor'].get('punch', []))}")
+            parts.append(f"✂️ 추가 컷 {len(r['editor'].get('drop', []))} · 강조 순간 {len(r['editor'].get('moments', []))}")
         if "motion" in r:
             parts.append(f"🎨 그래픽 {len(r['motion'].get('graphics', []))} · 모션 장면 {len(r['motion'].get('scenes', []))}")
         if "stock" in r:
@@ -278,6 +298,11 @@ class Studio:
         instr = load_prompt("agents/stock_pick.md").replace("{{requests}}", requests_text)
         res = self.call("stock_pick", ctx, instr, images=sheets)
         return res.get("picks", []) or []
+
+    def grade(self, ctx: str, notes: str, sheet: tuple[str, bytes, str]) -> dict[str, Any]:
+        """🎨 컬러리스트: 원본 + 룩 4가지 비교 시트를 보고 룩·세기·미세 조정을 고른다."""
+        instr = load_prompt("agents/colorist.md").replace("{{notes}}", notes)
+        return self.call("colorist", ctx, instr, images=[sheet])
 
     def review(self, ctx: str, graphics_text: str, stills: list[tuple[str, bytes, str]]) -> dict[str, Any]:
         instr = load_prompt("agents/art_director.md").replace("{{graphics}}", graphics_text)

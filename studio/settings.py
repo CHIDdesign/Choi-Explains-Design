@@ -52,6 +52,8 @@ class Settings:
     unsplash_access_key: str = ""    # https://unsplash.com/developers (사진 전용, 데모 시간당 50회)
     coverr_api_key: str = ""         # https://coverr.co/developers (영상 전용, 데모 시간당 50회)
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
+    keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
+    download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
     # 🎬 AI 스튜디오(멀티 에이전트)
     studio_workers: int = 4           # 동시에 일하는 전문 에이전트 수
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}

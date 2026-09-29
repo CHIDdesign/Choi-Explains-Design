@@ -2,7 +2,8 @@
 
 1) 단어 스트림을 발화(문장) 단위로 나눈다.
 2) 각 발화를 대본의 어느 부분인지 퍼지 매칭한다(rapidfuzz).
-3) 같은 대본 구간을 여러 번 말했으면 마지막 테이크만 남긴다(NG/리테이크 제거).
+3) 같은 대본 구간을 여러 번 말했으면 가장 또렷한 테이크만 남긴다(NG/리테이크 제거):
+   대본 일치도·완결성·인식 확신도·말더듬/추임새·말 속도·음량·최신성을 합산해 고른다.
 4) "다시 할게요" 같은 메타 발화를 제거한다.
 5) 매칭된 발화는 대본 문장으로 자막을 교정하고, 글자 단위 정렬로 단어 시간을 옮긴다.
 6) 대본 태그를 실제 발화(시간)에 고정한다.
@@ -94,8 +95,9 @@ class AlignReport:
 
 class ScriptAligner:
     def __init__(self, script: ParsedScript, glossary: Optional[dict[str, str]] = None,
-                 match_threshold: float = 66.0, script_text_threshold: float = 86.0):
+                 match_threshold: float = 66.0, script_text_threshold: float = 86.0, audio=None):
         self.script = script
+        self.audio = audio  # 16kHz 모노(float) — 테이크 음량 비교용, 없어도 된다
         self.glossary = glossary or {}
         self.snorm, self.smap = norm_with_map(script.clean)
         self.match_threshold = match_threshold
@@ -188,40 +190,93 @@ class ScriptAligner:
                 u.note = "NG/메타 발화"
 
     def _mark_retakes_by_script(self, utts: list[Utterance]) -> None:
+        """같은 대본 구간을 여러 번 말한 테이크들을 묶고, 가장 또렷한 테이크만 남긴다."""
         kept = [u for u in utts if u.kept and u.script_span]
+        groups = _UnionFind(len(kept))
         for j, uj in enumerate(kept):
             aj, bj = uj.script_span  # type: ignore[misc]
-            for ui in kept[max(0, j - 10):j]:
-                if not ui.kept or ui.script_span is None:
-                    continue
+            for i in range(max(0, j - 10), j):
+                ui = kept[i]
                 if uj.start - ui.end > 120:  # 2분 이상 떨어진 반복은 의도적 반복으로 본다
                     continue
-                ai, bi = ui.script_span
+                ai, bi = ui.script_span  # type: ignore[misc]
                 overlap = min(bi, bj) - max(ai, aj)
-                len_i = max(1, bi - ai)
-                len_j = max(1, bj - aj)
-                if overlap >= 0.5 * len_i and len_j >= 0.6 * len_i:
-                    ui.status = "retake"
-                    ui.note = f"#{uj.id} 에서 다시 말함"
+                if overlap >= 0.5 * max(1, min(bi - ai, bj - aj)):
+                    groups.union(i, j)
+        for members in groups.clusters():
+            if len(members) > 1:
+                self._resolve_takes([kept[k] for k in members], span=lambda u: u.script_span)
 
     def _mark_retakes_by_similarity(self, utts: list[Utterance]) -> None:
+        """대본에 없는 발화끼리의 반복(대본이 없거나 애드리브) — 비슷한 발화 묶음에서 가장 또렷한 것만."""
         kept = [u for u in utts if u.kept]
+        groups = _UnionFind(len(kept))
         for j, uj in enumerate(kept):
             nj = norm(uj.asr_text)
             if len(nj) < 6:
                 continue
-            for ui in kept[max(0, j - 3):j]:
-                if not ui.kept:
-                    continue
+            for i in range(max(0, j - 3), j):
+                ui = kept[i]
                 ni = norm(ui.asr_text)
                 if len(ni) < 6 or uj.start - ui.end > 25:
                     continue
                 if ui.script_span and uj.script_span:
                     continue  # 대본 기준 판정이 이미 처리
-                sim = fuzz.partial_ratio(ni, nj) if len(ni) <= len(nj) else fuzz.partial_ratio(nj, ni)
-                if sim >= 82 and len(nj) >= 0.6 * len(ni):
-                    ui.status = "retake"
-                    ui.note = f"#{uj.id} 와 유사(다시 말함)"
+                short, long_ = (ni, nj) if len(ni) <= len(nj) else (nj, ni)
+                if fuzz.partial_ratio(short, long_) >= 82 and len(short) >= 0.3 * len(long_):
+                    groups.union(i, j)
+        for members in groups.clusters():
+            if len(members) > 1:
+                self._resolve_takes([kept[k] for k in members], span=None)
+
+    def _resolve_takes(self, takes: list[Utterance], span) -> None:
+        """테이크 묶음 → 점수순으로 고르되, 이미 고른 테이크와 20% 넘게 겹치면 버린다(같은 말 두 번 방지)."""
+        def length(u: Utterance) -> int:
+            if span is not None and span(u):
+                a, b = span(u)
+                return max(1, b - a)
+            return max(1, len(norm(u.asr_text)))
+
+        def overlap(u: Utterance, v: Utterance) -> float:
+            if span is not None and span(u) and span(v):
+                (a1, b1), (a2, b2) = span(u), span(v)
+                return max(0, min(b1, b2) - max(a1, a2)) / length(u)
+            return 1.0  # 대본 없는 반복은 통째로 같은 말
+
+        longest = max(length(u) for u in takes)
+        order = sorted(takes, key=lambda u: u.start)
+        rates = sorted(len(norm(u.text)) / max(0.3, u.end - u.start) for u in takes)
+        med_rate = rates[len(rates) // 2]
+        scored = []
+        for rank, u in enumerate(order):
+            s = take_score(u, coverage=length(u) / longest, med_rate=med_rate, energy=self._energy(u),
+                           recency=rank / max(1, len(order) - 1))
+            scored.append((s, u))
+        scored.sort(key=lambda p: -p[0])
+        chosen: list[tuple[float, Utterance]] = []
+        for s, u in scored:
+            if all(overlap(u, c) < 0.2 for _, c in chosen):
+                chosen.append((s, u))
+                continue
+            best_s, best = chosen[0]
+            u.status = "retake"
+            u.note = f"#{best.id} 가 더 또렷함 ({s * 100:.0f} < {best_s * 100:.0f}점)"
+            u.take_score = round(s, 3)
+        for s, u in chosen:
+            u.take_score = round(s, 3)
+
+    def _energy(self, u: Utterance) -> Optional[float]:
+        """발화 구간의 평균 음량(dBFS) — 16kHz 오디오가 있을 때만."""
+        a = self.audio
+        if a is None or not len(a):
+            return None
+        i0, i1 = int(u.start * 16000), int(u.end * 16000)
+        seg = a[max(0, i0):max(i0 + 1, min(len(a), i1))]
+        if not len(seg):
+            return None
+        import numpy as np
+        rms = float(np.sqrt(np.mean(np.square(seg.astype(np.float32)))) + 1e-9)
+        return 20 * float(np.log10(rms))
 
     # --------------------------------------------------------------
     def _apply_glossary_words(self, u: Utterance) -> None:
@@ -319,6 +374,62 @@ class ScriptAligner:
             if c / n < 0.3 and len(text) > 6:
                 missing.append(text)
         return (hit / total if total else 0.0), missing[:30]
+
+
+FILLER_WORDS = {"음", "어", "아", "그", "저", "에", "뭐", "좀", "이제", "막", "으음", "어어", "음음", "그니까", "그러니까"}
+
+
+def take_score(u: Utterance, *, coverage: float, med_rate: float, energy: Optional[float] = None,
+               recency: float = 0.0) -> float:
+    """테이크 품질(0~1, 높을수록 또렷). 같은 대본 구간을 여러 번 말했을 때 어느 것을 쓸지 정한다.
+
+    - 대본 일치도(말실수 없이 대본대로)          35%
+    - 완결성(중간에 끊기지 않고 끝까지 말함)      30%
+    - 음성인식 확신도(발음이 또렷함)              15%
+    - 유창성: 추임새·단어 반복·긴 머뭇거림 감점
+    - 말 속도: 묶음 중앙값보다 크게 느리면(더듬음) 감점
+    - 음량: 더 힘 있게 말한 테이크 가산(±5%)
+    - 최신성: 보통 마지막 테이크가 고쳐 말한 것(+4%)
+    """
+    words = u.words or []
+    sim = (u.score or 70.0) / 100.0
+    cov = min(1.0, coverage)
+    cov_term = cov if cov >= 0.8 else cov * 0.6  # 중간에 끊긴 테이크는 크게 감점
+    conf = sum(w.prob for w in words) / len(words) if words else 0.8
+    toks = [norm(w.text) for w in words]
+    fillers = sum(1 for t in toks if t in FILLER_WORDS)
+    repeats = sum(1 for a, b in zip(toks, toks[1:]) if a and a == b)
+    pauses = sum(1 for a, b in zip(words, words[1:]) if b.start - a.end > 0.7)
+    flu = min(0.25, 0.05 * fillers + 0.06 * repeats + 0.04 * pauses)
+    rate = len(norm(u.text)) / max(0.3, u.end - u.start)
+    slow = max(0.0, (med_rate - rate) / max(1e-6, med_rate)) if med_rate else 0.0
+    score = 0.35 * sim + 0.30 * cov_term + 0.15 * conf - flu - 0.12 * min(1.0, slow)
+    if energy is not None:
+        score += 0.05 * max(-1.0, min(1.0, (energy + 30.0) / 12.0))
+    score += 0.04 * recency
+    return max(0.0, score)
+
+
+class _UnionFind:
+    def __init__(self, n: int):
+        self.p = list(range(n))
+
+    def find(self, i: int) -> int:
+        while self.p[i] != i:
+            self.p[i] = self.p[self.p[i]]
+            i = self.p[i]
+        return i
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.p[max(ra, rb)] = min(ra, rb)
+
+    def clusters(self) -> list[list[int]]:
+        out: dict[int, list[int]] = {}
+        for i in range(len(self.p)):
+            out.setdefault(self.find(i), []).append(i)
+        return list(out.values())
 
 
 def _interpolate(times: list[Optional[tuple[float, float]]], t0: float, t1: float) -> None:

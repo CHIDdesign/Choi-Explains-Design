@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 from ..director.catalog import LAYOUTS, TEMPLATE_NAMES
-from ..director.schema import GRAPHIC, HOOK_TYPES, INT, INT_LIST, SHORTS_PLAN, STR, STR_LIST, _obj
+from ..director.schema import GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHORTS_PLAN, STR, STR_LIST, _obj
 
 INTENTS = ["hook", "context", "explain", "example", "name_concept", "story", "data", "compare", "transition",
            "return_to_life", "payoff"]
 VISUALS = ["none", "template", "motion", "stock_video", "stock_photo", "photo", "keyword"]
+# ✂️ 편집 감독이 표시하는 '강조 순간' — 편집 문법 엔진(studio/edit/grammar.py)이 펀치인·강조 자막·효과음으로 옮긴다
+MOMENT_KINDS = ["punchline", "reveal", "shift", "conclusion", "question", "number", "joke"]
+BGM_MOODS = ["minimal", "calm", "ambient", "lofi", "piano", "inspiring", "upbeat"]
+LOOKS = ["natural", "warm_film", "clean_bright", "cinematic"]
 
 # 🎬 총괄 감독 — 크리에이티브 브리프
 BRIEF = _obj({
+    "title": STR,          # 화면 타이틀 카드·파일 이름에 쓰는 영상 제목(18자 이내)
     "logline": STR,
     "audience": STR,
     "tone": STR,
@@ -26,14 +31,32 @@ BRIEF = _obj({
     "shorts_ideas": {"type": "array", "items": _obj({"segments": INT_LIST, "angle": STR})},
     "caption_direction": STR,
     "music": _obj({"mood": STR, "notes": STR}),
+    "bgm_mood": {"type": "string", "enum": BGM_MOODS},
+    "shorts_bgm_mood": {"type": "string", "enum": BGM_MOODS},
     "notes_for_team": STR,
 })
 
 # ✂️ 편집 감독
 EDITOR = _obj({
     "drop": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
-    "punch": {"type": "array", "items": _obj({"seg": INT, "word": STR})},
+    "moments": {"type": "array", "items": _obj({
+        "seg": INT, "word": STR,
+        "kind": {"type": "string", "enum": MOMENT_KINDS},
+        "intensity": INT,   # 1(작게) ~ 3(가장 큰 한 방)
+        "callout": STR,     # 화자 옆에 크게 띄울 2줄 문구(줄바꿈 \n, 줄당 4~9자) — 없으면 빈 문자열
+        "label": STR,       # 콜아웃 위 작은 맥락 라벨(2~8자, 예: "핵심", "게슈탈트 원리")
+    })},
     "pacing_notes": STR,
+})
+
+# 🎨 컬러리스트 — 비교 시트(원본 + 룩 4가지)를 보고 고른다
+GRADE = _obj({
+    "look": {"type": "string", "enum": LOOKS},
+    "strength": NUM,      # 0~1
+    "exposure": NUM,      # -0.15~0.15
+    "warmth": NUM,        # -0.4~0.4
+    "saturation": NUM,    # 0.85~1.15
+    "reason": STR,
 })
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열)
@@ -104,5 +127,5 @@ MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["BRIEF", "EDITOR", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE", "SHORTS",
+__all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE", "SHORTS",
            "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]

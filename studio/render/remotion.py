@@ -53,11 +53,12 @@ class RenderItem:
     weight: float = 1.0     # 진행률 가중치(길이)
     frame: int = 0          # still: 뽑을 프레임
     frames: list[tuple[int, Path]] = field(default_factory=list)  # frames: (프레임, 출력 경로)
+    muted: bool = False     # 소리 없이 렌더(음향은 FFmpeg 에서 따로 믹스·마스터링)
 
     def to_job(self) -> dict:
         d = {"kind": self.kind, "composition": self.composition, "props": str(self.props_path),
              "output": str(self.output), "scale": self.scale, "crf": self.crf, "x264Preset": self.x264_preset,
-             "encoder": self.encoder, "frame": int(self.frame)}
+             "encoder": self.encoder, "frame": int(self.frame), "muted": bool(self.muted)}
         if self.frames:
             d["frames"] = [{"frame": int(f), "output": str(o)} for f, o in self.frames]
         return d

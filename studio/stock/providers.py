@@ -1,6 +1,7 @@
 """여러 무료 스톡 제공처를 한 번에 검색하는 허브.
 
-기본 순서: Pixabay(영상·사진, 한국어 검색) → Pexels(키가 있으면) → Coverr(영상) → Unsplash(사진).
+기본 순서: Pixabay(영상·사진, 한국어 검색) → Pexels(키가 있으면) → Coverr(영상) → Unsplash(사진)
+→ Openverse(사진, 키 없이 항상 동작).
 요청마다 제공처별 후보를 번갈아 섞어 최대 N개를 만들고, 🎞 자료 리서처가 썸네일 시트를 보고 고른다.
 """
 from __future__ import annotations
@@ -41,12 +42,15 @@ class StockHub:
     @classmethod
     def from_settings(cls, settings: Any, *, log: LogFn = noop_log, cache_dir: Optional[Path] = None) -> "StockHub":
         from .coverr import Coverr
+        from .openverse import Openverse
         from .pexels import Pexels
         from .pixabay import Pixabay
         from .unsplash import Unsplash
         spec = [(Pixabay, getattr(settings, "pixabay_api_key", "")), (Pexels, getattr(settings, "pexels_api_key", "")),
                 (Coverr, getattr(settings, "coverr_api_key", "")), (Unsplash, getattr(settings, "unsplash_access_key", ""))]
         provs = [cls_(key, log=log, cache_dir=cache_dir) for cls_, key in spec if key]
+        if getattr(settings, "keyless_stock", True):
+            provs.append(Openverse(log=log, cache_dir=cache_dir))
         return cls(provs, log=log)
 
     def _call(self, p: StockProvider, method: str, query: str, **kw: Any) -> list[StockCandidate]:

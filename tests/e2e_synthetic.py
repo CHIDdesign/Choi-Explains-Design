@@ -61,7 +61,7 @@ def make_words() -> tuple[list[dict], float]:
     return words, t + 1.0
 
 
-def make_media(dst: Path, words: list[dict], duration: float) -> None:
+def make_media(dst: Path, words: list[dict], duration: float, face: str = "") -> None:
     sr = 48000
     n = int(sr * duration)
     audio = np.random.default_rng(1).normal(0, 0.002, n)
@@ -78,9 +78,16 @@ def make_media(dst: Path, words: list[dict], duration: float) -> None:
         wf.setsampwidth(2)
         wf.setframerate(sr)
         wf.writeframes(pcm.tobytes())
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
-                    f"testsrc2=size=1920x1080:rate=30:duration={duration:.2f}", "-i", str(wav),
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    if face:
+        # 실제 얼굴 영상(짧은 클립을 반복)으로 — 색보정·얼굴 추적·카메라 연출을 눈으로 확인할 때
+        src = ["-stream_loop", "-1", "-i", face]
+        vf = ["-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30"]
+    else:
+        src = ["-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=30:duration={duration:.2f}"]
+        vf = []
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error"] + src + ["-i", str(wav), "-t", f"{duration:.2f}",
+                    "-map", "0:v:0", "-map", "1:a:0"] + vf +
+                   ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-shortest", str(dst)], check=True)
     wav.unlink()
 
@@ -90,6 +97,7 @@ def main() -> int:
     ap.add_argument("--browser", default="")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--work", default=str(ROOT / "projects" / "_e2e"))
+    ap.add_argument("--face", default="", help="실제 얼굴 영상 클립(반복해서 원본으로 씀)")
     args = ap.parse_args()
     work = Path(args.work)
     if work.exists() and not args.keep:
@@ -98,7 +106,7 @@ def main() -> int:
     words, duration = make_words()
     video = work / "source.mp4"
     if not video.exists():
-        make_media(video, words, duration)
+        make_media(video, words, duration, args.face)
 
     # 음성 인식 대신 합성 결과 사용
     def fake_transcribe(*_a, **_k):
@@ -111,9 +119,10 @@ def main() -> int:
     settings.render.browser_executable = args.browser
     settings.render.gl = "swangle" if sys.platform != "win32" else "angle"
     settings.render.concurrency = 3
-    spec = pl.JobSpec(video=str(video), title="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
-                      notes="테스트", shorts_count=1, use_claude=False, fetch_broll=False, thumbnails=True,
-                      short_max_sec=40)
+    settings.keyless_stock = False
+    settings.download_sounds = False
+    spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
+                      shorts_count=1, use_claude=False, fetch_broll=False, thumbnails=True, short_max_sec=40)
     job = work / "job"
 
     def log(m: str) -> None:
@@ -123,10 +132,13 @@ def main() -> int:
     out = Path(res["output"])
     files = sorted(p.name for p in out.iterdir())
     print("\n출력:", json.dumps(files, ensure_ascii=False, indent=1))
-    assert any(f.endswith("_롱폼.mp4") for f in files), "롱폼 없음"
+    extras = sorted(p.name for p in (out / "부가자료").iterdir())
+    print("부가자료:", json.dumps(extras, ensure_ascii=False, indent=1))
+    assert any(f.startswith("1_롱폼") and f.endswith(".mp4") for f in files), "롱폼 없음"
     assert any("숏폼1" in f and f.endswith(".mp4") for f in files), "숏폼 없음"
-    assert any(f.endswith(".srt") for f in files)
-    assert any(f.endswith("_premiere.xml") for f in files)
+    assert "업로드정보.txt" in files
+    assert any(f.endswith(".srt") for f in extras) and any(f.endswith("_premiere.xml") for f in extras)
+    assert any(f.startswith("썸네일") for f in extras) and "색보정_전후.jpg" in extras
     align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
     statuses = [u["status"] for u in align["utterances"]]
     assert "retake" in statuses and "meta" in statuses, statuses

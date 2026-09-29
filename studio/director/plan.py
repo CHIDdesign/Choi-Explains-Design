@@ -12,6 +12,7 @@ from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATE
 from .schema import HOOK_TYPES
 
 EM_TYPES = ("keyword", "term", "number", "contrast")  # 자막 강조 유형(renderer EmType)
+MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")  # 강조 순간
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
@@ -215,6 +216,10 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "music": raw.get("music") or {},
         "captions": raw.get("captions") or {},   # 🔤 자막 디자이너의 프리셋 선택
         "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
+        "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)
+        "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
+        "bgm_mood": str(raw.get("bgm_mood", "") or ""),
+        "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
     }
     for c in raw.get("chapters", []) or []:
         if isinstance(c, dict) and str(c.get("title", "")).strip():
@@ -235,6 +240,17 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
     for d in raw.get("drop", []) or []:
         if isinstance(d, dict) and d.get("seg") in kept:
             plan["drop"].append({"seg": d["seg"], "reason": str(d.get("reason", ""))})
+    for m in raw.get("moments", []) or []:
+        if isinstance(m, dict) and m.get("seg") in kept and m.get("kind") in MOMENT_KINDS:
+            try:
+                inten = max(1, min(3, int(m.get("intensity", 2))))
+            except (TypeError, ValueError):
+                inten = 2
+            item = {"seg": m["seg"], "word": str(m.get("word", "")), "kind": m["kind"], "intensity": inten,
+                    "callout": str(m.get("callout", "") or "").strip()[:40],
+                    "label": str(m.get("label", "") or "").strip()[:16]}
+            if not any(x["seg"] == item["seg"] and x["kind"] == item["kind"] for x in plan["moments"]):
+                plan["moments"].append(item)
 
     # 대본 태그는 반드시 반영(디렉터가 빠뜨렸으면 추가)
     enforce_tags(plan, tags, kept)
@@ -266,6 +282,9 @@ def enforce_tags(plan: dict[str, Any], tags: list[Tag], kept: list[int]) -> None
         if t.kind == "zoom":
             if not any(e["seg"] == seg and e.get("kind") == "punch" for e in plan["emphasis"]):
                 plan["emphasis"].append({"seg": seg, "word": "", "kind": "punch"})
+            if not any(m["seg"] == seg for m in plan.setdefault("moments", [])):
+                plan["moments"].append({"seg": seg, "word": t.args[0] if t.args else "", "kind": "punchline",
+                                        "intensity": 2, "callout": "", "label": ""})
             continue
         if t.kind == "cut":
             if not any(d["seg"] == seg for d in plan["drop"]):

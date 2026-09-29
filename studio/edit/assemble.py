@@ -37,24 +37,37 @@ def build_proxy(
     fps: int,
     height: int,
     lut: Optional[str | Path] = None,
+    pre_filters: Optional[list[str]] = None,
+    post_filters: Optional[list[str]] = None,
     log: LogFn = noop_log,
     progress: ProgressFn = noop_progress,
     cancel: Optional[CancelToken] = None,
 ) -> None:
+    """pre_filters: LUT 전(디노이즈 등, YUV) / post_filters: LUT 후(샤픈 등)."""
     vf: list[str] = []
     if info.is_hdr:
         log("HDR(HLG/PQ) 영상 감지 → SDR 톤매핑")
         vf.append(hdr_to_sdr_filter())
     vf.append(f"fps={fps}")
+    # 태그 없는 HD 영상을 BT.601 로 잘못 읽지 않도록(색이 살짝 틀어짐) 색 행렬을 명시
+    matrix = info.color_space if info.color_space in ("bt709", "bt470bg", "smpte170m", "bt2020nc") else (
+        "bt709" if (info.height or 0) >= 700 else "bt601")
+    matrix = {"bt470bg": "bt601", "smpte170m": "bt601", "bt2020nc": "bt2020"}.get(matrix, matrix)
     vf.append(f"scale=-2:{height}:flags=lanczos")
+    vf += list(pre_filters or [])
     if lut:
-        vf.append(f"lut3d=file={_escape_filter_path(lut)}")
+        vf.append(f"scale=in_color_matrix={matrix if not info.is_hdr else 'bt709'},format=gbrp")
+        vf.append(f"lut3d=file={_escape_filter_path(lut)}:interp=tetrahedral")
+        vf.append("scale=out_color_matrix=bt709:out_range=tv")
+    vf += list(post_filters or [])
     vf.append("format=yuv420p")
     hw: list[str] = []
     if ff.nvenc_ok and not info.is_hdr:
         hw = ["-hwaccel", "auto"]
     args = hw + ["-i", str(src), "-map", "0:v:0", "-an", "-vf", ",".join(vf)] + \
-        ff.video_codec_args("intermediate", gop=15) + ["-movflags", "+faststart", str(dst)]
+        ff.video_codec_args("intermediate", gop=15) + \
+        ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+         "-movflags", "+faststart", str(dst)]
     ff.run(args, duration=info.duration, progress=progress, log=log, cancel=cancel, what="프록시 생성")
 
 

@@ -2,11 +2,14 @@ import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {GraphicLayer, SPLIT_SPEAKER} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
+import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
 import {EndCard} from '../components/layout/EndCard';
+import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts} from '../design/fonts';
+import {CAMERA, EASE} from '../design/motion';
 import {FONT, makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
@@ -33,20 +36,34 @@ export const buildRegionSpans = (graphics: Graphic[]): RegionSpan[] => {
   return spans;
 };
 
-export const cameraZoom = (shots: CameraShot[], t: number): number => {
+export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: number} => {
   const i = lastIndexAtOrBefore(shots, t, (s) => s.start);
-  if (i < 0) return 1;
+  if (i < 0) return {zoom: 1, x: 0};
   const s = shots[i];
-  if (t > s.end) return s.zoomEnd;
+  if (t > s.end) return {zoom: s.zoomEnd, x: s.x ?? 0};
   const f = s.end > s.start ? (t - s.start) / (s.end - s.start) : 0;
-  return s.zoom + (s.zoomEnd - s.zoom) * f;
+  // 샷 안의 느린 푸시인은 가감속(inOut)으로 — 선형이면 시작/끝에서 '툭' 걸린다
+  return {zoom: s.zoom + (s.zoomEnd - s.zoom) * EASE.inOutCubic(f), x: s.x ?? 0};
 };
 
-/** 펀치인: 강조 순간 카메라를 한 단계 당긴 것처럼 하드컷(2캠 편집 느낌) */
-export const punchFactor = (punches: Punch[], t: number): number => {
+export const cameraZoom = (shots: CameraShot[], t: number): number => cameraAt(shots, t).zoom;
+
+/**
+ * 펀치인: 강조 순간 카메라를 한 단계 당긴다.
+ *  cut  — 한 프레임에 확(2캠 편집 느낌, 문장 끝에서 하드컷으로 복귀)
+ *  ease — 5프레임 동안 빠르게 당기고 끝에서 8프레임에 걸쳐 풀림(웃음·여운)
+ */
+export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
   let f = 1;
   for (const p of punches) {
-    if (t >= p.t && t < p.end) f = Math.max(f, 1 + p.amount);
+    if (t < p.t || t >= p.end) continue;
+    let k = 1;
+    if (p.style === 'ease') {
+      const inP = Math.min(1, ((t - p.t) * fps) / CAMERA.punchIn);
+      const outP = Math.min(1, ((p.end - t) * fps) / CAMERA.punchOut);
+      k = Math.min(EASE.outCubic(inP), EASE.inOutCubic(outP));
+    }
+    f = Math.max(f, 1 + p.amount * k);
   }
   return f;
 };
@@ -77,10 +94,15 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
 
   // ---- 카메라 ----
   const face = sampleFace(props.face, t);
-  const zoom = cameraZoom(props.camera, t) * punchFactor(props.punches, t);
+  const cam = cameraAt(props.camera, t);
+  const zoom = cam.zoom * punchFactor(props.punches, t, fps);
   const full: Rect = {x: 0, y: 0, w: W, h: H};
   let region = full;
   let box = videoBoxFor(full, face, zoom, 'anchor');
+  if (cam.x) {
+    // 타이트 샷은 얼굴을 x(화면 폭 비율)만큼 옆으로 — 3분할 구도. 확대 여유 안에서만(화면은 항상 덮음)
+    box = {...box, tx: Math.min(0, Math.max(W - box.w, box.tx + cam.x * W))};
+  }
   let radius = 0;
   let border: string | undefined;
   let capCenter = W / 2;
@@ -134,26 +156,32 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   };
 
   const endStart = props.endcard ? toFrame(props.endcard.start, fps) : Infinity;
+  const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
   return (
     <AbsoluteFill style={{background: theme.ink}}>
-      {under.map(seq)}
-      {frame < endStart ? (
-        <TalkingHead clips={props.clips} fps={fps} region={region} box={box} radius={radius} border={border}
-          shadow={radius > 0} />
-      ) : null}
-      {region === full ? <Vignette strength={0.22} /> : null}
-      {props.showChapterLabel && chapter && !fullscreenActive && !span ? (
-        <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
-          color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
-          opacity: enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9}}>
-          ( {chapter.number} ) {chapter.title}
-        </div>
-      ) : null}
-      {over.map(seq)}
+      <TransitionStage tx={tx}>
+        {under.map(seq)}
+        {frame < endStart ? (
+          <TalkingHead clips={props.clips} fps={fps} region={region} box={box} radius={radius} border={border}
+            shadow={radius > 0} />
+        ) : null}
+        {region === full ? <Vignette strength={0.22} /> : null}
+        {props.showChapterLabel && chapter && !fullscreenActive && !span ? (
+          <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
+            color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
+            opacity: enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9}}>
+            ( {chapter.number} ) {chapter.title}
+          </div>
+        ) : null}
+        {over.map(seq)}
+        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} />
+      </TransitionStage>
       {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
-      <LongCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
-        centerX={capCenter} frameW={W} plain={textGraphicActive} />
+      {tx.hideCaptions ? null : (
+        <LongCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
+          centerX={capCenter} frameW={W} plain={textGraphicActive} />
+      )}
       {props.endcard ? (
         <Sequence from={endStart} durationInFrames={Math.max(1, toFrame(props.endcard.dur, fps))} name="endcard">
           <EndCardSeq theme={theme} props={props} />

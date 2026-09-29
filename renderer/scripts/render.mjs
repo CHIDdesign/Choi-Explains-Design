@@ -8,6 +8,7 @@
 //   "browserExecutable": "", "gl": "angle", "concurrency": 0,
 //   "reuseBundle": false,   // true 면 소스가 바뀌지 않았을 때 이전 번들을 재사용(검수 스틸 → 본 렌더)
 //   "renders": [{"kind": "video"|"still"|"frames", "composition": "LongForm", "props": "<props.json>",
+//                "muted": false,                               // true: 영상만(음향은 Python 이 따로 믹스)
 //                "output": "<out.mp4>", "scale": 1, "crf": 18, "x264Preset": "medium", "encoder": "auto",
 //                "frame": 0,                                   // still: 뽑을 프레임
 //                "frames": [{"frame": 120, "output": "<a.jpg>"}]  // frames: 같은 props 로 여러 장
@@ -178,8 +179,7 @@ const main = async () => {
       scale: r.scale || 1,
       imageFormat: 'jpeg',
       jpegQuality: 92,
-      audioCodec: 'aac',
-      audioBitrate: '320k',
+      ...(r.muted ? {muted: true} : {audioCodec: 'aac', audioBitrate: '320k'}),
       pixelFormat: 'yuv420p',
       overwrite: true,
       offthreadVideoCacheSizeInBytes: 2 * 1024 * 1024 * 1024,

@@ -67,9 +67,15 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
                 block = []
     hook = [u.id for u in kept[:2]]
     emphasis = []
+    moments = []
     for u in kept:
         if re.search(r"(결국|핵심은|정리하면|한마디로)", u.text):
             emphasis.append({"seg": u.id, "word": "", "kind": "punch"})
+            moments.append({"seg": u.id, "word": "", "kind": "conclusion", "intensity": 2})
+        elif re.search(r"(사실은|아니라|반대로|그런데 말이죠)", u.text):
+            moments.append({"seg": u.id, "word": "", "kind": "reveal", "intensity": 2})
+        elif u.text.rstrip().endswith("?") and len(u.text) < 40:
+            moments.append({"seg": u.id, "word": "", "kind": "question", "intensity": 1})
     terms = sorted({a for t in tags for a in t.args if 1 < len(a) <= 12})[:12]
     return {
         "summary": brief.title,
@@ -78,6 +84,7 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
         "chapters": chapters,
         "graphics": [],   # 대본 태그는 plan.enforce_tags 에서 추가된다
         "emphasis": emphasis[:30],
+        "moments": moments[:40],
         "drop": [],
         "youtube": {
             "titles": [brief.title],
@@ -88,6 +95,9 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
             "pinned_comment": "여러분은 어떻게 생각하시나요?",
         },
         "music": {"mood": "솔로 피아노, 잔잔한 언더스코어, 80~90 BPM", "notes": "인트로와 챕터 전환에서만 음량을 올린다."},
+        "title": brief.title,
+        "bgm_mood": "minimal",
+        "shorts_bgm_mood": "upbeat",
     }
 
 

@@ -41,6 +41,26 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
   const baseStyle: React.CSSProperties = {fontFamily: FONT.sans, fontWeight: 800, fontSize: size, lineHeight: 1.16,
     letterSpacing: '-0.025em', whiteSpace: 'nowrap'};
 
+  if (preset === 'bar') {
+    // 셜록현준 숏폼 자막: 창 안 하단, 불투명 검정 박스 한 줄, 흰 SemiBold 약 48px, 강조어 노랑(#FFE14D)
+    const pIn = tween((t - cue.start) * fps, 0, 3, 'outQuint');
+    return (
+      <div style={{position: 'absolute', left: 0, width, top: y, display: 'flex', justifyContent: 'center',
+        opacity: Math.min(pIn, out)}}>
+        <div style={{background: 'rgba(0,0,0,0.92)', padding: '8px 18px 10px', borderRadius: 4,
+          fontFamily: FONT.sans, fontWeight: 600, fontSize: text.length > 16 ? 44 : 50, lineHeight: 1.2,
+          letterSpacing: '-0.015em', whiteSpace: 'nowrap', color: '#fff'}}>
+          {words.map((wd, k) => (
+            <React.Fragment key={k}>
+              {k > 0 ? ' ' : ''}
+              <span style={{color: emOf(wd) ? '#FFE14D' : '#fff'}}>{wd.text}</span>
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (preset === 'clean') {
     return (
       <div style={{position: 'absolute', left, width: w, top: y, display: 'flex', justifyContent: 'center',

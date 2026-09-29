@@ -14,7 +14,7 @@ from ..vision.face import remap_track
 
 
 LONG_PRESETS = ("editorial", "documentary", "glass", "boxed")
-SHORT_PRESETS = ("kinetic", "clean", "boxed")
+SHORT_PRESETS = ("kinetic", "clean", "boxed", "bar")
 
 
 def brand_props(b: Brand) -> dict[str, Any]:
@@ -264,6 +264,8 @@ def long_props(
         "camera": camera_shots(timemap, speech_total, chapter_starts),
         "punches": punches(emphasis, utts, timemap),
         "graphics": gdicts,
+        "transitions": [],
+        "callouts": [],
         "chapters": chapters,
         "panelSide": panel_side_from_face(face_src),
         "endcard": {"start": round(speech_total + 0.2, 3), "dur": end_dur - 0.2} if endcard else None,
@@ -344,8 +346,10 @@ def short_props(
         "sfx": sfx_events(gdicts, sfx, min_gap=10) if sfx else [],
         "captions": cues,
         "face": remap_track(face_src, timemap),
+        "camera": [],
         "punches": pun,
         "graphics": gdicts,
+        "transitions": [],
         "hookTitle": spec.get("hook_title") or episode.title,
         "hookHighlight": spec.get("hook_highlight", ""),
         "seriesLabel": series_label,
@@ -355,3 +359,34 @@ def short_props(
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],
     }
+
+
+# ---------------------------------------------------------------------------
+# 편집 문법 엔진 결과 반영
+# ---------------------------------------------------------------------------
+
+def apply_edit(props: dict[str, Any], ed: Any) -> dict[str, Any]:
+    """studio/edit/grammar.py 의 EditDecisions → props(카메라·펀치인·전환·강조 자막)."""
+    props["camera"] = ed.camera
+    props["punches"] = ed.punches
+    props["transitions"] = ed.transitions
+    if "callouts" in props or getattr(ed, "callouts", None):
+        props["callouts"] = list(getattr(ed, "callouts", []) or [])
+    for i in ed.impact_cues:
+        if 0 <= i < len(props["captions"]):
+            props["captions"][i]["style"] = "impact"
+    return props
+
+
+def strip_audio(props: dict[str, Any]) -> dict[str, Any]:
+    """음향은 FFmpeg 에서 따로 믹스·마스터링하므로 렌더 props 에서는 뺀다(무음 렌더)."""
+    props["voice"] = None
+    props["bgm"] = None
+    props["sfx"] = []
+    return props
+
+
+def text_graphic_spans(graphics: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    """화면에 글자 그래픽이 떠 있는 구간(LongForm.tsx textGraphicActive 와 같은 기준)."""
+    return [(g["start"], g["end"]) for g in graphics
+            if g["template"] not in ("lower_third", "broll", "photo", "title")]

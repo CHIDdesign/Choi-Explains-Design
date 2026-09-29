@@ -108,7 +108,7 @@ class MediaSlot(QFrame):
 
 
 class Section(QWidget):
-    """인스펙터의 접히는 섹션(프리미어 이펙트 컨트롤처럼)."""
+    """접히는 섹션(고급 설정 등)."""
 
     def __init__(self, title: str, *, expanded: bool = True):
         super().__init__()

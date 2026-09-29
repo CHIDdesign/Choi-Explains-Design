@@ -16,6 +16,8 @@ export const EASE = {
   inOutCubic: Easing.bezier(0.645, 0.045, 0.355, 1), // 화면 안 이동
   inCubic: Easing.bezier(0.32, 0, 0.67, 0), // 퇴장
   outBack: Easing.bezier(0.34, 1.56, 0.64, 1), // 아주 가끔: 숫자·아이콘 팝
+  inExpo: Easing.bezier(0.7, 0, 0.84, 0), // 전환: 나가는 장면이 컷으로 빨려 들어감
+  inQuart: Easing.bezier(0.5, 0, 0.75, 0),
   linear: Easing.linear,
 } as const;
 
@@ -32,6 +34,24 @@ export const DUR = {
 
 /** 퇴장은 진입의 75% */
 export const exitFrames = (enterFrames: number) => Math.max(3, Math.round(enterFrames * 0.75));
+
+/** 장면 전환 기본 길이(프레임, 30fps) — 컷을 가운데 두고 앞뒤 절반씩 */
+export const TRANSITION = {
+  whip: 10,
+  zoom: 10,
+  blur: 16,
+  push: 12,
+  flash: 9,
+  dip: 18,
+  wipe: 16,
+  leak: 24,
+} as const;
+
+/** 카메라: 펀치인 진입/복귀(ease 스타일) */
+export const CAMERA = {
+  punchIn: 5,
+  punchOut: 8,
+} as const;
 
 export const STAGGER = {
   char: 1, // ≈33ms (animate-skill 30ms)

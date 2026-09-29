@@ -1,41 +1,48 @@
-"""Choi Studio 메인 창 — 편집 툴 구조(프리미어 프로식 도킹 패널).
+"""Choi Studio — 세 가지만 넣으면 끝까지 만들어 주는 오토파일럿 창.
 
-┌ 헤더: ☰ 메뉴 · 로고 · 작업 공간(편집 / 검토 / 결과) · AI 연결 상태 · [편집 계획만] [▶ 전체 제작] ┐
-│ 스크립트(대본·메모·편집 지시) │        프로그램 모니터        │ 인스펙터(출력·자막·AI·오디오) │
-│ 프로젝트(시퀀스·미디어·최근)   ├────────── 타임라인 ──────────┤ AI 팀 · 콘솔 · 결과물         │
-└ 상태 표시줄: 단계 · 진행률 · 스톡 ──────────────────────────────────────────────────────┘
-패널은 끌어서 옮기거나 탭으로 합칠 수 있고, 배치는 저장된다(☰ → 보기 → 레이아웃 초기화).
+┌ 헤더: 로고 · 최근 작업 · AI 연결 상태 · ⚙ ─────────────────────────────────────────┐
+│ ① 주제          │ ② 원본 영상(끌어다 놓기·클릭·Ctrl+V) │ ③ 대본(붙여넣기·파일)          │
+│                          [ 영상 만들기 ▶ ]                                            │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+→ 진행 화면(단계 체크리스트 · AI 팀 작업 기록 · 색보정 전후) → 결과 화면(롱폼 1 · 숏폼 2 · 업로드 정보)
+
+편집 툴처럼 만질 것이 없다: 구성·컷·얼굴/그래픽 배분·색·자막·효과음·음악은 전부 자동.
 """
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QDockWidget, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-                               QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
+                               QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
+                               QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from .. import __version__
 from ..director.claude_code import auth_status, describe_auth, find_claude, open_login, resolve_backend
-from ..paths import ROOT, USER_DIR, ensure_user_dirs
-from ..pipeline import STAGES, JobSpec, Pipeline, new_job_dir
+from ..paths import USER_DIR, ensure_user_dirs
+from ..pipeline import EXTRAS, STAGES, JobSpec, Pipeline, new_job_dir
 from ..settings import Settings
-from ..util import CancelToken, Cancelled, read_json, write_json
+from ..text.docfile import TEXT_EXTS, read_text_file
+from ..util import CancelToken, Cancelled, fmt_ts, read_json, write_json
 from . import theme
-from .monitor import ProgramMonitor
-from .panels import (LONG_PRESETS, SHORT_PRESETS, ConsolePanel, ExportsPanel, InspectorPanel, ProjectPanel,
-                     ScriptPanel, TeamPanel)
+from .poster import make_poster
 from .settings_dialog import SettingsDialog
-from .timeline import TimelineData, TimelineView
+from .winshell import enable_elevated_drop, is_admin
 
-LAST_JOB = USER_DIR / "last_job.json"
-TEXT_FILTER = "텍스트 (*.txt *.md);;모든 파일 (*)"
-LAYOUT_VERSION = 2
+LAST_INPUTS = USER_DIR / "last_inputs.json"
+VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".avi", ".mts", ".m2ts", ".webm", ".mxf")
+VIDEO_FILTER = "영상 (" + " ".join("*" + e for e in VIDEO_EXTS) + ");;모든 파일 (*)"
+TEXT_FILTER = "대본 (*.txt *.md *.docx *.hwpx);;모든 파일 (*)"
 
+
+# ---------------------------------------------------------------------------
+# 백그라운드 작업
+# ---------------------------------------------------------------------------
 
 class Worker(QObject):
     log = Signal(str)
@@ -43,425 +50,565 @@ class Worker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, until: str, cancel: CancelToken):
+    def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, cancel: CancelToken, until: str = "all"):
         super().__init__()
-        self.spec, self.settings, self.job_dir, self.until, self.cancel = spec, settings, job_dir, until, cancel
+        self.spec, self.settings, self.job_dir, self.cancel, self.until = spec, settings, job_dir, cancel, until
 
     def run(self) -> None:
         try:
             p = Pipeline(self.spec, self.settings, self.job_dir, log=self.log.emit,
                          progress=lambda k, f, o: self.progress.emit(k, f, o), cancel=self.cancel)
-            res = p.run(until=self.until)
-            res["until"] = self.until
-            self.finished.emit(res)
+            self.finished.emit(p.run(until=self.until))
         except Cancelled:
-            self.failed.emit("사용자가 취소했습니다.")
+            self.failed.emit("취소했습니다.")
         except Exception as e:  # noqa: BLE001 - 모든 오류를 창에 표시
             self.failed.emit(f"{e}\n\n{traceback.format_exc()[-2500:]}")
 
 
-class _AIProbe(QObject):
-    """AI 연결 상태 확인(Claude Code 로그인 여부) — 창이 멈추지 않도록 별도 스레드."""
+class _Call(QObject):
+    """짧은 작업을 창을 멈추지 않고 실행(영상 정보·포스터·AI 연결 확인)."""
+    done = Signal(object)
 
-    done = Signal(str)
-
-    def __init__(self, settings: Settings):
+    def __init__(self, fn):
         super().__init__()
-        self.settings = settings
+        self.fn = fn
 
     def run(self) -> None:
-        backend, why = resolve_backend(self.settings)
-        if backend == "claude_code":
-            exe = find_claude(self.settings.claude_code_path)
-            self.done.emit(f"Claude Code · {describe_auth(auth_status(exe)) if exe else '없음'}")
-        elif backend == "api":
-            self.done.emit("Claude API 키 · 종량제")
-        else:
-            self.done.emit(f"AI 없음 · {why}")
+        try:
+            self.done.emit(self.fn())
+        except Exception as e:  # noqa: BLE001
+            self.done.emit(e)
 
+
+_BG: list[tuple[QThread, QObject]] = []
+
+
+def run_bg(parent: QObject, fn, on_done) -> None:
+    th = QThread()
+    call = _Call(fn)
+    call.moveToThread(th)
+    th.started.connect(call.run)
+    call.done.connect(on_done)
+    call.done.connect(th.quit)
+    _BG.append((th, call))  # 참조 유지(끝나면 정리)
+    th.finished.connect(lambda: _BG.remove((th, call)) if (th, call) in _BG else None)
+    th.start()
+
+
+def wait_bg(ms: int = 3000) -> None:
+    for th, _ in list(_BG):
+        th.quit()
+        th.wait(ms)
+
+
+def ai_status_text(settings: Settings) -> tuple[str, bool]:
+    backend, why = resolve_backend(settings)
+    if backend == "claude_code":
+        exe = find_claude(settings.claude_code_path)
+        st = auth_status(exe) if exe else {}
+        ok = bool(st.get("loggedIn"))
+        return (f"Claude Code · {describe_auth(st)}" if exe else "Claude Code 없음"), ok
+    if backend == "api":
+        return "Claude API 키 연결됨", True
+    return f"AI 없음 · {why}", False
+
+
+# ---------------------------------------------------------------------------
+# 위젯
+# ---------------------------------------------------------------------------
+
+def _label(text: str, name: str = "", wrap: bool = False) -> QLabel:
+    lab = QLabel(text)
+    if name:
+        lab.setObjectName(name)
+    lab.setWordWrap(wrap)
+    return lab
+
+
+class StepCard(QFrame):
+    """① ② ③ 입력 카드."""
+
+    def __init__(self, num: str, title: str, hint: str, body: QWidget, extra: Optional[QWidget] = None):
+        super().__init__()
+        self.setObjectName("stepCard")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(22, 20, 22, 20)
+        v.setSpacing(10)
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        badge = _label(num, "stepNum")
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedSize(30, 30)
+        head.addWidget(badge)
+        head.addWidget(_label(title, "stepTitle"))
+        head.addStretch(1)
+        if extra is not None:
+            head.addWidget(extra)
+        v.addLayout(head)
+        v.addWidget(_label(hint, "stepHint", wrap=True))
+        v.addWidget(body, 1)
+
+
+class VideoDrop(QFrame):
+    """원본 영상 칸: 클릭 → 찾아보기, 끌어다 놓기, 파일 복사 후 Ctrl+V."""
+    changed = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("videoDrop")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(260)
+        self.path = ""
+        self._pix: Optional[QPixmap] = None
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(8)
+        self.poster = QLabel()
+        self.poster.setAlignment(Qt.AlignCenter)
+        self.poster.setObjectName("poster")
+        self.poster.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self.empty = _label("＋\n\n여기를 눌러 영상 선택\n또는 탐색기에서 끌어다 놓기", "dropEmpty")
+        self.empty.setAlignment(Qt.AlignCenter)
+        self.name = _label("", "dropName")
+        self.name.setAlignment(Qt.AlignCenter)
+        self.meta = _label("", "dropMeta")
+        self.meta.setAlignment(Qt.AlignCenter)
+        v.addWidget(self.empty, 1)
+        v.addWidget(self.poster, 1)
+        v.addWidget(self.name)
+        v.addWidget(self.meta)
+        self.poster.hide()
+        if not is_admin():
+            self.setAcceptDrops(True)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        if e.button() == Qt.LeftButton:
+            p, _ = QFileDialog.getOpenFileName(self, "원본 영상 선택", str(Path(self.path).parent) if self.path else "",
+                                               VIDEO_FILTER)
+            if p:
+                self.set_path(p)
+
+    def dragEnterEvent(self, e):  # noqa: N802
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):  # noqa: N802
+        for u in e.mimeData().urls():
+            if u.isLocalFile():
+                self.set_path(u.toLocalFile())
+                break
+
+    def set_path(self, p: str) -> None:
+        self.path = p
+        self.empty.setVisible(not p)
+        self.poster.setVisible(bool(p))
+        self.name.setText(Path(p).name if p else "")
+        self.meta.setText("영상 정보를 읽는 중…" if p else "")
+        self._pix = None
+        self.poster.clear()
+        self.changed.emit(p)
+
+    def set_info(self, text: str, poster: Optional[Path]) -> None:
+        self.meta.setText(text)
+        if poster and Path(poster).exists():
+            self._pix = QPixmap(str(poster))
+            self._fit()
+
+    def _fit(self) -> None:
+        if self._pix and not self._pix.isNull():
+            self.poster.setPixmap(self._pix.scaled(self.poster.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, e):  # noqa: N802
+        super().resizeEvent(e)
+        self._fit()
+
+
+class ResultCard(QFrame):
+    def __init__(self, title: str, path: str, vertical: bool):
+        super().__init__()
+        self.setObjectName("resultCard")
+        self.path = path
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 14, 14, 14)
+        v.setSpacing(8)
+        self.poster = QLabel()
+        self.poster.setAlignment(Qt.AlignCenter)
+        self.poster.setObjectName("poster")
+        self.poster.setFixedSize(QSize(170, 302) if vertical else QSize(420, 236))
+        v.addWidget(self.poster, 0, Qt.AlignHCenter)
+        v.addWidget(_label(title, "resultTitle"))
+        self.meta = _label(Path(path).name if path else "만들지 못했습니다", "stepHint", wrap=True)
+        v.addWidget(self.meta)
+        row = QHBoxLayout()
+        play = QPushButton("▶ 재생")
+        play.setObjectName("primarySmall")
+        play.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.path)))
+        show = QPushButton("폴더에서 보기")
+        show.clicked.connect(lambda: reveal(self.path))
+        for b in (play, show):
+            b.setEnabled(bool(path) and Path(path).exists())
+            row.addWidget(b)
+        v.addLayout(row)
+        v.addStretch(1)
+        if path and Path(path).exists():
+            run_bg(self, lambda: make_poster(path), self._on_poster)
+
+    def _on_poster(self, p) -> None:
+        if isinstance(p, Path) and p.exists():
+            pix = QPixmap(str(p))
+            self.poster.setPixmap(pix.scaled(self.poster.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                                  .copy(0, 0, self.poster.width(), self.poster.height()))
+
+
+def reveal(path: str) -> None:
+    p = Path(path)
+    if sys.platform == "win32" and p.exists():
+        import subprocess
+        subprocess.Popen(["explorer", "/select,", str(p)])
+    else:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(p.parent if p.is_file() else p)))
+
+
+# ---------------------------------------------------------------------------
+# 메인 창
+# ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = Settings.load()
-        self.accent = self.settings.brand.accent
         self.setWindowTitle(f"Choi Studio {__version__}")
-        self.resize(1600, 960)
+        try:
+            from .icon import qicon
+            self.setWindowIcon(qicon())
+        except Exception:  # noqa: BLE001
+            pass
+        self.resize(1320, 820)
         self.job_dir: Optional[Path] = None
         self.cancel: Optional[CancelToken] = None
         self.thread: Optional[QThread] = None
+        self.t_start = 0.0
+        self.video_seconds = 0.0
         self._build()
-        self._restore()
-        QTimer.singleShot(200, self._probe_ai)
+        self._restore_inputs()
+        QTimer.singleShot(150, self._probe_ai)
+        QTimer.singleShot(400, lambda: enable_elevated_drop(self, self._on_files))
 
     # ------------------------------------------------------------------
-    def _dock(self, title: str, name: str, widget: QWidget, area) -> QDockWidget:
-        d = QDockWidget(title, self)
-        d.setObjectName(name)
-        d.setWidget(widget)
-        d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.addDockWidget(area, d)
-        return d
-
     def _build(self) -> None:
-        self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks | QMainWindow.AllowNestedDocks)
-        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
-
-        # 가운데: 프로그램 모니터
-        self.monitor = ProgramMonitor()
-        central = QWidget()
-        central.setObjectName("root")
-        cv = QVBoxLayout(central)
-        cv.setContentsMargins(0, 0, 0, 0)
-        cv.setSpacing(0)
-        cap = QLabel("  프로그램 모니터")
-        cap.setStyleSheet(f"background:{theme.BG2}; color:{theme.TEXT2}; font-weight:600; padding:7px 4px;"
-                          f"border-bottom:1px solid {theme.LINE};")
-        cv.addWidget(cap)
-        cv.addWidget(self.monitor, 1)
-        self.setCentralWidget(central)
-        self.setMenuWidget(self._header())
-
-        # 패널
-        self.project = ProjectPanel()
-        self.script = ScriptPanel()
-        self.inspector = InspectorPanel()
-        self.team = TeamPanel()
-        self.console = ConsolePanel()
-        self.exports = ExportsPanel()
-        self.timeline = TimelineView(self.accent)
-        self.d_script = self._dock("스크립트", "dock_script", self.script, Qt.LeftDockWidgetArea)
-        self.d_project = self._dock("프로젝트", "dock_project", self.project, Qt.LeftDockWidgetArea)
-        self.d_inspector = self._dock("인스펙터", "dock_inspector", self.inspector, Qt.RightDockWidgetArea)
-        self.d_team = self._dock("AI 팀", "dock_team", self.team, Qt.RightDockWidgetArea)
-        self.d_console = self._dock("콘솔", "dock_console", self.console, Qt.RightDockWidgetArea)
-        self.d_exports = self._dock("결과물", "dock_exports", self.exports, Qt.RightDockWidgetArea)
-        self.d_timeline = self._dock("타임라인", "dock_timeline", self.timeline, Qt.BottomDockWidgetArea)
-        self.splitDockWidget(self.d_script, self.d_project, Qt.Vertical)
-        self.splitDockWidget(self.d_inspector, self.d_team, Qt.Vertical)
-        self.tabifyDockWidget(self.d_team, self.d_console)
-        self.tabifyDockWidget(self.d_console, self.d_exports)
-        self.d_team.raise_()
-        self.resizeDocks([self.d_script, self.d_inspector], [380, 360], Qt.Horizontal)
-        self.resizeDocks([self.d_script, self.d_project], [360, 440], Qt.Vertical)
-        self.resizeDocks([self.d_inspector, self.d_team], [470, 330], Qt.Vertical)
-        self.resizeDocks([self.d_timeline], [300], Qt.Vertical)
-        self._default_state = self.saveState(LAYOUT_VERSION)
-
-        # 연결
-        self.project.open_job.connect(self._load_job_dir)
-        self.project.video.changed.connect(lambda _p: self._refresh_sources())
-        self.script.load_script.connect(self._load_script)
-        self.script.open_guide.connect(lambda: self._open_path(ROOT / "docs" / "대본_태그_가이드.md"))
-        self.inspector.open_settings.connect(self._open_settings)
-        self.monitor.position.connect(self._on_monitor_pos)
-        self.timeline.seek.connect(self._on_timeline_seek)
-        self.exports.play.connect(lambda p: self.monitor.set_sources(self._sources(), prefer=p))
-        self.exports.open_file.connect(lambda p: self._open_path(Path(p)))
-        self.exports.open_folder.connect(self._open_output)
-
-        self._menus()
-        self._statusbar()
-        QShortcut(QKeySequence(Qt.Key_Space), self, activated=self._space)
+        root = QWidget()
+        root.setObjectName("root")
+        self.setCentralWidget(root)
+        v = QVBoxLayout(root)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self._header())
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._input_page())
+        self.pages.addWidget(self._progress_page())
+        self.pages.addWidget(self._result_page())
+        v.addWidget(self.pages, 1)
+        QShortcut(QKeySequence.Paste, self, activated=self._paste)
 
     def _header(self) -> QWidget:
         w = QWidget()
         w.setObjectName("header")
         h = QHBoxLayout(w)
-        h.setContentsMargins(8, 6, 12, 6)
-        h.setSpacing(6)
-        self.menu_btn = QToolButton()
-        self.menu_btn.setText("☰")
-        self.menu_btn.setToolTip("메뉴 — 파일 · 제작 · 보기 · 도구 · 도움말")
-        self.menu_btn.setPopupMode(QToolButton.InstantPopup)
-        self.menu_btn.setStyleSheet("font-size:16px; padding:3px 9px;")
-        h.addWidget(self.menu_btn)
-        dot = QLabel("●")
-        dot.setObjectName("brandDot")
-        brand = QLabel("CHOI STUDIO")
-        brand.setObjectName("brand")
+        h.setContentsMargins(22, 12, 18, 12)
+        h.setSpacing(12)
+        dot = _label("●", "brandDot")
         h.addWidget(dot)
-        h.addWidget(brand)
-        h.addSpacing(18)
-        self.ws_group = QButtonGroup(self)
-        for i, (name, tip) in enumerate([("편집", "대본·미디어·옵션을 넣고 제작"),
-                                         ("검토", "모니터와 타임라인을 크게 — AI 편집 결과 확인"),
-                                         ("결과", "결과물 · AI 팀 · 콘솔")]):
-            b = QPushButton(name)
-            b.setObjectName("workspace")
-            b.setCheckable(True)
-            b.setToolTip(tip)
-            b.setChecked(i == 0)
-            self.ws_group.addButton(b, i)
-            h.addWidget(b)
-        self.ws_group.idClicked.connect(self._workspace)
+        h.addWidget(_label("CHOI STUDIO", "brand"))
+        h.addWidget(_label("디자인 이론 영상 오토파일럿", "brandSub"))
         h.addStretch(1)
-        self.ai_chip = QLabel("AI 연결 확인 중…")
+        self.recent_btn = QToolButton()
+        self.recent_btn.setText("최근 작업 ▾")
+        self.recent_btn.setPopupMode(QToolButton.InstantPopup)
+        self.recent_menu = QMenu(self)
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
+        self.recent_btn.setMenu(self.recent_menu)
+        h.addWidget(self.recent_btn)
+        self.ai_chip = QPushButton("AI 연결 확인 중…")
         self.ai_chip.setObjectName("chip")
-        self.ai_chip.setToolTip("AI 연결 — ☰ → 도구 → 환경 설정에서 바꿉니다")
+        self.ai_chip.clicked.connect(self._on_chip)
         h.addWidget(self.ai_chip)
-        h.addSpacing(10)
-        self.b_plan = QPushButton("편집 계획만")
-        self.b_plan.setToolTip("음성 인식·정렬·AI 편집 계획까지만 하고 멈춥니다. 타임라인에서 검토한 뒤 전체 제작\n"
-                               "(Ctrl+Shift+Enter)")
-        self.b_plan.clicked.connect(lambda: self._start("plan"))
-        self.b_run = QPushButton("▶  전체 제작")
-        self.b_run.setObjectName("primary")
-        self.b_run.setToolTip("롱폼 · 숏폼 · 썸네일 · 자막 · 프리미어 XML 까지 끝까지 자동 제작 (Ctrl+Enter)")
-        self.b_run.clicked.connect(lambda: self._start("all"))
-        self.b_cancel = QPushButton("취소")
-        self.b_cancel.setEnabled(False)
-        self.b_cancel.clicked.connect(self._cancel)
-        for b in (self.b_plan, self.b_run, self.b_cancel):
-            h.addWidget(b)
+        gear = QToolButton()
+        gear.setText("⚙")
+        gear.setToolTip("고급 설정(AI 연결 · 스톡 키 · 브랜드 · 경로) — 보통은 만질 필요 없습니다")
+        gear.clicked.connect(self._open_settings)
+        h.addWidget(gear)
         return w
 
-    def _menus(self) -> None:
-        menu = QMenu(self)
-        m_file = menu.addMenu("파일")
-        self._act(m_file, "작업 폴더 열기…", self._open_job, "Ctrl+O")
-        self._act(m_file, "대본 파일 불러오기…", self._load_script)
-        m_file.addSeparator()
-        self._act(m_file, "결과 폴더 열기", self._open_output)
-        self._act(m_file, "편집 계획 열기(plan.json)", self._open_plan)
-        m_file.addSeparator()
-        self._act(m_file, "종료", self.close, "Ctrl+Q")
-        m_run = menu.addMenu("제작")
-        self._act(m_run, "편집 계획만", lambda: self._start("plan"), "Ctrl+Shift+Return")
-        self._act(m_run, "전체 제작", lambda: self._start("all"), "Ctrl+Return")
-        self._act(m_run, "취소", self._cancel)
-        m_run.addSeparator()
-        self._act(m_run, "Remotion Studio 에서 미리보기", self._preview)
-        m_view = menu.addMenu("보기")
-        for d in (self.d_script, self.d_project, self.d_inspector, self.d_timeline, self.d_team, self.d_console,
-                  self.d_exports):
-            m_view.addAction(d.toggleViewAction())
-        m_view.addSeparator()
-        self._act(m_view, "레이아웃 초기화", lambda: self.restoreState(self._default_state, LAYOUT_VERSION))
-        m_tools = menu.addMenu("도구")
-        self._act(m_tools, "환경 설정…", self._open_settings, "Ctrl+,")
-        self._act(m_tools, "Claude 로그인(구독 계정)", self._claude_login)
-        m_help = menu.addMenu("도움말")
-        self._act(m_help, "사용 설명서", lambda: self._open_path(ROOT / "README.md"))
-        self._act(m_help, "대본 태그 가이드", lambda: self._open_path(ROOT / "docs" / "대본_태그_가이드.md"))
-        self._act(m_help, "AI 스튜디오 설명", lambda: self._open_path(ROOT / "docs" / "AI_스튜디오.md"))
-        self._act(m_help, "스톡 API 가이드", lambda: self._open_path(ROOT / "docs" / "스톡_API_가이드.md"))
-        m_help.addSeparator()
-        self._act(m_help, "Choi Studio 정보", lambda: QMessageBox.about(
-            self, "Choi Studio", f"<b>Choi Studio {__version__}</b><br>디자인 이론 교육 영상 자동 편집기<br><br>"
-                                 "faster-whisper · Claude · Remotion · FFmpeg"))
-        self.menu_btn.setMenu(menu)
+    # ---------------- 입력 ----------------
+    def _input_page(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setSpacing(18)
+        outer.addWidget(_label("새 영상 만들기", "pageTitle"))
+        outer.addWidget(_label("세 가지만 넣으면 기획 · 컷 편집 · 색보정 · 모션그래픽 · 자막 · 효과음 · 음악 · 렌더링까지 끝내서 "
+                               "롱폼 1편과 숏폼 2편을 드립니다.", "pageSub", wrap=True))
+        grid = QHBoxLayout()
+        grid.setSpacing(16)
+        self.topic = QPlainTextEdit()
+        self.topic.setPlaceholderText("무엇을, 누구에게, 왜 이야기하는지 편하게 적어 주세요.\n\n"
+                                      "예) 게슈탈트 원리 — 왜 우리는 점 세 개를 삼각형으로 볼까. 디자인 입문자 대상, "
+                                      "일상 사물 예시 위주. 꼭 보여 주고 싶은 장면: 신호등, 애플 로고.")
+        self.video = VideoDrop()
+        self.video.changed.connect(self._on_video)
+        self.script = QPlainTextEdit()
+        self.script.setPlaceholderText("녹화할 때 읽은 대본을 그대로 붙여 넣으세요.\n\n"
+                                       "대본과 다르게 말한 부분·같은 문장을 여러 번 말한 부분은 알아서 정리하고, "
+                                       "가장 또렷하게 말한 테이크를 씁니다.")
+        load = QPushButton("파일 불러오기")
+        load.setObjectName("ghost")
+        load.clicked.connect(self._load_script)
+        for w in (self.topic, self.script):
+            w.textChanged.connect(self._update_ready)
+        grid.addWidget(StepCard("1", "주제", "이 영상이 무엇에 관한 것인지", self.topic), 3)
+        grid.addWidget(StepCard("2", "원본 영상", "대본을 말하는 모습을 찍은 긴 원본 그대로(여러 번 다시 말한 것 포함)",
+                                self.video), 4)
+        grid.addWidget(StepCard("3", "대본", "읽은 대본 전체", self.script, load), 3)
+        outer.addLayout(grid, 1)
+        bar = QHBoxLayout()
+        self.summary = _label("", "stepHint", wrap=True)
+        bar.addWidget(self.summary, 1)
+        self.go = QPushButton("영상 만들기  ▶")
+        self.go.setObjectName("hero")
+        self.go.setCursor(Qt.PointingHandCursor)
+        self.go.clicked.connect(self._start)
+        bar.addWidget(self.go)
+        outer.addLayout(bar)
+        return page
 
-    def _act(self, menu, text: str, slot, shortcut: str = "") -> QAction:
-        a = QAction(text, self)
-        if shortcut:
-            a.setShortcut(QKeySequence(shortcut))
-            a.setShortcutContext(Qt.ApplicationShortcut)
-            self.addAction(a)
-        a.triggered.connect(slot)
-        menu.addAction(a)
-        return a
-
-    def _statusbar(self) -> None:
-        sb = self.statusBar()
-        self.stage_label = QLabel("  준비")
+    # ---------------- 진행 ----------------
+    def _progress_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(28, 24, 28, 24)
+        v.setSpacing(14)
+        top = QHBoxLayout()
+        box = QVBoxLayout()
+        self.p_title = _label("만드는 중…", "pageTitle")
+        self.p_sub = _label("", "pageSub")
+        box.addWidget(self.p_title)
+        box.addWidget(self.p_sub)
+        top.addLayout(box, 1)
+        self.p_pct = _label("0%", "bigPct")
+        top.addWidget(self.p_pct)
+        v.addLayout(top)
         self.bar = QProgressBar()
+        self.bar.setObjectName("thick")
         self.bar.setRange(0, 1000)
-        self.bar.setFixedWidth(260)
-        self.stock_chip = QLabel("")
-        self.stock_chip.setObjectName("hint")
-        sb.addWidget(self.stage_label, 1)
-        sb.addPermanentWidget(self.stock_chip)
-        sb.addPermanentWidget(self.bar)
-        self._refresh_chips()
+        v.addWidget(self.bar)
+        body = QHBoxLayout()
+        body.setSpacing(16)
+        stages = QFrame()
+        stages.setObjectName("panel")
+        sv = QVBoxLayout(stages)
+        sv.setContentsMargins(18, 16, 18, 16)
+        sv.setSpacing(7)
+        sv.addWidget(_label("진행 단계", "panelTitle"))
+        self.stage_rows: dict[str, QLabel] = {}
+        for key, label, _ in STAGES:
+            lab = _label(f"○  {label}", "stageTodo")
+            self.stage_rows[key] = lab
+            sv.addWidget(lab)
+        sv.addStretch(1)
+        body.addWidget(stages, 2)
+        right = QVBoxLayout()
+        logbox = QFrame()
+        logbox.setObjectName("panel")
+        lv = QVBoxLayout(logbox)
+        lv.setContentsMargins(18, 16, 18, 16)
+        lv.addWidget(_label("AI 팀 작업 기록", "panelTitle"))
+        self.logview = QPlainTextEdit()
+        self.logview.setReadOnly(True)
+        self.logview.setObjectName("log")
+        self.logview.setMaximumBlockCount(4000)
+        lv.addWidget(self.logview, 1)
+        right.addWidget(logbox, 3)
+        self.peek = QLabel()
+        self.peek.setObjectName("poster")
+        self.peek.setAlignment(Qt.AlignCenter)
+        self.peek.setMinimumHeight(0)
+        self.peek.hide()
+        right.addWidget(self.peek, 2)
+        body.addLayout(right, 3)
+        v.addLayout(body, 1)
+        row = QHBoxLayout()
+        row.addWidget(_label("창을 닫지 마세요. 절전 모드도 잠시 꺼 두면 좋습니다. 끝나면 결과 화면이 열립니다.",
+                             "stepHint"), 1)
+        self.cancel_btn = QPushButton("취소")
+        self.cancel_btn.clicked.connect(self._cancel)
+        row.addWidget(self.cancel_btn)
+        v.addLayout(row)
+        self.tick = QTimer(self)
+        self.tick.timeout.connect(self._tick)
+        return page
 
-    def _refresh_chips(self) -> None:
-        s = self.settings
-        names = [n for n, k in (("Pixabay", s.pixabay_api_key), ("Unsplash", s.unsplash_access_key),
-                                ("Coverr", s.coverr_api_key), ("Pexels", s.pexels_api_key)) if k]
-        self.stock_chip.setText("스톡  " + (" · ".join(names) if names else "키 없음") + "   ")
+    # ---------------- 결과 ----------------
+    def _result_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(28, 24, 28, 24)
+        v.setSpacing(14)
+        self.r_title = _label("완성!", "pageTitle")
+        self.r_sub = _label("", "pageSub", wrap=True)
+        v.addWidget(self.r_title)
+        v.addWidget(self.r_sub)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        self.r_body = QWidget()
+        self.r_body.setObjectName("root")
+        scroll.viewport().setObjectName("root")
+        self.r_grid = QGridLayout(self.r_body)
+        self.r_grid.setSpacing(16)
+        scroll.setWidget(self.r_body)
+        v.addWidget(scroll, 1)
+        row = QHBoxLayout()
+        self.r_upload = QPushButton("업로드 정보(제목·설명·태그) 열기")
+        self.r_upload.clicked.connect(lambda: self._open(self.results.get("upload_info", "")))
+        self.r_folder = QPushButton("결과 폴더 열기")
+        self.r_folder.clicked.connect(lambda: self._open(self.results.get("output", "")))
+        again = QPushButton("새 영상 만들기")
+        again.setObjectName("hero")
+        again.clicked.connect(self._new)
+        row.addWidget(self.r_upload)
+        row.addWidget(self.r_folder)
+        row.addStretch(1)
+        row.addWidget(again)
+        v.addLayout(row)
+        self.results: dict = {}
+        return page
 
     # ------------------------------------------------------------------
-    def _workspace(self, i: int) -> None:
-        self.restoreState(self._default_state, LAYOUT_VERSION)
-        if i == 1:     # 검토: 모니터·타임라인
-            for d in (self.d_script, self.d_project, self.d_inspector):
-                d.hide()
-            self.resizeDocks([self.d_timeline], [340], Qt.Vertical)
-        elif i == 2:   # 결과: 결과물·AI 팀·콘솔
-            self.d_script.hide()
-            self.d_exports.raise_()
-            self.resizeDocks([self.d_inspector], [480], Qt.Horizontal)
-
-    def _probe_ai(self) -> None:
-        self._probe_thread = QThread(self)
-        self._probe_worker = _AIProbe(self.settings)
-        self._probe_worker.moveToThread(self._probe_thread)
-        self._probe_thread.started.connect(self._probe_worker.run)
-        self._probe_worker.done.connect(self._on_ai_probe)
-        self._probe_worker.done.connect(self._probe_thread.quit)
-        self._probe_thread.start()
-
-    def _on_ai_probe(self, text: str) -> None:
-        ok = ("로그인됨" in text and "API 키(종량제" not in text) or text.startswith("Claude API")
-        self.ai_chip.setText(("●  " if ok else "○  ") + text)
-        self.ai_chip.setStyleSheet(f"color:{'#4CAF7A' if ok else '#E0A030'};")
-        self.inspector.ai_status.setText(text)
-        if not ok:
-            self.console.log("ℹ AI 연결: " + text + " — ☰ → 도구 → Claude 로그인(구독 계정), 또는 환경 설정")
-
+    # 입력 처리
     # ------------------------------------------------------------------
+    def _on_files(self, paths: list[str]) -> None:
+        """탐색기에서 끌어다 놓거나 붙여넣은 파일: 영상이면 ②, 글이면 ③(또는 비어 있으면 ①)."""
+        for p in paths:
+            ext = Path(p).suffix.lower()
+            if ext in VIDEO_EXTS:
+                self.video.set_path(p)
+            elif ext in TEXT_EXTS:
+                self._set_script_file(p)
+
+    def _paste(self) -> None:
+        md = QApplication.clipboard().mimeData()
+        files = [u.toLocalFile() for u in md.urls() if u.isLocalFile()] if md and md.hasUrls() else []
+        if files and self.pages.currentIndex() == 0:
+            self._on_files(files)
+            return
+        fw = QApplication.focusWidget()
+        if isinstance(fw, QPlainTextEdit):
+            fw.paste()
+
+    def _load_script(self) -> None:
+        p, _ = QFileDialog.getOpenFileName(self, "대본 파일", "", TEXT_FILTER)
+        if p:
+            self._set_script_file(p)
+
+    def _set_script_file(self, p: str) -> None:
+        try:
+            text = read_text_file(p)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "대본", f"파일을 읽지 못했습니다: {e}")
+            return
+        self.script.setPlainText(text)
+
+    def _on_video(self, p: str) -> None:
+        self._update_ready()
+        if not p:
+            return
+
+        def info():
+            from ..media.ffmpeg import FFmpeg
+            ff = FFmpeg(self.settings.ffmpeg_path, self.settings.ffprobe_path)
+            mi = ff.probe(p)
+            return mi, make_poster(p)
+
+        run_bg(self, info, self._on_video_info)
+
+    def _on_video_info(self, res) -> None:
+        if isinstance(res, Exception):
+            self.video.set_info(f"영상 정보를 읽지 못했습니다: {res}", None)
+            return
+        mi, poster = res
+        w, h = mi.display_size
+        self.video_seconds = mi.duration
+        extra = "" if mi.has_audio else "  ·  ⚠ 소리 없음"
+        self.video.set_info(f"{fmt_ts(mi.duration)}  ·  {w}×{h}  ·  {mi.fps:.0f}fps{extra}", poster)
+        self._update_ready()
+
+    def _update_ready(self) -> None:
+        has_video = bool(self.video.path) and Path(self.video.path).exists()
+        has_text = bool(self.script.toPlainText().strip() or self.topic.toPlainText().strip())
+        self.go.setEnabled(has_video and has_text and self.thread is None)
+        need = []
+        if not self.topic.toPlainText().strip():
+            need.append("① 주제")
+        if not has_video:
+            need.append("② 원본 영상")
+        if not self.script.toPlainText().strip():
+            need.append("③ 대본")
+        if need:
+            self.summary.setText("남은 입력: " + " · ".join(need)
+                                 + ("  (대본이 없어도 만들 수는 있지만 결과가 훨씬 좋아집니다)" if "③ 대본" in need and has_video else ""))
+        else:
+            mins = self.video_seconds / 60
+            est = f"약 {max(5, int(8 + mins * 1.4))}분" if mins else "영상 길이에 따라 다름"
+            self.summary.setText(f"결과: 롱폼 1편 · 숏폼 2편 · 썸네일 3장 · 자막 · 업로드 정보   |   예상 {est}")
+
     def _spec(self) -> JobSpec:
-        pj, ins, sc = self.project, self.inspector, self.script
-        heights = [1080, 1440, 2160]
-        paces = ["calm", "normal", "fast"]
-        return JobSpec(
-            video=pj.video.text().strip(), title=pj.title.text().strip(), audio=pj.audio.text().strip(),
-            episode=pj.episode.text().strip(), subtitle=pj.subtitle.text().strip(), series=pj.series.text().strip(),
-            notes=sc.notes.toPlainText(), script=sc.script.toPlainText(), images_dir=pj.images.text().strip(),
-            bgm=pj.bgm.text().strip(), lut=pj.lut.text().strip(),
-            make_long=ins.make_long.isChecked(), shorts_count=ins.shorts.value(), short_max_sec=ins.short_len.value(),
-            out_height=heights[ins.height_box.currentIndex()], pace=paces[ins.pace.currentIndex()],
-            use_claude=ins.use_claude.isChecked(), fetch_broll=ins.fetch_broll.isChecked(), grain=ins.grain.isChecked(),
-            caption_preset=LONG_PRESETS[ins.caption_style.currentIndex()],
-            short_caption_preset=SHORT_PRESETS[ins.short_caption.currentIndex()],
-            studio_mode=ins.studio_mode.isChecked(), fetch_stock=ins.fetch_stock.isChecked(),
-            motion_scenes=ins.motion_scenes.isChecked(), qa_rounds=ins.qa_rounds.value(),
-            direction=sc.direction.toPlainText().strip(), thumbnails=ins.thumbs.isChecked(), sfx=ins.sfx.isChecked(),
-            enhance_voice=ins.enhance.isChecked(), shorts_layout=["full", "framed"][ins.shorts_layout.currentIndex()],
-            progress_bar=ins.progress_bar.isChecked(), endcard=ins.endcard.isChecked(),
-            reuse_plan=ins.reuse.isChecked(), export_xml=ins.xml.isChecked())
+        return JobSpec(video=self.video.path, topic=self.topic.toPlainText().strip(),
+                       script=self.script.toPlainText())
 
-    def _apply_spec(self, s: JobSpec) -> None:
-        pj, ins, sc = self.project, self.inspector, self.script
-        pj.video.setText(s.video)
-        pj.audio.setText(s.audio)
-        pj.title.setText(s.title)
-        pj.episode.setText(s.episode)
-        pj.subtitle.setText(s.subtitle)
-        pj.series.setText(s.series)
-        pj.images.setText(s.images_dir)
-        pj.bgm.setText(s.bgm)
-        pj.lut.setText(s.lut)
-        sc.notes.setPlainText(s.notes)
-        sc.script.setPlainText(s.script)
-        sc.direction.setPlainText(s.direction)
-        ins.make_long.setChecked(s.make_long)
-        ins.shorts.setValue(s.shorts_count)
-        ins.short_len.setValue(max(25, min(60, s.short_max_sec)))
-        ins.height_box.setCurrentIndex({1080: 0, 1440: 1, 2160: 2}.get(s.out_height, 0))
-        ins.pace.setCurrentIndex({"calm": 0, "normal": 1, "fast": 2}.get(s.pace, 0))
-        ins.use_claude.setChecked(s.use_claude)
-        ins.fetch_broll.setChecked(s.fetch_broll)
-        ins.grain.setChecked(s.grain)
-        ins.caption_style.setCurrentIndex(LONG_PRESETS.index(s.caption_preset)
-                                          if s.caption_preset in LONG_PRESETS else 0)
-        ins.short_caption.setCurrentIndex(SHORT_PRESETS.index(s.short_caption_preset)
-                                          if s.short_caption_preset in SHORT_PRESETS else 0)
-        ins.studio_mode.setChecked(s.studio_mode)
-        ins.fetch_stock.setChecked(s.fetch_stock)
-        ins.motion_scenes.setChecked(s.motion_scenes)
-        ins.qa_rounds.setValue(max(0, min(3, s.qa_rounds)))
-        ins.thumbs.setChecked(s.thumbnails)
-        ins.sfx.setChecked(s.sfx)
-        ins.enhance.setChecked(s.enhance_voice)
-        ins.shorts_layout.setCurrentIndex(0 if s.shorts_layout == "full" else 1)
-        ins.progress_bar.setChecked(s.progress_bar)
-        ins.endcard.setChecked(s.endcard)
-        ins.reuse.setChecked(s.reuse_plan)
-        ins.xml.setChecked(s.export_xml)
-
-    def _restore(self) -> None:
-        st = QSettings(str(USER_DIR / "ui.ini"), QSettings.IniFormat)
-        geo, state = st.value("geometry"), st.value("state")
-        if geo is not None:
-            self.restoreGeometry(geo)
-        if state is not None:
-            self.restoreState(state, LAYOUT_VERSION)
-        d = read_json(LAST_JOB, None)
-        if d and d.get("spec"):
-            try:
-                self._apply_spec(JobSpec.from_dict(d["spec"]))
-                jd = d.get("job_dir")
-                if jd and Path(jd).exists():
-                    self._set_job(Path(jd))
-            except (TypeError, KeyError):
-                pass
-        self.project.refresh_recent(self.settings.projects_dir)
-        s = self.settings
-        if not any([s.pixabay_api_key, s.unsplash_access_key, s.coverr_api_key, s.pexels_api_key]):
-            self.console.log("ℹ 환경 설정 → 스톡 탭에 Pixabay API 키(무료)를 넣으면 🎞 스톡 영상·사진을 자동으로 찾아 넣습니다.")
-        self._refresh_sources()
-
-    def closeEvent(self, e):  # noqa: N802
+    def _save_inputs(self) -> None:
         ensure_user_dirs()
-        st = QSettings(str(USER_DIR / "ui.ini"), QSettings.IniFormat)
-        st.setValue("geometry", self.saveGeometry())
-        st.setValue("state", self.saveState(LAYOUT_VERSION))
-        super().closeEvent(e)
+        write_json(LAST_INPUTS, {"topic": self.topic.toPlainText(), "script": self.script.toPlainText(),
+                                 "video": self.video.path})
+
+    def _restore_inputs(self) -> None:
+        d = read_json(LAST_INPUTS, {})
+        if d:
+            self.topic.setPlainText(d.get("topic", ""))
+            self.script.setPlainText(d.get("script", ""))
+            if d.get("video") and Path(d["video"]).exists():
+                self.video.set_path(d["video"])
+        self._update_ready()
 
     # ------------------------------------------------------------------
-    def _set_job(self, job_dir: Optional[Path]) -> None:
-        self.job_dir = job_dir
-        self.timeline.set_data(TimelineData.load(job_dir))
-        self.exports.refresh(job_dir)
-        self._refresh_sources()
-        self.setWindowTitle(f"Choi Studio {__version__} — {job_dir.name if job_dir else '새 작업'}")
-
-    def _sources(self) -> list[tuple[str, str, bool]]:
-        items: list[tuple[str, str, bool]] = []
-        if self.job_dir and (self.job_dir / "output").exists():
-            for f in sorted((self.job_dir / "output").glob("*.mp4")):
-                long = "롱폼" in f.name
-                items.append((("롱폼 결과 · " if long else "숏폼 · ") + f.name, str(f), long))
-        v = self.project.video.text().strip()
-        if v:
-            items.append(("원본 · " + Path(v).name, v, False))
-        return items
-
-    def _refresh_sources(self) -> None:
-        self.monitor.set_sources(self._sources())
-
-    def _on_monitor_pos(self, t: float, edit_time: bool) -> None:
-        if edit_time:
-            self.timeline.set_playhead(t)
-
-    def _on_timeline_seek(self, t: float) -> None:
-        if self.monitor.current_is_edit():
-            self.monitor.seek(t)
-
-    def _space(self) -> None:
-        if isinstance(QApplication.focusWidget(), (QLineEdit, QPlainTextEdit)):
-            return
-        self.monitor.toggle()
-
+    # 실행
     # ------------------------------------------------------------------
-    def _start(self, until: str) -> None:
-        if self.thread is not None and self.thread.isRunning():
+    def _start(self, job_dir: Optional[Path] = None, spec: Optional[JobSpec] = None) -> None:
+        if self.thread is not None:
             return
-        spec = self._spec()
+        spec = spec or self._spec()
         if not spec.video or not Path(spec.video).exists():
-            QMessageBox.warning(self, "확인", "프로젝트 패널에 원본 영상을 넣어 주세요.")
+            QMessageBox.information(self, "원본 영상", "② 원본 영상을 선택해 주세요.")
             return
-        if not spec.title:
-            QMessageBox.warning(self, "확인", "프로젝트 패널 → 시퀀스 → 제목을 입력하세요.")
-            return
+        self._save_inputs()
         self.settings = Settings.load()
-        same = False
-        if self.job_dir and (self.job_dir / "job.json").exists():
-            prev = read_json(self.job_dir / "job.json", {})
-            same = prev.get("video") == spec.video and prev.get("title") == spec.title
-        if not same:
-            self.job_dir = new_job_dir(self.settings, spec.title)
-        ensure_user_dirs()
-        write_json(LAST_JOB, {"spec": spec.to_dict(), "job_dir": str(self.job_dir)})
-        self.console.log(f"\n▶ 작업 폴더: {self.job_dir}")
-        self.team.reset()
-        self.d_team.raise_()
+        self.job_dir = job_dir or new_job_dir(self.settings, spec.working_title())
         self.cancel = CancelToken()
-        self.thread = QThread()
-        self.worker = Worker(spec, self.settings, self.job_dir, until, self.cancel)
+        for key, label, _ in STAGES:
+            self.stage_rows[key].setText(f"○  {label}")
+            self.stage_rows[key].setObjectName("stageTodo")
+            self._restyle(self.stage_rows[key])
+        self.logview.clear()
+        self.peek.hide()
+        self.p_title.setText(f"「{spec.working_title()}」 만드는 중…")
+        self.p_sub.setText("AI 팀이 기획하고, 편집하고, 렌더링까지 합니다.")
+        self.bar.setValue(0)
+        self.p_pct.setText("0%")
+        self.pages.setCurrentIndex(1)
+        self.t_start = time.time()
+        self.tick.start(1000)
+        self._current = ""
+        self.thread = QThread(self)
+        self.worker = Worker(spec, self.settings, self.job_dir, self.cancel)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.log.connect(self._log)
@@ -470,148 +617,214 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_fail)
         self.worker.finished.connect(self.thread.quit)
         self.worker.failed.connect(self.thread.quit)
-        self._busy(True)
+        self.thread.finished.connect(self._thread_done)
         self.thread.start()
+        self._update_ready()
+
+    def _thread_done(self) -> None:
+        self.thread = None
+        self.tick.stop()
+        self._update_ready()
+
+    def _restyle(self, w: QWidget) -> None:
+        w.style().unpolish(w)
+        w.style().polish(w)
 
     def _log(self, msg: str) -> None:
-        self.console.log(msg)
-        self.team.on_log(msg)
-
-    def _busy(self, on: bool) -> None:
-        self.b_run.setEnabled(not on)
-        self.b_plan.setEnabled(not on)
-        self.b_cancel.setEnabled(on)
+        self.logview.appendPlainText(msg)
+        if "색보정" in msg and self.job_dir:
+            ba = self.job_dir / "output" / EXTRAS / "색보정_전후.jpg"
+            if ba.exists():
+                pix = QPixmap(str(ba))
+                self.peek.setPixmap(pix.scaledToWidth(min(640, max(320, self.peek.width() or 520)),
+                                                      Qt.SmoothTransformation))
+                self.peek.show()
 
     def _on_progress(self, key: str, frac: float, overall: float) -> None:
         self.bar.setValue(int(overall * 1000))
-        label = dict((k, v) for k, v, _ in STAGES).get(key, key)
-        self.stage_label.setText(f"  {label}  {frac * 100:.0f}%   ·   전체 {overall * 100:.0f}%")
-        self.team.on_progress(key, frac)
+        self.p_pct.setText(f"{overall * 100:.0f}%")
+        keys = [k for k, _, _ in STAGES]
+        if key in keys:
+            idx = keys.index(key)
+            for i, (k, label, _) in enumerate(STAGES):
+                lab = self.stage_rows[k]
+                if i < idx:
+                    text, name = f"✓  {label}", "stageDone"
+                elif i == idx:
+                    text, name = f"●  {label}  {frac * 100:.0f}%", "stageNow"
+                else:
+                    continue
+                if lab.text() != text:
+                    lab.setText(text)
+                if lab.objectName() != name:
+                    lab.setObjectName(name)
+                    self._restyle(lab)
+
+    def _tick(self) -> None:
+        el = time.time() - self.t_start
+        frac = self.bar.value() / 1000
+        eta = ""
+        if frac > 0.08:
+            left = el / frac - el
+            eta = f" · 남은 시간 약 {max(1, int(left / 60))}분"
+        self.p_sub.setText(f"경과 {fmt_ts(el)}{eta}")
 
     def _on_done(self, res: dict) -> None:
-        self._busy(False)
-        self.bar.setValue(1000)
-        plan_only = res.get("until") == "plan"
-        self.stage_label.setText("  편집 계획 완료 — 타임라인을 검토하세요" if plan_only else "  완료")
-        self.console.log(f"✔ 완료 → {res.get('output')}")
-        self._set_job(self.job_dir)
-        self.project.refresh_recent(self.settings.projects_dir)
-        if plan_only:
-            self.ws_group.button(1).click()
-        else:
-            self.ws_group.button(2).click()
-            longs = [s for s in self._sources() if s[2]]
-            if longs:
-                self.monitor.set_sources(self._sources(), prefer=longs[0][1])
+        for k, label, _ in STAGES:
+            self.stage_rows[k].setText(f"✓  {label}")
+        self._show_results(res, elapsed=time.time() - self.t_start)
 
     def _on_fail(self, msg: str) -> None:
-        self._busy(False)
-        self.stage_label.setText("  중단됨")
-        self.console.log("✖ " + msg)
-        self.d_console.raise_()
-        QMessageBox.critical(self, "오류", msg[:1500])
+        self.tick.stop()
+        self.logview.appendPlainText("\n⚠ " + msg)
+        if msg.startswith("취소"):
+            self.pages.setCurrentIndex(0)
+            return
+        QMessageBox.critical(self, "만들지 못했습니다",
+                             msg.split("\n\n")[0] + "\n\n아래 'AI 팀 작업 기록'에 자세한 내용이 있습니다. "
+                             "같은 입력으로 다시 누르면 끝난 단계는 건너뛰고 이어서 합니다.")
+        self.cancel_btn.setText("입력 화면으로")
+        self.cancel_btn.clicked.disconnect()
+        self.cancel_btn.clicked.connect(self._back_to_input)
+
+    def _back_to_input(self) -> None:
+        self.cancel_btn.setText("취소")
+        self.cancel_btn.clicked.disconnect()
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.pages.setCurrentIndex(0)
 
     def _cancel(self) -> None:
-        if self.cancel:
+        if self.cancel and QMessageBox.question(self, "취소", "만들기를 멈출까요? 끝난 단계는 저장되어 다음에 이어서 합니다.") \
+                == QMessageBox.Yes:
             self.cancel.cancel()
-            self.console.log("취소 요청…")
 
     # ------------------------------------------------------------------
+    def _show_results(self, res: dict, elapsed: Optional[float] = None) -> None:
+        self.results = res
+        while self.r_grid.count():
+            it = self.r_grid.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        title = res.get("title") or ""
+        self.r_title.setText(f"완성! 「{title}」" if title else "완성!")
+        took = f"걸린 시간 {fmt_ts(elapsed)} · " if elapsed else ""
+        self.r_sub.setText(took + "후가공 없이 바로 올릴 수 있게 색보정·음향 마스터링(-14 LUFS)까지 끝냈습니다. "
+                           f"썸네일·자막(.srt)·편집 리포트는 '{EXTRAS}' 폴더에 있습니다.")
+        cards = [("롱폼 16:9", res.get("long", ""), False)]
+        cards += [(f"숏폼 {i} · 9:16", p, True) for i, p in enumerate(res.get("shorts", []) or [], 1)]
+        for i, (t, p, vert) in enumerate(cards):
+            self.r_grid.addWidget(ResultCard(t, p, vert), 0, i, Qt.AlignTop)
+        extras = Path(res.get("extras") or Path(res.get("output", "")) / EXTRAS)
+        thumbs = sorted(extras.glob("썸네일*.jpg")) if extras.exists() else []
+        side = QFrame()
+        side.setObjectName("panel")
+        sv = QVBoxLayout(side)
+        sv.setContentsMargins(14, 14, 14, 14)
+        sv.addWidget(_label("썸네일 후보", "panelTitle"))
+        for t in thumbs[:3]:
+            lab = QLabel()
+            lab.setPixmap(QPixmap(str(t)).scaledToWidth(240, Qt.SmoothTransformation))
+            lab.setCursor(Qt.PointingHandCursor)
+            lab.mousePressEvent = lambda _e, p=str(t): QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+            sv.addWidget(lab)
+        ba = extras / "색보정_전후.jpg"
+        if ba.exists():
+            sv.addWidget(_label("색보정 전 | 후", "panelTitle"))
+            lab = QLabel()
+            lab.setPixmap(QPixmap(str(ba)).scaledToWidth(240, Qt.SmoothTransformation))
+            sv.addWidget(lab)
+        sv.addStretch(1)
+        self.r_grid.addWidget(side, 0, len(cards), Qt.AlignTop)
+        self.r_grid.setColumnStretch(len(cards) + 1, 1)
+        self.r_upload.setEnabled(bool(res.get("upload_info")))
+        self.pages.setCurrentIndex(2)
+
+    def _new(self) -> None:
+        self.pages.setCurrentIndex(0)
+
+    def _open(self, p: str) -> None:
+        if p and Path(p).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+
+    # ------------------------------------------------------------------
+    def _fill_recent(self) -> None:
+        self.recent_menu.clear()
+        base = Path(self.settings.projects_dir)
+        jobs = sorted([d for d in base.glob("*") if d.is_dir() and not d.name.startswith("_")],
+                      key=lambda d: d.stat().st_mtime, reverse=True)[:15] if base.exists() else []
+        if not jobs:
+            self.recent_menu.addAction("아직 만든 영상이 없습니다").setEnabled(False)
+            return
+        for d in jobs:
+            res = read_json(d / "work" / "result.json", {})
+            if res.get("long") or res.get("shorts"):
+                self.recent_menu.addAction(f"✓  {res.get('title') or d.name}", lambda r=res: self._show_results(r))
+            else:
+                self.recent_menu.addAction(f"…  {d.name}  (이어서 만들기)", lambda j=d: self._resume(j))
+        self.recent_menu.addSeparator()
+        self.recent_menu.addAction("작업 폴더 열기", lambda: self._open(str(base)))
+
+    def _resume(self, job: Path) -> None:
+        data = read_json(job / "job.json", {})
+        if not data.get("video"):
+            QMessageBox.information(self, "이어서 만들기", "이 작업의 입력 정보를 찾지 못했습니다.")
+            return
+        spec = JobSpec.from_dict(data)
+        self.topic.setPlainText(spec.topic_text)
+        self.script.setPlainText(spec.script)
+        self.video.set_path(spec.video)
+        self._start(job_dir=job, spec=spec)
+
+    # ------------------------------------------------------------------
+    def _probe_ai(self) -> None:
+        run_bg(self, lambda: ai_status_text(self.settings), self._on_ai)
+
+    def _on_ai(self, res) -> None:
+        if isinstance(res, Exception):
+            self.ai_chip.setText("AI 연결 확인 실패")
+            return
+        text, ok = res
+        self._ai_ok = ok
+        self.ai_chip.setText(("●  " if ok else "○  ") + text + ("" if ok else "  — 눌러서 연결"))
+        self.ai_chip.setProperty("ok", ok)
+        self._restyle(self.ai_chip)
+
+    def _on_chip(self) -> None:
+        if getattr(self, "_ai_ok", False):
+            self._open_settings()
+            return
+        exe = find_claude(self.settings.claude_code_path)
+        if exe:
+            open_login(exe)
+            QMessageBox.information(self, "Claude 로그인", "브라우저에서 Claude(Pro/Max) 계정으로 로그인한 뒤 확인을 누르세요.")
+            self._probe_ai()
+        else:
+            self._open_settings()
+
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(Settings.load(), self)
+        dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
             self.settings = Settings.load()
-            theme.apply(QApplication.instance(), self.settings.brand.accent)
-            self._refresh_chips()
             self._probe_ai()
-            self.console.log("환경 설정 저장됨")
 
-    def _claude_login(self) -> None:
-        exe = find_claude(self.settings.claude_code_path)
-        if not exe:
-            QMessageBox.information(self, "Claude Code", "Claude Code 가 설치되어 있지 않습니다.\n"
-                                                         "setup_windows.bat 을 다시 실행하면 설치와 로그인을 함께 진행합니다.")
-            return
-        open_login(exe)
-        self.console.log("브라우저에서 Claude 구독 계정으로 로그인하세요. 끝나면 헤더의 AI 상태가 자동으로 갱신됩니다.")
-        QTimer.singleShot(20000, self._probe_ai)
-        QTimer.singleShot(60000, self._probe_ai)
-
-    def _load_script(self) -> None:
-        p, _ = QFileDialog.getOpenFileName(self, "대본 파일", "", TEXT_FILTER)
-        if p:
-            for enc in ("utf-8", "cp949", "utf-16"):
-                try:
-                    self.script.script.setPlainText(Path(p).read_text(encoding=enc))
-                    self.script.tabs.setCurrentIndex(0)
-                    return
-                except UnicodeDecodeError:
-                    continue
-
-    def _open_job(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "작업 폴더 선택", self.settings.projects_dir)
-        if d:
-            self._load_job_dir(d)
-
-    def _load_job_dir(self, d: str) -> None:
-        data = read_json(Path(d) / "job.json", None)
-        if not data:
-            QMessageBox.warning(self, "확인", "job.json 이 없는 폴더입니다.")
-            return
-        self._apply_spec(JobSpec.from_dict(data))
-        self._set_job(Path(d))
-        self.console.log(f"작업 불러옴: {d}  (전체 제작을 누르면 분석 결과를 재사용해 다시 렌더합니다)")
-
-    def _open_path(self, p: Path) -> None:
-        if not p.exists():
-            QMessageBox.information(self, "안내", f"아직 없습니다: {p}")
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
-
-    def _open_output(self) -> None:
-        if self.job_dir:
-            self._open_path(self.job_dir / "output")
-
-    def _open_plan(self) -> None:
-        if not self.job_dir:
-            return
-        out = self.job_dir / "output" / "plan.json"
-        work = self.job_dir / "work" / "plan.json"
-        if not out.exists() and work.exists():
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(work.read_bytes())
-        self._open_path(out)
-
-    def _preview(self) -> None:
-        if not self.job_dir:
-            return
-        from ..render.remotion import find_node, open_studio
-        pub = self.job_dir / "render" / "bundle" / "public"
-        props = self.job_dir / "render" / "props_long.json"
-        if not pub.exists() or not props.exists():
-            QMessageBox.information(self, "안내", "한 번 이상 렌더한 작업에서 미리보기를 열 수 있습니다.")
-            return
-        try:
-            open_studio(pub, props, find_node(self.settings.node_path))
-            self.console.log("Remotion Studio 를 여는 중… 브라우저에서 http://localhost:3000")
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "오류", str(e))
+    def closeEvent(self, e):  # noqa: N802
+        if self.thread is not None:
+            if QMessageBox.question(self, "종료", "아직 만드는 중입니다. 멈추고 닫을까요?(끝난 단계는 저장됩니다)") \
+                    != QMessageBox.Yes:
+                e.ignore()
+                return
+            if self.cancel:
+                self.cancel.cancel()
+        self._save_inputs()
+        wait_bg()
+        super().closeEvent(e)
 
 
 def run_gui() -> int:
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:  # noqa: BLE001
-            pass
-    app = QApplication(sys.argv)
+    ensure_user_dirs()
+    app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Choi Studio")
     theme.apply(app, Settings.load().brand.accent)
     w = MainWindow()
     w.show()
     return app.exec()
-
-
-if __name__ == "__main__":
-    sys.exit(run_gui())

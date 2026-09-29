@@ -1,4 +1,4 @@
-"""편집 툴 스타일 다크 테마(프리미어 프로식 패널 회색 + 채널 시그널 레드 한 곳)."""
+"""다크 테마 — 깊은 잉크 바탕 + 채널 시그널 레드 한 곳(버튼·진행 표시)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -72,7 +72,7 @@ def qss(accent: str, fam: str = UI_FONT) -> str:
     QWidget {{ color: {TEXT}; font-size: 12px; }}
     QToolTip {{ background: {BG3}; color: {TEXT}; border: 1px solid {LINE}; padding: 5px 7px; }}
 
-    /* ---------- 패널(도킹) ---------- */
+    /* ---------- 탭·분리선 ---------- */
     QDockWidget {{ titlebar-close-icon: none; titlebar-normal-icon: none; }}
     QDockWidget::title {{ background: {BG2}; padding: 7px 10px; border-bottom: 1px solid {LINE};
         text-align: left; font-weight: 600; color: {TEXT2}; }}
@@ -156,17 +156,46 @@ def qss(accent: str, fam: str = UI_FONT) -> str:
     QStatusBar {{ background: {BG0}; color: {TEXT2}; border-top: 1px solid {LINE}; }}
     QStatusBar::item {{ border: none; }}
 
-    /* ---------- 섹션(인스펙터) ---------- */
-    QPushButton#sectionHeader {{ background: {BG2}; color: {TEXT}; font-weight: 700; padding: 8px 10px;
-        border: none; border-bottom: 1px solid {LINE}; border-radius: 0; text-align: left; }}
-    QPushButton#sectionHeader:hover {{ background: {BG3}; }}
-    QLabel#fieldLabel {{ color: {TEXT2}; }}
+    /* ---------- 오토파일럿 화면 ---------- */
+    QLabel#brandSub {{ color: {TEXT3}; font-size: 12px; padding-left: 6px; }}
+    QLabel#pageTitle {{ font-size: 26px; font-weight: 800; letter-spacing: -0.5px; color: {TEXT}; }}
+    QLabel#pageSub {{ font-size: 13px; color: {TEXT2}; }}
+    QFrame#stepCard {{ background: {BG1}; border: 1px solid {LINE}; border-radius: 14px; }}
+    QLabel#stepNum {{ background: {accent}; color: #111; border-radius: 15px; font-weight: 800; font-size: 14px; }}
+    QLabel#stepTitle {{ font-size: 17px; font-weight: 800; }}
+    QLabel#stepHint {{ color: {TEXT2}; font-size: 12px; }}
+    QFrame#stepCard QPlainTextEdit {{ background: {BG0}; border: 1px solid {LINE}; border-radius: 10px;
+        padding: 10px 12px; font-size: 14px; line-height: 150%; }}
+    QFrame#stepCard QPlainTextEdit:focus {{ border: 1px solid {accent}; }}
+    QFrame#videoDrop {{ background: {BG0}; border: 2px dashed #3A3A3A; border-radius: 12px; }}
+    QFrame#videoDrop:hover {{ border-color: {accent}; }}
+    QLabel#dropEmpty {{ color: {TEXT3}; font-size: 15px; font-weight: 600; }}
+    QLabel#dropName {{ font-size: 14px; font-weight: 700; }}
+    QLabel#dropMeta {{ color: {TEXT2}; font-size: 12px; }}
+    QLabel#poster {{ background: #000; border-radius: 8px; }}
+    QPushButton#hero {{ background: {accent}; color: #111; border: none; border-radius: 12px; font-size: 17px;
+        font-weight: 900; padding: 15px 34px; }}
+    QPushButton#hero:hover {{ background: #FF5A34; }}
+    QPushButton#hero:disabled {{ background: #3A2520; color: #7A5A52; }}
+    QPushButton#primarySmall {{ background: {accent}; color: #111; border: none; border-radius: 6px; font-weight: 800;
+        padding: 7px 14px; }}
+    QPushButton#primarySmall:disabled {{ background: #3A2520; color: #7A5A52; }}
+    QPushButton#chip {{ background: {BG2}; border: 1px solid {LINE}; border-radius: 13px; padding: 5px 12px;
+        color: {TEXT2}; font-size: 12px; }}
+    QPushButton#chip[ok="true"] {{ color: #8FD6A0; border-color: #2F5B3A; }}
+    QPushButton#chip[ok="false"] {{ color: #FFB199; border-color: #6A3325; }}
+    QLabel#bigPct {{ font-size: 44px; font-weight: 900; color: {accent}; }}
+    QProgressBar#thick {{ height: 10px; border-radius: 5px; border: none; background: {BG2}; }}
+    QProgressBar#thick::chunk {{ border-radius: 5px; background: {accent}; }}
+    QFrame#panel {{ background: {BG1}; border: 1px solid {LINE}; border-radius: 14px; }}
+    QLabel#panelTitle {{ font-size: 13px; font-weight: 800; color: {TEXT2}; letter-spacing: 0.5px; }}
+    QLabel#stageTodo {{ color: {TEXT3}; font-size: 13px; }}
+    QLabel#stageNow {{ color: {TEXT}; font-size: 13px; font-weight: 800; }}
+    QLabel#stageDone {{ color: #8FD6A0; font-size: 13px; }}
+    QPlainTextEdit#log {{ background: {BG0}; border: none; border-radius: 8px; font-size: 12px; color: {TEXT2};
+        font-family: "{fam}"; }}
+    QFrame#resultCard {{ background: {BG1}; border: 1px solid {LINE}; border-radius: 14px; }}
+    QLabel#resultTitle {{ font-size: 16px; font-weight: 800; }}
     QLabel#hint {{ color: {TEXT3}; font-size: 11px; }}
-    QLabel#panelEmpty {{ color: {TEXT3}; font-size: 13px; }}
-    QFrame#card {{ background: {BG2}; border: 1px solid {LINE}; border-radius: 4px; }}
-    QFrame#card:hover {{ border-color: #4A4A4A; }}
-    QFrame#monitor {{ background: #000; border: 1px solid {LINE}; }}
-    QLabel#timecode {{ font-family: "Consolas", "Menlo", monospace; font-size: 15px; color: {accent};
-        font-weight: 700; }}
-    QLabel#timecodeDim {{ font-family: "Consolas", "Menlo", monospace; font-size: 12px; color: {TEXT2}; }}
+    QLabel#fieldLabel {{ color: {TEXT2}; }}
     """

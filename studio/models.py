@@ -53,6 +53,7 @@ class Utterance:
     score: float = 0.0             # 대본 일치도 0~100
     status: str = "keep"           # keep | retake | meta | noise | director_drop
     note: str = ""
+    take_score: float = 0.0        # 리테이크 묶음에서 매긴 테이크 품질(0~1, 묶음이 없으면 0)
 
     @property
     def kept(self) -> bool:
@@ -72,6 +73,7 @@ class Utterance:
             words=[Word.from_dict(w) for w in d.get("words", [])],
             script_span=tuple(span) if span else None,
             score=float(d.get("score", 0.0)), status=d.get("status", "keep"), note=d.get("note", ""),
+            take_score=float(d.get("take_score", 0.0)),
         )
 
 

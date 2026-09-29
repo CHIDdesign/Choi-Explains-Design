@@ -92,6 +92,10 @@ def _seg_with(segs: dict[int, str], word: str) -> int:
 
 
 def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict:
+    if agent == "colorist":  # 전사본 없이 비교 시트 한 장만 받는다
+        assert n_images == 1, n_images
+        return {"look": "warm_film", "strength": 0.7, "exposure": 0.0, "warmth": 0.05, "saturation": 1.0,
+                "reason": "피부가 가장 자연스럽다"}
     segs = _segs(body)
     ids = sorted(segs)
     first, last = ids[0], ids[-1]
@@ -104,7 +108,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     s_sketch = _seg_with(segs, "스케치가 가득")
     s_trip = _seg_with(segs, "방향 없는")
     if agent == "director":
-        return {"logline": "좋은 디자인은 좋은 질문에서 시작한다", "audience": "디자인 전공 1~2학년", "tone": "차분한 강의",
+        return {"title": "질문이 먼저다", "logline": "좋은 디자인은 좋은 질문에서 시작한다", "audience": "디자인 전공 1~2학년",
+                "tone": "차분한 강의", "bgm_mood": "minimal", "shorts_bgm_mood": "upbeat",
                 "structure": [{"title": "들어가며", "start_seg": first, "end_seg": s_wide, "purpose": "문제 제기"},
                               {"title": "문제를 다시 정의하기", "start_seg": s_skip, "end_seg": last, "purpose": "원리"}],
                 "beats": [{"start_seg": s_dots, "end_seg": s_gestalt, "intent": "name_concept", "visual": "motion",
@@ -115,7 +120,13 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "caption_direction": "절제된 다큐멘터리 톤, 전문용어만 마커", "music": {"mood": "calm piano", "notes": ""},
                 "notes_for_team": "화자 중심, 도식은 크게"}
     if agent == "editor":
-        return {"drop": [], "punch": [{"seg": last, "word": "결국"}], "pacing_notes": "차분하게"}
+        s_pencil = _seg_with(segs, "연필보다")   # 그래픽이 없는(얼굴만 보이는) 문장 → 콜아웃 자리
+        return {"drop": [], "moments": [
+            {"seg": s_pencil, "word": "질문", "kind": "punchline", "intensity": 3, "callout": "연필보다\n질문 먼저",
+             "label": "핵심"},
+            {"seg": last, "word": "", "kind": "conclusion", "intensity": 2, "callout": "", "label": ""},
+            {"seg": s_q, "word": "", "kind": "number", "intensity": 2, "callout": "", "label": ""}],
+            "pacing_notes": "차분하게"}
     if agent == "motion":
         spec = copy.deepcopy(EXAMPLES["proximity"])
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
@@ -136,10 +147,15 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "preset_long": "documentary", "preset_short": "kinetic", "notes": "용어만 마커"}
     if agent == "shorts":
         seg = [i for i in ids if i >= s_skip][:6]
+        seg2 = [i for i in ids if i < s_skip][:6]
         return {"shorts": [{"title": "질문", "hook_type": "contrarian", "hook_title": "해결책부터 그리면\n망합니다",
-                            "hook_highlight": "망합니다", "cold_open_seg": last, "segments": seg, "graphics": [],
+                            "hook_highlight": "", "cold_open_seg": last, "segments": seg, "graphics": [],
                             "emphasis": [{"seg": last, "word": "질문에서"}], "cta": "", "loop_line": "", "caption": "질문",
-                            "hashtags": ["#디자인"], "why": "통념 반박", "score": 8}]}
+                            "hashtags": ["#디자인"], "why": "통념 반박", "score": 8},
+                           {"title": "넓게", "hook_type": "everyday_why", "hook_title": "디자인은 왜\n넓게 시작할까",
+                            "hook_highlight": "넓게", "cold_open_seg": -1, "segments": seg2, "graphics": [],
+                            "emphasis": [], "cta": "", "loop_line": "", "caption": "넓게", "hashtags": ["#디자인"],
+                            "why": "일상의 왜", "score": 7}]}
     if agent == "copy":
         return {"titles": ["디자인 학생 90%가 건너뛰는 단계"], "description": "#디자인 #더블다이아몬드\n요약\n\n{{CHAPTERS}}",
                 "hashtags": ["#디자인"], "tags": ["디자인"], "thumbnail_texts": ["질문이 먼저"], "pinned_comment": "여러분은?"}
@@ -163,7 +179,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
-    for key, marker in (("director", "logline"), ("editor", "punch"), ("motion", "scenes"), ("stock", "requests"),
+    for key, marker in (("director", "logline"), ("editor", "moments"), ("motion", "scenes"), ("stock", "requests"),
+                        ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "preset_long"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("motion_revise", "changes")):
         if marker in props:
@@ -324,6 +341,8 @@ def main() -> int:
     settings.render.gl = "swangle" if sys.platform != "win32" else "angle"
     settings.render.concurrency = 3
     settings.agent_effort = {"copy": "low"}
+    settings.keyless_stock = False       # 테스트는 인터넷(Openverse)에 나가지 않는다
+    settings.download_sounds = False     # 이미 받아 둔 효과음·음악만(없으면 절차적 효과음)
     settings.ai_backend = args.backend
     if args.backend == "claude_code":
         # 진짜 Claude Code 대신 가짜 CLI(같은 가짜 답변 로직, 호출은 CALL_LOG 에 기록)
@@ -332,9 +351,9 @@ def main() -> int:
         shim.chmod(0o755)
         settings.claude_code_path = str(shim)
         os.environ["ANTHROPIC_API_KEY"] = "sk-should-be-stripped"  # 구독 모드에서는 자식 프로세스에 넘어가면 안 된다
-    spec = pl.JobSpec(video=str(video), title="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
-                      notes="테스트", shorts_count=1, use_claude=True, fetch_broll=False, thumbnails=False,
-                      short_max_sec=40, qa_rounds=2, direction="모션 장면은 크게")
+    spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다 — 디자인 전공 1~2학년 대상", episode="01",
+                      script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, qa_rounds=2,
+                      direction="모션 장면은 크게")
     job = work / "job"
     res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True)).run()
     out = Path(res["output"])
@@ -345,9 +364,9 @@ def main() -> int:
 
     agents = [c["agent"] for c in CALLS]
     for a in ("director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
-              "motion_revise"):
+              "motion_revise", "colorist"):
         assert a in agents, f"{a} 호출 없음: {agents}"
-    assert agents[0] == "director", agents
+    assert agents[0] == "colorist" and agents[1] == "director", agents   # 색보정 → 기획
     assert next(c for c in CALLS if c["agent"] == "stock_pick")["images"] == 2
     assert next(c for c in CALLS if c["agent"] == "art_director")["images"] >= 2
     assert next(c for c in CALLS if c["agent"] == "copy")["effort"] == "low"
@@ -369,7 +388,17 @@ def main() -> int:
     for c in lp["captions"]:
         assert sum(1 for line in c["lines"] for w in line if w.get("em")) <= 1, c
     sp = json.loads((job / "render" / "props_short_1.json").read_text(encoding="utf-8"))
-    assert sp["captionPreset"] == "kinetic"
+    assert sp["layout"] == "window" and sp["camera"], sp["layout"]
+    assert (job / "render" / "props_short_2.json").exists()
+    # 편집 문법 엔진: 점프컷 앵글·펀치인·콜아웃·챕터 전환
+    assert len(lp["camera"]) >= 3 and {c["zoom"] for c in lp["camera"]} >= {1.0, 1.12}, lp["camera"]
+    assert lp["punches"] and lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
+    assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
+    assert any(t["type"] in ("wipe", "leak") for t in lp["transitions"]), lp["transitions"]
+    assert lp["voice"] is None and lp["sfx"] == []          # 음향은 FFmpeg 에서 따로 믹스
+    grade_info = json.loads((job / "work" / "grade.json").read_text(encoding="utf-8"))
+    assert grade_info["choice"]["look"] == "warm_film" and grade_info["choice"]["by"] == "ai", grade_info["choice"]
+    assert (job / "media" / "grade.cube").exists() and (out / "부가자료" / "색보정_전후.jpg").exists()
 
     plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
     assert plan["long"]["qa"]["rounds"], plan["long"].get("qa")
@@ -378,12 +407,23 @@ def main() -> int:
         assert "Claude Code" in plan["director"], plan["director"]
         assert all(c.get("backend") == "claude_code" and not c.get("api_key_env") for c in CALLS), CALLS
         assert all(u.get("backend") == "claude_code" for u in plan["usage"]), plan["usage"][:2]
-    upload = next(out.glob("*_업로드정보.txt")).read_text(encoding="utf-8")
+    upload = (out / "업로드정보.txt").read_text(encoding="utf-8")
     assert "Pixabay" in upload and "Unsplash" in upload, upload[-500:]
     assert StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계
-    report = next(out.glob("*_편집리포트.md")).read_text(encoding="utf-8")
-    assert "AI 스튜디오 브리프" in report and "아트 디렉터 검수" in report and "🎨 모션 디자이너" in report
-    assert any(f.endswith("_롱폼.mp4") for f in files) and any("숏폼1" in f and f.endswith(".mp4") for f in files)
+    report = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
+    assert "AI 스튜디오 브리프" in report and "아트 디렉터 검수" in report and "자동 후반 작업" in report
+    longs = [f for f in files if f.startswith("1_롱폼") and f.endswith(".mp4")]
+    shorts = [f for f in files if "숏폼" in f and f.endswith(".mp4")]
+    assert len(longs) == 1 and len(shorts) == 2, files
+    assert "질문이 먼저다" in longs[0], longs          # 🎬 감독이 정한 제목
+    from studio.media.ffmpeg import FFmpeg
+    from studio.media.mix import measure_lufs
+    ff = FFmpeg()
+    for f in longs + shorts:
+        info = ff.probe(out / f)
+        assert info.has_audio and info.has_video, f
+        lufs = measure_lufs(ff, out / f)
+        assert lufs is not None and abs(lufs + 14) < 1.5, (f, lufs)   # -14 LUFS 마스터
     qa_dir = job / "work" / "qa" / "r1"
     assert any(qa_dir.glob("g*.jpg")), list(qa_dir.iterdir())
 
@@ -391,8 +431,8 @@ def main() -> int:
     before = len(load_calls())
     logs: list[str] = []
     p2 = pl.Pipeline(spec, settings, job, log=logs.append)
-    for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_align, p2.stage_face, p2.stage_director,
-               p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
+    for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_align, p2.stage_face, p2.stage_grade,
+               p2.stage_director, p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
         fn()
     assert len(load_calls()) == before, load_calls()[before:]
     assert any("이전 검수 결과 사용" in m for m in logs), logs[-10:]

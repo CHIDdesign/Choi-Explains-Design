@@ -69,6 +69,30 @@ def test_retake_and_meta_removed():
     assert "다이아몬드" in kept_text  # 용어 사전 교정
 
 
+def test_best_take_wins_not_last_take():
+    """같은 문장을 두 번 말했을 때 '마지막'이 아니라 '가장 또렷한' 테이크를 남긴다."""
+    p = parse_script(SCRIPT)
+    words = _words([("안녕하세요.", 0.8), ("오늘은 더블 다이아몬드 이야기를 해볼게요.", 1.2),
+                    ("음 오늘은 어 더블 더블 다이아몬드 이야기를 해볼게요.", 1.0),
+                    ("디자인은 먼저 넓게 펼쳐야 합니다.", 0.7)])
+    for w in words[1:6]:
+        w.prob = 0.97          # 첫 테이크: 또렷
+    for w in words[6:14]:
+        w.prob = 0.55          # 둘째 테이크: 웅얼거림 + 추임새 + 말더듬
+    utts, _, rep = ScriptAligner(p).run(build_utterances(words))
+    first = next(u for u in utts if u.asr_text.startswith("오늘은"))
+    second = next(u for u in utts if u.asr_text.startswith("음 오늘은"))
+    assert first.kept and second.status == "retake"
+    assert f"#{first.id}" in second.note and first.take_score > second.take_score
+
+
+def test_partial_take_loses_to_complete_take():
+    p = parse_script(SCRIPT)
+    words = _words([("디자인은 먼저 넓게 펼쳐야 합니다.", 1.2), ("디자인은 먼저", 1.0)])
+    utts, _, _ = ScriptAligner(p).run(build_utterances(words))
+    assert [u.status for u in utts] == ["keep", "retake"]  # 나중 테이크여도 중간에 끊겼으면 버린다
+
+
 def test_cuts_and_timemap():
     utts, _, _ = _aligned()
     keeps = build_keeps(utts, pace=PACES["calm"], vad=[], media_duration=30, fps=30)

@@ -3,16 +3,17 @@ import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConf
 import {ShortCaptions} from '../components/captions/ShortCaptions';
 import {Grain} from '../components/fx/Grain';
 import {TEMPLATE_COMPONENTS} from '../components/graphics';
-import {HookTitle} from '../components/shorts/HookTitle';
+import {HookTitle, WindowTitle} from '../components/shorts/HookTitle';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts} from '../design/fonts';
 import {surface as mkSurface} from '../design/surfaces';
-import {makeTheme} from '../design/tokens';
+import {FONT, makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
 import type {Graphic, ShortProps} from '../lib/types';
-import {punchFactor} from './LongForm';
+import {cameraAt, punchFactor} from './LongForm';
+import {TransitionStage, transitionState} from '../components/fx/Transitions';
 
 ensureFonts();
 
@@ -20,6 +21,36 @@ ensureFonts();
 const PANEL_L3: Rect = {x: 0, y: 590, w: 1080, h: 450}; // 상단 도식 패널(L3)
 const FACE_L3: Rect = {x: 0, y: 1040, w: 1080, h: 880};
 const FRAMED: Rect = {x: 0, y: 600, w: 1080, h: 608}; // L2: 가운데 16:9 (y 600–1208)
+// 셜록현준 숏폼 실측(1080×1920): 제목 y 182–392 · 창 y 445–1475(≈1.05:1) · 자막 y≈1355 · 로고 y 1525–1590
+const WINDOW: Rect = {x: 0, y: 445, w: 1080, h: 1030};
+
+/** window 레이아웃: 도식·B-roll 이 창 전체를 채운다(얼굴 대신 — 목소리는 계속) */
+const WindowGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof makeTheme>; props: ShortProps}> = ({
+  g,
+  dur,
+  theme,
+  props,
+}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const Comp = TEMPLATE_COMPONENTS[g.template];
+  if (!Comp) return null;
+  const s = mkSurface(theme, g.template === 'photo' || g.template === 'broll' ? 'photo' : 'board');
+  const pIn = enter(frame, 0, 8);
+  const pOut = exit(frame, dur, 6);
+  const media = g.template === 'photo' || g.template === 'broll';
+  const pad = media ? 0 : 56;
+  return (
+    <div style={{position: 'absolute', left: 0, top: 0, width: WINDOW.w, height: WINDOW.h, background: s.bg,
+      opacity: Math.min(pIn, pOut)}}>
+      <div style={{position: 'absolute', left: pad, top: pad, width: WINDOW.w - pad * 2, height: WINDOW.h - pad * 2}}>
+        <Comp id={g.id} data={g.data} frame={frame} dur={dur} fps={fps} theme={theme} surface={s}
+          box={{w: WINDOW.w - pad * 2, h: WINDOW.h - pad * 2}} layout="split" brand={props.brand}
+          episode={props.episode} compact />
+      </div>
+    </div>
+  );
+};
 
 const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof makeTheme>; props: ShortProps}> = ({
   g,
@@ -56,10 +87,49 @@ export const Short: React.FC<ShortProps> = (props) => {
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
   const face = sampleFace(props.face, t);
-  const punch = punchFactor(props.punches, t);
+  // 숏폼 카메라: 컷마다 확대 단계가 바뀌는 점프컷 줌 + 강조 펀치인
+  const punch = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
+  const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
   const gi = lastIndexAtOrBefore(props.graphics, t, (g) => g.start);
   const g = gi >= 0 && t < props.graphics[gi].end ? props.graphics[gi] : null;
+
+  if (props.layout === 'window') {
+    const local: Rect = {x: 0, y: 0, w: WINDOW.w, h: WINDOW.h};
+    const wbox = videoBoxFor(local, face, punch, 'center', 0.4);
+    return (
+      <AbsoluteFill style={{background: '#000'}}>
+        <WindowTitle text={props.hookTitle} highlight={props.hookHighlight} frame={frame} theme={theme} width={W} />
+        <div style={{position: 'absolute', left: WINDOW.x, top: WINDOW.y, width: WINDOW.w, height: WINDOW.h,
+          overflow: 'hidden', background: '#000'}}>
+          <TransitionStage tx={tx}>
+            <TalkingHead clips={props.clips} fps={fps} region={local} box={wbox} />
+            {props.graphics.map((gr) => {
+              const from = toFrame(gr.start, fps);
+              const dur = Math.max(1, toFrame(gr.end, fps) - from);
+              return (
+                <Sequence key={gr.id} from={from} durationInFrames={dur} name={`${gr.template} ${gr.id}`}>
+                  <WindowGraphic g={gr} dur={dur} theme={theme} props={props} />
+                </Sequence>
+              );
+            })}
+          </TransitionStage>
+          {tx.hideCaptions ? null : (
+            <ShortCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset="bar"
+              y={WINDOW.h - 132} width={WINDOW.w} />
+          )}
+        </div>
+        <div style={{position: 'absolute', left: 0, width: W, top: 1522, textAlign: 'center', fontFamily: FONT.display,
+          fontWeight: 800, fontSize: 44, letterSpacing: '-0.02em', color: '#fff'}}>
+          {props.brand.shortName || props.brand.name}
+        </div>
+        {props.progressBar ? (
+          <div style={{position: 'absolute', left: 0, top: WINDOW.y + WINDOW.h, height: 6,
+            width: (W * frame) / Math.max(1, durationInFrames), background: theme.accent, opacity: 0.85}} />
+        ) : null}
+      </AbsoluteFill>
+    );
+  }
 
   let region: Rect;
   let box;
@@ -82,24 +152,28 @@ export const Short: React.FC<ShortProps> = (props) => {
       {props.layout === 'framed' ? (
         <AbsoluteFill style={{background: `radial-gradient(90% 60% at 50% 50%, #1d1d1d 0%, ${theme.ink} 100%)`}} />
       ) : null}
-      <TalkingHead clips={props.clips} fps={fps} region={region} box={box} />
-      {props.layout === 'full' ? (
-        <AbsoluteFill style={{background:
-          'linear-gradient(180deg, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.25) 26%, rgba(0,0,0,0) 38%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 72%, rgba(0,0,0,0.0) 100%)'}} />
-      ) : null}
-      {props.graphics.map((gr) => {
-        const from = toFrame(gr.start, fps);
-        const dur = Math.max(1, toFrame(gr.end, fps) - from);
-        return (
-          <Sequence key={gr.id} from={from} durationInFrames={dur} name={`${gr.template} ${gr.id}`}>
-            <PanelGraphic g={gr} dur={dur} theme={theme} props={props} />
-          </Sequence>
-        );
-      })}
+      <TransitionStage tx={tx}>
+        <TalkingHead clips={props.clips} fps={fps} region={region} box={box} />
+        {props.layout === 'full' ? (
+          <AbsoluteFill style={{background:
+            'linear-gradient(180deg, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.25) 26%, rgba(0,0,0,0) 38%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 72%, rgba(0,0,0,0.0) 100%)'}} />
+        ) : null}
+        {props.graphics.map((gr) => {
+          const from = toFrame(gr.start, fps);
+          const dur = Math.max(1, toFrame(gr.end, fps) - from);
+          return (
+            <Sequence key={gr.id} from={from} durationInFrames={dur} name={`${gr.template} ${gr.id}`}>
+              <PanelGraphic g={gr} dur={dur} theme={theme} props={props} />
+            </Sequence>
+          );
+        })}
+      </TransitionStage>
       <HookTitle text={props.hookTitle} highlight={props.hookHighlight} series={props.seriesLabel} frame={frame}
         theme={theme} width={W} />
-      <ShortCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
-        y={g && props.layout === 'full' ? 1090 : 1110} width={W} />
+      {tx.hideCaptions ? null : (
+        <ShortCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
+          y={g && props.layout === 'full' ? 1090 : 1110} width={W} />
+      )}
       {props.progressBar ? (
         <div style={{position: 'absolute', left: 0, top: 0, height: 6, width: (W * frame) / Math.max(1, durationInFrames),
           background: theme.accent, opacity: 0.8}} />

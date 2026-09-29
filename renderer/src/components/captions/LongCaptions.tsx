@@ -54,6 +54,24 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
       </React.Fragment>
     ));
 
+  if (cue.style === 'impact' && !plain) {
+    // 강조 자막: 크게, 가운데, 굵게 — 펀치인·효과음과 같은 순간에 '툭' 튀어나온다
+    const pop = tween(local, 0, 7, 'outBack');
+    return (
+      <div style={{position: 'absolute', left: cx - frameW / 2, width: frameW, bottom: bottom + 36, display: 'flex',
+        flexDirection: 'column', alignItems: 'center', opacity: Math.min(tween(local, 0, 3, 'outQuint'), pOut),
+        scale: `${interpolate(pop, [0, 1], [1.16, 1])}`, transformOrigin: '50% 100%'}}>
+        {cue.lines.map((line, li) => (
+          <div key={li} style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: 76, lineHeight: 1.2,
+            letterSpacing: '-0.025em', color: '#fff', whiteSpace: 'nowrap',
+            textShadow: '0 2px 3px rgba(0,0,0,0.6), 0 8px 30px rgba(0,0,0,0.55)'}}>
+            {words(line)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (preset === 'documentary') {
     const barP = tween(local, 0, joinPrev ? 1 : DUR.normal, 'outQuint');
     return (

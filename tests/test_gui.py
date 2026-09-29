@@ -1,7 +1,6 @@
-"""편집 툴 화면 스모크 테스트(오프스크린): 창 구성, 작업 → JobSpec 왕복, 타임라인 데이터."""
+"""오토파일럿 창 스모크 테스트(오프스크린): 세 입력 → JobSpec, 진행·결과 화면 전환, 파일 끌어다 놓기 분류."""
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -24,50 +23,50 @@ def app(tmp_path_factory):
     return a
 
 
-def test_timeline_data_from_props():
-    from studio.gui.timeline import TimelineData, tc
-    d = TimelineData.from_dict({
-        "duration": 30, "fps": 30,
-        "clips": [{"start": 0, "dur": 10, "srcStart": 2}, {"start": 10, "dur": 12, "srcStart": 20}],
-        "graphics": [{"template": "motion", "layout": "fullscreen", "start": 3, "end": 9, "data": {"title": "근접성"}},
-                     {"template": "broll", "layout": "split", "start": 12, "end": 15,
-                      "data": {"title": "스케치", "credit": "A / Pixabay"}},
-                     {"template": "list", "layout": "split", "start": 16, "end": 22, "data": {"title": "조건"}}],
-        "chapters": [{"start": 0, "title": "들어가며", "number": "01"}],
-        "captions": [{"start": 1, "end": 2, "lines": [[{"text": "안녕"}, {"text": "하세요"}]]},
-                     {"start": 3, "end": 4, "text": "두 번째"}]}, source="render")
-    tracks = [c.track for c in d.clips]
-    assert tracks.count("v1") == 2 and tracks.count("a1") == 2 and tracks.count("cc") == 2
-    assert [c.track for c in d.clips if c.label.startswith(("모션", "스톡"))] == ["v3", "v3"]
-    assert any("▣ A / Pixabay" in c.tip for c in d.clips)
-    assert d.chapters == [(0.0, "01 들어가며")] and tc(61.5) == "00:01:01:15"
-
-
-def test_main_window_builds_and_roundtrips_spec(app, tmp_path):
+def test_three_inputs_make_a_spec(app, tmp_path):
     from studio.gui.app import MainWindow
-    from studio.pipeline import JobSpec
     w = MainWindow()
-    names = {d.objectName() for d in w.findChildren(type(w.d_script))}
-    assert {"dock_script", "dock_project", "dock_inspector", "dock_timeline", "dock_team", "dock_console",
-            "dock_exports"} <= names
-    spec = JobSpec(video=str(tmp_path / "a.mp4"), title="제목", episode="03", script="대본", notes="메모",
-                   direction="모션 많이", caption_preset="glass", short_caption_preset="clean", qa_rounds=2,
-                   studio_mode=False, fetch_stock=False, shorts_count=3, pace="fast", out_height=1440)
-    w._apply_spec(spec)
-    back = w._spec()
-    for k in ("title", "episode", "script", "notes", "direction", "caption_preset", "short_caption_preset",
-              "qa_rounds", "studio_mode", "fetch_stock", "shorts_count", "pace", "out_height"):
-        assert getattr(back, k) == getattr(spec, k), k
-    # 작업 폴더의 타임라인 불러오기
-    job = tmp_path / "job"
-    (job / "work").mkdir(parents=True)
-    (job / "work" / "timeline.json").write_text(json.dumps({"duration": 12, "fps": 30, "clips": [
-        {"start": 0, "dur": 12, "srcStart": 0}], "graphics": [], "chapters": [], "captions": []}), encoding="utf-8")
-    w._set_job(job)
-    assert w.timeline.data.duration == 12 and w.timeline.data.source == "plan"
-    w.team.on_log("동시 작업: ✂️ 편집 감독 · 🎨 모션 디자이너")
-    w.team.on_log("🎨 모션 디자이너: 완료 3s")
-    assert "완료" in w.team.rows["🎨"][0].text() and "작업 중" in w.team.rows["✂️"][0].text()
-    for i in range(3):
-        w._workspace(i)
+    assert w.pages.count() == 3 and w.pages.currentIndex() == 0
+    assert not w.go.isEnabled()                      # 아직 아무것도 없음
+    video = tmp_path / "원본.mp4"
+    video.write_bytes(b"\0")
+    script = tmp_path / "대본.txt"
+    script.write_text("안녕하세요. 오늘은 게슈탈트 이야기입니다.", encoding="utf-8")
+    w.topic.setPlainText("게슈탈트 원리 — 입문자용")
+    w._on_files([str(video), str(script)])           # 탐색기에서 두 파일을 한꺼번에 끌어다 놓은 경우
+    assert w.video.path == str(video)
+    assert "게슈탈트" in w.script.toPlainText()
+    assert w.go.isEnabled()
+    spec = w._spec()
+    assert (spec.video, spec.topic) == (str(video), "게슈탈트 원리 — 입문자용")
+    assert spec.shorts_count == 2 and spec.make_long            # 롱폼 1 + 숏폼 2 고정
+    assert spec.working_title() == "게슈탈트 원리 — 입문자용"
+
+
+def test_result_page_lists_outputs(app, tmp_path):
+    from studio.gui.app import MainWindow
+    out = tmp_path / "output"
+    (out / "부가자료").mkdir(parents=True)
+    long_ = out / "1_롱폼_x.mp4"
+    long_.write_bytes(b"\0")
+    w = MainWindow()
+    w._show_results({"title": "게슈탈트", "output": str(out), "long": str(long_), "shorts": [],
+                     "upload_info": ""}, elapsed=65)
+    assert w.pages.currentIndex() == 2 and "게슈탈트" in w.r_title.text()
+    w._on_progress("asr", 0.5, 0.3)
+    assert w.bar.value() == 300
     w.close()
+
+
+def test_docx_and_hwpx_script_reading(tmp_path):
+    import zipfile
+    from studio.text.docfile import read_text_file
+    d = tmp_path / "a.docx"
+    with zipfile.ZipFile(d, "w") as z:
+        z.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   "<w:body><w:p><w:r><w:t>첫 문장.</w:t></w:r></w:p><w:p><w:r><w:t>둘째</w:t></w:r>"
+                   "<w:r><w:t> 문장.</w:t></w:r></w:p></w:body></w:document>")
+    assert read_text_file(d) == "첫 문장.\n둘째 문장."
+    c = tmp_path / "b.txt"
+    c.write_bytes("한글 대본".encode("cp949"))
+    assert read_text_file(c) == "한글 대본"

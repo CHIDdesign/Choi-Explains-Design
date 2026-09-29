@@ -38,6 +38,7 @@ class MediaInfo:
     vcodec: str = ""
     pix_fmt: str = ""
     color_transfer: str = ""
+    color_space: str = ""
     bit_depth: int = 8
 
     @property
@@ -166,6 +167,7 @@ class FFmpeg:
                 info.vcodec = st.get("codec_name", "")
                 info.pix_fmt = st.get("pix_fmt", "")
                 info.color_transfer = st.get("color_transfer", "") or ""
+                info.color_space = st.get("color_space", "") or ""
                 info.bit_depth = 10 if "10" in info.pix_fmt else 8
                 rfr = st.get("r_frame_rate") or "30/1"
                 afr = st.get("avg_frame_rate") or rfr
