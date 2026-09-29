@@ -90,6 +90,10 @@ class Worker(QObject):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()[-2500:]}")
 
 
+LONG_PRESETS = ["auto", "editorial", "documentary", "glass", "boxed"]
+SHORT_PRESETS = ["auto", "kinetic", "clean", "boxed"]
+
+
 class SettingsDialog(QDialog):
     def __init__(self, s: Settings, parent=None):
         super().__init__(parent)
@@ -117,9 +121,18 @@ class SettingsDialog(QDialog):
         self.device = QComboBox()
         self.device.addItems(["auto", "cuda", "cpu"])
         self.device.setCurrentText(s.whisper_device)
+        self.pexels = QLineEdit(s.pexels_api_key)
+        self.pexels.setEchoMode(QLineEdit.Password)
+        self.pexels.setPlaceholderText("Pexels API 키 (pexels.com/ko-kr/api 에서 무료 발급)")
+        self.workers = QSpinBox()
+        self.workers.setRange(1, 8)
+        self.workers.setValue(s.studio_workers)
+        self.workers.setToolTip("총괄 감독 아래에서 동시에 일하는 전문 에이전트 수(요청 한도가 낮으면 줄이세요)")
         f.addRow("Claude API 키", self.key)
         f.addRow("Claude 모델", self.model)
         f.addRow("사고 강도(effort)", self.effort)
+        f.addRow("동시 에이전트 수", self.workers)
+        f.addRow("Pexels API 키", self.pexels)
         f.addRow("Whisper 모델", self.whisper)
         f.addRow("Whisper 장치", self.device)
         hint = QLabel("· large-v3: 가장 정확(첫 실행 시 약 3GB 다운로드)\n· large-v3-turbo: 약 3~4배 빠름, 정확도 약간 낮음")
@@ -199,6 +212,8 @@ class SettingsDialog(QDialog):
         s.anthropic_api_key = self.key.text().strip()
         s.claude_model = self.model.currentText().strip()
         s.claude_effort = self.effort.currentText()
+        s.pexels_api_key = self.pexels.text().strip()
+        s.studio_workers = self.workers.value()
         s.whisper_model = self.whisper.currentText().strip()
         s.whisper_device = self.device.currentText()
         s.brand.name = self.b_name.text().strip()
@@ -335,9 +350,15 @@ class MainWindow(QMainWindow):
         sv.addWidget(self.script)
         tabs.addTab(sw, "3. 대본")
         tabs.addTab(self.notes, "4. 메모 · 주요 장면")
+        self.direction = QPlainTextEdit()
+        self.direction.setPlaceholderText(
+            "AI 스튜디오 전체에 주는 편집 지시(선택). 모든 에이전트가 최우선으로 따릅니다.\n"
+            "예)\n- 이번 편은 모션 그래픽을 평소보다 많이, 스톡 영상은 자연광 톤만\n"
+            "- 인트로는 30초 안에 끝내고 첫 장면은 의자 사진으로\n- 자막은 다큐멘터리 스타일로 절제해서")
+        tabs.addTab(self.direction, "5. 편집 지시")
         lv.addWidget(tabs, 1)
 
-        g3 = QGroupBox("5. 선택 자료")
+        g3 = QGroupBox("6. 선택 자료")
         f3 = QFormLayout(g3)
         self.images = DropLine("(선택) 자료 이미지 폴더 — 파일명이 곧 설명(예: Braun SK 4.jpg)")
         self.bgm = DropLine("(선택) 배경음악 — 라이선스 있는 곡(가사 없는 곡 권장)")
@@ -367,7 +388,9 @@ class MainWindow(QMainWindow):
         self.pace = QComboBox()
         self.pace.addItems(["차분하게 (셜록현준식 호흡)", "보통", "빠르게"])
         self.caption_style = QComboBox()
-        self.caption_style.addItems(["그림자 자막", "박스 자막"])
+        self.caption_style.addItems(["자동(🔤 자막 디자이너가 선택)", "에디토리얼", "다큐멘터리", "글래스", "박스"])
+        self.short_caption = QComboBox()
+        self.short_caption.addItems(["자동(🔤 자막 디자이너가 선택)", "키네틱", "클린(카라오케)", "박스"])
         self.shorts_layout = QComboBox()
         self.shorts_layout.addItems(["풀프레임 얼굴(+상단 도식)", "가운데 16:9 (3단)"])
         og.addWidget(self.make_long, 0, 0)
@@ -381,9 +404,33 @@ class MainWindow(QMainWindow):
         og.addWidget(self.pace, 3, 1, 1, 2)
         og.addWidget(QLabel("롱폼 자막"), 4, 0)
         og.addWidget(self.caption_style, 4, 1, 1, 2)
-        og.addWidget(QLabel("숏폼 레이아웃"), 5, 0)
-        og.addWidget(self.shorts_layout, 5, 1, 1, 2)
+        og.addWidget(QLabel("숏폼 자막"), 5, 0)
+        og.addWidget(self.short_caption, 5, 1, 1, 2)
+        og.addWidget(QLabel("숏폼 레이아웃"), 6, 0)
+        og.addWidget(self.shorts_layout, 6, 1, 1, 2)
         rv.addWidget(go)
+
+        gs = QGroupBox("🎬 AI 스튜디오")
+        sg = QGridLayout(gs)
+        self.studio_mode = QCheckBox("멀티 에이전트(감독 + 전문가 팀)")
+        self.studio_mode.setToolTip("🎬 총괄 감독이 ✂️ 편집 · 🎨 모션 · 🎞 자료 · 🔤 자막 · 📱 숏폼 · ✍️ 카피 에이전트를 동시에 굴립니다.\n"
+                                    "끄면 Claude 한 번 호출로 계획합니다(빠르고 저렴).")
+        self.fetch_stock = QCheckBox("🎞 Pexels 스톡 영상·사진")
+        self.motion_scenes = QCheckBox("🎨 모션 장면 직접 설계")
+        self.qa_rounds = QSpinBox()
+        self.qa_rounds.setRange(0, 3)
+        self.qa_rounds.setValue(1)
+        self.qa_rounds.setSpecialValueText("끔")
+        self.qa_rounds.setSuffix(" 라운드")
+        self.qa_rounds.setToolTip("🧐 아트 디렉터가 렌더된 장면을 직접 보고 고치는 횟수")
+        for cb in (self.studio_mode, self.fetch_stock, self.motion_scenes):
+            cb.setChecked(True)
+        sg.addWidget(self.studio_mode, 0, 0, 1, 2)
+        sg.addWidget(self.fetch_stock, 1, 0)
+        sg.addWidget(self.motion_scenes, 1, 1)
+        sg.addWidget(QLabel("🧐 아트 디렉터 검수"), 2, 0)
+        sg.addWidget(self.qa_rounds, 2, 1)
+        rv.addWidget(gs)
 
         gx = QGroupBox("편집 기능")
         xg = QGridLayout(gx)
@@ -486,7 +533,11 @@ class MainWindow(QMainWindow):
             short_max_sec=self.short_len.value(), out_height=heights[self.height_box.currentIndex()],
             pace=paces[self.pace.currentIndex()], use_claude=self.use_claude.isChecked(),
             fetch_broll=self.fetch_broll.isChecked(), grain=self.grain.isChecked(),
-            caption_style=["shadow", "box"][self.caption_style.currentIndex()], thumbnails=self.thumbs.isChecked(),
+            caption_preset=LONG_PRESETS[self.caption_style.currentIndex()],
+            short_caption_preset=SHORT_PRESETS[self.short_caption.currentIndex()],
+            studio_mode=self.studio_mode.isChecked(), fetch_stock=self.fetch_stock.isChecked(),
+            motion_scenes=self.motion_scenes.isChecked(), qa_rounds=self.qa_rounds.value(),
+            direction=self.direction.toPlainText().strip(), thumbnails=self.thumbs.isChecked(),
             sfx=self.sfx.isChecked(), enhance_voice=self.enhance.isChecked(),
             shorts_layout=["full", "framed"][self.shorts_layout.currentIndex()],
             progress_bar=self.progress_bar.isChecked(), endcard=self.endcard.isChecked(),
@@ -512,7 +563,14 @@ class MainWindow(QMainWindow):
         self.use_claude.setChecked(s.use_claude)
         self.fetch_broll.setChecked(s.fetch_broll)
         self.grain.setChecked(s.grain)
-        self.caption_style.setCurrentIndex(0 if s.caption_style == "shadow" else 1)
+        self.caption_style.setCurrentIndex(LONG_PRESETS.index(s.caption_preset) if s.caption_preset in LONG_PRESETS else 0)
+        self.short_caption.setCurrentIndex(
+            SHORT_PRESETS.index(s.short_caption_preset) if s.short_caption_preset in SHORT_PRESETS else 0)
+        self.studio_mode.setChecked(s.studio_mode)
+        self.fetch_stock.setChecked(s.fetch_stock)
+        self.motion_scenes.setChecked(s.motion_scenes)
+        self.qa_rounds.setValue(max(0, min(3, s.qa_rounds)))
+        self.direction.setPlainText(s.direction)
         self.thumbs.setChecked(s.thumbnails)
         self.sfx.setChecked(s.sfx)
         self.enhance.setChecked(s.enhance_voice)
@@ -532,8 +590,10 @@ class MainWindow(QMainWindow):
             except (TypeError, KeyError):
                 pass
         if not self.settings.anthropic_api_key:
-            self._log("ℹ 설정에서 Claude API 키를 입력하면 편집 판단(그래픽·챕터·숏폼 후킹)을 Claude 가 합니다. "
+            self._log("ℹ 설정에서 Claude API 키(본인 키)를 입력하면 🎬 AI 스튜디오(감독 + 전문 에이전트 팀)가 편집을 판단합니다. "
                       "키가 없으면 대본 태그 기반 규칙 편집으로 동작합니다.")
+        if not self.settings.pexels_api_key:
+            self._log("ℹ 설정 → AI 탭에 Pexels API 키(무료)를 넣으면 🎞 스톡 영상·사진을 자동으로 찾아 넣습니다.")
 
     def _log(self, msg: str) -> None:
         self.logbox.appendPlainText(msg)

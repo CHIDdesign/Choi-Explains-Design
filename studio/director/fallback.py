@@ -139,8 +139,16 @@ def _make_short(ids: list[int], by_id: dict[int, Utterance], hint: str, max_sec:
     first_text = by_id[cold if cold >= 0 else ids[0]].text
     title_src = hint or first_text
     title = re.sub(r"[.?!…]+$", "", title_src).strip()
-    if len(title) > 22:
-        title = title[:22].rstrip() + "…"
+    if len(title) > 24:
+        # 말줄임 대신 어절 단위로 자른다(훅 타이틀 2줄 × 8~12자)
+        words, acc = [], 0
+        for w in title.split():
+            if words and acc + len(w) + 1 > 24:
+                break
+            words.append(w)
+            acc += len(w) + (1 if acc else 0)
+        title = " ".join(words) if words else title[:24]
+        title = re.sub(r"[,，·]+$", "", title)
     spaces = [i for i, ch in enumerate(title) if ch == " "]
     if len(title) > 12 and spaces:
         sp = min(spaces, key=lambda i: abs(i - len(title) / 2))

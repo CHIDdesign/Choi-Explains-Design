@@ -40,7 +40,7 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
 
 /** 템플릿 × 레이아웃 → 표면 */
 export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName => {
-  if (layout === 'split') return template === 'photo' ? 'photo' : 'board';
+  if (layout === 'split') return template === 'photo' || template === 'broll' ? 'photo' : 'board';
   if (layout === 'overlay') return 'overlay';
   switch (template) {
     case 'chapter':
@@ -53,6 +53,7 @@ export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName 
     case 'title':
       return 'signal';
     case 'photo':
+    case 'broll':
       return 'photo';
     default:
       return 'board';
@@ -75,6 +76,8 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   venn: '교집합',
   pyramid: '위계',
   photo: '자료',
+  motion: 'motion',
+  broll: 'footage',
   title: 'episode',
   lower_third: '',
 };

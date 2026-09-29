@@ -13,6 +13,10 @@ from ..text.captions import build_cues, build_short_chunks
 from ..vision.face import remap_track
 
 
+LONG_PRESETS = ("editorial", "documentary", "glass", "boxed")
+SHORT_PRESETS = ("kinetic", "clean", "boxed")
+
+
 def brand_props(b: Brand) -> dict[str, Any]:
     return {"name": b.name, "shortName": b.short_name, "handle": b.handle, "presenter": b.presenter,
             "presenterTitle": b.presenter_title, "accent": b.accent, "ink": b.ink, "paper": b.paper, "year": b.year}
@@ -91,10 +95,10 @@ def punches(emphasis: list[dict], utts: list[Utterance], timemap: TimeMap, *, am
     return out
 
 
-def emphasis_keys(emphasis: list[dict], utts: list[Utterance], timemap: TimeMap) -> set[tuple[float, str]]:
-    """자막 강조어: (편집 시각, 정규화 텍스트)"""
+def emphasis_keys(emphasis: list[dict], utts: list[Utterance], timemap: TimeMap) -> dict[tuple[float, str], Any]:
+    """자막 강조어: {(편집 시각, 정규화 텍스트): 유형(keyword|term|number|contrast) 또는 True}"""
     by_id = {u.id: u for u in utts}
-    keys: set[tuple[float, str]] = set()
+    keys: dict[tuple[float, str], Any] = {}
     for e in emphasis:
         if e.get("kind", "highlight") == "punch" and not e.get("word"):
             continue
@@ -107,9 +111,12 @@ def emphasis_keys(emphasis: list[dict], utts: list[Utterance], timemap: TimeMap)
             if wn and (w in wn or wn in w):
                 t = timemap.src_to_edit(word.start, snap=False)
                 if t is not None:
-                    keys.add((round(t, 3), word.text.strip().rstrip(".,")))
+                    key = (round(t, 3), word.text.strip().rstrip(".,").replace(" ", ""))
+                    typ = e.get("type") or True
+                    if keys.get(key) in (None, True):
+                        keys[key] = typ
                 break
-    return {(t, txt.replace(" ", "")) for t, txt in keys}
+    return keys
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +228,7 @@ def long_props(
     sfx: dict[str, str],
     grain_frames: list[str],
     grain: float,
-    caption_style: str,
+    caption_preset: str = "editorial",
     endcard: bool = True,
     use_sfx: bool = True,
 ) -> dict[str, Any]:
@@ -252,7 +259,7 @@ def long_props(
         "bgm": {"src": bgm_src, "envelope": bgm_envelope(regions, total, swells), "loop": True} if bgm_src else None,
         "sfx": sfx_events(gdicts, sfx) if use_sfx else [],
         "captions": cues,
-        "captionStyle": caption_style,
+        "captionPreset": caption_preset if caption_preset in LONG_PRESETS else "editorial",
         "face": face,
         "camera": camera_shots(timemap, speech_total, chapter_starts),
         "punches": punches(emphasis, utts, timemap),
@@ -288,6 +295,8 @@ def short_props(
     layout: str = "full",
     progress_bar: bool = False,
     series_label: str = "",
+    caption_preset: str = "kinetic",
+    extra_emphasis: Optional[list[dict]] = None,
 ) -> dict[str, Any]:
     by_id = {u.id: u for u in utts}
     groups = []
@@ -298,6 +307,9 @@ def short_props(
             if mapped:
                 groups.append(mapped)
     em = [{"seg": e["seg"], "word": e.get("word", ""), "kind": "highlight"} for e in spec.get("emphasis", [])]
+    # 🔤 자막 디자이너가 롱폼에서 정한 강조(유형 포함) 중 이 숏폼에 들어간 것
+    segs = set(spec["segments"])
+    em = [e for e in extra_emphasis or [] if e.get("seg") in segs and e.get("kind") == "highlight"] + em
     em_keys = emphasis_keys(em, utts, timemap)
     cues = build_short_chunks(groups, emphasis=em_keys)
     total = timemap.duration
@@ -338,6 +350,7 @@ def short_props(
         "hookHighlight": spec.get("hook_highlight", ""),
         "seriesLabel": series_label,
         "layout": layout,
+        "captionPreset": caption_preset if caption_preset in SHORT_PRESETS else "kinetic",
         "progressBar": progress_bar,
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],

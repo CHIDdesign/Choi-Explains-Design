@@ -1,7 +1,8 @@
 """자막 큐 만들기.
 
-- 롱폼: 1줄 우선, 최대 2줄, 줄당 18자 이내(셜록현준 리서치 규칙 16), 발화 경계에서 끊음
+- 롱폼: 1줄 우선, 최대 2줄, 줄당 16자 이내(넷플릭스 한국어 가이드 · 셜록현준 리서치 규칙 16), 발화 경계에서 끊음
 - 숏폼: 1~3어절, 6~14자 청크(숏폼 리서치 4-4), 최소 0.6초 표시
+- 강조: 🔤 자막 디자이너가 고른 단어에 유형(keyword/term/number/contrast)을 붙이고, 한 큐에 하나만 남긴다
 """
 from __future__ import annotations
 
@@ -21,6 +22,34 @@ def display_text(t: str) -> str:
 
 def _clen(s: str) -> int:
     return len(s.replace(" ", ""))
+
+
+Emphasis = "dict[tuple[float, str], str | bool] | set[tuple[float, str]] | None"
+
+
+def _em_lookup(emphasis, start: float, txt: str):
+    """(단어 시작시각, 정규화 텍스트) 가 강조 목록에 있으면 유형(또는 True)."""
+    if not emphasis:
+        return None
+    flat = re.sub(r"\s", "", txt)
+    items = emphasis.items() if isinstance(emphasis, dict) else ((k, True) for k in emphasis)
+    for (t, key), typ in items:
+        if abs(start - t) < 0.05 and key and key in flat:
+            return typ or True
+    return None
+
+
+def one_em_per_cue(cues: list[dict]) -> None:
+    """한 큐(청크)에 강조는 하나만 — 여러 개면 전문용어/숫자 > 대비 > 키워드 순으로 남긴다."""
+    rank = {"term": 0, "number": 1, "contrast": 2, "keyword": 3, True: 4}
+    for c in cues:
+        ems = [w for line in c["lines"] for w in line if w.get("em")]
+        if len(ems) <= 1:
+            continue
+        keep = min(ems, key=lambda w: rank.get(w["em"], 5))
+        for w in ems:
+            if w is not keep:
+                w.pop("em", None)
 
 
 def _split_lines(words: list[dict], max_chars: int, max_lines: int) -> list[list[dict]]:
@@ -48,12 +77,12 @@ def _split_lines(words: list[dict], max_chars: int, max_lines: int) -> list[list
 def build_cues(
     groups: Iterable[list[Word]],
     *,
-    max_chars: int = 18,
+    max_chars: int = 16,
     max_lines: int = 2,
     max_dur: float = 5.5,
     gap_break: float = 0.6,
     tail: float = 0.25,
-    emphasis: set[tuple[float, str]] | None = None,
+    emphasis=None,
 ) -> list[dict]:
     """groups: 발화별 단어 목록(편집 시간). emphasis: (단어 시작시각, 정규화 텍스트) 집합."""
     cues: list[dict] = []
@@ -74,8 +103,9 @@ def build_cues(
             if not txt:
                 continue
             item = {"text": txt, "start": round(w.start, 3), "end": round(w.end, 3)}
-            if emphasis and any(abs(w.start - t) < 0.05 and key and key in re.sub(r"\s", "", txt) for t, key in emphasis):
-                item["em"] = True
+            em = _em_lookup(emphasis, w.start, txt)
+            if em:
+                item["em"] = em
             if cur:
                 length = sum(_clen(x["text"]) for x in cur) + len(cur) + _clen(txt)
                 too_long = length > cap
@@ -88,6 +118,7 @@ def build_cues(
             prev_raw = w.text
         flush()
     _fix_overlaps(cues)
+    one_em_per_cue(cues)
     return cues
 
 
@@ -97,7 +128,7 @@ def build_short_chunks(
     max_chars: int = 14,
     max_words: int = 3,
     min_dur: float = 0.6,
-    emphasis: set[tuple[float, str]] | None = None,
+    emphasis=None,
 ) -> list[dict]:
     cues: list[dict] = []
     for words in groups:
@@ -107,8 +138,9 @@ def build_short_chunks(
             if not txt:
                 continue
             item = {"text": txt, "start": round(w.start, 3), "end": round(w.end, 3)}
-            if emphasis and any(abs(w.start - t) < 0.05 and key and key in re.sub(r"\s", "", txt) for t, key in emphasis):
-                item["em"] = True
+            em = _em_lookup(emphasis, w.start, txt)
+            if em:
+                item["em"] = em
             if cur:
                 length = sum(_clen(x["text"]) for x in cur) + _clen(txt) + len(cur)
                 if length > max_chars or len(cur) >= max_words:
@@ -134,6 +166,7 @@ def build_short_chunks(
     for i, c in enumerate(merged):
         nxt = merged[i + 1]["start"] if i + 1 < len(merged) else c["end"] + 0.4
         c["end"] = min(max(c["end"] + 0.12, c["start"] + min_dur), nxt)
+    one_em_per_cue(merged)
     return merged
 
 

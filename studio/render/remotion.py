@@ -39,7 +39,7 @@ def ensure_renderer_installed() -> None:
 
 @dataclass
 class RenderItem:
-    kind: str            # video | still
+    kind: str            # video | still | frames(같은 props 로 스틸 여러 장 — 검수용)
     composition: str     # LongForm | Short | Thumbnail
     props_path: Path
     output: Path
@@ -48,11 +48,16 @@ class RenderItem:
     x264_preset: str = "medium"
     encoder: str = "auto"   # auto(Windows=GPU) | cpu | gpu
     weight: float = 1.0     # 진행률 가중치(길이)
+    frame: int = 0          # still: 뽑을 프레임
+    frames: list[tuple[int, Path]] = field(default_factory=list)  # frames: (프레임, 출력 경로)
 
     def to_job(self) -> dict:
-        return {"kind": self.kind, "composition": self.composition, "props": str(self.props_path),
-                "output": str(self.output), "scale": self.scale, "crf": self.crf, "x264Preset": self.x264_preset,
-                "encoder": self.encoder}
+        d = {"kind": self.kind, "composition": self.composition, "props": str(self.props_path),
+             "output": str(self.output), "scale": self.scale, "crf": self.crf, "x264Preset": self.x264_preset,
+             "encoder": self.encoder, "frame": int(self.frame)}
+        if self.frames:
+            d["frames"] = [{"frame": int(f), "output": str(o)} for f, o in self.frames]
+        return d
 
 
 @dataclass
@@ -64,6 +69,7 @@ class RenderJob:
     browser_executable: str = ""
     gl: str = ""
     concurrency: int = 0
+    reuse_bundle: bool = False
 
 
 def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_log,
@@ -76,6 +82,7 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
         "browserExecutable": job.browser_executable,
         "gl": job.gl,
         "concurrency": job.concurrency,
+        "reuseBundle": job.reuse_bundle,
         "renders": [it.to_job() for it in job.items],
     }
     write_json(job_file, data)
@@ -102,14 +109,16 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
             progress(bundle_share * float(ev.get("progress", 0)))
         elif typ == "start":
             state["index"] = ev["index"]
-            log(f"렌더 시작: {ev.get('composition')} → {Path(ev.get('output', '')).name}")
+            if job.items[ev["index"]].kind != "frames":
+                log(f"렌더 시작: {ev.get('composition')} → {Path(ev.get('output', '')).name}")
         elif typ == "progress":
             i = ev["index"]
             frac = (done_w[0] + weights[i] * float(ev.get("progress", 0))) / total_w
             progress(bundle_share + (1 - bundle_share) * frac)
         elif typ == "done":
             done_w[0] += weights[ev["index"]]
-            log(f"완료: {Path(ev.get('output', '')).name}")
+            if job.items[ev["index"]].kind != "frames":
+                log(f"완료: {Path(ev.get('output', '')).name}")
         elif typ == "error":
             state["err"] = ev.get("message", "")
             log("[remotion 오류] " + state["err"][:2000])

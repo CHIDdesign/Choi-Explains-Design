@@ -1,6 +1,6 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
-import {ShortCaptions} from '../components/Captions';
+import {ShortCaptions} from '../components/captions/ShortCaptions';
 import {Grain} from '../components/fx/Grain';
 import {TEMPLATE_COMPONENTS} from '../components/graphics';
 import {HookTitle} from '../components/shorts/HookTitle';
@@ -98,8 +98,8 @@ export const Short: React.FC<ShortProps> = (props) => {
       })}
       <HookTitle text={props.hookTitle} highlight={props.hookHighlight} series={props.seriesLabel} frame={frame}
         theme={theme} width={W} />
-      <ShortCaptions cues={props.captions} t={t} fps={fps} theme={theme} y={g && props.layout === 'full' ? 1090 : 1110}
-        width={W} />
+      <ShortCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
+        y={g && props.layout === 'full' ? 1090 : 1110} width={W} />
       {props.progressBar ? (
         <div style={{position: 'absolute', left: 0, top: 0, height: 6, width: (W * frame) / Math.max(1, durationInFrames),
           background: theme.accent, opacity: 0.8}} />

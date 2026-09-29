@@ -82,6 +82,14 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "고유명사(제품·건축·디자이너·브랜드·작품)가 처음 나오면 1초 안에 실제 사진. 첫 등장은 풀스크린 3~6초.",
              "image=로컬 이미지 파일명 또는 영어 검색어(예: 'Braun SK 4 radio'), title=대상 이름, body=짧은 캡션(연도·디자이너 등, 선택)",
              ("fullscreen", "split", "pip"), 3.0, 7.0, 5),
+    Template("motion", "모션 장면(직접 설계)",
+             "템플릿으로 표현되지 않는 개념을 움직임으로 보여줄 때(게슈탈트 근접성, 시선 흐름, 비례 변화, 전후 비교 모핑 등). 모션 디자이너 전용.",
+             "spec_json=MotionSpec JSON(모션 DSL 참고)",
+             ("fullscreen", "split"), 4.0, 12.0, 8),
+    Template("broll", "스톡 B-roll",
+             "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
+             "image=영어 검색어(구체적 명사·장면), title=한국어 검색어(화면 라벨로도 씀), subtitle=video|photo, body=이 장면의 목적",
+             ("fullscreen", "split", "pip"), 2.5, 7.0, 5),
 ]}
 
 TEMPLATE_NAMES = tuple(TEMPLATES.keys())

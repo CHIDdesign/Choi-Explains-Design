@@ -1,7 +1,7 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {GraphicLayer, SPLIT_SPEAKER} from '../components/graphics';
-import {LongCaptions} from '../components/Captions';
+import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
 import {Grain, Vignette} from '../components/fx/Grain';
 import {EndCard} from '../components/layout/EndCard';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
@@ -119,6 +119,9 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     return k >= 0 ? `ch ${props.chapters[k].number}` : '';
   };
   const fullscreenActive = props.graphics.some((g) => g.layout === 'fullscreen' && t >= g.start && t < g.end);
+  // 화면에 글자 그래픽이 떠 있으면 자막 강조는 끈다(강조색은 화면당 한 곳)
+  const textGraphicActive = props.graphics.some((g) => t >= g.start && t < g.end
+    && !['lower_third', 'broll', 'photo', 'title'].includes(g.template));
 
   const seq = (g: Graphic) => {
     const from = toFrame(g.start, fps);
@@ -148,8 +151,9 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         </div>
       ) : null}
       {over.map(seq)}
-      <LongCaptions cues={props.captions} t={t} fps={fps} theme={theme} style={props.captionStyle} centerX={capCenter}
-        frameW={W} />
+      {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
+      <LongCaptions cues={props.captions} t={t} fps={fps} theme={theme} preset={props.captionPreset}
+        centerX={capCenter} frameW={W} plain={textGraphicActive} />
       {props.endcard ? (
         <Sequence from={endStart} durationInFrames={Math.max(1, toFrame(props.endcard.dur, fps))} name="endcard">
           <EndCardSeq theme={theme} props={props} />

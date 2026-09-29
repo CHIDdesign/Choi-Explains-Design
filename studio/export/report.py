@@ -40,7 +40,8 @@ def youtube_text(plan: dict[str, Any], chapters: list[dict], shorts: list[dict],
 
 def edit_report(*, title: str, source_duration: float, long_duration: float, align_report: dict,
                 utts: list, graphics: list[dict], chapters: list[dict], shorts: list[dict],
-                director: str, usage: list[dict], broll: list[dict]) -> str:
+                director: str, usage: list[dict], broll: list[dict], studio: dict | None = None,
+                qa: list[dict] | None = None) -> str:
     removed = [u for u in utts if not u.kept]
     lines = [f"# 편집 리포트 — {title}", "",
              f"- 편집 판단: {director}",
@@ -49,6 +50,30 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
              f"- 대본 일치 발화 {align_report.get('matched', 0)}개 · 리테이크 제거 {align_report.get('retakes', 0)}개 · "
              f"NG/추임새 제거 {align_report.get('meta', 0)}개 · 대본 밖 애드리브 {align_report.get('unmatched', 0)}개",
              f"- 대본 커버리지 {align_report.get('script_coverage', 0) * 100:.0f}%", ""]
+    if studio:
+        lines += ["## 🎬 AI 스튜디오 브리프", "",
+                  f"- 로그라인: {studio.get('logline', '')}",
+                  f"- 대상: {studio.get('audience', '')} · 톤: {studio.get('tone', '')}",
+                  f"- 팀 메모: {studio.get('notes_for_team', '')}",
+                  f"- ✂️ 호흡: {studio.get('pacing_notes', '')}",
+                  f"- 🔤 자막: {studio.get('caption_notes', '')}",
+                  f"- 🎨 모션 장면 {studio.get('motion_scenes', 0)}개 · 🎞 스톡 요청 {studio.get('stock_requests', 0)}건", ""]
+        beats = studio.get("beats") or []
+        if beats:
+            lines += ["| 발화 | 의도 | 시각 수단 | 아이디어 |", "|---|---|---|---|"]
+            for b in beats:
+                lines.append(f"| S{b.get('start_seg')}–S{b.get('end_seg')} | {b.get('intent')} | {b.get('visual')} | "
+                             f"{str(b.get('idea', ''))[:60]} |")
+            lines.append("")
+    if qa:
+        lines += ["## 🧐 아트 디렉터 검수", ""]
+        for r in qa:
+            lines.append(f"### {r.get('round')}라운드 — {r.get('verdict')} (반영 {r.get('applied', 0)}건)")
+            lines.append(f"{r.get('summary', '')}")
+            for i in r.get("issues", []) or []:
+                lines.append(f"- {i.get('target')} [{i.get('severity')}] {i.get('problem')} → {i.get('action')}")
+            lines.append("")
+        lines += ["> 페이싱의 느낌·음악 취향·그래픽의 전반적 인상은 기계가 판단할 수 없습니다. 위 타임코드를 직접 확인하세요.", ""]
     missing = align_report.get("missing_sentences") or []
     if missing:
         lines += ["## 영상에서 찾지 못한 대본 문장(말하지 않았거나 인식 실패)", ""] + [f"- {m}" for m in missing] + [""]
@@ -65,9 +90,10 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         lines.append(f"| {fmt_ts(g['start'], True)}–{fmt_ts(g['end'], True)} | {g['template']} | {g['layout']} | {str(text)[:50]} |")
     lines.append("")
     if broll:
-        lines += ["## 자료 사진 출처(라이선스 확인)", ""]
+        lines += ["## 자료 사진·스톡 출처(라이선스 확인)", ""]
         for b in broll:
-            lines.append(f"- {b.get('query')}: {b.get('origin')} {b.get('license', '')} {b.get('source_url', '')}")
+            lines.append(f"- {b.get('query')}: {b.get('origin')} {b.get('credit', '')} {b.get('license', '')} "
+                         f"{b.get('source_url', '') or b.get('url', '')}".rstrip())
         lines.append("")
     if shorts:
         lines += ["## 숏폼", ""]
@@ -82,6 +108,18 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         out = sum(u.get("output", 0) for u in usage)
         lines += ["## Claude 사용량", "", f"- 입력 {inp:,} 토큰(캐시 읽기 {sum(u.get('cache_read', 0) for u in usage):,}) · 출력 {out:,} 토큰",
                   "- 요금은 모델별 단가로 계산됩니다(Opus 5.5 기준 입력 $4 / 출력 $20 per 1M 토큰).", ""]
+        by: dict[str, list[int]] = {}
+        for u in usage:
+            acc = by.setdefault(str(u.get("label", "")), [0, 0, 0, 0])
+            acc[0] += 1
+            acc[1] += u.get("input", 0)
+            acc[2] += u.get("cache_read", 0)
+            acc[3] += u.get("output", 0)
+        if len(by) > 1:
+            lines += ["| 에이전트 | 호출 | 입력 | 캐시 읽기 | 출력 |", "|---|---|---|---|---|"]
+            for lab, (n, i, c, o) in by.items():
+                lines.append(f"| {lab} | {n} | {i:,} | {c:,} | {o:,} |")
+            lines.append("")
     return "\n".join(lines)
 
 

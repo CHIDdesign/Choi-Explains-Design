@@ -6,9 +6,16 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 from ..models import Tag, TimeMap, Utterance
+from ..motion.spec import clean_spec
 from ..text.align import norm
 from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATES
 from .schema import HOOK_TYPES
+
+EM_TYPES = ("keyword", "term", "number", "contrast")  # 자막 강조 유형(renderer EmType)
+
+# 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
+DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
+EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
@@ -156,6 +163,29 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         out["items"] = ["발견", "정의", "개발", "전달"]
     if tn == "venn" and len(out["items"]) < 2:
         return None
+    if tn == "motion":
+        # 🎨 모션 디자이너가 설계한 MotionSpec(장면 길이에 맞춘 최종 정리는 time_graphics 에서)
+        spec = g.get("spec")
+        if not isinstance(spec, dict) or not clean_spec(spec, 12.0):
+            return None
+        out["spec"] = spec
+    if tn == "broll":
+        # 🎞 Pexels 요청 — 단일 디렉터 모드에서는 image=영어 검색어, subtitle=video|photo, title=한국어 검색어
+        st = g.get("stock") if isinstance(g.get("stock"), dict) else {}
+        kind = st.get("kind") or (out["subtitle"] if out["subtitle"] in ("video", "photo") else "video")
+        stock = {"kind": kind if kind in ("video", "photo") else "video",
+                 "query_en": str(st.get("query_en") or out["image"]).strip(),
+                 "query_ko": str(st.get("query_ko") or out["title"]).strip(),
+                 "purpose": str(st.get("purpose") or out["body"]).strip(),
+                 "must_show": str(st.get("must_show") or "").strip()}
+        if not (stock["query_en"] or stock["query_ko"]):
+            return None
+        out["stock"] = stock
+        for k in ("src", "kind", "credit", "kenburns", "stock_url"):
+            if g.get(k):
+                out[k] = g[k]
+    if tn == "photo" and g.get("credit"):
+        out["credit"] = g["credit"]
     return out
 
 
@@ -183,6 +213,8 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "drop": [],
         "youtube": raw.get("youtube") or {},
         "music": raw.get("music") or {},
+        "captions": raw.get("captions") or {},   # 🔤 자막 디자이너의 프리셋 선택
+        "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
     }
     for c in raw.get("chapters", []) or []:
         if isinstance(c, dict) and str(c.get("title", "")).strip():
@@ -196,7 +228,10 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
                 plan["graphics"].append(cg)
     for e in raw.get("emphasis", []) or []:
         if isinstance(e, dict) and e.get("seg") in kept and e.get("kind") in ("punch", "highlight"):
-            plan["emphasis"].append({"seg": e["seg"], "word": str(e.get("word", "")), "kind": e["kind"]})
+            item = {"seg": e["seg"], "word": str(e.get("word", "")), "kind": e["kind"]}
+            if e.get("type") in EM_TYPES:
+                item["type"] = e["type"]
+            plan["emphasis"].append(item)
     for d in raw.get("drop", []) or []:
         if isinstance(d, dict) and d.get("seg") in kept:
             plan["drop"].append({"seg": d["seg"], "reason": str(d.get("reason", ""))})
@@ -337,6 +372,31 @@ def word_edit_time(u: Utterance, word: str, timemap: TimeMap) -> Optional[float]
     return None
 
 
+def reading_chars(g: dict[str, Any]) -> int:
+    parts = [g.get("title") or "", g.get("subtitle") or "", g.get("body") or "", g.get("title_b") or ""]
+    parts += [str(x) for x in (g.get("items") or []) + (g.get("items_b") or [])]
+    if g.get("template") == "motion" and isinstance(g.get("spec"), dict):
+        parts += [str(e.get("text", "")) for e in g["spec"].get("elements", []) if isinstance(e, dict)]
+    if g.get("template") in ("broll", "photo"):
+        return 0
+    return sum(len(p.replace(" ", "")) for p in parts)
+
+
+def spec_settle_time(spec: dict[str, Any]) -> float:
+    """모든 요소가 도착(진입 완료)하는 시각."""
+    t = 0.0
+    for e in spec.get("elements", []) or []:
+        if not isinstance(e, dict):
+            continue
+        try:
+            t = max(t, float(e.get("at", 0) or 0) + float(e.get("dur", 0.5) or 0.5))
+            for k in e.get("keys", []) or []:
+                t = max(t, float(k.get("t", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+    return t
+
+
 def time_graphics(
     graphics: list[dict[str, Any]],
     utts: list[Utterance],
@@ -367,6 +427,10 @@ def time_graphics(
         n_items = len(g.get("items") or []) + len(g.get("items_b") or [])
         if g["template"] in ("list", "process", "cycle", "timeline", "pyramid", "compare"):
             want = max(want, 1.6 + 1.4 * n_items)
+        # 읽기 시간(한국어 12자/초 + 도착 여유 1.2초) — 넷플릭스 한국어 자막 기준
+        want = max(want, 1.2 + reading_chars(g) / 12.0)
+        if g["template"] == "motion" and isinstance(g.get("spec"), dict):
+            want = max(want, spec_settle_time(g["spec"]) + 1.2)
         end = max(end, start + want)
         # 목표 길이에 맞게 다음 발화들까지 자연스럽게 연장
         if end - start < want and s_seg in order:
@@ -375,11 +439,23 @@ def time_graphics(
                 k += 1
             end = max(end, seg_t[order[k]][1])
         end = min(end, start + t.max_dur, total - 0.3)
-        start = max(start - 0.15, min_start)  # 말보다 살짝 먼저 등장
+        if g["template"] == "broll":
+            start = max(start + 0.25, min_start)  # 컷어웨이는 단어보다 살짝 늦게(의도로 읽힘)
+        else:
+            start = max(start - 0.15, min_start)  # 도식은 말보다 살짝 먼저 도착
         if end - start < t.min_dur * 0.7:
             continue
-        data = {k: g.get(k) for k in ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight",
-                                      "author", "source", "image")}
+        data = {k: g.get(k) for k in DATA_KEYS}
+        for k in EXTRA_DATA_KEYS:
+            if g.get(k):
+                data[k] = g[k]
+        if g["template"] == "broll" and not g.get("src"):
+            continue  # 소재를 못 구한 B-roll 은 버린다(틀린 B-roll 보다 없는 게 낫다)
+        if g["template"] == "motion":
+            spec = clean_spec(g.get("spec"), end - start)
+            if not spec:
+                continue
+            data["spec"] = spec
         timed.append(TimedGraphic(f"{id_prefix}{i}", g["template"], g["layout"], start, end, data,
                                   t.priority + (3 if "태그" in (g.get("reason") or "") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))

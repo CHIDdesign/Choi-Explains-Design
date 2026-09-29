@@ -6,19 +6,22 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import json
 import shutil
 import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .agents.studio import Studio
 from .asr.transcribe import load_audio_16k, speech_regions, transcribe
 from .broll.images import Wikimedia, list_local_images, resolve_image
 from .director import fallback
 from .director.catalog import TEMPLATES
 from .director.claude import ClaudeClient, DirectorError
 from .director.context import JobBrief, long_instruction, shared_context, shorts_instruction, system_prompt
-from .director.plan import TimedGraphic, normalize_long, normalize_shorts, resolve_overlaps, seg_edit_times, time_graphics
+from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, resolve_overlaps, seg_edit_times,
+                            spec_settle_time, time_graphics)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
@@ -30,6 +33,8 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .render.assets import copy_fonts, make_grain, make_sfx
 from .render.props import Episode, long_props, short_props
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
+from .stock.pexels import Pexels, PexelsError
+from .stock.research import StockResearcher
 from .settings import Settings
 from .text.align import ScriptAligner, build_utterances
 from .text.captions import cues_to_srt
@@ -45,10 +50,12 @@ STAGES: list[tuple[str, str, float]] = [
     ("asr", "음성 인식(Whisper)", 22),
     ("align", "대본 정렬 · NG/리테이크 제거", 2),
     ("face", "얼굴 추적", 6),
-    ("director", "편집 계획(Claude)", 8),
+    ("director", "편집 계획(AI 스튜디오)", 9),
     ("proxy", "렌더용 프록시·오디오 컷", 10),
-    ("broll", "자료 사진 확보", 3),
-    ("render", "렌더링(Remotion)", 42),
+    ("broll", "자료 사진 확보", 2),
+    ("stock", "스톡 영상·사진(Pexels)", 3),
+    ("qa", "아트 디렉터 검수", 5),
+    ("render", "렌더링(Remotion)", 36),
     ("export", "자막·XML·리포트 내보내기", 2),
 ]
 STAGE_LABEL = {k: v for k, v, _ in STAGES}
@@ -76,7 +83,13 @@ class JobSpec:
     use_claude: bool = True
     fetch_broll: bool = True
     grain: bool = True
-    caption_style: str = "shadow"
+    caption_preset: str = "auto"        # auto(🔤 자막 디자이너 선택) | editorial | documentary | glass | boxed
+    short_caption_preset: str = "auto"  # auto | kinetic | clean | boxed
+    studio_mode: bool = True            # 멀티 에이전트 스튜디오(끄면 단일 디렉터)
+    fetch_stock: bool = True            # Pexels 스톡 영상·사진
+    motion_scenes: bool = True          # 🎨 모션 디자이너가 직접 설계하는 장면
+    qa_rounds: int = 1                  # 🧐 아트 디렉터 검수 라운드(0 = 끔)
+    direction: str = ""                 # 사용자 편집 지시(모든 에이전트에게 최우선 전달)
     thumbnails: bool = True
     sfx: bool = True
     enhance_voice: bool = True
@@ -92,6 +105,9 @@ class JobSpec:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "JobSpec":
         names = {f.name for f in fields(cls)}
+        d = dict(d)
+        if "caption_style" in d and "caption_preset" not in d:  # 이전 버전 job.json 호환
+            d["caption_preset"] = "boxed" if d["caption_style"] == "box" else "auto"
         return cls(**{k: v for k, v in d.items() if k in names})
 
 
@@ -133,7 +149,11 @@ class Pipeline:
         self.plan_shorts: list[dict] = []
         self.director_name = ""
         self.claude: Optional[ClaudeClient] = None
+        self.studio: Optional[Studio] = None
+        self.ctx = ""
         self.broll_log: list[dict] = []
+        self.qa_log: list[dict] = []
+        self._render_prep: Optional[tuple[list[tuple[Path, str]], Optional[str]]] = None
 
     # ------------------------------------------------------------------
     def _stage(self, key: str, frac: float) -> None:
@@ -155,8 +175,8 @@ class Pipeline:
             ("align", self.stage_align), ("face", self.stage_face), ("director", self.stage_director),
         ]
         if until != "plan":
-            steps += [("proxy", self.stage_proxy), ("broll", self.stage_broll), ("render", self.stage_render),
-                      ("export", self.stage_export)]
+            steps += [("proxy", self.stage_proxy), ("broll", self.stage_broll), ("stock", self.stage_stock),
+                      ("qa", self.stage_qa), ("render", self.stage_render), ("export", self.stage_export)]
         for key, fn in steps:
             self.cancel.check()
             self.log(f"━━ {STAGE_LABEL[key]}")
@@ -261,14 +281,41 @@ class Pipeline:
         keeps = build_keeps(self.utts, pace=self._pace(), vad=self.vad, media_duration=self.info.duration, fps=self.fps)
         return TimeMap(keeps)
 
+    def _use_api(self) -> bool:
+        return self.spec.use_claude and bool(self.settings.anthropic_api_key)
+
+    def _client(self) -> ClaudeClient:
+        if self.claude is None:
+            self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
+                                       self.settings.claude_effort, log=self.log)
+        return self.claude
+
+    def _ensure_studio(self) -> Optional[Studio]:
+        """🎬 멀티 에이전트 스튜디오(API 키 + 스튜디오 모드일 때)."""
+        if self.studio is not None:
+            return self.studio
+        if not (self._use_api() and self.spec.studio_mode):
+            return None
+        self.studio = Studio(self._client(), log=self.log, cancel=self.cancel, workers=self.settings.studio_workers,
+                             effort=self.settings.agent_effort, models=self.settings.agent_models,
+                             user_direction=self.spec.direction, use_stock=self._stock_enabled(),
+                             use_motion=self.spec.motion_scenes)
+        return self.studio
+
+    def _stock_enabled(self) -> bool:
+        return self.spec.fetch_stock and bool(self.settings.pexels_api_key)
+
     def stage_director(self) -> None:
         assert self.info
         brief = self._brief()
         tm0 = self._initial_timemap()
         ctx = shared_context(brief, self.utts, self.tags, tm0, tm0.duration)
+        self.ctx = ctx
         # 캐시 키는 내용만으로(템포 옵션을 바꿔도 Claude 를 다시 부르지 않도록 편집 시간은 제외)
+        mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
-                        self.spec.short_max_sec, self.settings.claude_model, "plan-v1")
+                        self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
+                        self._stock_enabled(), self.spec.motion_scenes, "plan-v2")
         saved = read_json(self.work / "plan.json", {})
         edited = self.out / "plan.json"
         if saved and edited.exists() and edited.stat().st_mtime > (self.work / "plan.json").stat().st_mtime + 1:
@@ -277,15 +324,30 @@ class Pipeline:
             if user.get("long"):
                 self.log("output/plan.json 의 수정 내용을 반영합니다.")
                 saved = {**user, "key": saved.get("key")}
-        use_api = self.spec.use_claude and bool(self.settings.anthropic_api_key)
+        use_api = self._use_api()
+        studio = self._ensure_studio()
+        raw_long = raw_shorts = None
         if self.spec.reuse_plan and saved.get("key") == key and saved.get("long"):
             self.log("편집 계획: 저장된 plan.json 사용 (직접 수정한 내용 반영)")
             raw_long, raw_shorts = saved["long"], {"shorts": saved.get("shorts", [])}
             self.director_name = saved.get("director", "saved")
+        elif studio is not None:
+            self.director_name = f"AI 스튜디오 · Claude ({self.settings.claude_model})"
+            self.log("🎬 AI 스튜디오 가동: 총괄 감독 → 전문 에이전트 병렬 작업")
+            try:
+                raw_long, raw_shorts = studio.plan(brief, ctx, shorts_count=self.spec.shorts_count,
+                                                   progress=lambda f: self._stage("director", 0.95 * f))
+                if self.spec.shorts_count > 0 and not (raw_shorts or {}).get("shorts"):
+                    raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
+                                                      max_sec=self.spec.short_max_sec)
+            except DirectorError as e:
+                self.log(f"🎬 총괄 감독 실패 → 단일 디렉터로 진행: {e}")
+                raw_long = raw_shorts = None
+        if raw_long is not None:
+            pass
         elif use_api:
             self.director_name = f"Claude ({self.settings.claude_model})"
-            self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
-                                       self.settings.claude_effort, log=self.log)
+            self._client()
             sys_prompt = system_prompt()
             try:
                 self.log("Claude: 롱폼 편집 계획 요청")
@@ -313,10 +375,11 @@ class Pipeline:
             raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
+        if saved.get("key") == key and saved.get("long", {}).get("qa"):
+            self.plan_long["qa"] = saved["long"]["qa"]
         self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count)
-        write_json(self.work / "plan.json", {"key": key, "director": self.director_name, "long": self.plan_long,
-                                             "shorts": self.plan_shorts,
-                                             "usage": self.claude.usage if self.claude else []})
+        self._plan_key = key
+        self._save_plan()
         write_json(self.work / "plan_raw.json", {"long": raw_long, "shorts": raw_shorts})
         # 디렉터가 추가로 버린 발화
         drop_ids = {d["seg"] for d in self.plan_long.get("drop", [])}
@@ -324,8 +387,24 @@ class Pipeline:
             if u.id in drop_ids and u.kept:
                 u.status = "director_drop"
                 u.note = next((d["reason"] for d in self.plan_long["drop"] if d["seg"] == u.id), "")
-        self.log(f"계획: 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])} · "
-                 f"숏폼 {len(self.plan_shorts)} · 추가 컷 {len(drop_ids)}")
+        n_motion = sum(1 for g in self.plan_long["graphics"] if g["template"] == "motion")
+        n_broll = sum(1 for g in self.plan_long["graphics"] if g["template"] == "broll")
+        self.log(f"계획: 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])}"
+                 f"(모션 장면 {n_motion} · 스톡 {n_broll}) · 숏폼 {len(self.plan_shorts)} · 추가 컷 {len(drop_ids)}")
+
+    def _save_plan(self) -> None:
+        prev = read_json(self.work / "plan.json", {})
+        usage = (prev.get("usage", []) if prev.get("key") == getattr(self, "_plan_key", None) else []) \
+            + (self.claude.usage if self.claude else [])
+        # 같은 호출이 두 번 기록되지 않도록
+        seen, uniq = set(), []
+        for u in usage:
+            k = json.dumps(u, sort_keys=True)
+            if k not in seen:
+                seen.add(k)
+                uniq.append(u)
+        write_json(self.work / "plan.json", {"key": getattr(self, "_plan_key", ""), "director": self.director_name,
+                                             "long": self.plan_long, "shorts": self.plan_shorts, "usage": uniq})
 
     # ------------------------------------------------------------------
     def stage_proxy(self) -> None:
@@ -405,6 +484,181 @@ class Pipeline:
             gl[:] = keep
 
     # ------------------------------------------------------------------
+    def stage_stock(self) -> None:
+        """🎞 B-roll 요청 → Pexels 검색 → (Claude 비전으로) 선택 → 다운로드·정리."""
+        lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
+        n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
+        if not n:
+            return
+        if not self._stock_enabled():
+            why = "옵션 꺼짐" if not self.spec.fetch_stock else "Pexels API 키 없음(설정 → 스톡)"
+            self.log(f"🎞 스톡 B-roll {n}건 건너뜀: {why}")
+            for gl in lists:
+                gl[:] = [g for g in gl if g["template"] != "broll" or g.get("src")]
+            return
+        try:
+            px = Pexels(self.settings.pexels_api_key, log=self.log, cache_dir=self.work / "pexels_cache")
+        except PexelsError as e:
+            self.log(f"🎞 {e}")
+            return
+        studio = self._ensure_studio()
+        pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
+        res = StockResearcher(px, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
+                              cancel=self.cancel)
+        res.run(lists, progress=self._sp("stock"))
+        self.broll_log += res.credits
+        if px.remaining is not None:
+            self.log(f"🎞 Pexels 남은 호출 {px.remaining}회(시간당)")
+
+    # ------------------------------------------------------------------
+    def stage_qa(self) -> None:
+        """🧐 아트 디렉터: 실제 렌더된 스틸만 보고 검수(블라인드) → 계획 패치 → 필요하면 한 번 더."""
+        rounds = max(0, int(self.spec.qa_rounds or 0))
+        if not self.spec.make_long or rounds == 0:
+            return
+        studio = self._ensure_studio()
+        if studio is None:
+            self.log("🧐 아트 디렉터 검수 건너뜀(Claude API 키 + AI 스튜디오 모드 필요)")
+            return
+        gkey = lambda: text_hash(json.dumps(self.plan_long["graphics"], sort_keys=True, ensure_ascii=False), "qa-v1")
+        if self.plan_long.get("qa", {}).get("key") == gkey():
+            self.log("🧐 검수: 이전 검수 결과 사용(그래픽 변경 없음)")
+            return
+        links, _ = self._prepare_render()
+        node = find_node(self.settings.node_path)
+        rs = self.settings.render
+        changed: Optional[list[dict]] = None
+        for rnd in range(1, rounds + 1):
+            self.cancel.check()
+            graphics, chapters = self._timed_long()
+            lp = self._make_long_props(graphics, chapters)
+            props_path = self.render_dir / "props_qa.json"
+            write_json(props_path, lp)
+            gl = self.plan_long["graphics"]
+            by_id = {f"g{i}": g for i, g in enumerate(gl)}
+            want_ids = None if changed is None else {f"g{gl.index(g)}" for g in changed if g in gl}
+            targets = [g for g in graphics if g.id in by_id and (want_ids is None or g.id in want_ids)]
+            order = {"motion": 0, "broll": 1, "photo": 3}
+            targets.sort(key=lambda g: (order.get(g.template, 2), g.start))
+            targets = sorted(targets[:12], key=lambda g: g.start)
+            if not targets:
+                break
+            qa_dir = self.work / "qa" / f"r{rnd}"
+            shutil.rmtree(qa_dir, ignore_errors=True)
+            qa_dir.mkdir(parents=True, exist_ok=True)
+            frames = [(int(self._settle_time(g) * self.fps), qa_dir / f"{g.id}.jpg") for g in targets]
+            if rnd == 1:
+                for j, t in enumerate(self._caption_moments(lp, graphics)):
+                    frames.append((int(t * self.fps), qa_dir / f"captions{j + 1}.jpg"))
+            self.log(f"🧐 검수 {rnd}라운드: 스틸 {len(frames)}장 렌더")
+            item = RenderItem("frames", "LongForm", props_path, qa_dir / "frames", scale=0.6, frames=frames)
+            job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=links, items=[item],
+                            browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency,
+                            reuse_bundle=True)
+            base = (rnd - 1) / rounds
+            run_render(job, self.render_dir / "job_qa.json", node=node, log=self.log, cancel=self.cancel,
+                       progress=lambda f: self._stage("qa", base + 0.5 * f / rounds))
+            stills = [(p.stem, p.read_bytes(), "image/jpeg") for _, p in frames if p.exists()]
+            try:
+                res = studio.review(self.ctx, self._qa_text(targets, lp), stills)
+            except DirectorError as e:
+                self.log(f"🧐 검수 실패 → 그대로 진행: {e}")
+                break
+            issues = [i for i in res.get("issues", []) or [] if i.get("action") != "none"
+                      and i.get("severity") in ("high", "medium")]
+            self.log(f"🧐 {res.get('verdict', '')}: {res.get('summary', '')}")
+            for i in issues:
+                self.log(f"🧐 {i.get('target')} [{i.get('severity')}] {i.get('problem')} → {i.get('action')}")
+            still_by_id = {s[0]: s for s in stills}
+            changed = self._apply_qa(issues, by_id, {g.id: g for g in graphics}, still_by_id, studio)
+            self.qa_log.append({"round": rnd, "verdict": res.get("verdict"), "summary": res.get("summary", ""),
+                                "issues": res.get("issues", []), "applied": len(changed)})
+            self._stage("qa", rnd / rounds)
+            if res.get("verdict") == "pass" or not changed:
+                break
+        self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
+        self._save_plan()
+
+    def _settle_time(self, g: TimedGraphic) -> float:
+        """진입 애니메이션이 끝나 화면이 '정지'한 순간(움직이는 중간 프레임을 결함으로 오판하지 않도록)."""
+        dur = g.end - g.start
+        if g.template == "motion" and isinstance(g.data.get("spec"), dict):
+            t = spec_settle_time(g.data["spec"]) + 0.3
+        elif g.template in ("list", "process", "cycle", "timeline", "pyramid", "compare", "matrix", "double_diamond"):
+            t = dur * 0.75
+        else:
+            t = min(1.8, dur * 0.6)
+        return g.start + max(0.5, min(t, dur - 0.35))
+
+    def _caption_moments(self, lp: dict, graphics: list[TimedGraphic], n: int = 2) -> list[float]:
+        busy = [(g.start - 0.5, g.end + 0.5) for g in graphics]
+        cands = [(c["start"] + c["end"]) / 2 for c in lp.get("captions", [])
+                 if c["end"] - c["start"] > 1.2 and not any(a <= (c["start"] + c["end"]) / 2 <= b for a, b in busy)]
+        cands = [t for t in cands if t > 8]
+        if not cands:
+            return []
+        step = max(1, len(cands) // (n + 1))
+        return [cands[min(len(cands) - 1, step * (k + 1))] for k in range(n)]
+
+    def _qa_text(self, targets: list[TimedGraphic], lp: dict) -> str:
+        lines = []
+        for g in targets:
+            d = g.data
+            content = " / ".join(x for x in [d.get("title") or "", d.get("body") or "",
+                                              ", ".join(map(str, d.get("items") or []))] if x)
+            if g.template == "motion":
+                content = (d.get("title") or "") + " (모션 장면)"
+            if g.template == "broll":
+                content = f"스톡 {d.get('kind', '')}: {d.get('title', '')}"
+            spoken = " ".join(w["text"] for c in lp.get("captions", []) for line in c["lines"] for w in line
+                              if g.start - 0.3 <= w["start"] <= g.end)
+            lines.append(f"- {g.id} · {g.template} · {g.layout} · {g.end - g.start:.1f}초 · 내용: {content[:120]}"
+                         f" · 그 구간 발화: \"{spoken[:140]}\"")
+        lines.append("- captions1, captions2 · 그래픽 없는 구간의 자막(프리셋 "
+                     f"{lp.get('captionPreset', '')})")
+        return "\n".join(lines)
+
+    def _apply_qa(self, issues: list[dict], by_id: dict[str, dict], timed: dict[str, TimedGraphic],
+                  stills: dict[str, tuple], studio: Studio) -> list[dict]:
+        changed: list[dict] = []
+        drop: list[dict] = []
+        for iss in issues:
+            g = by_id.get(str(iss.get("target", "")))
+            if g is None:
+                continue
+            act = iss.get("action")
+            if act == "drop":
+                drop.append(g)
+            elif act == "shorten_text":
+                if iss.get("new_title"):
+                    g["title"] = iss["new_title"]
+                if iss.get("new_body"):
+                    g["body"] = iss["new_body"]
+                if iss.get("new_items"):
+                    g["items"] = [str(x) for x in iss["new_items"]][:8]
+                changed.append(g)
+            elif act == "change_layout" and iss.get("new_layout") in TEMPLATES[g["template"]].layouts:
+                g["layout"] = iss["new_layout"]
+                changed.append(g)
+            elif act == "revise_scene" and g["template"] == "motion":
+                tg = timed.get(str(iss["target"]))
+                dur = (tg.end - tg.start) if tg else 8.0
+                try:
+                    new = studio.revise_scene(self.ctx, g.get("spec") or {}, dur, iss.get("problem", ""),
+                                              iss.get("direction", ""), stills.get(str(iss["target"])))
+                except DirectorError as e:
+                    self.log(f"🎨 수정 실패: {e}")
+                    new = None
+                if new:
+                    g["spec"] = new
+                    changed.append(g)
+        if drop:
+            # 삭제만 있으면 다시 볼 장면이 없으므로 다음 라운드 없이 끝난다
+            self.plan_long["graphics"] = [g for g in self.plan_long["graphics"] if not any(g is d for d in drop)]
+            self.log(f"🧐 그래픽 {len(drop)}개 삭제")
+        return [g for g in changed if not any(g is d for d in drop)]
+
+    # ------------------------------------------------------------------
     def _episode(self) -> Episode:
         return Episode(self.spec.title, self.spec.episode, self.spec.subtitle, self.spec.series)
 
@@ -441,18 +695,47 @@ class Pipeline:
                 kept.append(g)
         return kept, chapters
 
-    def stage_render(self) -> None:
-        assert self.info
-        fonts_dir = self.public / "fonts"
-        copy_fonts(fonts_dir)
-        grain = make_grain(self.public / "fx") if self.spec.grain else []
-        sfx = make_sfx(self.public / "sfx") if self.spec.sfx else {}
+    def _prepare_render(self) -> tuple[list[tuple[Path, str]], Optional[str]]:
+        """폰트·그레인·효과음 준비 + 번들 public 에 연결할 큰 미디어 목록(한 번만)."""
+        if self._render_prep is not None:
+            return self._render_prep
+        copy_fonts(self.public / "fonts")
+        self._grain = make_grain(self.public / "fx") if self.spec.grain else []
+        self._sfx = make_sfx(self.public / "sfx") if self.spec.sfx else {}
         links: list[tuple[Path, str]] = [(self.media / "proxy.mp4", "media/proxy.mp4")]
         bgm_src = None
         if self.spec.bgm and Path(self.spec.bgm).exists():
             ext = Path(self.spec.bgm).suffix.lower()
             links.append((Path(self.spec.bgm), f"media/bgm{ext}"))
             bgm_src = f"media/bgm{ext}"
+        if self.spec.make_long:
+            links.append((self.media / "long_voice.wav", "media/long_voice.wav"))
+        for i in range(1, len(getattr(self, "short_maps", [])) + 1):
+            links.append((self.media / f"short_{i}_voice.wav", f"media/short_{i}_voice.wav"))
+        self._render_prep = (links, bgm_src)
+        return self._render_prep
+
+    def _caption_presets(self) -> tuple[str, str]:
+        caps = self.plan_long.get("captions") or {}
+        lp = self.spec.caption_preset if self.spec.caption_preset != "auto" else (caps.get("preset_long") or "editorial")
+        sp = (self.spec.short_caption_preset if self.spec.short_caption_preset != "auto"
+              else (caps.get("preset_short") or "kinetic"))
+        return lp, sp
+
+    def _make_long_props(self, graphics: list[TimedGraphic], chapters: list[dict]) -> dict:
+        _, bgm_src = self._prepare_render()
+        grain = self._grain
+        return long_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), utts=self.utts,
+                          timemap=self.timemap, graphics=graphics, chapters=chapters,
+                          emphasis=self.plan_long.get("emphasis", []), face_src=self.face,
+                          voice_src="media/long_voice.wav", bgm_src=bgm_src, sfx=self._sfx, grain_frames=grain,
+                          grain=0.06 if grain else 0.0, caption_preset=self._caption_presets()[0],
+                          endcard=self.spec.endcard, use_sfx=self.spec.sfx)
+
+    def stage_render(self) -> None:
+        assert self.info
+        links, bgm_src = self._prepare_render()
+        grain, sfx = self._grain, self._sfx
         brand = self.settings.brand
         episode = self._episode()
         items: list[RenderItem] = []
@@ -460,14 +743,9 @@ class Pipeline:
         scale = max(1.0, self.spec.out_height / 1080)
         self.long_props: dict = {}
         if self.spec.make_long:
-            links.append((self.media / "long_voice.wav", "media/long_voice.wav"))
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
-            lp = long_props(fps=self.fps, brand=brand, episode=episode, utts=self.utts, timemap=self.timemap,
-                            graphics=graphics, chapters=chapters, emphasis=self.plan_long.get("emphasis", []),
-                            face_src=self.face, voice_src="media/long_voice.wav", bgm_src=bgm_src, sfx=sfx,
-                            grain_frames=grain, grain=0.06 if grain else 0.0,
-                            caption_style=self.spec.caption_style, endcard=self.spec.endcard, use_sfx=self.spec.sfx)
+            lp = self._make_long_props(graphics, chapters)
             self.long_props = lp
             p = self.render_dir / "props_long.json"
             write_json(p, lp)
@@ -475,7 +753,6 @@ class Pipeline:
                                     crf=rs.crf, x264_preset=rs.x264_preset, weight=lp["duration"]))
         self.short_props: list[dict] = []
         for i, (s, tm) in enumerate(zip(self.plan_shorts, getattr(self, "short_maps", [])), 1):
-            links.append((self.media / f"short_{i}_voice.wav", f"media/short_{i}_voice.wav"))
             sg = time_graphics(s["graphics"], self.utts, tm, total=tm.duration, min_start=3.0, id_prefix=f"s{i}g")
             for g in sg:
                 g.layout = "split"
@@ -483,7 +760,9 @@ class Pipeline:
             sp = short_props(fps=self.fps, brand=brand, episode=episode, spec=s, utts=self.utts, timemap=tm,
                              graphics=sg, face_src=self.face, voice_src=f"media/short_{i}_voice.wav", bgm_src=bgm_src,
                              sfx=sfx, grain_frames=grain, grain=0.05 if grain else 0.0, layout=self.spec.shorts_layout,
-                             progress_bar=self.spec.progress_bar, series_label=series)
+                             progress_bar=self.spec.progress_bar, series_label=series,
+                             caption_preset=self._caption_presets()[1],
+                             extra_emphasis=self.plan_long.get("emphasis", []))
             self.short_props.append(sp)
             p = self.render_dir / f"props_short_{i}.json"
             write_json(p, sp)
@@ -496,7 +775,8 @@ class Pipeline:
             self.log("렌더할 항목이 없습니다.")
             return
         job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=links, items=items,
-                        browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency)
+                        browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency,
+                        reuse_bundle=True)
         node = find_node(self.settings.node_path)
         run_render(job, self.render_dir / "job.json", node=node, log=self.log, progress=self._sp("render"),
                    cancel=self.cancel)
@@ -553,7 +833,8 @@ class Pipeline:
     # ------------------------------------------------------------------
     def stage_export(self) -> None:
         assert self.info
-        credits = sorted({b.get("credit", "") for b in self.broll_log if b.get("credit")})
+        credits = sorted({b["credit"] + (f" ({b['url']})" if b.get("url") else "") for b in self.broll_log
+                          if b.get("credit")})
         chapters = getattr(self, "long_chapters", [])
         if self.long_props:
             write_text(self.out / f"{self.slug}_롱폼.srt", cues_to_srt(self.long_props["captions"]))
@@ -580,7 +861,8 @@ class Pipeline:
                              graphics=self.long_props.get("graphics", []) if self.long_props else [],
                              chapters=chapters, shorts=self.plan_shorts, director=self.director_name,
                              usage=self.claude.usage if self.claude else read_json(self.work / "plan.json", {}).get("usage", []),
-                             broll=self.broll_log)
+                             broll=self.broll_log, studio=self.plan_long.get("studio") or None,
+                             qa=self.qa_log or (self.plan_long.get("qa") or {}).get("rounds"))
         write_text(self.out / f"{self.slug}_편집리포트.md", report)
         # 사용자가 계획을 직접 고칠 수 있도록 사본을 출력 폴더에도
         shutil.copyfile(self.work / "plan.json", self.out / "plan.json")

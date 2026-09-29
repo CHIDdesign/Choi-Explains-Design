@@ -11,6 +11,8 @@ import type {TemplateProps} from './common';
 import {CycleDiagram, DoubleDiamond, MatrixDiagram, ProcessDiagram, PyramidDiagram, VennDiagram} from './Diagrams';
 import {CompareCard, ListCard, TimelineCard} from './Lists';
 import {PhotoCard} from './Photo';
+import {BrollCard} from './Broll';
+import {MotionScene} from '../motion/MotionScene';
 
 export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> = {
   chapter: ChapterCard,
@@ -28,6 +30,9 @@ export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> 
   venn: VennDiagram,
   pyramid: PyramidDiagram,
   photo: PhotoCard,
+  motion: (p) => (p.data.spec ? <MotionScene spec={p.data.spec} frame={p.frame} fps={p.fps} dur={p.dur} box={p.box}
+    surface={p.surface} id={p.id} /> : null),
+  broll: BrollCard,
   title: TitleCard,
   lower_third: LowerThird,
 };
@@ -52,7 +57,8 @@ type Props = {
 export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand, episode, W, H, panelSide, pageLabel}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
   if (!Comp) return null;
-  const sName = surfaceFor(g.template, g.layout);
+  const specBg = g.template === 'motion' ? g.data.spec?.bg : undefined;
+  const sName = specBg && specBg !== 'transparent' ? specBg : surfaceFor(g.template, g.layout);
   const s = mkSurface(theme, sName);
   const pIn = enter(frame, 0, 14, EASE_OUT);
   const pOut = exit(frame, dur, 10, EASE_IN_OUT);
@@ -107,7 +113,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const clipIn = `inset(${(1 - pIn) * 100}% 0 0 0)`;
   const clipOut = `inset(0 0 ${(1 - pOut) * 100}% 0)`;
   const clip = frame < dur / 2 ? clipIn : clipOut;
-  const noHeader = g.template === 'photo' || g.template === 'title';
+  const noHeader = g.template === 'photo' || g.template === 'title' || g.template === 'broll';
   const m = GRID.margin + 24;
   const top = noHeader ? 0 : headerH + 64;
   const bottom = noHeader ? 0 : 170;

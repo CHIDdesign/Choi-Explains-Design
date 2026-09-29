@@ -44,7 +44,11 @@ class Settings:
     node_path: str = ""
     projects_dir: str = str(DEFAULT_PROJECTS_DIR)
     wikimedia_contact: str = ""       # Wikimedia API User-Agent 연락처(권장)
-    pexels_api_key: str = ""
+    pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ 무료 발급
+    # 🎬 AI 스튜디오(멀티 에이전트)
+    studio_workers: int = 4           # 동시에 일하는 전문 에이전트 수
+    agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}
+    agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
     glossary: dict[str, str] = field(default_factory=lambda: {
         "디자인 띵킹": "디자인 씽킹",
         "더블 다이어몬드": "더블 다이아몬드",

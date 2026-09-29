@@ -56,29 +56,41 @@ class ClaudeClient:
         max_tokens: int = 48000,
         cancel: Optional[CancelToken] = None,
         label: str = "Claude",
+        images: Optional[list[tuple[str, bytes, str]]] = None,
+        effort: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> dict:
-        """system + (캐시되는) 공통 컨텍스트 + 작업 지시 → 스키마에 맞는 dict."""
+        """system + (캐시되는) 공통 컨텍스트 + [이미지들] + 작업 지시 → 스키마에 맞는 dict.
+
+        images: [(라벨, 바이트, media_type)] — 아트 디렉터 검수·스톡 선택용
+        """
+        import base64
         system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-        user_blocks = [
+        user_blocks: list[dict[str, Any]] = [
             {"type": "text", "text": shared_context, "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": instruction},
         ]
+        for lab, data, media in images or []:
+            user_blocks.append({"type": "text", "text": f"[이미지 {lab}]"})
+            user_blocks.append({"type": "image", "source": {"type": "base64", "media_type": media,
+                                                            "data": base64.b64encode(data).decode("ascii")}})
+        user_blocks.append({"type": "text", "text": instruction})
+        use_model = model or self.model
         base: dict[str, Any] = {
-            "model": self.model,
+            "model": use_model,
             "max_tokens": max_tokens,
             "system": system_blocks,
             "messages": [{"role": "user", "content": user_blocks}],
         }
         output_config: dict[str, Any] = {"format": {"type": "json_schema", "schema": schema}}
-        if _supports_adaptive(self.model):
+        if _supports_adaptive(use_model):
             base["thinking"] = {"type": "adaptive"}
-            output_config["effort"] = self.effort
+            output_config["effort"] = effort or self.effort
         base["output_config"] = output_config
 
         attempts = [("structured+fallback", True, True), ("structured", True, False), ("plain-json", False, False)]
         last_err: Exception | None = None
         for name, use_schema, use_fallback in attempts:
-            if use_fallback and not _supports_fallbacks(self.model):
+            if use_fallback and not _supports_fallbacks(use_model):
                 continue
             kwargs = json.loads(json.dumps(base))  # 깊은 복사
             if not use_schema:
