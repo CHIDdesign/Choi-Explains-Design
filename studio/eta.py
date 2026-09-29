@@ -35,7 +35,7 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "sound": lambda f: 60,
     "qa@ai": lambda f: 180,
     "qa@rule": lambda f: 20,
-    "render": lambda f: 60 + 50 * f["frames_k"] + (15 if f["thumbs"] else 0),   # 약 20fps
+    "render": lambda f: 60 + 67 * f["frames_k"] + (15 if f["thumbs"] else 0),   # 약 15fps(첫 작업은 넉넉히)
     "master": lambda f: 20 + 8 * f["out_s"] / 60,
     "export": lambda f: 30,
 }
