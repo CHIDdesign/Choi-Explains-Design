@@ -15,6 +15,32 @@ rem Node.js·FFmpeg 는 이 폴더의 tools\ 에 설치해서 이 창에서 바�
 set "TOOLS=%CD%\tools"
 set "PATH=%TOOLS%\node;%TOOLS%\ffmpeg\bin;%PATH%"
 set "PS=powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\install_tools.ps1""
+rem 무거운 임시 파일·캐시·음성인식 모델은 C 드라이브 사용자 폴더 대신 이 프로그램 폴더 안에 둔다
+if not exist "%TOOLS%\tmp" mkdir "%TOOLS%\tmp"
+set "TEMP=%TOOLS%\tmp"
+set "TMP=%TOOLS%\tmp"
+set "PIP_NO_CACHE_DIR=1"
+set "npm_config_cache=%TOOLS%\npm-cache"
+set "HF_HOME=%CD%\models\hf"
+
+rem ---------- 디스크 여유 공간 ----------
+echo [확인] 디스크 여유 공간
+%PS% -DiskCheck -NeedGB 7
+set "DISK=%errorlevel%"
+if "%DISK%"=="2" (
+  echo.
+  echo [중단] 디스크 공간이 부족합니다. 설치를 끝내려면 이 폴더가 있는 드라이브에 7GB 이상,
+  echo        영상 작업까지 하려면 20GB 이상 비어 있어야 합니다^(4K 원본 한 편에 작업 파일 3~5GB^).
+  echo   - 휴지통 비우기, 다운로드 폴더 정리, Windows 검색에서 '디스크 정리' 실행^(시스템 파일 정리 포함^)
+  echo   - 또는 여유가 있는 다른 드라이브^(예: D:\ChoiStudio^)로 이 폴더를 옮긴 뒤 거기서 다시 실행
+  echo     ^(옮긴 뒤 이 폴더를 지우면 이미 설치된 용량도 돌려받습니다^)
+  pause
+  exit /b 1
+)
+if "%DISK%"=="3" (
+  echo [안내] 설치는 되지만 여유 공간이 20GB 보다 적습니다. 영상 작업 전에 공간을 더 비워 두세요.
+)
+echo.
 
 rem ---------- Python 3.10~3.13 ----------
 call :find_python
@@ -64,14 +90,14 @@ call ".venv\Scripts\activate.bat"
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt || goto :fail
 echo [설치] GPU 음성인식용 CUDA 라이브러리 cuBLAS / cuDNN ^(약 1.5GB^)...
-python -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
+python -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" || goto :fail
 
 rem ---------- 렌더러(Remotion) ----------
 echo [설치] 렌더러 패키지 npm install ...
 pushd renderer
 call npm install --no-audit --no-fund || (popd & goto :fail)
 echo [설치] 렌더링용 Chrome Headless Shell...
-call npx remotion browser ensure
+call npx remotion browser ensure || (popd & goto :fail)
 popd
 
 rem ---------- Claude Code (Pro/Max 구독으로 AI 편집 - API 결제 불필요) ----------
@@ -143,6 +169,9 @@ exit /b 0
 :fail
 echo.
 echo [오류] 설치 중 문제가 발생했습니다. 위의 메시지를 확인해 주세요.
-echo        인터넷 연결을 확인하고(학교·회사망은 다운로드가 막힐 수 있음) 다시 실행하면 이어서 설치합니다.
+echo   - "No space left" / "ENOSPC" / "not enough space" 가 보이면 디스크 공간이 부족한 것입니다.
+echo     공간을 비우거나 여유 있는 드라이브로 폴더를 옮긴 뒤 다시 실행하세요.
+echo   - 다운로드 오류면 인터넷 연결을 확인하세요^(학교·회사망은 막힐 수 있음^).
+echo   다시 실행하면 이미 설치된 것은 건너뛰고 이어서 설치합니다.
 pause
 exit /b 1

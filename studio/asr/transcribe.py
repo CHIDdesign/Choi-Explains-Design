@@ -12,6 +12,10 @@ import numpy as np
 
 from ..models import Word
 from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress
+from ..paths import MODELS_DIR
+
+# Whisper 모델(약 3GB)은 C 드라이브 사용자 캐시 대신 프로그램 폴더(models\hf)에 — setup/run 배치 파일과 같은 위치
+os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 
 _DLL_READY = False
 

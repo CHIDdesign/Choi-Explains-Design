@@ -2,18 +2,41 @@
 #   -Node   : portable Node.js LTS  -> tools\node
 #   -Ffmpeg : portable FFmpeg (GPL build with NVENC + zimg) -> tools\ffmpeg
 #   -Python : official Python 3.12 installer, per-user (%LOCALAPPDATA%\Programs\Python\Python312)
+#   -DiskCheck [-NeedGB n] : print free space; exit 2 = not enough to install, 3 = enough to install but < 20 GB
 # Called by setup_windows.bat. Messages are ASCII on purpose (Windows PowerShell 5.1 encoding).
 param(
   [string]$Root = (Split-Path -Parent $PSScriptRoot),
   [switch]$Node,
   [switch]$Ffmpeg,
-  [switch]$Python
+  [switch]$Python,
+  [switch]$DiskCheck,
+  [double]$NeedGB = 7
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar
 try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {}
+
+if ($DiskCheck) {
+  try {
+    $drive = (Get-Item -LiteralPath $Root).PSDrive
+    $free = [math]::Round($drive.Free / 1GB, 1)
+    Write-Host ("    free space  {0}: {1} GB  (this folder, need ~{2} GB to finish setup)" -f $drive.Name, $free, $NeedGB)
+    $sysFree = $free
+    if ($env:SystemDrive) {
+      $sys = Get-PSDrive -Name ($env:SystemDrive.TrimEnd(':'))
+      $sysFree = [math]::Round($sys.Free / 1GB, 1)
+      if ($sys.Name -ne $drive.Name) { Write-Host ("    free space  {0}: {1} GB  (system drive, need ~1 GB)" -f $sys.Name, $sysFree) }
+    }
+    if ($free -lt $NeedGB -or $sysFree -lt 1) { exit 2 }
+    if ($free -lt 20) { exit 3 }
+    exit 0
+  } catch {
+    Write-Host "    (could not read free space: $($_.Exception.Message))"
+    exit 0
+  }
+}
 
 $tools = Join-Path $Root 'tools'
 $dl = Join-Path $tools '_downloads'

@@ -25,3 +25,6 @@ desktop.ini
 
 # Portable tools downloaded by setup_windows.bat (Node.js, FFmpeg)
 tools/
+
+# Whisper 음성인식 모델 캐시(HF_HOME) — 설치 때 받음
+models/hf/
