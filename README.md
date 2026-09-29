@@ -53,7 +53,8 @@
 1. 이 저장소를 내려받습니다(초록색 **Code → Download ZIP** 후 압축 해제, 또는 `git clone`).
    경로에 공백·한글이 없는 곳(예: `C:\ChoiStudio`)을 권장합니다.
 2. **`setup_windows.bat`** 을 더블클릭합니다.
-   - Python 3.12 · Node.js LTS · FFmpeg(Gyan, NVENC 포함)가 없으면 `winget` 으로 설치합니다. 새로 설치했다면 **창을 닫고 한 번 더 실행**하세요.
+   - Python 3.12 가 없으면 공식 설치 파일을 내려받아 사용자 계정에 설치하고, Node.js LTS·FFmpeg(NVENC 포함)는 이 폴더의 `tools\` 에 휴대용으로 받습니다. **winget·관리자 권한·재시작이 필요 없습니다.**
+   - 처음 설치는 약 **5~6GB** 를 내려받아 20~40분 걸립니다(아래 "왜 다운로드한 파일은 작나요?" 참고). 중간에 끊겨도 다시 실행하면 이어서 합니다.
    - 파이썬 가상환경(.venv)과 패키지, GPU 음성인식용 cuBLAS/cuDNN, 렌더러(npm), 렌더용 Chrome 을 설치합니다.
    - 마지막에 Whisper large-v3 모델(약 3GB)을 미리 받을지 묻습니다.
 3. **`run_studio.bat`** 을 더블클릭하면 창이 열립니다. (오류를 콘솔로 보려면 `run_studio_console.bat`)
@@ -63,6 +64,20 @@
    - 키는 이 PC 의 `user/settings.json` 에만 저장됩니다.
 
 > NVIDIA 드라이버는 최신으로 유지하세요. GPU 가 인식되지 않으면 자동으로 CPU 로 전환됩니다(느리지만 동작).
+
+### 왜 다운로드한 파일은 1~2MB 밖에 안 되나요?
+
+GitHub 에서 받는 것은 **프로그램의 설계도(소스 코드)** 입니다. 무거운 부품은 `setup_windows.bat` 이 설치할 때 각 공식 배포처에서 직접 받습니다(라이선스·용량 때문에 저장소에 넣지 않음).
+
+| 설치할 때 받는 것 | 대략 크기 |
+|---|---|
+| Whisper large-v3 음성인식 모델 | 약 3GB |
+| GPU 음성인식용 CUDA 라이브러리(cuBLAS·cuDNN) | 약 1.5GB |
+| 파이썬 패키지(PySide6 화면, OpenCV, faster-whisper 등) | 약 0.6GB |
+| 렌더러(Remotion·React) + 렌더링용 Chrome | 약 0.5GB |
+| FFmpeg(영상 처리) · Node.js · Python | 약 0.3GB |
+
+설치가 끝나면 폴더가 **5~6GB** 가 되고, 작업한 영상은 `projects\` 에 쌓입니다.
 
 ## 사용법
 
@@ -150,7 +165,9 @@
 | 증상 | 해결 |
 |---|---|
 | `cublas64_12.dll` / `cudnn` 관련 오류 | `setup_windows.bat` 재실행(cuBLAS/cuDNN 설치) 또는 설정 → Whisper 장치 `cpu` |
-| `ffmpeg 를 찾을 수 없습니다` | `winget install Gyan.FFmpeg` 후 새 창에서 실행, 또는 설정에 ffmpeg.exe 경로 입력 |
+| `ffmpeg 를 찾을 수 없습니다` | `setup_windows.bat` 을 다시 실행(`tools\ffmpeg` 에 자동 설치), 또는 설정에 ffmpeg.exe 경로 입력 |
+| 설치 창에 `'winget' is not recognized` | 예전 설치 파일입니다. 최신 파일로 다시 받으세요(지금 버전은 winget 을 쓰지 않습니다) |
+| 설치 중 다운로드 실패 | 학교·회사망은 막힐 수 있습니다. 다른 네트워크에서 다시 실행하면 받은 파일은 건너뛰고 이어서 설치합니다 |
 | 렌더 중 Chrome 관련 오류 | `renderer` 폴더에서 `npx remotion browser ensure` |
 | 아이폰 HDR 영상 색이 이상함 | 자동 톤매핑(HLG/PQ → SDR)을 합니다. 그래도 이상하면 LUT 를 지정하세요 |
 | 자막 용어가 계속 틀림 | 설정 → 용어 사전에 `틀린말=맞는말` 추가, 대본을 넣으면 대본 표기를 따릅니다 |

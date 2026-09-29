@@ -350,3 +350,21 @@ def test_stock_hub_from_settings_order():
     s.unsplash_access_key, s.pixabay_api_key, s.coverr_api_key = "u", "p", "c"
     assert StockHub.from_settings(s).names == ["Pixabay", "Coverr", "Unsplash"]
     assert StockHub.from_settings(Settings()).names == []
+
+
+def test_normalize_long_is_idempotent_with_script_tags():
+    """저장된 plan.json 을 다시 정규화해도 같아야 재실행 때 검수·렌더 캐시가 맞는다."""
+    from studio.models import Tag
+    utts = _utts()
+    tags = [Tag(kind="keyword", args=["질문"], raw="[강조: 질문]", pos=0, utt_id=0),
+            Tag(kind="zoom", args=[], raw="[줌]", pos=0, utt_id=2),
+            Tag(kind="cut", args=[], raw="[컷]", pos=0, utt_id=3),
+            Tag(kind="list", args=["조건", "구체적 ; 열린"], raw="[목록: 조건 | 구체적 ; 열린]", pos=0, utt_id=1)]
+    raw = {"summary": "", "hook_segs": [0], "title_card_seg": 1, "chapters": [], "emphasis": [], "drop": [],
+           "youtube": {}, "music": {}, "graphics": [
+               {"template": "keyword", "layout": "split", "start_seg": 0, "end_seg": 0, "title": "질문", "reason": "감독"}]}
+    first = normalize_long(raw, utts, tags)
+    second = normalize_long(json.loads(json.dumps(first)), utts, tags)
+    assert json.dumps(first, sort_keys=True, ensure_ascii=False) == json.dumps(second, sort_keys=True, ensure_ascii=False)
+    assert sum(1 for e in second["emphasis"] if e["kind"] == "punch") == 1
+    assert sum(1 for d in second["drop"] if d["seg"] == 3) == 1

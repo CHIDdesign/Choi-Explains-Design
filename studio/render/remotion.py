@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..paths import RENDERER_DIR
+from ..paths import RENDERER_DIR, TOOLS_DIR
 from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress, run_process, write_json
 
 
@@ -21,6 +21,9 @@ class RenderError(RuntimeError):
 def find_node(custom: str = "") -> str:
     if custom and Path(custom).exists():
         return custom
+    portable = TOOLS_DIR / "node" / ("node.exe" if sys.platform == "win32" else "bin/node")
+    if portable.exists():  # setup_windows.bat 이 설치한 휴대용 Node.js 우선
+        return str(portable)
     p = shutil.which("node")
     if p:
         return p
@@ -29,7 +32,7 @@ def find_node(custom: str = "") -> str:
             cand = Path(base) / "nodejs" / "node.exe"
             if cand.exists():
                 return str(cand)
-    raise RenderError("Node.js 를 찾을 수 없습니다. setup_windows.bat 을 실행하거나 https://nodejs.org 에서 LTS 를 설치하세요.")
+    raise RenderError("Node.js 를 찾을 수 없습니다. setup_windows.bat 을 다시 실행하면 tools\\node 에 자동으로 설치됩니다.")
 
 
 def ensure_renderer_installed() -> None:

@@ -195,7 +195,7 @@ class SettingsDialog(QDialog):
         f3 = QFormLayout(pa)
         self.projects = QLineEdit(s.projects_dir)
         self.ffmpeg = QLineEdit(s.ffmpeg_path)
-        self.ffmpeg.setPlaceholderText("비우면 자동 탐색(PATH / winget)")
+        self.ffmpeg.setPlaceholderText("비우면 자동 탐색(tools\\ffmpeg / PATH)")
         self.node = QLineEdit(s.node_path)
         self.node.setPlaceholderText("비우면 자동 탐색")
         self.browser = QLineEdit(s.render.browser_executable)

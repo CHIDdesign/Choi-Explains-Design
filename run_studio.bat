@@ -6,4 +6,6 @@ if not exist ".venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
+rem setup 이 tools\ 에 설치한 Node.js·FFmpeg 를 먼저 쓴다
+set "PATH=%~dp0tools\node;%~dp0tools\ffmpeg\bin;%PATH%"
 start "" ".venv\Scripts\pythonw.exe" -m studio

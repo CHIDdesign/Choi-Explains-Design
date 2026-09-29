@@ -519,7 +519,9 @@ class Pipeline:
         if studio is None:
             self.log("🧐 아트 디렉터 검수 건너뜀(Claude API 키 + AI 스튜디오 모드 필요)")
             return
-        gkey = lambda: text_hash(json.dumps(self.plan_long["graphics"], sort_keys=True, ensure_ascii=False), "qa-v1")
+        # 화면에 영향을 주는 내용만으로 키를 만든다(메모성 reason 제외)
+        gkey = lambda: text_hash([{k: v for k, v in g.items() if k != "reason"} for g in self.plan_long["graphics"]],
+                                 "qa-v2")
         if self.plan_long.get("qa", {}).get("key") == gkey():
             self.log("🧐 검수: 이전 검수 결과 사용(그래픽 변경 없음)")
             return

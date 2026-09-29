@@ -57,8 +57,7 @@ class FFmpeg:
         self.ffprobe = ffprobe or self._find("ffprobe")
         if not self.ffmpeg:
             raise FFmpegError(
-                "ffmpeg 를 찾을 수 없습니다. setup_windows.bat 을 실행하거나 "
-                "'winget install Gyan.FFmpeg' 로 설치한 뒤 다시 시도하세요.")
+                "ffmpeg 를 찾을 수 없습니다. setup_windows.bat 을 다시 실행하면 tools\\ffmpeg 에 자동으로 설치됩니다.")
         if not self.ffprobe:
             cand = Path(self.ffmpeg).with_name("ffprobe" + (".exe" if sys.platform == "win32" else ""))
             self.ffprobe = str(cand) if cand.exists() else ""
@@ -67,11 +66,15 @@ class FFmpeg:
 
     @staticmethod
     def _find(name: str) -> str:
+        from ..paths import TOOLS_DIR
+        exe = TOOLS_DIR / "ffmpeg" / "bin" / (name + (".exe" if sys.platform == "win32" else ""))
+        if exe.exists():  # setup_windows.bat 이 설치한 휴대용 FFmpeg 우선
+            return str(exe)
         p = shutil.which(name)
         if p:
             return p
         if sys.platform == "win32":
-            # winget(Gyan.FFmpeg) 기본 설치 위치 탐색
+            # 예전 방식(winget Gyan.FFmpeg)으로 설치한 경우의 기본 위치
             local = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
             if local.exists():
                 for exe in local.glob(f"Gyan.FFmpeg*/**/bin/{name}.exe"):

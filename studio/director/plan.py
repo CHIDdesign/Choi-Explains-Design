@@ -262,11 +262,14 @@ def enforce_tags(plan: dict[str, Any], tags: list[Tag], kept: list[int]) -> None
                        if c["seg"] in kept):
                 plan["chapters"].append({"seg": seg, "title": t.args[0] if t.args else ""})
             continue
+        # 저장된 plan.json 을 다시 정규화해도 결과가 같아야 한다(중복 추가 금지)
         if t.kind == "zoom":
-            plan["emphasis"].append({"seg": seg, "word": "", "kind": "punch"})
+            if not any(e["seg"] == seg and e.get("kind") == "punch" for e in plan["emphasis"]):
+                plan["emphasis"].append({"seg": seg, "word": "", "kind": "punch"})
             continue
         if t.kind == "cut":
-            plan["drop"].insert(0, {"seg": seg, "reason": "대본 [컷] 태그"})
+            if not any(d["seg"] == seg for d in plan["drop"]):
+                plan["drop"].insert(0, {"seg": seg, "reason": "대본 [컷] 태그"})
             continue
         g = graphic_from_tag(t, seg)
         if not g:
@@ -274,7 +277,8 @@ def enforce_tags(plan: dict[str, Any], tags: list[Tag], kept: list[int]) -> None
         near = [x for x in plan["graphics"] if x["template"] == g["template"]
                 and abs(kept.index(x["start_seg"]) - kept.index(seg)) <= 1]
         if near:
-            near[0]["reason"] = (near[0].get("reason") or "") + " (대본 태그)"
+            if "태그" not in (near[0].get("reason") or ""):
+                near[0]["reason"] = (near[0].get("reason") or "") + " (대본 태그)"
             continue
         plan["graphics"].append(g)
 

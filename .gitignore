@@ -21,3 +21,6 @@ projects/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Portable tools downloaded by setup_windows.bat (Node.js, FFmpeg)
+tools/
