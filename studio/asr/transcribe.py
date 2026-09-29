@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import sys
 import time
@@ -58,13 +59,27 @@ def cuda_available() -> bool:
 
 
 def load_audio_16k(wav_path: str | Path) -> np.ndarray:
+    """PCM WAV → 16kHz 모노 float32(-1~1). Whisper·VAD 입력.
+
+    faster-whisper 에 파일 경로를 넘기면 PyAV 로 디코딩하는데, PyAV 19 에서 faster-whisper 가 쓰는
+    인자(metadata_errors)가 없어져 실패한다. 그래서 FFmpeg 가 만든 WAV 를 여기서 직접 읽어 배열로 넘긴다.
+    """
     import wave
-    with wave.open(str(wav_path), "rb") as w:
-        assert w.getframerate() == 16000 and w.getsampwidth() == 2, "16kHz/16bit WAV 가 필요합니다"
-        ch = w.getnchannels()
-        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+    try:
+        with wave.open(str(wav_path), "rb") as w:
+            rate, ch, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
+            raw = w.readframes(w.getnframes())
+    except (wave.Error, EOFError) as e:
+        raise ValueError(f"음성 인식용 WAV 를 읽지 못했습니다({wav_path}): {e}") from e
+    if width not in (2, 4):
+        raise ValueError(f"16/32비트 PCM WAV 가 필요합니다({wav_path}: {width * 8}비트)")
+    data = np.frombuffer(raw, dtype=np.int16 if width == 2 else np.int32).astype(np.float32)
+    data /= 32768.0 if width == 2 else 2147483648.0
     if ch > 1:
-        data = data.reshape(-1, ch).mean(axis=1)
+        data = data[: len(data) // ch * ch].reshape(-1, ch).mean(axis=1)
+    if rate != 16000 and len(data):
+        n = int(round(len(data) * 16000 / rate))
+        data = np.interp(np.arange(n) * (rate / 16000), np.arange(len(data)), data).astype(np.float32)
     return data
 
 
@@ -160,12 +175,18 @@ def transcribe(
     )
     if hot:
         kwargs["hotwords"] = hot
+    # 설치된 faster-whisper 가 모르는 옵션은 미리 뺀다(TypeError 를 잡아 재시도하면 다른 원인의 오류까지 가려진다)
     try:
-        segments, info = model.transcribe(str(wav16k), **kwargs)
-    except TypeError:
-        kwargs.pop("hotwords", None)
-        kwargs.pop("hallucination_silence_threshold", None)
-        segments, info = model.transcribe(str(wav16k), **kwargs)
+        accepted = set(inspect.signature(model.transcribe).parameters)
+    except (TypeError, ValueError):
+        accepted = set(kwargs)
+    dropped = [k for k in kwargs if k not in accepted]
+    for k in dropped:
+        kwargs.pop(k)
+    if dropped:
+        log(f"(이 faster-whisper 버전이 지원하지 않는 옵션 생략: {', '.join(dropped)})")
+    audio = load_audio_16k(wav16k)   # 경로 대신 배열 — PyAV 디코딩을 거치지 않는다
+    segments, info = model.transcribe(audio, **kwargs)
 
     total = duration or float(getattr(info, "duration", 0.0) or 0.0)
     words: list[dict] = []

@@ -184,3 +184,74 @@ def test_camera_shots_mask_big_jumps():
     assert 16.4 not in starts      # 짧은 쉼 컷은 12초 안 지났으면 유지
     assert 30.0 in starts and shots[starts.index(30.0)]["zoom"] == 1.0  # 챕터는 와이드로
     assert all(s["zoomEnd"] <= s["zoom"] * 1.036 for s in shots)
+
+
+def _write_wav(path: Path, samples, rate: int, channels: int = 1) -> None:
+    import wave
+
+    import numpy as np
+    data = (np.asarray(samples, dtype=np.float64) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(data.tobytes())
+
+
+def test_load_audio_16k_reads_and_resamples(tmp_path):
+    import numpy as np
+    from studio.asr.transcribe import load_audio_16k
+
+    t = np.arange(16000) / 16000
+    tone = 0.5 * np.sin(2 * np.pi * 220 * t)
+    _write_wav(tmp_path / "mono16k.wav", tone, 16000)
+    a = load_audio_16k(tmp_path / "mono16k.wav")
+    assert a.dtype == np.float32 and len(a) == 16000
+    assert np.abs(a - tone).max() < 1e-4
+
+    # 48kHz 스테레오 → 16kHz 모노(채널 평균)
+    t48 = np.arange(48000) / 48000
+    left, right = 0.4 * np.sin(2 * np.pi * 220 * t48), 0.2 * np.sin(2 * np.pi * 220 * t48)
+    _write_wav(tmp_path / "st48k.wav", np.stack([left, right], axis=1).ravel(), 48000, channels=2)
+    b = load_audio_16k(tmp_path / "st48k.wav")
+    assert b.dtype == np.float32 and len(b) == 16000
+    assert np.abs(b - 0.3 * np.sin(2 * np.pi * 220 * t)).max() < 1e-3
+
+
+def test_transcribe_passes_array_and_drops_unknown_options(tmp_path, monkeypatch):
+    """faster-whisper 에 경로가 아닌 배열을 넘긴다(PyAV 19 에서 경로 디코딩이 깨짐). 모르는 옵션은 미리 뺀다."""
+    import types
+
+    import numpy as np
+    from studio.asr import transcribe as tr
+
+    seen: dict = {}
+
+    class FakeModel:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def transcribe(self, audio, language=None, beam_size=5, word_timestamps=False, vad_filter=False,
+                       vad_parameters=None, condition_on_previous_text=True, initial_prompt=None):
+            seen["audio"], seen["language"] = audio, language
+            if seen.get("raise"):
+                raise TypeError("내부 오류")
+            w = types.SimpleNamespace(word=" 안녕", start=0.1, end=0.5, probability=0.9)
+            seg = types.SimpleNamespace(start=0.0, end=1.0, text=" 안녕", words=[w], avg_logprob=-0.2, no_speech_prob=0.0)
+            return iter([seg]), types.SimpleNamespace(duration=1.0, language="ko")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeModel))
+    _write_wav(tmp_path / "asr16k.wav", np.zeros(16000), 16000)
+    logs: list[str] = []
+    res = tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8",
+                        hint_terms=["어포던스"], log=logs.append)
+    assert isinstance(seen["audio"], np.ndarray) and seen["audio"].dtype == np.float32
+    assert len(seen["audio"]) == 16000 and seen["language"] == "ko"
+    assert [w["text"] for w in res["words"]] == ["안녕"]
+    assert any("hotwords" in m and "hallucination_silence_threshold" in m for m in logs)
+
+    # 라이브러리 안에서 난 TypeError 는 옵션을 빼고 재시도하며 가리지 않고 그대로 올린다
+    seen["raise"] = True
+    import pytest
+    with pytest.raises(TypeError, match="내부 오류"):
+        tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8")
