@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import io
 import json
 import re
@@ -44,8 +45,20 @@ EXTRA = [
 base.SPOKEN[-1:-1] = EXTRA
 SCRIPT = base.SCRIPT.replace("결국 좋은 디자인은", " ".join(t for t, _ in EXTRA) + "\n결국 좋은 디자인은")
 
-CALLS: list[dict] = []
 LOCK = threading.Lock()
+CALL_LOG = Path(os.environ.get("FAKE_CLAUDE_LOG", "/tmp/fake_claude_calls.jsonl"))
+
+
+def load_calls() -> list[dict]:
+    """가짜 API 서버·가짜 Claude Code CLI 가 공통으로 남기는 호출 기록."""
+    if not CALL_LOG.exists():
+        return []
+    return [json.loads(x) for x in CALL_LOG.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def record_call(entry: dict) -> None:
+    with LOCK, CALL_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "motion_examples.json").read_text(encoding="utf-8"))
 
 
@@ -132,8 +145,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "hashtags": ["#디자인"], "tags": ["디자인"], "thumbnail_texts": ["질문이 먼저"], "pinned_comment": "여러분은?"}
     if agent == "art_director":
         m = re.search(r"- (g\d+) · motion", instruction)
-        with LOCK:
-            rounds = sum(1 for c in CALLS if c["agent"] == "art_director")
+        rounds = sum(1 for c in load_calls() if c["agent"] == "art_director")
         if m and rounds == 0:
             return {"verdict": "revise", "summary": "모션 장면 글자가 작다",
                     "issues": [{"target": m.group(1), "severity": "medium", "problem": "라벨이 작아 읽기 어렵다",
@@ -168,8 +180,8 @@ class ClaudeHandler(BaseHTTPRequestHandler):
         n_images = sum(1 for b in blocks if b.get("type") == "image")
         instruction = blocks[-1].get("text", "")
         ans = fake_answer(agent, body, n_images, instruction)
-        with LOCK:
-            CALLS.append({"agent": agent, "images": n_images, "effort": body.get("output_config", {}).get("effort"),
+        if True:
+            record_call({"agent": agent, "images": n_images, "effort": body.get("output_config", {}).get("effort"),
                           "cache": [b.get("cache_control") is not None for b in blocks[:1]]})
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
@@ -264,9 +276,11 @@ def start(handler) -> ThreadingHTTPServer:
 
 
 def main() -> int:
-    import os
+    global CALL_LOG
     ap = argparse.ArgumentParser()
     ap.add_argument("--browser", default="")
+    ap.add_argument("--backend", default="claude_code", choices=["claude_code", "api"],
+                    help="claude_code = 가짜 Claude Code CLI(tests/fake_claude.py), api = 가짜 API 서버")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--work", default=str(ROOT / "projects" / "_e2e_studio"))
     args = ap.parse_args()
@@ -274,6 +288,9 @@ def main() -> int:
     if work.exists() and not args.keep:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
+    CALL_LOG = work / "fake_calls.jsonl"
+    CALL_LOG.unlink(missing_ok=True)
+    os.environ["FAKE_CLAUDE_LOG"] = str(CALL_LOG)
 
     words, duration = make_words()
     video = work / "source.mp4"
@@ -307,6 +324,14 @@ def main() -> int:
     settings.render.gl = "swangle" if sys.platform != "win32" else "angle"
     settings.render.concurrency = 3
     settings.agent_effort = {"copy": "low"}
+    settings.ai_backend = args.backend
+    if args.backend == "claude_code":
+        # 진짜 Claude Code 대신 가짜 CLI(같은 가짜 답변 로직, 호출은 CALL_LOG 에 기록)
+        shim = work / "fake_claude"
+        shim.write_text(f"#!/bin/sh\nexec {sys.executable} {ROOT / 'tests' / 'fake_claude.py'} \"$@\"\n")
+        shim.chmod(0o755)
+        settings.claude_code_path = str(shim)
+        os.environ["ANTHROPIC_API_KEY"] = "sk-should-be-stripped"  # 구독 모드에서는 자식 프로세스에 넘어가면 안 된다
     spec = pl.JobSpec(video=str(video), title="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
                       notes="테스트", shorts_count=1, use_claude=True, fetch_broll=False, thumbnails=False,
                       short_max_sec=40, qa_rounds=2, direction="모션 장면은 크게")
@@ -315,6 +340,7 @@ def main() -> int:
     out = Path(res["output"])
     files = sorted(p.name for p in out.iterdir())
     print("\n출력:", json.dumps(files, ensure_ascii=False, indent=1))
+    CALLS = load_calls()
     print("에이전트 호출:", json.dumps(CALLS, ensure_ascii=False))
 
     agents = [c["agent"] for c in CALLS]
@@ -348,6 +374,10 @@ def main() -> int:
     plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
     assert plan["long"]["qa"]["rounds"], plan["long"].get("qa")
     assert plan["director"].startswith("AI 스튜디오")
+    if args.backend == "claude_code":
+        assert "Claude Code" in plan["director"], plan["director"]
+        assert all(c.get("backend") == "claude_code" and not c.get("api_key_env") for c in CALLS), CALLS
+        assert all(u.get("backend") == "claude_code" for u in plan["usage"]), plan["usage"][:2]
     upload = next(out.glob("*_업로드정보.txt")).read_text(encoding="utf-8")
     assert "Pixabay" in upload and "Unsplash" in upload, upload[-500:]
     assert StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계
@@ -358,13 +388,13 @@ def main() -> int:
     assert any(qa_dir.glob("g*.jpg")), list(qa_dir.iterdir())
 
     # 재실행: 계획·스톡·검수 캐시 사용(새 Claude 호출 없음) — 렌더 직전 단계까지
-    before = len(CALLS)
+    before = len(load_calls())
     logs: list[str] = []
     p2 = pl.Pipeline(spec, settings, job, log=logs.append)
     for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_align, p2.stage_face, p2.stage_director,
                p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
         fn()
-    assert len(CALLS) == before, CALLS[before:]
+    assert len(load_calls()) == before, load_calls()[before:]
     assert any("이전 검수 결과 사용" in m for m in logs), logs[-10:]
     assert any(g["template"] == "broll" and g.get("src") for g in p2.plan_long["graphics"])
     print("E2E STUDIO OK")

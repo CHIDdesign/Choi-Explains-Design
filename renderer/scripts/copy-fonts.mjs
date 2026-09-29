@@ -19,6 +19,15 @@ for (const w of ['Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'])
 const antonDir = path.join(root, 'node_modules', '@fontsource', 'anton', 'files');
 copies.push([path.join(antonDir, 'anton-latin-400-normal.woff2'), 'Anton-Regular.woff2']);
 
+// 데스크톱 프로그램(PySide6) 화면용 OTF — Qt 는 woff2 를 읽지 못한다
+const uiOut = path.join(out, 'ui');
+fs.mkdirSync(uiOut, {recursive: true});
+const otfDir = path.join(root, 'node_modules', 'pretendard', 'dist', 'public', 'static');
+for (const w of ['Regular', 'Medium', 'SemiBold', 'Bold']) {
+  const src = path.join(otfDir, `Pretendard-${w}.otf`);
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(uiOut, `Pretendard-${w}.otf`));
+}
+
 let ok = 0;
 for (const [src, name] of copies) {
   if (fs.existsSync(src)) {

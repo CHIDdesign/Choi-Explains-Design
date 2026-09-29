@@ -9,6 +9,7 @@ venv/
 renderer/node_modules/
 renderer/out/
 renderer/assets/fonts/*.woff2
+renderer/assets/fonts/ui/
 renderer/public/
 renderer/.remotion/
 

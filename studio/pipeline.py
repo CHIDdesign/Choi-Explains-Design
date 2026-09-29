@@ -9,7 +9,7 @@ import datetime as dt
 import json
 import shutil
 import time
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -19,9 +19,10 @@ from .broll.images import Wikimedia, list_local_images, resolve_image
 from .director import fallback
 from .director.catalog import TEMPLATES
 from .director.claude import ClaudeClient, DirectorError
+from .director.claude_code import ClaudeCodeClient, find_claude, resolve_backend
 from .director.context import JobBrief, long_instruction, shared_context, shorts_instruction, system_prompt
-from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, resolve_overlaps, seg_edit_times,
-                            spec_settle_time, time_graphics)
+from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, seg_edit_times, spec_settle_time,
+                            time_graphics)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
@@ -37,7 +38,7 @@ from .stock.providers import StockHub
 from .stock.research import StockResearcher
 from .settings import Settings
 from .text.align import ScriptAligner, build_utterances
-from .text.captions import cues_to_srt
+from .text.captions import build_cues, cues_to_srt
 from .text.script import glossary_terms, parse_script
 from .util import (CancelToken, LogFn, file_fingerprint, noop_log, read_json, slugify, text_hash, write_json)
 from .vision.face import track_faces
@@ -183,6 +184,8 @@ class Pipeline:
             self._stage(key, 0.0)
             fn()
             self._stage(key, 1.0)
+        if until == "plan":
+            self.write_timeline()   # 렌더 전 미리보기용 타임라인
         self.log(f"완료 ({(time.time() - t0) / 60:.1f}분) → {self.out}")
         return {"output": str(self.out), "job_dir": str(self.dir)}
 
@@ -282,13 +285,26 @@ class Pipeline:
         return TimeMap(keeps)
 
     def _use_api(self) -> bool:
-        return self.spec.use_claude and bool(self.settings.anthropic_api_key)
+        """Claude 를 쓸 수 있는가(Claude Code 구독 또는 API 키)."""
+        return self.spec.use_claude and resolve_backend(self.settings)[0] != "none"
 
-    def _client(self) -> ClaudeClient:
+    def _client(self):
         if self.claude is None:
-            self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
-                                       self.settings.claude_effort, log=self.log)
+            backend, why = resolve_backend(self.settings)
+            if backend == "claude_code":
+                exe = find_claude(self.settings.claude_code_path) or "claude"
+                self.claude = ClaudeCodeClient(exe, self.settings.claude_model, self.settings.claude_effort,
+                                               log=self.log, workdir=self.work / "claude_code")
+                self.log(f"AI 연결: Claude Code(Pro/Max 구독 사용량) · {exe}")
+            else:
+                self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
+                                           self.settings.claude_effort, log=self.log)
+                self.log(f"AI 연결: {why}")
         return self.claude
+
+    def _ai_label(self) -> str:
+        backend = getattr(self.claude, "backend", "api")
+        return "Claude Code · 구독" if backend == "claude_code" else "Claude API"
 
     def _ensure_studio(self) -> Optional[Studio]:
         """🎬 멀티 에이전트 스튜디오(API 키 + 스튜디오 모드일 때)."""
@@ -334,7 +350,7 @@ class Pipeline:
             raw_long, raw_shorts = saved["long"], {"shorts": saved.get("shorts", [])}
             self.director_name = saved.get("director", "saved")
         elif studio is not None:
-            self.director_name = f"AI 스튜디오 · Claude ({self.settings.claude_model})"
+            self.director_name = f"AI 스튜디오 · {self._ai_label()} ({self.settings.claude_model})"
             self.log("🎬 AI 스튜디오 가동: 총괄 감독 → 전문 에이전트 병렬 작업")
             try:
                 raw_long, raw_shorts = studio.plan(brief, ctx, shorts_count=self.spec.shorts_count,
@@ -348,8 +364,8 @@ class Pipeline:
         if raw_long is not None:
             pass
         elif use_api:
-            self.director_name = f"Claude ({self.settings.claude_model})"
             self._client()
+            self.director_name = f"{self._ai_label()} ({self.settings.claude_model})"
             sys_prompt = system_prompt()
             try:
                 self.log("Claude: 롱폼 편집 계획 요청")
@@ -371,7 +387,8 @@ class Pipeline:
                                                   max_sec=self.spec.short_max_sec)
         else:
             if self.spec.use_claude:
-                self.log("API 키가 없어 규칙 기반 편집으로 진행합니다(설정에서 Claude API 키 입력).")
+                self.log("Claude Code(구독)도 API 키도 없어 규칙 기반 편집으로 진행합니다 — "
+                         "setup_windows.bat 으로 Claude Code 를 설치하고 로그인하세요.")
             self.director_name = "규칙 기반"
             raw_long = fallback.long_plan(brief, self.utts, self.tags)
             raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
@@ -517,7 +534,7 @@ class Pipeline:
             return
         studio = self._ensure_studio()
         if studio is None:
-            self.log("🧐 아트 디렉터 검수 건너뜀(Claude API 키 + AI 스튜디오 모드 필요)")
+            self.log("🧐 아트 디렉터 검수 건너뜀(Claude Code 또는 API 키 + AI 스튜디오 모드 필요)")
             return
         # 화면에 영향을 주는 내용만으로 키를 만든다(메모성 reason 제외)
         gkey = lambda: text_hash([{k: v for k, v in g.items() if k != "reason"} for g in self.plan_long["graphics"]],
@@ -716,6 +733,28 @@ class Pipeline:
         self._render_prep = (links, bgm_src)
         return self._render_prep
 
+    def write_timeline(self, lp: Optional[dict] = None) -> None:
+        """GUI 타임라인 패널용 work/timeline.json (편집 시간 기준 컷·그래픽·자막·챕터)."""
+        try:
+            if lp is None:
+                if not self.spec.make_long or not self.utts:
+                    return
+                self.timemap = self._initial_timemap()
+                graphics, chapters = self._timed_long()
+                from .render.props import utterance_word_groups
+                cues = build_cues(utterance_word_groups(self.utts, self.timemap))
+                clips = [{"start": round(self.timemap.edit_span_of(i).start, 3), "dur": round(k.dur, 3),
+                          "srcStart": round(k.start, 3)} for i, k in enumerate(self.timemap.keeps)]
+                lp = {"duration": round(self.timemap.duration, 3), "fps": self.fps, "clips": clips,
+                      "graphics": [g.to_dict() for g in graphics], "chapters": chapters, "captions": cues}
+            data = {k: lp.get(k) for k in ("duration", "fps", "clips", "graphics", "chapters")}
+            data["captions"] = [{"start": c["start"], "end": c["end"],
+                                 "text": " ".join(w["text"] for line in c["lines"] for w in line)}
+                                for c in lp.get("captions", [])]
+            write_json(self.work / "timeline.json", data)
+        except Exception as e:  # noqa: BLE001 - 미리보기 실패가 제작을 막지 않게
+            self.log(f"(타임라인 미리보기 생략: {e})")
+
     def _caption_presets(self) -> tuple[str, str]:
         caps = self.plan_long.get("captions") or {}
         lp = self.spec.caption_preset if self.spec.caption_preset != "auto" else (caps.get("preset_long") or "editorial")
@@ -748,6 +787,7 @@ class Pipeline:
             self.long_chapters = chapters
             lp = self._make_long_props(graphics, chapters)
             self.long_props = lp
+            self.write_timeline(lp)
             p = self.render_dir / "props_long.json"
             write_json(p, lp)
             items.append(RenderItem("video", "LongForm", p, self.out / f"{self.slug}_롱폼.mp4", scale=scale,

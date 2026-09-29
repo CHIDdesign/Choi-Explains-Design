@@ -33,6 +33,9 @@ class RenderSettings:
 
 @dataclass
 class Settings:
+    # AI 연결: claude_code = 이 PC 의 Claude Code(Pro/Max 구독 사용량, 추가 결제 없음) | api = Claude API 키(종량제)
+    ai_backend: str = "claude_code"
+    claude_code_path: str = ""        # 비우면 자동 탐색(%USERPROFILE%\.local\bin\claude.exe, PATH)
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
     claude_effort: str = "high"

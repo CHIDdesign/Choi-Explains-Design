@@ -11,6 +11,8 @@
 - `studio/director/` — `catalog.py`(템플릿 목록, TS 와 동기화), `schema.py`(구조화 출력 스키마: 모든 object 는 additionalProperties=false + 전체 required), `plan.py`(검증·시간 변환), `claude.py`(API 호출), `fallback.py`(키 없을 때).
 - `prompts/*.md` — 편집 감독 프롬프트. 채널 톤 조정은 여기서.
 - `renderer/src/lib/types.ts` ↔ `studio/render/props.py` — props 계약. 한쪽을 바꾸면 다른 쪽도.
+- `studio/gui/` — 편집 툴 UI(도킹 패널): `app.py`(메인 창·작업 공간·메뉴), `panels.py`(프로젝트·스크립트·인스펙터·AI 팀·콘솔·결과물), `timeline.py`(work/timeline.json·props_long.json 을 트랙으로), `monitor.py`(QtMultimedia 재생), `theme.py`, `settings_dialog.py`.
+- `studio/director/claude_code.py` — 기본 AI 연결: 로컬 Claude Code `claude -p`(stream-json 입력·--json-schema·--system-prompt-file·--tools "", ANTHROPIC_API_KEY 제거). `claude.py` 는 API 키 방식. 둘은 같은 `structured()` 인터페이스.
 - `renderer/src/components/graphics/` — 템플릿. 새 템플릿은 types.ts TemplateName + graphics/index.tsx + director/catalog.py 세 곳에 추가.
 
 ## 규칙
@@ -25,5 +27,6 @@
 - `python -m pytest tests -q`
 - `cd renderer && npx tsc --noEmit`
 - `python tests/e2e_synthetic.py --browser <chrome-headless-shell>` (Whisper 없이 전체 파이프라인)
-- `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude·Pixabay·Unsplash 로 스튜디오·스톡·검수 전체)
+- `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude Code CLI·Pixabay·Unsplash 로 스튜디오·스톡·검수 전체, `--backend api` 는 가짜 API 서버)
+- E2E·테스트에서 **진짜 claude CLI 를 부르지 않도록** 반드시 `settings.claude_code_path` 를 가짜 CLI 로 지정하거나 `ai_backend="api"` 로.
 - 템플릿 시각 확인: `cd renderer && npx remotion render src/index.ts LongForm out/f --sequence --frames=160,330 --image-format=jpeg`

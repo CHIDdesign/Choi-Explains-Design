@@ -6,7 +6,7 @@ cd /d "%~dp0"
 echo.
 echo ==============================================================
 echo   Choi Studio 설치 (Windows + NVIDIA)
-echo   Python / Node.js / FFmpeg 를 확인하고, 없으면 직접 내려받아 설치합니다.
+echo   Python / Node.js / FFmpeg / Claude Code 를 확인하고, 없으면 직접 내려받아 설치합니다.
 echo   (winget·관리자 권한 필요 없음. 처음에는 약 5~6GB 를 내려받아 20~40분 걸립니다)
 echo ==============================================================
 echo.
@@ -74,6 +74,30 @@ echo [설치] 렌더링용 Chrome Headless Shell...
 call npx remotion browser ensure
 popd
 
+rem ---------- Claude Code (Pro/Max 구독으로 AI 편집 - API 결제 불필요) ----------
+echo.
+call :find_claude
+if not defined CLAUDE_EXE (
+  echo [설치] Claude Code 를 설치합니다 ^(Anthropic 공식 설치 스크립트^)...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"
+  call :find_claude
+)
+if defined CLAUDE_EXE (
+  echo [확인] Claude Code:
+  %CLAUDE_EXE% --version
+  %CLAUDE_EXE% auth status --json 2>nul | findstr /r /c:"loggedIn.*true" >nul
+  if errorlevel 1 (
+    echo.
+    echo [로그인] 곧 브라우저가 열립니다. Claude Pro/Max 구독 계정으로 로그인하고 '승인'을 누르세요.
+    echo          로그인하면 AI 편집이 구독 사용량으로 동작합니다^(API 결제 불필요^).
+    %CLAUDE_EXE% auth login --claudeai
+  ) else (
+    echo   이미 로그인되어 있습니다.
+  )
+) else (
+  echo [안내] Claude Code 설치에 실패했습니다. 프로그램 설정 - AI 에서 다시 설치하거나 API 키를 쓸 수 있습니다.
+)
+
 rem ---------- Whisper 모델 미리 받기 ----------
 echo.
 choice /c YN /m "Whisper large-v3 음성인식 모델 약 3GB 를 지금 미리 받을까요"
@@ -86,6 +110,16 @@ echo ==============================================================
 echo   설치 완료!  run_studio.bat 을 더블클릭하면 창이 열립니다.
 echo ==============================================================
 pause
+exit /b 0
+
+rem ---------------------------------------------------------------
+rem Claude Code 실행 파일 찾기(공식 설치 위치 우선)
+:find_claude
+set "CLAUDE_EXE="
+if exist "%USERPROFILE%\.local\bin\claude.exe" set CLAUDE_EXE="%USERPROFILE%\.local\bin\claude.exe"
+if not defined CLAUDE_EXE (
+  where claude >nul 2>nul && set "CLAUDE_EXE=claude"
+)
 exit /b 0
 
 rem ---------------------------------------------------------------
