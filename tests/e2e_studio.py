@@ -415,7 +415,7 @@ def main() -> int:
     longs = [f for f in files if f.startswith("1_롱폼") and f.endswith(".mp4")]
     shorts = [f for f in files if "숏폼" in f and f.endswith(".mp4")]
     assert len(longs) == 1 and len(shorts) == 2, files
-    assert "질문이 먼저다" in longs[0], longs          # 🎬 감독이 정한 제목
+    assert "질문이_먼저다" in longs[0], longs          # 🎬 감독이 정한 제목(파일 이름은 공백 → _)
     from studio.media.ffmpeg import FFmpeg
     from studio.media.mix import measure_lufs
     ff = FFmpeg()
