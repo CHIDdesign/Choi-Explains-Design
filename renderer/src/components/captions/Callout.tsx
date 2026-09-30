@@ -1,11 +1,11 @@
 import React from 'react';
 import {interpolate} from 'remotion';
-import {DUR, springIn, tweenOut} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {DUR, springIn, tween, tweenOut} from '../../design/motion';
+import {FONT, rgba} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {fitSize} from '../../lib/fit';
 import type {Callout, FaceSample} from '../../lib/types';
-import {AccentText, LabelTag, PAPER} from '../paper/Paper';
+import {LabelTag, PAPER, pickAccent} from '../paper/Paper';
 
 /**
  * 키워드 콜아웃 — 셜록현준 롱폼의 강조 방식(자막과 별도 레이어).
@@ -13,6 +13,23 @@ import {AccentText, LabelTag, PAPER} from '../paper/Paper';
  * paper(롱폼은 두 스킨 모두 이것): 레퍼런스 3 — 검정 라벨 + 굵은 흰 글씨(그림자), 부드러운 스프링으로 떠오른다.
  * 그 밖: 예전 스타일(강조색 라벨 + 스프링 팝). 퇴장은 페이드.
  */
+/** 흰 굵은 글씨 + 핵심어는 주황 + 그 아래 형광펜이 쓸리듯 칠해진다(숏폼 카드와 같은 언어) */
+const MarkedAccent: React.FC<{text: string; accent?: string | null; p: number; marker: string}> = ({text, accent, p,
+  marker}) => {
+  const a = pickAccent(text, accent);
+  const i = a ? text.lastIndexOf(a) : -1;
+  if (i < 0) return <span style={{color: PAPER.white}}>{text}</span>;
+  return (
+    <span style={{color: PAPER.white}}>
+      {text.slice(0, i)}
+      <span style={{color: PAPER.accent, fontWeight: 900,
+        backgroundImage: `linear-gradient(transparent 62%, ${marker} 62%, ${marker} 94%, transparent 94%)`,
+        backgroundSize: `${Math.max(0, Math.min(1, p)) * 100}% 100%`, backgroundRepeat: 'no-repeat'}}>{a}</span>
+      {text.slice(i + a.length)}
+    </span>
+  );
+};
+
 export const CalloutLayer: React.FC<{items: Callout[]; t: number; fps: number; W: number; H: number; theme: Theme;
   paper?: boolean; face?: FaceSample; zoom?: number}> = ({items, t, fps, W, H, theme, paper, face, zoom = 1}) => {
   const c = items.find((x) => t >= x.start && t < x.end);
@@ -50,8 +67,8 @@ export const CalloutLayer: React.FC<{items: Callout[]; t: number; fps: number; W
             letterSpacing: '-0.04em', color: PAPER.white, whiteSpace: 'nowrap',
             textAlign: c.side === 'right' ? 'left' : 'right',
             textShadow: '0 3px 0 rgba(0,0,0,0.55), 0 10px 30px rgba(0,0,0,0.55)'}}>
-            <AccentText text={l} accent={c.highlight ? (l.includes(c.highlight) ? c.highlight : null)
-              : i === lines.length - 1 ? undefined : null} />
+            <MarkedAccent text={l} accent={c.highlight ? (l.includes(c.highlight) ? c.highlight : null)
+              : i === lines.length - 1 ? undefined : null} p={tween(f, 10 + i * 3, 12)} marker={rgba(theme.accent, 0.42)} />
           </div>
         ))}
       </div>

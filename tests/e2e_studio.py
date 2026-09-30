@@ -111,9 +111,11 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     s_ask = _seg_with(segs, "잘 묻지")     # 태그·다른 그래픽이 없는 문장 → 자유 HTML 카드 자리
     if agent == "director":
         return {"title": "질문이 먼저다", "logline": "좋은 디자인은 좋은 질문에서 시작한다", "audience": "디자인 전공 1~2학년",
+                "thesis": "좋은 디자인은 해결책이 아니라 문제 정의에서 갈린다",
                 "tone": "차분한 강의", "bgm_mood": "minimal", "shorts_bgm_mood": "upbeat",
-                "structure": [{"title": "들어가며", "start_seg": first, "end_seg": s_wide, "purpose": "문제 제기"},
-                              {"title": "문제를 다시 정의하기", "start_seg": s_skip, "end_seg": last, "purpose": "원리"}],
+                "structure": [{"title": "들어가며", "start_seg": first, "end_seg": s_wide, "purpose": "문제 제기", "claim": ""},
+                              {"title": "문제를 다시 정의하기", "start_seg": s_skip, "end_seg": last, "purpose": "원리",
+                               "claim": "해결책보다 질문이 먼저다"}],
                 "beats": [{"start_seg": s_dots, "end_seg": s_gestalt, "intent": "name_concept", "visual": "motion",
                            "idea": "점들이 모이며 무리로 보임", "priority": 1},
                           {"start_seg": s_sketch, "end_seg": s_sketch, "intent": "example", "visual": "stock_video",
@@ -455,6 +457,10 @@ def main() -> int:
     assert any(p["style"] == "cut" and p["t"] < hl_dur for p in lp["punches"]), lp["punches"]   # 조각마다 펀치인
     report_hl = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
     assert "오프닝 하이라이트" in report_hl
+    # 🎬 챕터 카드 부제 = 총괄 감독의 챕터 주장(claim) — 시청자가 '지금 무슨 이야기인지' 안다
+    ch2 = next(g for g in lp["graphics"] if g["template"] == "chapter")
+    assert ch2["data"]["subtitle"] == "해결책보다 질문이 먼저다", ch2["data"]
+    assert plan["long"]["chapters"][1].get("claim") == "해결책보다 질문이 먼저다", plan["long"]["chapters"]
     grade_info = json.loads((job / "work" / "grade.json").read_text(encoding="utf-8"))
     assert grade_info["choice"]["look"] == "warm_film" and grade_info["choice"]["by"] == "ai", grade_info["choice"]
     assert (job / "media" / "grade.cube").exists() and (out / "부가자료" / "색보정_전후.jpg").exists()

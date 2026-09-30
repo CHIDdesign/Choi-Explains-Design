@@ -5,14 +5,15 @@ import {useFontForText} from '../../design/fonts';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import {FONT, makeTheme, rgba} from '../../design/tokens';
-import {fitSize, wrap} from '../../lib/fit';
+import {fitSize} from '../../lib/fit';
 import {lastIndexAtOrBefore, sampleFace, toFrame} from '../../lib/time';
 import type {CaptionCue, Graphic, ShortBeat, ShortProps} from '../../lib/types';
 import {LivePeek} from '../fx/LivePeek';
 import {StackCaption, stackParts, warmOf} from '../captions/Stack';
 import {TEMPLATE_COMPONENTS} from '../graphics';
 import {conceptText} from '../paper/Collage';
-import {AccentText, hashSeed, LabelTag, PAPER, PaperBg, pickAccent, seeded} from '../paper/Paper';
+import {ConceptCardBody, Highlighted, INK} from '../cards/ConceptVariants';
+import {hashSeed, seeded} from '../paper/Paper';
 import {TalkingHead, videoBoxFor} from '../TalkingHead';
 import type {Rect} from '../TalkingHead';
 
@@ -29,7 +30,6 @@ const SEAM = 830;
 const FACE: Rect = {x: 0, y: SEAM, w: 1080, h: 1920 - SEAM};
 const CARD = {x: 50, y: 70, w: 980, h: 720};
 const BG = '#F5F5F3';
-const INK = '#17181C';
 
 type Slide = {start: number; end: number; kind: 'graphic' | 'beat' | 'title'; g?: Graphic; b?: ShortBeat};
 
@@ -58,19 +58,6 @@ export const buildSlides = (graphics: Graphic[], beats: ShortBeat[], total: numb
   if (out.length) out[out.length - 1].end = Math.max(out[out.length - 1].end, total);
   for (let i = 0; i + 1 < out.length; i++) out[i].end = Math.max(out[i].end, out[i + 1].start);
   return out;
-};
-
-const Marker: React.FC<{text: string; p: number; color: string}> = ({text, p, color}) => (
-  <span style={{backgroundImage: `linear-gradient(transparent 58%, ${color} 58%, ${color} 92%, transparent 92%)`,
-    backgroundSize: `${Math.max(0, Math.min(1, p)) * 100}% 100%`, backgroundRepeat: 'no-repeat'}}>{text}</span>
-);
-
-const Highlighted: React.FC<{text: string; accent?: string | null; p: number; color: string}> = ({text, accent, p,
-  color}) => {
-  const a = pickAccent(text, accent);
-  const i = a ? text.indexOf(a) : -1;
-  if (i < 0) return <>{text}</>;
-  return <>{text.slice(0, i)}<Marker text={a} p={p} color={color} />{text.slice(i + a.length)}</>;
 };
 
 const MediaFill: React.FC<{src: string; video: boolean; f: number; dur: number}> = ({src, video, f, dur}) => {
@@ -119,7 +106,7 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
       </div>
     );
   }
-  // 개념 텍스트(키워드·정의·숫자 또는 beats) / 제목: 흰 카드 + 짙은 굵은 글씨 + 형광펜
+  // 개념 텍스트(키워드·정의·숫자 또는 beats) / 제목: 세 가지 카드 언어(ConceptVariants — 롱폼 얼굴 옆 카드와 같다)
   let label = '';
   let head = '';
   let body = '';
@@ -139,76 +126,8 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
     head = props.hookTitle.replace(/\n/g, ' ');
     accent = props.hookHighlight || undefined;
   }
-  const lines = wrap(head, 110, CARD.w - 120, 3).slice(0, 3);
-  const size = Math.min(118, ...lines.map((l) => fitSize(l, CARD.w - 120, 118, 60, -0.045)));
-  if (variant === 2) {
-    // 사용자 템플릿 카드: 구겨진 짙은 종이 + 흰 라벨 태그 + 흰 헤드라인(한 낱말만 주황) + 회색 주석
-    const ps = Math.min(116, ...lines.map((l) => fitSize(l, CARD.w - 140, 116, 56, -0.035)));
-    return (
-      <div style={{position: 'absolute', inset: 0}}>
-        <PaperBg src={props.paperTexture} />
-        <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-          justifyContent: 'center', padding: '0 70px'}}>
-          {label ? <div style={{opacity: tween(f, 2, 10), marginBottom: 22}}><LabelTag text={label} size={34} /></div> : null}
-          {lines.map((l, i) => (
-            <div key={i} style={{fontFamily: FONT.display, fontWeight: 500, fontSize: ps, lineHeight: 1.16,
-              letterSpacing: '-0.04em', whiteSpace: 'nowrap', opacity: tween(f, 3 + i * 3, 12),
-              translate: `0 ${interpolate(tween(f, 3 + i * 3, 14), [0, 1], [16, 0])}px`}}>
-              <AccentText text={l} accent={i === lines.length - 1 ? accent : null} />
-            </div>
-          ))}
-          {body ? <div style={{marginTop: 20, fontFamily: FONT.sans, fontSize: 36, lineHeight: 1.45, color: PAPER.body,
-            opacity: tween(f, 10, 12)}}>{wrap(body, 36, CARD.w - 140, 2).map((l, i) => <div key={i}>{l}</div>)}</div>
-            : null}
-        </div>
-      </div>
-    );
-  }
-  if (variant === 1) {
-    // 번갈아 쓰는 에디토리얼 카드(참고 채널의 명조 헤드라인): 기울인 명조 라벨 → 큰 명조 헤드라인(한 낱말만 따뜻한 강조색)
-    const serifSize = Math.min(112, ...lines.map((l) => fitSize(l, CARD.w - 140, 112, 56, -0.02)));
-    const a = pickAccent(lines[lines.length - 1] ?? '', accent);
-    return (
-      <div style={{position: 'absolute', inset: 0, background: '#FBF7F0', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', padding: '0 70px', textAlign: 'center'}}>
-        {label ? <div style={{fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 700, fontSize: 38,
-          color: warmOf(theme.accent), marginBottom: 14, opacity: tween(f, 2, 10)}}>{label}</div> : null}
-        {lines.map((l, i) => {
-          const last = i === lines.length - 1;
-          const k = last && a ? l.indexOf(a) : -1;
-          const p = tween(f, 3 + i * 3, 12);
-          return (
-            <div key={i} style={{fontFamily: FONT.serif, fontWeight: 700, fontSize: serifSize, lineHeight: 1.22,
-              letterSpacing: '-0.02em', color: INK, whiteSpace: 'nowrap', opacity: p,
-              filter: `blur(${interpolate(p, [0, 1], [8, 0])}px)`}}>
-              {k < 0 ? l : <>{l.slice(0, k)}<span style={{color: theme.accent}}>{a}</span>{l.slice(k + a.length)}</>}
-            </div>
-          );
-        })}
-        {body ? <div style={{marginTop: 22, fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 500, fontSize: 36,
-          lineHeight: 1.45, color: '#6A625A', opacity: tween(f, 10, 12)}}>
-          {wrap(body, 36, CARD.w - 140, 2).map((l, i) => <div key={i}>{l}</div>)}</div> : null}
-      </div>
-    );
-  }
-  return (
-    <div style={{position: 'absolute', inset: 0, background: '#FFFFFF', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center', padding: '0 60px', textAlign: 'center'}}>
-      {label ? <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 32, color: theme.accent, marginBottom: 18,
-        opacity: tween(f, 2, 10)}}>{label}</div> : null}
-      {lines.map((l, i) => (
-        <div key={i} style={{fontFamily: FONT.display, fontWeight: 800, fontSize: size, lineHeight: 1.18,
-          letterSpacing: '-0.045em', color: INK, whiteSpace: 'nowrap',
-          opacity: tween(f, 3 + i * 3, 12), translate: `0 ${interpolate(tween(f, 3 + i * 3, 14), [0, 1], [18, 0])}px`}}>
-          <Highlighted text={l} accent={i === lines.length - 1 ? accent : null} p={tween(f, 12 + i * 3, 14)}
-            color={marker} />
-        </div>
-      ))}
-      {body ? <div style={{marginTop: 22, fontFamily: FONT.sans, fontWeight: 500, fontSize: 38, lineHeight: 1.4,
-        color: '#5A5A60', opacity: tween(f, 10, 12)}}>{wrap(body, 38, CARD.w - 120, 2).map((l, i) => <div key={i}>{l}</div>)}</div>
-        : null}
-    </div>
-  );
+  return <ConceptCardBody label={label} head={head} body={body} accent={accent} f={f} w={CARD.w} theme={theme}
+    marker={marker} variant={variant} paperTexture={props.paperTexture} />;
 };
 
 /** 제목 형광펜: 지정한 강조어가 있으면 그 낱말만, 없으면 마지막 줄의 마지막 어절만 */

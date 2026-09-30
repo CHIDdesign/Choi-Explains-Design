@@ -78,7 +78,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
       paperTexture={paperTexture} />;
   }
   // 기본 스타일 위에 사용자 레퍼런스에서 가져온 부분: 얼굴 위 사진 액자·개념 텍스트, 타이틀 구도(글 왼쪽 + 화자 액자)
-  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode});
+  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode, theme, paperTexture});
   if (ref) {
     return g.template === 'title' ? <AbsoluteFill style={{background: theme.ink}}>{ref}</AbsoluteFill> : ref;
   }

@@ -101,13 +101,15 @@ export const DisplayText: React.FC<{label?: string; text: string; accent?: strin
 export const FramedMedia: React.FC<{src: string; kind?: 'video' | 'photo'; b: Box; frame: number; dur: number;
   seed: number; enterDelay?: number; rotate?: number}> = ({src, kind = 'photo', b, frame, dur, seed, enterDelay = 0,
   rotate = 0}) => {
-  const p = tween(frame, enterDelay, DUR.slow + 4, 'outCubic');
+  // 참고 릴스의 사진 카드처럼 위에서 떨어지듯(8프레임, 흐림 → 선명) 도착한다 — 예전의 느린 떠오름보다 또렷한 리듬
+  const p = tween(frame, enterDelay, 8, 'outCubic');
   const out = tweenOut(frame, dur, 10);
   const push = interpolate(frame, [0, Math.max(1, dur)], [1.0, 1.06]);
   const isVideo = kind === 'video' || /\.(mp4|webm|mov)$/i.test(src);
   return (
     <div style={{position: 'absolute', inset: 0, opacity: Math.min(p, out),
-      translate: `0 ${interpolate(p, [0, 1], [26, 0])}px`, scale: `${interpolate(p, [0, 1], [0.97, 1])}`,
+      translate: `0 ${interpolate(p, [0, 1], [-70, 0])}px`, scale: `${interpolate(p, [0, 1], [1.03, 1])}`,
+      filter: p < 1 ? `blur(${interpolate(p, [0, 1], [10, 0])}px)` : undefined,
       transformOrigin: `${b.x + b.w / 2}px ${b.y + b.h / 2}px`}}>
       <TornFrame b={b} seed={seed} rotate={rotate}>
         {isVideo ? (

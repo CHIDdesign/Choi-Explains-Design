@@ -236,7 +236,10 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
     }
     for c in raw.get("chapters", []) or []:
         if isinstance(c, dict) and str(c.get("title", "")).strip():
-            plan["chapters"].append({"seg": _nearest(kept, c.get("seg")), "title": str(c["title"]).strip()})
+            item = {"seg": _nearest(kept, c.get("seg")), "title": str(c["title"]).strip()}
+            if str(c.get("claim", "") or "").strip():
+                item["claim"] = str(c["claim"]).strip()[:40]     # 챕터의 주장 한 문장(챕터 카드 부제)
+            plan["chapters"].append(item)
     for g in raw.get("graphics", []) or []:
         cg = _clean_graphic(g, kept)
         if cg:

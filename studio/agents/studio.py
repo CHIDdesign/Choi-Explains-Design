@@ -212,7 +212,8 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
     emphasis += [{"seg": e.get("seg"), "word": e.get("word", ""), "kind": "highlight", "type": e.get("type", "keyword")}
                  for e in caps.get("emphasis", []) or [] if e.get("word")]
 
-    chapters = [{"seg": c.get("start_seg"), "title": c.get("title", "")} for c in brief.get("structure", []) or []]
+    chapters = [{"seg": c.get("start_seg"), "title": c.get("title", ""), "claim": str(c.get("claim", "") or "")}
+                for c in brief.get("structure", []) or []]
     raw_long = {
         "title": brief.get("title", ""),
         "moments": moments,
@@ -220,7 +221,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "highlights": [h for h in editor.get("highlights", []) or [] if isinstance(h, dict)],
         "bgm_mood": brief.get("bgm_mood", ""),
         "shorts_bgm_mood": brief.get("shorts_bgm_mood", ""),
-        "summary": brief.get("logline", ""),
+        "summary": brief.get("thesis") or brief.get("logline", ""),
         "hook_segs": brief.get("hook_segs", []) or [],
         "title_card_seg": brief.get("title_card_seg", -1),
         "chapters": chapters,
@@ -232,7 +233,8 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "music": brief.get("music") or {},
         "captions": {},   # 자막 모양은 채널 템플릿(흰 종이 상자 + 두 층 강조)로 고정 — 디자이너는 강조어만 정한다
         "studio": {
-            "logline": brief.get("logline", ""), "audience": brief.get("audience", ""), "tone": brief.get("tone", ""),
+            "logline": brief.get("logline", ""), "thesis": brief.get("thesis", ""), "audience": brief.get("audience", ""),
+            "tone": brief.get("tone", ""),
             "beats": brief.get("beats", []), "notes_for_team": brief.get("notes_for_team", ""),
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
             "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),

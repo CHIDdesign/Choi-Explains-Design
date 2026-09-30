@@ -3,10 +3,11 @@ import {interpolate} from 'remotion';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
-import {FONT} from '../../design/tokens';
+import {FONT, rgba} from '../../design/tokens';
 import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
+import {ReelConceptCard} from '../cards/ConceptVariants';
 import {ConceptCard, conceptText, DisplayText, FramedMedia, pipBoxes} from './Collage';
 import {AccentText, hashSeed, LabelTag, PAPER, PaperBg, RoughBorder, SourceCredit} from './Paper';
 import type {Box} from './Paper';
@@ -52,7 +53,7 @@ export const PaperGraphic: React.FC<Props> = ({g, Comp, frame, dur, fps, theme, 
     return <Comp {...common} frame={frame} dur={dur} box={{w: W, h: H}} />;
   }
 
-  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode});
+  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode, theme, paperTexture});
   if (ref) return ref;
 
   // ---- 화자 액자 + 글(레퍼런스 1) ----
@@ -161,7 +162,7 @@ export const PaperGraphic: React.FC<Props> = ({g, Comp, frame, dur, fps, theme, 
 };
 
 export type RefArgs = {g: Graphic; frame: number; dur: number; W: number; H: number; panelSide: 'left' | 'right';
-  chapterTag: string; faceX: number; brand: Brand; episode: Episode};
+  chapterTag: string; faceX: number; brand: Brand; episode: Episode; theme: Theme; paperTexture?: string};
 
 /**
  * 사용자 레퍼런스에서 가져온 부분 — 기본(classic) 스타일에도 그대로 쓰인다.
@@ -169,8 +170,8 @@ export type RefArgs = {g: Graphic; frame: number; dur: number; W: number; H: num
  *  · 얼굴 위 키워드·숫자: 개념 텍스트(레퍼런스 3)
  *  · 타이틀: 왼쪽 개념 카드(라벨 태그 → 주황 한 낱말 헤드라인 → 부제 → 회색 주석) + 오른쪽 화자 액자(레퍼런스 1)
  */
-export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode}: RefArgs
-): React.ReactElement | null => {
+export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode, theme,
+  paperTexture}: RefArgs): React.ReactElement | null => {
   const seed = hashSeed(g.id);
   const media = g.template === 'photo' ? g.data.image : g.template === 'broll' ? g.data.src : undefined;
   const mediaKind = g.template === 'broll' ? g.data.kind : 'photo';
@@ -189,10 +190,14 @@ export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, fa
       );
     }
     if (CONCEPT.has(g.template)) {
+      // 얼굴 옆 개념 카드 — 숏폼(릴스식) 위 카드와 같은 카드 언어(고딕+형광펜 · 명조 · 짙은 종이)를 번갈아 쓴다
       const {head, body} = conceptText(g.template, g.data);
+      const w = b.w;
+      const h = Math.round(w * 0.74);
       return (
-        <DisplayText label={body || label} text={head} accent={g.data.accent} frame={frame} dur={dur} x={textX}
-          y={H * 0.26} w={textW} align={right ? 'right' : 'left'} size={g.template === 'stat' ? 150 : 96} />
+        <ReelConceptCard x={b.x} y={b.y} w={w} h={h} dur={dur} f={frame} label={body || label} head={head}
+          accent={g.data.accent} big={g.template === 'stat'} theme={theme} marker={rgba(theme.accent, 0.3)}
+          variant={seed % 3} paperTexture={paperTexture} scale={w / 980} tilt={right ? 1.2 : -1.2} />
       );
     }
   }

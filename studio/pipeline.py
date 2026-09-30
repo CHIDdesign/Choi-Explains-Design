@@ -1352,7 +1352,8 @@ class Pipeline:
             if c["seg"] not in seg_t:
                 continue
             start = 0.0 if not chapters else seg_t[c["seg"]][0]
-            chapters.append({"start": round(start, 3), "title": c["title"], "number": f"{len(chapters) + 1:02d}"})
+            chapters.append({"start": round(start, 3), "title": c["title"], "number": f"{len(chapters) + 1:02d}",
+                             "claim": c.get("claim", "")})
         reserved: list[TimedGraphic] = []
         tseg = self.plan_long.get("title_card_seg", -1)
         t_title = seg_t[tseg][0] if tseg in seg_t else 0.2
@@ -1365,8 +1366,10 @@ class Pipeline:
         for c in chapters[1:]:
             if c["start"] < t_title + 4:
                 continue
+            # 챕터 카드 부제 = 그 챕터의 주장 한 문장(총괄 감독 claim) — 시청자가 '지금 무슨 이야기인지' 바로 안다
             reserved.append(TimedGraphic(f"ch{c['number']}", "chapter", "fullscreen", max(0.0, c["start"] - 0.1),
-                                         min(total, c["start"] + 2.6), {"title": c["title"], "number": c["number"]},
+                                         min(total, c["start"] + (3.2 if c.get("claim") else 2.6)),
+                                         {"title": c["title"], "number": c["number"], "subtitle": c.get("claim", "")},
                                          priority=11, source="auto"))
         graphics = time_graphics(self.plan_long["graphics"], self.utts, tm, total=total, reserved=reserved)
         kept: list[TimedGraphic] = []
@@ -1535,7 +1538,18 @@ class Pipeline:
         plan_g = self.plan_long.get("graphics", []) or []
         subset = [(i, g) for i, g in enumerate(plan_g)
                   if g.get("start_seg") in segs and g.get("template") not in ("chapter", "title", "lower_third")]
+        seg_t = seg_edit_times([u for u in self.utts if u.id in segs], tm)
         timed = time_graphics([g for _, g in subset], self.utts, tm, total=tm.duration, min_start=0.2, id_prefix="h")
+        # 그래픽은 자기 문장 조각 안에서만(읽기 시간으로 다음 조각까지 늘어나면 다른 문장 위에 남는다)
+        kept_t: list[TimedGraphic] = []
+        for g in timed:
+            k = int(g.id[1:]) if g.id[1:].isdigit() else -1
+            sid = subset[k][1].get("start_seg") if 0 <= k < len(subset) else None
+            if sid in seg_t:
+                g.end = min(g.end, seg_t[sid][1] + 0.15)
+            if g.end - g.start >= 1.5:
+                kept_t.append(g)
+        timed = kept_t
         clips, face_src, angle_cuts = self._angles(self.hl_pieces, tm)
         hp = long_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), utts=self.utts, timemap=tm,
                         graphics=timed, chapters=[], clips=clips, emphasis=self.plan_long.get("emphasis", []),
@@ -1550,7 +1564,6 @@ class Pipeline:
             src = by_main.get(f"g{subset[k][0]}") if 0 <= k < len(subset) else None
             g["skin"] = src["skin"] if src and src.get("skin") else "classic"
         face_safe_layouts(hp["graphics"], hp["face"])
-        seg_t = seg_edit_times([u for u in self.utts if u.id in segs], tm)
         moments = self._moments(tm, segs)
         have = {m.seg for m in moments}
         for sid, (a, b) in seg_t.items():          # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막)

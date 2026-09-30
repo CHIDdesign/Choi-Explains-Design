@@ -16,9 +16,12 @@ LOOKS = ["warm_rich", "natural", "warm_film", "clean_bright", "cinematic"]
 BRIEF = _obj({
     "title": STR,          # 화면 타이틀 카드·파일 이름에 쓰는 영상 제목(18자 이내)
     "logline": STR,
+    "thesis": STR,         # 논지 한 문장 — 이 영상이 증명하려는 주장(모든 챕터·그래픽이 이 문장을 향한다)
     "audience": STR,
     "tone": STR,
-    "structure": {"type": "array", "items": _obj({"title": STR, "start_seg": INT, "end_seg": INT, "purpose": STR})},
+    # claim: 그 챕터가 세우는 주장 한 문장(≤40자) — 챕터 카드 부제로 화면에 나가 '지금 무슨 이야기인지' 알려 준다
+    "structure": {"type": "array", "items": _obj({"title": STR, "start_seg": INT, "end_seg": INT, "purpose": STR,
+                                                   "claim": STR})},
     "beats": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT,
         "intent": {"type": "string", "enum": INTENTS},
