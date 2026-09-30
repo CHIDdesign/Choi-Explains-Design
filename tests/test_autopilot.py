@@ -470,3 +470,35 @@ def test_hybrid_looks_follow_content_and_always_mix():
     # 모두 한쪽이면 하나는 반대로(섞기)
     same = choose_looks([g("a", "process", 5), g("b", "cycle", 65)], chapters, 120.0, lambda a, b: "")
     assert {c["look"] for c in same.chapters} == {"paper", "classic"}
+
+
+def test_face_safe_pip_placement_picks_free_side_or_falls_back_to_split():
+    """얼굴 옆 사진 액자·개념 텍스트가 얼굴을 덮지 않게: 빈 쪽으로, 좁으면 줄이고, 자리가 없으면 화자 패널로."""
+    from studio.render.props import face_safe_layouts
+
+    def g(i, tpl, a, layout="pip"):
+        return {"id": i, "template": tpl, "layout": layout, "start": a, "end": a + 4, "data": {}}
+
+    def track(x, s, t0=0.0, t1=200.0):
+        return [{"t": t, "x": x, "y": 0.4, "s": s} for t in range(int(t0), int(t1))]
+    # 화자가 오른쪽(x 0.62) → 액자는 왼쪽, 원래 크기
+    gs = [g("p", "photo", 10), g("k", "keyword", 20, "overlay"), g("l", "list", 30, "overlay")]
+    st = face_safe_layouts(gs, track(0.62, 0.3))
+    assert gs[0]["pip"] == {"side": "left", "w": 700, "h": 520} and gs[1]["pip"]["side"] == "left"
+    assert "pip" not in gs[2] and st["placed"] == 2 and st["to_split"] == 0
+    # 가운데 큰 얼굴(x 0.5, s 0.42) → 여유에 맞춰 줄인 액자
+    gs = [g("p", "photo", 10)]
+    st = face_safe_layouts(gs, track(0.5, 0.42))
+    assert 420 <= gs[0]["pip"]["w"] < 700 and st["shrunk"] == 1
+    # 클로즈업(s 0.65) → 액자 대신 화자 패널(split)
+    gs = [g("p", "photo", 10), g("b", "broll", 20)]
+    st = face_safe_layouts(gs, track(0.5, 0.65))
+    assert all(x["layout"] == "split" and "pip" not in x for x in gs) and st["to_split"] == 2
+    # 구간 안에서 얼굴이 움직이면(0.3 → 0.62) 두 위치를 다 피한다
+    tr = track(0.3, 0.3, 0, 12) + track(0.62, 0.3, 12, 40)
+    gs = [g("p", "photo", 8)]
+    face_safe_layouts(gs, tr)
+    assert gs[0]["layout"] == "split" and "pip" not in gs[0]      # 양쪽 다 좁아져 패널로
+    # 얼굴 트랙이 없으면 손대지 않는다(렌더러가 faceX 로)
+    gs = [g("p", "photo", 8)]
+    assert face_safe_layouts(gs, []) == {"placed": 0, "shrunk": 0, "to_split": 0} and "pip" not in gs[0]

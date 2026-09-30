@@ -126,6 +126,9 @@ export type MotionSpec = {
 // html = .card 안쪽 조각, css = `.card[data-card-id="id"]` 로 스코프된 규칙, w×h = 작성 캔버스(렌더러가 상자에 맞춰 축소)
 export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string};
 
+// 얼굴 옆 액자·개념 텍스트의 자리(studio/render/props.py face_safe_layouts): 얼굴 트랙으로 고른 빈 쪽 + 여유에 맞춘 크기
+export type PipPlacement = {side: 'left' | 'right'; w: number; h: number};
+
 export type Graphic = {
   id: string;
   template: TemplateName;
@@ -134,6 +137,7 @@ export type Graphic = {
   end: number;
   data: GraphicData;
   skin?: Look; // 하이브리드: 이 그래픽을 종이 콜라주로 그릴지 기본 디자인으로 그릴지(없으면 props.skin)
+  pip?: PipPlacement; // pip/overlay: 얼굴을 가리지 않는 자리(없으면 렌더러가 faceX 로 반대편)
 };
 
 // 강조 종류: keyword(핵심어 밑줄 스윕) · term(전문용어 형광 마커) · number(숫자 Anton) · contrast(대비어)

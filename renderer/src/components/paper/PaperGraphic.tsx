@@ -176,7 +176,7 @@ export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, fa
   const mediaKind = g.template === 'broll' ? g.data.kind : 'photo';
   const label = chapterTag || TEMPLATE_LABEL[g.template];
   if (g.layout === 'pip' || g.layout === 'overlay') {
-    const {b, right, textX, textW} = pipBoxes(faceX, W);
+    const {b, right, textX, textW} = pipBoxes(faceX, W, g.pip);
     if (media) {
       return (
         <>

@@ -416,6 +416,57 @@ def paper_layouts(gdicts: list[dict[str, Any]], skin: str) -> list[dict[str, Any
     return gdicts
 
 
+# ---------------------------------------------------------------------------
+# 얼굴을 가리지 않는 배치(채널 피드백: 얼굴 옆 사진 액자·개념 텍스트가 자주 얼굴을 덮었다)
+# ---------------------------------------------------------------------------
+PIP_W, PIP_H = 700, 520       # renderer Collage.pipBoxes 기본 액자 크기
+PIP_MIN_W = 420               # 이보다 작아지면 액자 대신 화자 패널(split)로
+PIP_MARGIN = 60
+PIP_TEMPLATES = ("photo", "broll", "keyword", "definition", "quote", "stat")
+
+
+def _head_half_width(s: float, H: int) -> float:
+    """얼굴 상자 높이 비율(s) → 화면에서 머리(머리카락·귀 포함)가 차지하는 반폭(px) + 여유."""
+    return s * H * 0.64 + 40.0
+
+
+def face_safe_layouts(gdicts: list[dict[str, Any]], face: list[dict[str, Any]], *, W: int = 1920, H: int = 1080
+                      ) -> dict[str, int]:
+    """pip/overlay 그래픽(사진 액자·개념 텍스트)마다 그 구간의 얼굴 트랙(편집 시각)으로 **빈 쪽**과 액자 크기를 정한다.
+    · 얼굴 왼쪽·오른쪽 여유 중 넓은 쪽, 액자는 여유에 맞춰 700→420px 까지 줄인다
+    · 어느 쪽도 420px 이 안 되면(클로즈업·화면 가운데) 액자 대신 화자 패널(split)로 바꾼다 — 얼굴 위에 얹지 않는다
+    결과는 g["pip"] = {side, w, h}(렌더러 pipBoxes 가 그대로 쓴다). 얼굴 트랙이 없으면 예전대로(렌더러가 faceX 로)."""
+    import bisect
+    stats = {"placed": 0, "shrunk": 0, "to_split": 0}
+    if not face:
+        return stats
+    ts = [f["t"] for f in face]
+    for g in gdicts:
+        if g.get("layout") not in ("pip", "overlay") or g.get("template") not in PIP_TEMPLATES:
+            continue
+        i0 = max(0, bisect.bisect_left(ts, g["start"] - 0.3) - 1)
+        i1 = min(len(face), bisect.bisect_right(ts, g["end"] + 0.3) + 1)
+        sub = face[i0:i1] or [min(face, key=lambda f: abs(f["t"] - g["start"]))]
+        left_edge = min(f["x"] * W - _head_half_width(f["s"], H) for f in sub)
+        right_edge = max(f["x"] * W + _head_half_width(f["s"], H) for f in sub)
+        free_left = left_edge - PIP_MARGIN
+        free_right = W - right_edge - PIP_MARGIN
+        side = "left" if free_left >= free_right else "right"
+        free = max(free_left, free_right)
+        w = min(PIP_W, free - 24)
+        if w < PIP_MIN_W:
+            g["layout"] = "split"
+            g.pop("pip", None)
+            stats["to_split"] += 1
+            continue
+        w = int(round(w))
+        g["pip"] = {"side": side, "w": w, "h": int(round(w * PIP_H / PIP_W))}
+        stats["placed"] += 1
+        if w < PIP_W:
+            stats["shrunk"] += 1
+    return stats
+
+
 def mark_soft_cuts(clips: list[dict[str, Any]], camera: list[dict[str, Any]], transitions: list[dict[str, Any]],
                    soft: float) -> int:
     """프레이밍이 그대로 이어지는 점프컷에 소프트 컷(앞 장면 마지막 프레임을 soft 초 동안 섞기)을 표시.

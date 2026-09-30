@@ -60,8 +60,8 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .net import redact
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
-from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, long_props, mark_soft_cuts,
-                           mark_stack_cues, short_beats, short_props, strip_audio, text_graphic_spans)
+from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, face_safe_layouts, long_props,
+                           mark_soft_cuts, mark_stack_cues, short_beats, short_props, strip_audio, text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -1436,6 +1436,10 @@ class Pipeline:
                         skin="classic" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
                         endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
+        # 얼굴을 가리지 않게: 얼굴 옆 사진 액자·개념 텍스트는 빈 쪽으로, 자리가 없으면 화자 패널로
+        ps = face_safe_layouts(lp["graphics"], lp["face"])
+        if ps["placed"] or ps["to_split"]:
+            self.log(f"🙂 얼굴 옆 배치: 액자 {ps['placed']}개(줄임 {ps['shrunk']}) · 자리가 없어 패널로 {ps['to_split']}개")
         seg_t = seg_edit_times(self.utts, self.timemap)
         looks = None
         if self._hybrid:

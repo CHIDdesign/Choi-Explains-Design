@@ -195,6 +195,9 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     }
   }
 
+  // 화면 좌표의 얼굴(줌·리프레이밍·패널 축소 반영) — 콜아웃은 이 위치를 피해 놓는다(예전엔 원본 좌표라 확대·이동 때 겹쳤다)
+  const screenFace = {t, x: (box.tx + face.x * box.w) / W, y: (box.ty + face.y * box.h) / H, s: (face.s * box.h) / H};
+
   // ---- 챕터 ----
   const ci = lastIndexAtOrBefore(props.chapters, t, (c) => c.start);
   const chapter = ci >= 0 ? props.chapters[ci] : null;
@@ -263,7 +266,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         ) : null}
         {over.map(seq)}
         <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} paper
-          face={face} zoom={zoom} />
+          face={screenFace} zoom={1} />
       </TransitionStage>
       {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
       {tx.hideCaptions ? null : (

@@ -3,7 +3,7 @@ import {Img, interpolate, OffthreadVideo, staticFile} from 'remotion';
 import {DUR, STAGGER, tween, tweenOut} from '../../design/motion';
 import {FONT} from '../../design/tokens';
 import {fitBlock, fitSize, wrap} from '../../lib/fit';
-import type {GraphicData, TemplateName} from '../../lib/types';
+import type {GraphicData, PipPlacement, TemplateName} from '../../lib/types';
 import {AccentText, LabelTag, PAPER, TornFrame} from './Paper';
 import type {Box} from './Paper';
 
@@ -121,11 +121,13 @@ export const FramedMedia: React.FC<{src: string; kind?: 'video' | 'photo'; b: Bo
   );
 };
 
-/** 사진 PIP 배치: 얼굴 반대편 위쪽(레퍼런스 3: x 1150~1860, y 76~624) */
-export const pipBoxes = (faceX: number, W = 1920) => {
-  const w = 700;
-  const h = 520;
-  const right = faceX < 0.5;
+/** 사진 PIP 배치: 얼굴 반대편 위쪽(레퍼런스 3: x 1150~1860, y 76~624).
+ * pip(파이프라인이 얼굴 트랙으로 정한 빈 쪽·크기)이 있으면 그대로 — 얼굴을 덮지 않는다. 없으면 faceX 의 반대편. */
+export const pipBoxes = (faceX: number, W = 1920, pip?: PipPlacement) => {
+  const w = pip?.w ?? 700;
+  const h = pip?.h ?? 520;
+  const right = pip ? pip.side === 'right' : faceX < 0.5;
   const b: Box = right ? {x: W - 60 - w, y: 84, w, h} : {x: 60, y: 84, w, h};
-  return {b, right, textX: right ? W - 60 - 760 : 60, textW: 760};
+  const textW = Math.max(420, Math.min(760, w + 60));
+  return {b, right, textX: right ? W - 60 - textW : 60, textW};
 };
