@@ -210,3 +210,14 @@ def test_captions_break_on_phrase_breath_not_char_count():
     items = [{"text": w.text, "raw": w.text, "start": w.start, "end": w.end} for w in say("좋은 디자인은", 0.7, "설명이 필요 없다")]
     chunks = split_phrases(items)
     assert [len(c) for c in chunks] == [2, 3] or [" ".join(x["text"] for x in c) for c in chunks][0] == "좋은 디자인은"
+
+
+def test_captions_keep_adjective_modifiers_with_their_noun():
+    """'결국 좋은 / 디자인은' 처럼 형용사 관형어와 명사를 떼지 않는다(실전 검토 시트에서 발견)."""
+    from studio.text.captions import build_phrase_cues
+    texts = [" ".join(w["text"] for w in c["lines"][0])
+             for c in build_phrase_cues([say("결국 좋은 디자인은 좋은 질문에서 시작합니다.")])]
+    assert texts == ["결국 좋은 디자인은", "좋은 질문에서", "시작합니다"], texts
+    texts = [" ".join(w["text"] for w in c["lines"][0])
+             for c in build_phrase_cues([say("가장 중요한 것은 문제를 정의하는 일입니다.")])]
+    assert texts[0] == "가장 중요한 것은", texts

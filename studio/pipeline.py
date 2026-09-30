@@ -1567,8 +1567,9 @@ class Pipeline:
         moments = self._moments(tm, segs)
         have = {m.seg for m in moments}
         for sid, (a, b) in seg_t.items():          # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막)
-            if sid not in have:
-                moments.append(Moment(t=round(a + 0.05, 3), end=round(b, 3), kind="punchline", intensity=2, seg=sid,
+            if sid not in have and b - a > 1.2:
+                # 조각 시작 0.5초 뒤 — 앞 조각의 그래픽이 끝나는 자리(±0.4초 여유) 바로 뒤에 놓여야 강조가 살아남는다
+                moments.append(Moment(t=round(a + 0.5, 3), end=round(b, 3), kind="punchline", intensity=2, seg=sid,
                                       word="", callout="", label=""))
         hd = tm.duration
         ed_h = build_long_edit(timemap=tm, total=hp["duration"], speech_total=hd, graphics=hp["graphics"], chapters=[],

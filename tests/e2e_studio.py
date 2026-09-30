@@ -448,8 +448,8 @@ def main() -> int:
     assert [h["reason"] for h in hl] == ["숫자", "결론"], hl
     assert 3.0 <= hl_dur <= 20.0, hl_dur
     assert lp["chapters"][0]["start"] == 0.0 or lp["chapters"][0]["start"] >= hl_dur - 0.01, lp["chapters"][:2]
-    title_g = next(g for g in lp["graphics"] if g["template"] == "title")
-    assert abs(title_g["start"] - (hl_dur + 0.2)) < 0.3, (title_g["start"], hl_dur)
+    title_g = next(g for g in lp["graphics"] if g["template"] == "title")   # 타이틀은 본편 훅 뒤 발화에(하이라이트 뒤로 밀림)
+    assert hl_dur <= title_g["start"] <= hl_dur + 4.0, (title_g["start"], hl_dur)
     first_src = lp["clips"][0]["srcStart"]
     main_first = next(c for c in lp["clips"] if c["start"] >= hl_dur - 0.01)["srcStart"]
     assert first_src > main_first, (first_src, main_first)                  # 하이라이트는 뒤쪽 문장에서 가져온다
