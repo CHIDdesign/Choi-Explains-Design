@@ -3,7 +3,12 @@
 합성 영상(테스트 패턴 + 단어 길이만큼의 톤) + 가짜 음성인식 결과로
 대본 정렬 → NG 제거 → 규칙 기반 디렉터 → 프록시 → Remotion 렌더 → 내보내기까지 실행한다.
 
-    python tests/e2e_synthetic.py [--browser /path/to/chrome] [--keep]
+    python tests/e2e_synthetic.py [--browser /path/to/chrome] [--keep] [--face 얼굴클립.mp4] [--multi multicam|split]
+
+--multi multicam: 같은 순간을 두 각도로 찍은 원본 2개(B 는 1.2초 먼저 녹화 시작 · 소리 작고 잡음 많음 · 좌우 반전·
+                  가까운 앵글 · 9~15초 초점 나감) → 소리 싱크 · 목소리 카메라 · 앵글 고르기(흐린 구간 피하기) 확인
+--multi split:    나눠 찍은 원본 2개(두 번째 파일이 앞 파일 마지막 문장을 다시 말하며 시작) → 가상 타임라인 이어 붙이기 ·
+                  파일을 넘나드는 테이크 고르기 확인
 """
 from __future__ import annotations
 
@@ -50,9 +55,9 @@ SPOKEN = [
 ]
 
 
-def make_words() -> tuple[list[dict], float]:
+def make_words(spoken=SPOKEN) -> tuple[list[dict], float]:
     words, t = [], 0.8
-    for sent, pause in SPOKEN:
+    for sent, pause in spoken:
         for w in sent.split():
             d = 0.26 + 0.09 * len(w)
             words.append({"text": w, "start": round(t, 3), "end": round(t + d, 3), "prob": 0.95})
@@ -61,16 +66,21 @@ def make_words() -> tuple[list[dict], float]:
     return words, t + 1.0
 
 
-def make_media(dst: Path, words: list[dict], duration: float, face: str = "") -> None:
+def make_media(dst: Path, words: list[dict], duration: float, face: str = "", *, lead: float = 0.0,
+               gain: float = 0.25, noise: float = 0.002, angle: str = "a",
+               blur: tuple[float, float] | None = None) -> None:
+    """lead: 이 카메라가 몇 초 먼저 녹화를 시작했나(그만큼 소리가 늦게 나옴). angle='b': 다른 각도(좌우 반전 · 가까이).
+    blur: (시작, 끝) 이 카메라 시각으로 초점이 나간 구간."""
     sr = 48000
+    duration = duration + lead
     n = int(sr * duration)
-    audio = np.random.default_rng(1).normal(0, 0.002, n)
+    audio = np.random.default_rng(1 if angle == "a" else 2).normal(0, noise, n)
     for i, w in enumerate(words):
-        a, b = int(w["start"] * sr), int(w["end"] * sr)
+        a, b = int((w["start"] + lead) * sr), int((w["end"] + lead) * sr)
         tt = np.arange(b - a) / sr
         f = 180 + (i % 7) * 25
         env = np.sin(np.pi * np.linspace(0, 1, b - a)) ** 0.5
-        audio[a:b] += 0.25 * env * (np.sin(2 * np.pi * f * tt) + 0.4 * np.sin(2 * np.pi * 2 * f * tt))
+        audio[a:b] += gain * env * (np.sin(2 * np.pi * f * tt) + 0.4 * np.sin(2 * np.pi * 2 * f * tt))
     pcm = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
     wav = dst.with_suffix(".wav")
     with wave.open(str(wav), "wb") as wf:
@@ -78,18 +88,51 @@ def make_media(dst: Path, words: list[dict], duration: float, face: str = "") ->
         wf.setsampwidth(2)
         wf.setframerate(sr)
         wf.writeframes(pcm.tobytes())
+    extra = ""
+    if angle == "b":   # 다른 각도: 좌우 반전 + 가까이(1.35배) + 살짝 따뜻하게
+        extra += ",hflip,crop=iw/1.35:ih/1.35:(iw-iw/1.35)/2:(ih-ih/1.35)/3,scale=1920:1080,eq=gamma_r=1.05"
+    if blur:
+        extra += f",gblur=sigma=18:enable='between(t,{blur[0]},{blur[1]})'"
     if face:
         # 실제 얼굴 영상(짧은 클립을 반복)으로 — 색보정·얼굴 추적·카메라 연출을 눈으로 확인할 때
         src = ["-stream_loop", "-1", "-i", face]
-        vf = ["-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30"]
+        vf = ["-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30" + extra]
     else:
         src = ["-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=30:duration={duration:.2f}"]
-        vf = []
+        vf = ["-vf", extra[1:]] if extra else []
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error"] + src + ["-i", str(wav), "-t", f"{duration:.2f}",
                     "-map", "0:v:0", "-map", "1:a:0"] + vf +
                    ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-shortest", str(dst)], check=True)
     wav.unlink()
+
+
+def check_multi(mode: str, job: Path) -> None:
+    src = json.loads((job / "work" / "sources.json").read_text(encoding="utf-8"))
+    props = json.loads((job / "render" / "props_long.json").read_text(encoding="utf-8"))
+    angles = json.loads((job / "work" / "angles.json").read_text(encoding="utf-8"))
+    used = sorted({c["src"] for c in props["clips"]})
+    print("묶음:", [[(Path(c["path"]).name, c["offset"]) for c in g["cams"]] for g in src["groups"]])
+    print("롱폼 클립 소스:", used, "· 앵글 조각:", [(p["start"], p["end"], p["cam"], p["why"]) for p in angles["long"]])
+    assert used == ["media/proxy.mp4", "media/proxy_2.mp4"], used
+    xml = (job / "output" / "부가자료" / "롱폼_premiere.xml").read_text(encoding="utf-8")
+    assert "source.mp4" in xml and "source_b.mp4" in xml
+    if mode == "multicam":
+        assert len(src["groups"]) == 1 and len(src["groups"][0]["cams"]) == 2
+        a, b = src["groups"][0]["cams"]
+        assert Path(a["path"]).name == "source.mp4", "목소리는 깨끗한 카메라에서"
+        assert abs(b["offset"] - 1.2) < 0.04, b     # B 시각 = A 시각 + 1.2
+        # B 가 초점이 나간 구간(B 시각 9~15초 = 가상 7.8~13.8초)에서는 B 를 쓰지 않는다
+        bad = sum(max(0.0, min(p["end"], 13.3) - max(p["start"], 8.3)) for p in angles["long"] if p["cam"] == 1)
+        assert bad < 0.6, bad
+    else:
+        assert len(src["groups"]) == 2
+        align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
+        kept = [u["text"] for u in align["utterances"] if u["status"] == "keep"]
+        assert sum("먼저 넓게 펼치고" in t for t in kept) == 1, kept     # 두 파일에서 말한 문장은 한 번만
+        joined = " ".join(kept)
+        for must in ("안녕하세요", "건너뜁니다", "시작합니다"):
+            assert must in joined, joined
 
 
 def main() -> int:
@@ -98,19 +141,47 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--work", default=str(ROOT / "projects" / "_e2e"))
     ap.add_argument("--face", default="", help="실제 얼굴 영상 클립(반복해서 원본으로 씀)")
+    ap.add_argument("--multi", default="", choices=["", "multicam", "split"], help="원본 여러 개 시험")
     args = ap.parse_args()
     work = Path(args.work)
     if work.exists() and not args.keep:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
-    words, duration = make_words()
     video = work / "source.mp4"
-    if not video.exists():
-        make_media(video, words, duration, args.face)
+    videos: list[Path] = []
+    job = work / "job"
+    if args.multi == "split":
+        # 나눠 찍기: 두 번째 파일은 앞 파일의 마지막 문장을 다시 말하며 시작(파일을 넘나드는 테이크)
+        words, duration = make_words(SPOKEN[:6])
+        words_b, duration_b = make_words([SPOKEN[5]] + SPOKEN[6:])
+        by_file = {str(video): words, str(work / "source_b.mp4"): words_b}
+        if not video.exists():
+            make_media(video, words, duration, args.face)
+            make_media(work / "source_b.mp4", words_b, duration_b, args.face, angle="b")
+        videos = [work / "source_b.mp4"]
+    else:
+        words, duration = make_words()
+        by_file = {str(video): words}
+        if not video.exists():
+            make_media(video, words, duration, args.face)
+        if args.multi == "multicam":
+            if not (work / "source_b.mp4").exists():
+                make_media(work / "source_b.mp4", words, duration, args.face, lead=1.2, gain=0.12, noise=0.012,
+                           angle="b", blur=(9.0, 15.0))
+            videos = [work / "source_b.mp4"]
 
-    # 음성 인식 대신 합성 결과 사용
+    # 음성 인식 대신 합성 결과 사용 — 원본이 여러 개면 파일 시각 → 가상 타임라인(work/sources.json)으로 옮긴다
     def fake_transcribe(*_a, **_k):
-        return {"words": words, "segments": [], "info": {"model": "synthetic", "duration": duration}}
+        src = json.loads((job / "work" / "sources.json").read_text(encoding="utf-8")) if videos else None
+        if not src:
+            return {"words": words, "segments": [], "info": {"model": "synthetic", "duration": duration}}
+        out = []
+        for g in src["groups"]:
+            cam = next((c for c in g["cams"] if c["path"] in by_file), None)
+            for w in by_file[cam["path"]] if cam else []:
+                sh = g["start"] - cam["offset"]
+                out.append({**w, "start": round(w["start"] + sh, 3), "end": round(w["end"] + sh, 3)})
+        return {"words": out, "segments": [], "info": {"model": "synthetic", "duration": duration}}
     pl.transcribe = fake_transcribe
 
     settings = Settings()
@@ -121,9 +192,8 @@ def main() -> int:
     settings.render.concurrency = 3
     settings.keyless_stock = False
     settings.download_sounds = False
-    spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
+    spec = pl.JobSpec(video=str(video), videos=[str(v) for v in videos], topic="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
                       shorts_count=1, use_claude=False, fetch_broll=False, thumbnails=True, short_max_sec=40, verify_edit=False)
-    job = work / "job"
 
     def log(m: str) -> None:
         print(m, flush=True)
@@ -169,6 +239,8 @@ def main() -> int:
     print("남은 시간 예측(분):", [round(x / 60, 1) for x in etas[::max(1, len(etas) // 12)]])
     print("학습 기록:", {k: v[-1] for k, v in hist["factors"].items()})
     assert etas and "render" in hist["factors"]
+    if args.multi:
+        check_multi(args.multi, job)
     print("E2E OK")
     return 0
 

@@ -41,6 +41,15 @@ def test_three_inputs_make_a_spec(app, tmp_path):
     assert (spec.video, spec.topic) == (str(video), "게슈탈트 원리 — 입문자용")
     assert spec.shorts_count == 2 and spec.make_long            # 롱폼 1 + 숏폼 2 고정
     assert spec.working_title() == "게슈탈트 원리 — 입문자용"
+    # 원본 여러 개(다른 각도·나눠 찍은 것): 끌어다 놓으면 더해지고, 같은 파일은 한 번만
+    cam_b = tmp_path / "원본_B.mp4"
+    cam_b.write_bytes(b"\0")
+    w._on_files([str(cam_b), str(video)])
+    assert w.video.paths == [str(video), str(cam_b)] and "외 1개" in w.video.name.text()
+    spec = w._spec()
+    assert spec.video == str(video) and spec.videos == [str(cam_b)] and spec.sources() == [str(video), str(cam_b)]
+    w.video.set_paths([])
+    assert not w.go.isEnabled()
 
 
 def test_result_page_lists_outputs(app, tmp_path):

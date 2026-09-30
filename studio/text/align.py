@@ -95,9 +95,11 @@ class AlignReport:
 
 class ScriptAligner:
     def __init__(self, script: ParsedScript, glossary: Optional[dict[str, str]] = None,
-                 match_threshold: float = 66.0, script_text_threshold: float = 86.0, audio=None):
+                 match_threshold: float = 66.0, script_text_threshold: float = 86.0, audio=None, visual=None):
         self.script = script
         self.audio = audio  # 16kHz 모노(float) — 테이크 음량 비교용, 없어도 된다
+        # visual(a, b) → 0~1: 그 구간에서 가장 잘 나온 앵글의 화면 품질(얼굴·초점·노출·정면) — 없어도 된다
+        self.visual = visual
         self.glossary = glossary or {}
         self.snorm, self.smap = norm_with_map(script.clean)
         self.match_threshold = match_threshold
@@ -250,7 +252,8 @@ class ScriptAligner:
         scored = []
         for rank, u in enumerate(order):
             s = take_score(u, coverage=length(u) / longest, med_rate=med_rate, energy=self._energy(u),
-                           recency=rank / max(1, len(order) - 1))
+                           recency=rank / max(1, len(order) - 1),
+                           visual=self.visual(u.start, u.end) if self.visual else None)
             scored.append((s, u))
         scored.sort(key=lambda p: -p[0])
         chosen: list[tuple[float, Utterance]] = []
@@ -380,7 +383,7 @@ FILLER_WORDS = {"음", "어", "아", "그", "저", "에", "뭐", "좀", "이제"
 
 
 def take_score(u: Utterance, *, coverage: float, med_rate: float, energy: Optional[float] = None,
-               recency: float = 0.0) -> float:
+               recency: float = 0.0, visual: Optional[float] = None) -> float:
     """테이크 품질(0~1, 높을수록 또렷). 같은 대본 구간을 여러 번 말했을 때 어느 것을 쓸지 정한다.
 
     - 대본 일치도(말실수 없이 대본대로)          35%
@@ -389,6 +392,7 @@ def take_score(u: Utterance, *, coverage: float, med_rate: float, energy: Option
     - 유창성: 추임새·단어 반복·긴 머뭇거림 감점
     - 말 속도: 묶음 중앙값보다 크게 느리면(더듬음) 감점
     - 음량: 더 힘 있게 말한 테이크 가산(±5%)
+    - 화면: 얼굴이 잘 보이고 초점·노출이 맞는 테이크 가산(±6%, 원본 여러 개면 가장 잘 나온 앵글 기준)
     - 최신성: 보통 마지막 테이크가 고쳐 말한 것(+4%)
     """
     words = u.words or []
@@ -406,6 +410,8 @@ def take_score(u: Utterance, *, coverage: float, med_rate: float, energy: Option
     score = 0.35 * sim + 0.30 * cov_term + 0.15 * conf - flu - 0.12 * min(1.0, slow)
     if energy is not None:
         score += 0.05 * max(-1.0, min(1.0, (energy + 30.0) / 12.0))
+    if visual is not None:
+        score += 0.06 * max(-1.0, min(1.0, (visual - 0.55) / 0.3))
     score += 0.04 * recency
     return max(0.0, score)
 

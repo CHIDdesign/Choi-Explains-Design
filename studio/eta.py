@@ -23,11 +23,11 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "asr@gpu": lambda f: 40 + 10 * f["m"],
     "asr@cpu": lambda f: 40 + 80 * f["m"],
     "align": lambda f: 5 + 2 * f["m"],
-    "face": lambda f: 10 + 8 * f["m"] * f["k"],
-    "grade": lambda f: 25 + 3 * f["m"],
+    "face": lambda f: 10 + 8 * f.get("mv", f["m"]) * f["k"],        # mv: 원본 영상 길이 합(다시점이면 카메라 수만큼)
+    "grade": lambda f: 25 + 3 * f.get("mv", f["m"]),
     "director@ai": lambda f: 150 + 20 * f["m"],
     "director@rule": lambda f: 15,
-    "proxy": lambda f: 15 + 25 * f["m"] * f["k"],
+    "proxy": lambda f: 15 + 25 * f.get("mv", f["m"]) * f["k"],
     "verify@gpu": lambda f: 30 + 12 * f["out_s"] / 60,     # 편집된 목소리 다시 인식(최대 2차)
     "verify@cpu": lambda f: 30 + 100 * f["out_s"] / 60,
     "broll": lambda f: 40,
@@ -52,10 +52,13 @@ CACHED_S = 2.0         # 이보다 빨리 끝나면 캐시로 건너뛴 것으�
 TRUST_AT = 0.33        # 단계 진행률이 이만큼 되면 실측 속도를 온전히 믿음
 
 
-def features(*, src_s: float, out_fps: float, long_s: float, shorts_s: float, thumbs: bool) -> dict:
+def features(*, src_s: float, out_fps: float, long_s: float, shorts_s: float, thumbs: bool,
+             video_s: Optional[float] = None) -> dict:
+    """src_s: 목소리 타임라인 길이(원본이 여러 개면 이어 붙인 길이), video_s: 원본 영상 길이 합(얼굴·색·프록시는
+    카메라마다 한 번씩 돈다)."""
     out_s = long_s + shorts_s
-    return {"m": src_s / 60.0, "k": max(0.5, out_fps / 30.0), "out_s": out_s,
-            "frames_k": out_s * out_fps / 1000.0, "thumbs": thumbs}
+    return {"m": src_s / 60.0, "mv": (video_s if video_s is not None else src_s) / 60.0,
+            "k": max(0.5, out_fps / 30.0), "out_s": out_s, "frames_k": out_s * out_fps / 1000.0, "thumbs": thumbs}
 
 
 class Eta:

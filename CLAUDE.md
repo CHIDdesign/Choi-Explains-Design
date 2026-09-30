@@ -1,12 +1,13 @@
 # Choi Studio — 개발 메모 (Claude Code 용)
 
-디자인 이론 교육 영상 **오토파일럿**. 입력은 주제 설명 · 원본 영상 · 대본 세 가지뿐 → 롱폼 1 + 숏폼 2 + 썸네일 + 업로드 정보 + 검토 시트.
+디자인 이론 교육 영상 **오토파일럿**. 입력은 주제 설명 · 원본 영상(여러 개 가능) · 대본 세 가지뿐 → 롱폼 1 + 숏폼 2 + 썸네일 + 업로드 정보 + 검토 시트.
 Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmpeg 음향 믹스·마스터링.
 
 ## 구조
-- `studio/pipeline.py` — 단계 오케스트레이션(probe → audio → asr → align → face → grade → director → proxy → verify → broll → stock → sound → qa → render → master → export), 단계별 캐시는 `projects/<job>/work/`(`log.txt`·`진단.md` 포함). 결과는 `output/`(영상 3편 + 업로드정보.txt) · `output/부가자료/`(썸네일·자막·XML·리포트·색보정 전후·검토시트·진단자료.zip).
+- `studio/pipeline.py` — 단계 오케스트레이션(probe → audio → face → asr → align → grade → director → proxy → verify → broll → stock → sound → qa → render → master → export), 단계별 캐시는 `projects/<job>/work/`(`log.txt`·`진단.md` 포함). 결과는 `output/`(영상 3편 + 업로드정보.txt) · `output/부가자료/`(썸네일·자막·XML·리포트·색보정 전후·검토시트·진단자료.zip).
+- `studio/media/sources.py` — **원본 여러 개**: 소리 에너지 곡선 교차상관으로 동시 촬영(다시점) 묶기·오프셋(`group_sources`, `work/sources.json`), 묶음마다 가장 깨끗한 카메라 소리를 2초 무음을 사이에 두고 이은 **가상 타임라인**(`master_audio_args`) — 이후 ASR·정렬·테이크·컷은 이 시각. 앵글 고르기(`choose_angles`: 얼굴·초점·노출·정면·크기 점수, 점프컷에서 교차, 최소 유지 2.5초, 한 앵글 최대 9초(숏폼 7초·가까운 앵글 선호), `work/angles.json`) → 클립(`clips_for`, 카메라별 `media/proxy_N.mp4`)·얼굴 트랙(`face_track`)·앵글 컷(`angle_cut_times` → 편집 문법이 새 샷으로, 소프트 컷 안 함). 카메라마다 얼굴 추적·색보정(`grade_N.cube`, 룩은 첫 카메라에서 한 번)·프록시. 원본이 하나면 `SourceMap.one` 으로 예전과 같다.
 - `studio/text/takes.py` — **단어 단위 실수 정리**: 쉼·문장 끝·추임새 뒤에서 가까운 앞의 시도와 같은 말로 다시 시작하면 앞의 시도를 지움(마지막 시도가 남음), 떨어진 추임새 삭제. 꼬리에 '끝난 다른 문장'이 있으면 되풀이가 아님(NG 말 제외). 쉼은 VAD 로 잰다(`vad_pause`). 동작 변경 시 `tests/test_takes.py` 에 실제 사례를 추가.
-- `studio/text/align.py` — ASR↔대본 정렬, 리테이크 묶음에서 **가장 또렷한 테이크**(`take_score`) 선택, NG 제거, 태그 고정. 동작 변경 시 `tests/test_core.py` 갱신.
+- `studio/text/align.py` — ASR↔대본 정렬, 리테이크 묶음에서 **가장 또렷하고 잘 나온 테이크**(`take_score`: 대본 일치·완결·확신도·유창성·음량 + 화면 품질 `visual`) 선택, NG 제거, 태그 고정. 동작 변경 시 `tests/test_core.py` 갱신.
 - `studio/edit/cuts.py` · `studio/edit/verify.py` — keep 구간(단어 끝을 VAD 말소리 끝까지 연장, 긴 무음 정리), **편집 오류 검사**(잘라 붙인 목소리를 Whisper 로 다시 받아 적어 남은 되풀이·추임새·긴 무음을 원본 시간으로 되돌려 한 번 더 자름, 최대 2회, `work/verify.json`).
 - `studio/edit/grammar.py` — **편집 문법 엔진**: AI 가 정한 강조 순간·그래픽 → 프레이밍(카메라)·강조(glide)·전환·키워드 콜아웃·효과음 큐·음악 스웰/교체/비우기. 수치는 `PARAMS` 한 곳(근거는 `prompts/playbook/`, `docs/research/*리서치.md`, 채널 피드백). 교육 영상이라 **젠틀하게**: 프레이밍 100↔106% 는 NG 점프·챕터·그래픽 복귀에서만, 같은 프레이밍 점프컷은 소프트 컷, 강조는 0.7초 글라이드, 전환은 blur/push/wipe/leak, 효과음은 템플릿별(`SFX_FOR_TEMPLATE`).
 - `studio/grade/auto.py` — 자동 색보정: 프레임 분석 → 교정(WB·노출·명암·채도, 피부 보호) → 레퍼런스 색 맞춤(`ref_match`, CIELAB, `REFERENCE_LAB` 또는 `user/reference_frames/`) → 룩(기본 `warm_rich`) → 33³ LUT → 프록시에 굽는다. 🎨 컬러리스트(비전)가 비교 시트에서 룩 선택.
@@ -22,12 +23,13 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - `studio/render/props.py` — props 생성 + 편집 결과 반영(`apply_edit`, `mark_soft_cuts`), 한두 마디 자막(`text/captions.py build_phrase_cues`, VAD 시작에 맞춤), 화면 그래픽과 같은 말인 자막 숨김(`dedupe_captions` → cue `hidden`, SRT 에는 남김), 숏폼 개념 텍스트(`short_beats`), 종이 스킨 배치(`paper_layouts`).
 - `studio/eta.py` — 남은 시간 예측: 단계별 시간 모델(원본 길이·fps·GPU·AI·출력 프레임, 첫 작업은 넉넉히) + 진행 중 실측 보정 + `user/eta_history.json` 에 이 PC 속도 학습. 단계를 추가하면 `DEFAULTS`·`GROUPS` 도.
 - `studio/review.py` — 완성 영상 검토 시트(2.5초마다 한 장, 시간·자막) → `부가자료/검토시트_*.jpg`.
-- `studio/gui/` — 오토파일럿 창: `app.py`(① 주제 ② 원본 영상 ③ 대본 → 진행 화면(남은 시간·실시간 미리보기) → 결과 화면), `winshell.py`(관리자 창에서 탐색기 끌어다 놓기: WM_DROPFILES 허용), `poster.py`, `icon.py`, `theme.py`, `settings_dialog.py`(고급 설정 — 브랜드 탭에 화면 스타일·숏폼 구성).
+- `studio/gui/` — 오토파일럿 창: `app.py`(① 주제 ② 원본 영상(여러 개: 다른 각도·나눠 찍은 것) ③ 대본 → 진행 화면(남은 시간·실시간 미리보기) → 결과 화면), `winshell.py`(관리자 창에서 탐색기 끌어다 놓기: WM_DROPFILES 허용), `poster.py`, `icon.py`, `theme.py`, `settings_dialog.py`(고급 설정 — AI 연결·스톡 키·브랜드·경로. 화면 스타일은 고르지 않는다(자동)).
+- `studio/edit/style.py` — **화면 구성 자동 선택(하이브리드)**: 대본·전사·그래픽 종류로 챕터마다 종이(개념·사례 중심)/기본(구조·도식 중심)을 고르고 한쪽으로만 쏠리면 섞는다. 개념 카드·타이틀은 어디서든 종이. `apply_looks` → `Graphic.skin`·`Chapter.look`·props `skin="hybrid"`, 액자 샷은 종이 챕터에서만(`framed_ranges`).
 - `renderer/src/components/graphics/` — 템플릿. 새 템플릿은 types.ts TemplateName + graphics/index.tsx + director/catalog.py 세 곳에 추가.
-- **화면 스킨**(props `skin`, 설정 `Settings.skin`):
+- **화면 스킨**(props `skin`: 실제 작업은 늘 `hybrid` — `JobSpec.skin="auto"`. `classic`·`paper` 는 한쪽만 쓰는 개발·시험용):
   - `classic`(기본) = 에디토리얼 디자인(칠판 패널·잉크·시그널) + 사용자 템플릿에서 가져온 부분: 얼굴 옆 찢어진 액자 사진·개념 텍스트(pip/overlay), 개념 카드 글 위계(split), 타이틀(글 왼쪽 + 화자 액자), 우상단 출처, 엔드카드 '오늘의 정리'. 공통 부분은 `components/paper/PaperGraphic.tsx referenceGraphic`.
   - `paper` = 템플릿 전체: 구겨진 짙은 종이(`studio/render/assets.py make_paper`, 절차적)·회색 거친 테두리·액자 샷(`CameraShot.framed`, paper 일 때만 생성). 부품은 `components/paper/`(`Paper.tsx`·`Collage.tsx`·`PaperGraphic.tsx`·`PaperShort.tsx`).
-- **숏폼 구성**(props `layout`, 설정 `Settings.shorts_layout`): `reel`(기본, `components/shorts/ReelShort.tsx` — 위 큰 카드가 그래픽·개념 텍스트(`beats`)로 바뀌고 아래는 얼굴, 이음새에 한두 마디 굵은 자막, 사진이 있으면 첫 2.2초 부채꼴 카드 + 큰 제목) · `window` · `full` · `framed`. 숏폼은 기획의 그래픽 + 그 구간의 롱폼 그래픽(`Pipeline._short_graphics`).
+- **숏폼 구성**(props `layout`, `JobSpec.shorts_layout`): `reel`(기본 — 카드는 고딕+형광펜 · 명조 · 어두운 종이 카드를 번갈아, `components/shorts/ReelShort.tsx` — 위 큰 카드가 그래픽·개념 텍스트(`beats`)로 바뀌고 아래는 얼굴, 이음새에 한두 마디 굵은 자막, 사진이 있으면 첫 2.2초 부채꼴 카드 + 큰 제목) · `window` · `full` · `framed`. 숏폼은 기획의 그래픽 + 그 구간의 롱폼 그래픽(`Pipeline._short_graphics`).
 
 ## 규칙
 - 모션은 `renderer/src/design/motion.ts` 토큰(EASE·DUR·STAGGER·SPRING)만 쓴다. 자막 프리셋은 `components/captions/`(기본 `paper`: 흰 종이 상자 + 핵심어 굵게).
@@ -46,7 +48,7 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 ## 확인
 - `python -m pytest tests -q`
 - `cd renderer && npx tsc --noEmit`
-- `python tests/e2e_synthetic.py --browser <chrome-headless-shell> [--face 얼굴클립.mp4]` (Whisper·AI 없이 전체 파이프라인, --face 로 실제 얼굴 영상 반복 사용)
+- `python tests/e2e_synthetic.py --browser <chrome-headless-shell> [--face 얼굴클립.mp4] [--multi multicam|split]` (Whisper·AI 없이 전체 파이프라인, --face 로 실제 얼굴 영상 반복 사용, --multi 로 원본 2개: 다시점 싱크·앵글 고르기 / 나눠 찍기 잇기·파일 넘나드는 테이크)
 - `python tests/e2e_realistic.py --face 얼굴클립.mp4` (gTTS 한국어 음성 + 실제 faster-whisper 로 되풀이·추임새·무음 정리와 편집 오류 검사 확인)
 - `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude Code CLI·Pixabay·Unsplash 로 스튜디오·스톡·검수 전체, `--backend api` 는 가짜 API 서버)
 - E2E·테스트에서 **진짜 claude CLI 를 부르지 않도록** 반드시 `settings.claude_code_path` 를 가짜 CLI 로 지정하거나 `ai_backend="api"` 로.

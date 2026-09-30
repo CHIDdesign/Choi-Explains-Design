@@ -1,11 +1,13 @@
 """오토파일럿: 주제 설명 + 원본 영상 + 대본 → 롱폼 1편 + 숏폼 2편(+ 썸네일·자막·업로드 정보).
 
-사용자가 주는 것은 세 가지뿐이고, 나머지는 전부 여기서 자동으로 정한다.
-  목소리 다듬기 → 음성 인식 → 대본 정렬·가장 또렷한 테이크 → 얼굴 추적 → 자동 색보정
+사용자가 주는 것은 세 가지뿐이고(원본 영상은 여러 개여도 된다), 나머지는 전부 여기서 자동으로 정한다.
+  원본 확인(여러 개면 소리로 다시점 싱크·묶음 → 가상 타임라인, studio/media/sources.py)
+  → 목소리 다듬기 → 얼굴 추적·화면 품질 → 음성 인식 → 대본 정렬·가장 또렷하고 잘 나온 테이크 → 자동 색보정
   → 🎬 AI 기획(감독 + 전문 팀: 구성·얼굴/그래픽 배분·강조 순간·모션그래픽·자료·자막·숏폼·제목)
   → 편집본(컷 + 색) → 🔎 편집 검사(Whisper 로 다시 받아 적어 남은 되풀이·무음을 더 자름)
   → 자료 사진·스톡(모션 장면 이미지 포함)·효과음·배경음악 → 🧐 아트 디렉터 검수
-  → 렌더(편집 문법 엔진: 점프컷 프레이밍·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막, 화면 스킨 classic/paper)
+  → 렌더(앵글 고르기(다시점) + 편집 문법 엔진: 점프컷 프레이밍·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막,
+    화면 구성은 대본·기획을 보고 챕터·그래픽마다 섞는 하이브리드)
   → 음향 믹스·마스터링(-14 LUFS) → 마무리(썸네일·자막·검토 시트·업로드 정보)
 
 각 단계 결과는 작업 폴더(work/)에 캐시되어, 재실행하면 바뀐 단계부터만 다시 한다.
@@ -18,7 +20,7 @@ import json
 import shutil
 import time
 import traceback
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -48,6 +50,8 @@ from .grade import auto as grade
 from .media.audio import build_voice_track
 from .media.ffmpeg import FFmpeg, MediaInfo, hdr_to_sdr_filter, pick_output_fps
 from .media.mix import BgmPlan, SfxCue, mix, mux_final
+from .media.sources import (Piece, Quality, SourceMap, analyze_sources, angle_cut_times, angle_summary, choose_angles,
+                            clips_for, face_track, master_audio_args, visual_scorer)
 from .models import Span, Tag, TimeMap, Utterance, Word
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
@@ -71,9 +75,9 @@ StageProgress = Callable[[str, float, float], None]  # (단계 키, 단계 진�
 STAGES: list[tuple[str, str, float]] = [
     ("probe", "영상 확인", 1),
     ("audio", "목소리 다듬기(잡음 제거·EQ·음량)", 4),
+    ("face", "얼굴 추적 · 화면 품질", 5),
     ("asr", "음성 인식(Whisper)", 20),
     ("align", "대본 맞추기 · 가장 또렷한 테이크 고르기", 2),
-    ("face", "얼굴 추적", 5),
     ("grade", "자동 색보정", 3),
     ("director", "AI 기획(감독 + 전문 팀)", 9),
     ("proxy", "편집본 만들기(컷·색)", 8),
@@ -92,8 +96,11 @@ EXTRAS = "부가자료"
 
 @dataclass
 class JobSpec:
-    """사용자가 주는 것은 video · topic · script 세 가지. 나머지는 자동(테스트·고급용으로만 남김)."""
+    """사용자가 주는 것은 video · topic · script 세 가지. 나머지는 자동(테스트·고급용으로만 남김).
+    원본을 여러 개 넣으면 첫 번째가 video, 나머지가 videos — 같은 순간을 다른 각도에서 찍었으면(다시점) 소리로 싱크를
+    맞춰 구간마다 가장 잘 나온 앵글을 고르고, 따로 찍었으면 입력 순서대로 이어 붙여 같은 문장은 더 나은 테이크를 쓴다."""
     video: str
+    videos: list[str] = field(default_factory=list)   # 두 번째 이후 원본
     topic: str = ""                     # ① 이 영상의 주제 설명(무엇을·누구에게·왜)
     script: str = ""                    # ③ 대본
     title: str = ""                     # 비우면 🎬 감독이 정한다
@@ -147,6 +154,13 @@ class JobSpec:
             d["caption_preset"] = "boxed" if d["caption_style"] == "box" else "auto"
         return cls(**{k: v for k, v in d.items() if k in names})
 
+    def sources(self) -> list[str]:
+        out: list[str] = []
+        for v in [self.video] + list(self.videos or []):
+            if v and v not in out:
+                out.append(v)
+        return out
+
     @property
     def topic_text(self) -> str:
         return "\n\n".join(x.strip() for x in (self.topic, self.notes) if x and x.strip())
@@ -195,7 +209,13 @@ class Pipeline:
         self.title = spec.working_title()
         self.slug = slugify(self.title, 30)
         # 단계 사이에 공유하는 상태
-        self.info: Optional[MediaInfo] = None
+        self.info: Optional[MediaInfo] = None       # 원본이 여러 개면 가상 타임라인(이어 붙인 목소리 기준)
+        self.infos: dict[int, MediaInfo] = {}          # 카메라(입력 순서) → 원본 정보
+        self.smap: SourceMap = SourceMap()
+        self.quality: dict[int, Quality] = {}          # 카메라 → 화면 품질 표본
+        self.face_cams: dict[int, list[dict]] = {}     # 카메라 → 얼굴 트랙(카메라 영상 시각)
+        self.long_pieces: list[Piece] = []             # 롱폼 앵글 조각
+        self.short_pieces: list[list[Piece]] = []
         self.fps = 30
         self.utts: list[Utterance] = []
         self.tags: list[Tag] = []
@@ -258,7 +278,8 @@ class Pipeline:
         if shorts_s is None:
             shorts_s = self.spec.shorts_count * self.spec.short_max_sec
         return features(src_s=self.info.duration, out_fps=self.fps, long_s=long_s, shorts_s=shorts_s,
-                        thumbs=bool(self.spec.thumbnails))
+                        thumbs=bool(self.spec.thumbnails),
+                        video_s=sum(i.duration for i in self.infos.values()) or None)
 
     def _eta_plan(self, keys: list[str]) -> None:
         ai = self._use_api()
@@ -286,8 +307,8 @@ class Pipeline:
         t0 = time.time()
         write_json(self.dir / "job.json", self.spec.to_dict())
         steps: list[tuple[str, Callable[[], None]]] = [
-            ("probe", self.stage_probe), ("audio", self.stage_audio), ("asr", self.stage_asr),
-            ("align", self.stage_align), ("face", self.stage_face), ("grade", self.stage_grade),
+            ("probe", self.stage_probe), ("audio", self.stage_audio), ("face", self.stage_face),
+            ("asr", self.stage_asr), ("align", self.stage_align), ("grade", self.stage_grade),
             ("director", self.stage_director),
         ]
         if until != "plan":
@@ -296,7 +317,9 @@ class Pipeline:
                       ("sound", self.stage_sound), ("qa", self.stage_qa), ("render", self.stage_render),
                       ("master", self.stage_master), ("export", self.stage_export)]
         self.eta.begin()
-        self.log(f"══ 작업 시작 {time.strftime('%Y-%m-%d %H:%M')} · 원본 {Path(self.spec.video).name}")
+        srcs = self.spec.sources()
+        self.log(f"══ 작업 시작 {time.strftime('%Y-%m-%d %H:%M')} · 원본 {Path(srcs[0]).name}"
+                 + (f" 외 {len(srcs) - 1}개" if len(srcs) > 1 else ""))
         try:
             for key, fn in steps:
                 self.cancel.check()
@@ -330,17 +353,43 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_probe(self) -> None:
-        self.info = self.ff.probe(self.spec.video)
-        if not self.info.has_video:
-            raise RuntimeError("영상 스트림이 없습니다: " + self.spec.video)
-        if not self.info.has_audio and not self.spec.audio:
+        paths = self.spec.sources()
+        self.infos = {}
+        for i, path in enumerate(paths):
+            info = self.ff.probe(path)
+            if not info.has_video:
+                raise RuntimeError("영상 스트림이 없습니다: " + path)
+            self.infos[i] = info
+        info0 = self.infos[0]
+        if len(paths) == 1 and not info0.has_audio and not self.spec.audio:
             raise RuntimeError("영상에 소리가 없습니다. 목소리가 녹음된 영상을 넣어 주세요.")
-        self.fps = pick_output_fps(self.info)
-        w, h = self.info.display_size
-        self.log(f"원본 {w}x{h} · {self.info.fps:.2f}fps{' (VFR)' if self.info.vfr else ''} · "
-                 f"{self.info.duration / 60:.1f}분 · {self.info.vcodec}{' · HDR' if self.info.is_hdr else ''}"
-                 f" → 출력 {self.fps}fps")
-        write_json(self.work / "probe.json", asdict(self.info))
+        if len(paths) > 1 and not any(i.has_audio for i in self.infos.values()):
+            raise RuntimeError("원본 영상 모두 소리가 없습니다. 목소리가 녹음된 영상을 넣어 주세요.")
+        self.fps = pick_output_fps(info0)
+        for i, info in self.infos.items():
+            w, h = info.display_size
+            self.log(f"원본{f' {i + 1}' if len(paths) > 1 else ''} {w}x{h} · {info.fps:.2f}fps"
+                     f"{' (VFR)' if info.vfr else ''} · {info.duration / 60:.1f}분 · {info.vcodec}"
+                     f"{' · HDR' if info.is_hdr else ''}" + (f" → 출력 {self.fps}fps" if i == 0 else ""))
+        if len(paths) == 1:
+            self.smap = SourceMap.one(paths[0], info0.duration)
+            self.info = info0
+        else:
+            if self.spec.audio:
+                self.log("(원본이 여러 개일 때는 외부 녹음 파일 대신 카메라 소리 중 가장 깨끗한 것을 씁니다)")
+            key = text_hash([file_fingerprint(p) for p in paths], self.fps, "sources-v2")
+            cached = read_json(self.work / "sources.json", {})
+            if cached.get("key") == key:
+                self.smap = SourceMap.from_dict(cached)
+            else:
+                self.smap = analyze_sources(self.ff, paths, [self.infos[i] for i in range(len(paths))], fps=self.fps,
+                                            log=self.log, cancel=self.cancel)
+                write_json(self.work / "sources.json", {"key": key, **self.smap.to_dict()})
+            self.log("🎥 " + self.smap.summary())
+            # 가상 타임라인: 0초 = 첫 묶음의 첫 영상 프레임, 목소리·영상 시작 차이는 묶음마다 이미 맞춤
+            self.info = replace(self.infos[self.smap.groups[0].cams[0].idx], duration=self.smap.total,
+                                v_start=0.0, a_start=0.0, has_audio=True)
+        write_json(self.work / "probe.json", {**asdict(self.info), "sources": self.smap.to_dict()})
 
     def _sound_lib(self, *, full: bool = True) -> SoundLibrary:
         if self.sounds is None or (full and not getattr(self.sounds, "_full", False)):
@@ -359,9 +408,11 @@ class Pipeline:
                 model = self._sound_lib(full=False).rnnoise_model()
             except Exception as e:  # noqa: BLE001 - 잡음 제거 모델이 없으면 기본 필터로
                 self.log(f"(잡음 제거 모델 준비 실패 → 기본 필터 사용: {e})")
-        key = text_hash(file_fingerprint(self.spec.video),
-                        file_fingerprint(self.spec.audio) if self.spec.audio else "", self.spec.enhance_voice,
-                        bool(model), round(self.info.av_offset, 3), "v4")
+        multi = not self.smap.single
+        key = text_hash([file_fingerprint(p) for p in self.spec.sources()],
+                        file_fingerprint(self.spec.audio) if (self.spec.audio and not multi) else "",
+                        self.spec.enhance_voice, bool(model), round(self.info.av_offset, 3),
+                        self.smap.to_dict() if multi else "", "v4")
         voice = self.work / "voice.wav"
         asr = self.work / "asr16k.wav"
         meta = read_json(self.work / "audio.json", {})
@@ -370,7 +421,12 @@ class Pipeline:
             return
         self.log("목소리: " + ("신경망 잡음 제거(RNNoise) + 방송용 EQ·컴프레서" if model
                               else "잡음 제거 + 방송용 EQ·컴프레서"))
-        info = build_voice_track(self.ff, self.spec.video, voice, external_audio=self.spec.audio or None,
+        src = self.spec.video
+        if multi:   # 묶음마다 가장 깨끗한 카메라 소리를 가상 타임라인에 이어 붙인 원본 목소리
+            src = str(self.work / "master_audio.wav")
+            self.ff.run(master_audio_args(self.smap, self.infos, src), duration=self.info.duration, cancel=self.cancel,
+                        what="원본 목소리 잇기")
+        info = build_voice_track(self.ff, src, voice, external_audio=(self.spec.audio or None) if not multi else None,
                                  duration=self.info.duration, enhance=self.spec.enhance_voice, denoise_model=model,
                                  av_offset=self.info.av_offset,
                                  log=self.log, progress=lambda f: self._stage("audio", f * 0.85), cancel=self.cancel)
@@ -411,7 +467,8 @@ class Pipeline:
             if r.reason.startswith("되풀이"):
                 self.log(f"   - {fmt_ts(r.start)} 「{r.text[:40]}」")
         utts = build_utterances(words)
-        aligner = ScriptAligner(parsed, self.settings.glossary, audio=audio)
+        aligner = ScriptAligner(parsed, self.settings.glossary, audio=audio,
+                                visual=visual_scorer(self.smap, self.quality))
         self.utts, self.tags, rep = aligner.run(utts)
         self.align_report = rep.to_dict()
         self.align_report["words_removed"] = self.removed
@@ -423,50 +480,96 @@ class Pipeline:
                  + (f" · 대본 커버리지 {rep.script_coverage * 100:.0f}%" if parsed.has_text else " (대본 없음)"))
 
     def stage_face(self) -> None:
+        """얼굴 추적 + 화면 품질 표본 — 카메라마다. 원본이 여러 개면 얼굴 트랙은 묶음 기준 카메라를 따라 잇는다
+        (편집이 정해지면 앵글 조각을 따라 다시 잇는다)."""
         assert self.info
-        key = text_hash(file_fingerprint(self.spec.video), "face-v1")
+        cams = self.smap.cams
+        key = text_hash([file_fingerprint(c.path) for c in cams], "face-v2")
         cached = read_json(self.work / "face.json", {})
-        if cached.get("key") == key:
-            self.face = cached.get("samples", [])
+        if cached.get("key") == key and "cams" in cached:
             self.log("얼굴 추적: 캐시 사용")
-            return
-        res = track_faces(self.ff, self.spec.video, self.info, log=self.log, progress=self._sp("face"),
-                          cancel=self.cancel)
-        res["key"] = key
-        write_json(self.work / "face.json", res)
-        self.face = res["samples"]
+            res = cached
+        else:
+            res = {"key": key, "cams": {}}
+            for n, cam in enumerate(cams):
+                if len(cams) > 1:
+                    self.log(f"얼굴 추적 {n + 1}/{len(cams)}: {Path(cam.path).name}")
+                r = track_faces(self.ff, cam.path, self.infos[cam.idx], log=self.log, cancel=self.cancel,
+                                progress=lambda f, n=n: self._stage("face", (n + f) / len(cams)))
+                res["cams"][str(cam.idx)] = r
+            write_json(self.work / "face.json", res)
+        self._load_face(res)
+
+    def _load_face(self, res: dict) -> None:
+        cams = res.get("cams") or {"0": res}          # 예전 캐시(카메라 하나) 호환
+        self.face_cams = {int(k): v.get("samples", []) for k, v in cams.items()}
+        self.quality = {int(k): Quality(v["quality"]) for k, v in cams.items() if v.get("quality")}
+        if self.smap.single:
+            self.face = self.face_cams.get(0, [])
+        else:
+            base = [Piece(-1, g.start, g.end, g.cams[0].idx) for g in self.smap.groups]
+            self.face = face_track(base, self.smap, self.face_cams)
 
     # ------------------------------------------------------------------
+    def _cube(self, idx: int) -> Path:
+        return self.media / ("grade.cube" if idx == 0 else f"grade_{idx + 1}.cube")
+
+    def _grade_times(self, cam, vt: list[float]) -> list[float]:
+        """남길 발화 시각(가상) → 이 카메라가 담은 순간의 카메라 시각(최대 16개)."""
+        g = self.smap.group_of(cam.idx)
+        times = [self.smap.to_cam(t, cam) for t in vt if g.start <= t <= g.end]
+        times = [t for t in times if 0.2 <= t <= cam.duration - 0.2]
+        if len(times) < 4:
+            times = [cam.duration * (i + 0.5) / 8 for i in range(8)]
+        if len(times) > 16:
+            step = len(times) / 16
+            times = [times[int(i * step)] for i in range(16)]
+        return times
+
     def stage_grade(self) -> None:
         """🎨 자동 색보정: 남길 구간의 프레임 분석 → 교정 + 레퍼런스 색 매칭 + 룩(기본 웜 리치, 컬러리스트가 비교 시트에서
-        선택) → LUT."""
+        선택) → LUT. 원본이 여러 개면 카메라마다 교정·색 매칭을 따로 하고(같은 레퍼런스로 모아 앵글끼리 색이 맞는다),
+        룩은 첫 카메라에서 한 번 고른다."""
         assert self.info
-        cube = self.media / "grade.cube"
         if self.spec.lut or not self.spec.auto_grade:
             self.grade_info = {}
             return
         kept = [u for u in self.utts if u.kept] or self.utts
-        times = [((u.start + u.end) / 2) for u in kept]
-        if len(times) > 16:
-            step = len(times) / 16
-            times = [times[int(i * step)] for i in range(16)]
-        if not times:
-            times = [self.info.duration * (i + 0.5) / 8 for i in range(8)]
+        vt = [((u.start + u.end) / 2) for u in kept]
+        cams = self.smap.cams
+        times = {c.idx: self._grade_times(c, vt) for c in cams}
         ref_lab = grade.reference_lab(USER_DIR / "reference_frames")
-        key = text_hash(file_fingerprint(self.spec.video), [round(t, 1) for t in times], self._use_api(),
-                        [round(v, 1) for v in ref_lab], "grade-v2")
+        key = text_hash([(file_fingerprint(c.path), [round(t, 1) for t in times[c.idx]]) for c in cams], self._use_api(),
+                        [round(v, 1) for v in ref_lab], "grade-v3")
         cached = read_json(self.work / "grade.json", {})
-        if cached.get("key") == key and cube.exists():
+        if cached.get("key") == key and all(self._cube(c.idx).exists() for c in cams):
             self.grade_info = cached
             self.log(f"🎨 색보정: 캐시 사용({grade.LOOKS[cached['choice']['look']].label})")
             return
-        frames = grade.sample_frames(self.ff, self.spec.video, times, self.info)
-        faces = [min(self.face, key=lambda s: abs(s["t"] - t)) if self.face else None for t, _ in frames]
+        base: Optional[grade.GradeChoice] = None
+        per_cam: dict[str, dict] = {}
+        for n, cam in enumerate(cams):
+            plan, choice = self._grade_cam(cam, times[cam.idx], ref_lab, base, first=(n == 0))
+            if n == 0:
+                base = choice
+                self.grade_info = {"key": key, **plan}
+            per_cam[str(cam.idx)] = {"filters": plan.get("filters", []),
+                                     "notes": plan.get("correction", {}).get("notes", [])}
+            self._stage("grade", (n + 1) / len(cams))
+        if len(cams) > 1:
+            self.grade_info["cams"] = per_cam
+        write_json(self.work / "grade.json", self.grade_info)
+
+    def _grade_cam(self, cam, times: list[float], ref_lab, base: Optional["grade.GradeChoice"], *,
+                   first: bool) -> tuple[dict, "grade.GradeChoice"]:
+        info = self.infos[cam.idx]
+        frames = grade.sample_frames(self.ff, cam.path, times, info)
+        track = self.face_cams.get(cam.idx) or []
+        faces = [min(track, key=lambda s: abs(s["t"] - t)) if track else None for t, _ in frames]
         stats = grade.analyze(frames, faces)
         corr = grade.correction_from_stats(stats)
         # 교정 후 평균색 → 레퍼런스(사용자가 좋아하는 따뜻하고 풍부한 색) 쪽으로 옮길 기준
         src_lab = grade.lab_stats(np.concatenate([grade.apply_correction(f, corr).reshape(-1, 3) for _, f in frames]))
-        self._stage("grade", 0.4)
         # 비교용 3프레임: 얼굴이 크고 서로 떨어진 순간
         order = sorted(range(len(frames)), key=lambda i: -(faces[i] or {}).get("s", 0))
         picks: list[int] = []
@@ -476,33 +579,38 @@ class Pipeline:
             if len(picks) == 3:
                 break
         picks = sorted(picks or [0])
-        choice = grade.GradeChoice(src_lab=src_lab, ref_lab=ref_lab)
-        studio = self._ensure_studio()
-        if studio is not None:
-            sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab)
-            (self.work / "grade_sheet.jpg").write_bytes(sheet)
-            try:
-                notes = " · ".join(corr.notes) or "교정 필요 적음"
-                r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
-                choice = grade.GradeChoice(look=r.get("look", "warm_rich"), strength=float(r.get("strength", 0.8) or 0.8),
-                                           src_lab=src_lab, ref_lab=ref_lab,
-                                           exposure=float(r.get("exposure", 0) or 0),
-                                           warmth=float(r.get("warmth", 0) or 0),
-                                           saturation=float(r.get("saturation", 1) or 1),
-                                           reason=str(r.get("reason", "")), by="ai").clamp()
-            except (DirectorError, ValueError, TypeError) as e:
-                self.log(f"🎨 컬러리스트 실패 → 웜 리치: {e}")
-        grade.write_cube(cube, corr, choice)
+        if base is not None:          # 두 번째 카메라부터: 같은 룩, 이 카메라의 색에서 출발
+            choice = replace(base, src_lab=src_lab, ref_lab=ref_lab)
+        else:
+            choice = grade.GradeChoice(src_lab=src_lab, ref_lab=ref_lab)
+            studio = self._ensure_studio()
+            if studio is not None:
+                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab)
+                (self.work / "grade_sheet.jpg").write_bytes(sheet)
+                try:
+                    notes = " · ".join(corr.notes) or "교정 필요 적음"
+                    r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
+                    choice = grade.GradeChoice(look=r.get("look", "warm_rich"),
+                                               strength=float(r.get("strength", 0.8) or 0.8),
+                                               src_lab=src_lab, ref_lab=ref_lab,
+                                               exposure=float(r.get("exposure", 0) or 0),
+                                               warmth=float(r.get("warmth", 0) or 0),
+                                               saturation=float(r.get("saturation", 1) or 1),
+                                               reason=str(r.get("reason", "")), by="ai").clamp()
+                except (DirectorError, ValueError, TypeError) as e:
+                    self.log(f"🎨 컬러리스트 실패 → 웜 리치: {e}")
+        grade.write_cube(self._cube(cam.idx), corr, choice)
         filters = grade.cleanup_filters(stats)
-        grade.before_after(frames[picks[0]][1], corr, choice, self.extras / "색보정_전후.jpg")
-        self.grade_info = {"key": key, **grade.plan_to_dict(stats, corr, choice, filters)}
-        write_json(self.work / "grade.json", self.grade_info)
+        if first:
+            grade.before_after(frames[picks[0]][1], corr, choice, self.extras / "색보정_전후.jpg")
         after = grade.lab_stats(np.concatenate([grade.grade(f, corr, choice).reshape(-1, 3) for _, f in frames[:6]]))
-        self.log(f"🎨 색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → {after[3]:.1f}"
-                 f" (레퍼런스 b {ref_lab[2]:+.1f} · C {ref_lab[3]:.1f})")
-        self.log(f"🎨 색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
+        who = f"[{Path(cam.path).name}] " if not self.smap.single else ""
+        self.log(f"🎨 {who}색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → "
+                 f"{after[3]:.1f} (레퍼런스 b {ref_lab[2]:+.1f} · C {ref_lab[3]:.1f})")
+        self.log(f"🎨 {who}색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
                  f"(세기 {choice.strength:.1f}{', AI 선택' if choice.by == 'ai' else ''})"
-                 + (f" — {choice.reason}" if choice.reason else ""))
+                 + (f" — {choice.reason}" if choice.reason and first else ""))
+        return grade.plan_to_dict(stats, corr, choice, filters), choice
 
     # ------------------------------------------------------------------
     def _brief(self) -> JobBrief:
@@ -660,32 +768,42 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_proxy(self) -> None:
+        """카메라마다 편집용 프록시(CFR · 색보정 LUT · 디노이즈/샤픈). 0초 = 그 카메라의 첫 영상 프레임."""
         assert self.info
         height = proxy_height_for(self.info, self.spec.out_height)
-        proxy = self.media / "proxy.mp4"
-        lut = self.spec.lut or (str(self.media / "grade.cube") if (self.media / "grade.cube").exists()
-                                and self.spec.auto_grade else "")
-        filters = (self.grade_info or {}).get("filters") or []
-        pre = [f for f in filters if f.startswith("hqdn3d")]
-        post = [f for f in filters if not f.startswith("hqdn3d")]
-        key = text_hash(file_fingerprint(self.spec.video), self.fps, height, file_fingerprint(lut) if lut else "",
-                        filters, "proxy-v3")
+        cams = self.smap.cams
         meta = read_json(self.media / "proxy.json", {})
-        if meta.get("key") == key and proxy.exists():
-            self.log("편집본: 캐시 사용")
-        else:
-            self.log(f"편집본: {height}p · {self.fps}fps · {'NVENC' if self.ff.nvenc_ok else 'x264'}"
+        keys = meta.get("keys") or ({"0": meta["key"]} if meta.get("key") else {})
+        for n, cam in enumerate(cams):
+            proxy = self.media / Path(cam.proxy).name
+            cube = self._cube(cam.idx)
+            lut = self.spec.lut or (str(cube) if cube.exists() and self.spec.auto_grade else "")
+            gi = self.grade_info or {}
+            filters = (gi.get("cams", {}).get(str(cam.idx), {}).get("filters") if gi.get("cams") else gi.get("filters")) or []
+            pre = [f for f in filters if f.startswith("hqdn3d")]
+            post = [f for f in filters if not f.startswith("hqdn3d")]
+            key = text_hash(file_fingerprint(cam.path), self.fps, height, file_fingerprint(lut) if lut else "",
+                            filters, "proxy-v3")
+            who = f" {n + 1}/{len(cams)}({Path(cam.path).name})" if len(cams) > 1 else ""
+            if keys.get(str(cam.idx)) == key and proxy.exists():
+                self.log(f"편집본{who}: 캐시 사용")
+                continue
+            self.log(f"편집본{who}: {height}p · {self.fps}fps · {'NVENC' if self.ff.nvenc_ok else 'x264'}"
                      + (" · 색보정 LUT" if lut else "") + (" · 디노이즈/샤픈" if filters else ""))
-            build_proxy(self.ff, self.spec.video, self.info, proxy, fps=self.fps, height=height,
+            build_proxy(self.ff, cam.path, self.infos[cam.idx], proxy, fps=self.fps, height=height,
                         lut=lut or None, pre_filters=pre, post_filters=post, log=self.log,
-                        progress=lambda f: self._stage("proxy", 0.8 * f), cancel=self.cancel)
-            write_json(self.media / "proxy.json", {"key": key, "height": height})
-        self.base_keeps = build_keeps(self.utts, pace=self._pace(), vad=self.vad,
-                                      media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
+                        progress=lambda f, n=n: self._stage("proxy", 0.8 * (n + f) / len(cams)), cancel=self.cancel)
+            keys[str(cam.idx)] = key
+            write_json(self.media / "proxy.json", {"keys": keys, "height": height})
+        self.base_keeps = self.smap.clamp_keeps(
+            build_keeps(self.utts, pace=self._pace(), vad=self.vad, media_duration=self.info.duration, fps=self.fps,
+                        exclude=self._removed_spans()), self.fps)
         ver = read_json(self.work / "verify.json", {})
         self.edit_drops = [Span(a, b) for a, b in ver.get("drops", [])] \
             if ver.get("base") == self._keeps_key(self.base_keeps) else []
         self._make_cuts()
+        if self.smap.multicam:
+            self.log("🎥 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
 
     def _removed_spans(self) -> list[Span]:
         """단어 정리에서 지운 되풀이·추임새(원본 시간)."""
@@ -704,22 +822,32 @@ class Pipeline:
         keeps = quantize(subtract(self.base_keeps, drops), self.fps, self.info.duration) if drops else self.base_keeps
         self.timemap = TimeMap(keeps)
         write_json(self.work / "keeps_long.json", self.timemap.to_list())
+        starts = sorted(u.start for u in self.utts if u.kept)
+        self.long_pieces = choose_angles(self.timemap.keeps, self.smap, self.quality, sentence_starts=starts)
         if self.spec.make_long:
             cut_audio(self.ff, self.work / "voice.wav", self.timemap.keeps, self.media / "long_voice.wav", self.work,
                       log=self.log, cancel=self.cancel)
         self.short_maps: list[TimeMap] = []
+        self.short_pieces = []
         for i, s in enumerate(self.plan_shorts, 1):
             keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES["shorts"], vad=self.vad,
                                        media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
             if drops:
                 keeps = subtract(keeps, drops)
-            keeps = self._limit_short(keeps)
+            keeps = self._limit_short(self.smap.clamp_keeps(keeps, self.fps))
             tm = TimeMap(keeps, preserve_order=True)
             s["duration"] = tm.duration
             self.short_maps.append(tm)
+            # 숏폼은 얼굴이 크게 보이는 앵글을 조금 더 선호(세로 화면 아래 절반이 얼굴)
+            self.short_pieces.append(choose_angles(tm.keeps, self.smap, self.quality, sentence_starts=starts,
+                                                   prefer_close=True, max_hold=7.0))
             cut_audio(self.ff, self.work / "voice.wav", keeps, self.media / f"short_{i}_voice.wav", self.work,
                       log=self.log, cancel=self.cancel)
             self.log(f"숏폼 {i}: {tm.duration:.1f}초 · 구간 {len(keeps)}개")
+        if not self.smap.single:   # 진단·리포트용: 어느 구간에 어느 앵글을 썼나
+            write_json(self.work / "angles.json", {
+                "long": [vars(p) for p in self.long_pieces],
+                "shorts": [[vars(p) for p in ps] for ps in self.short_pieces]})
 
     # ------------------------------------------------------------------
     def stage_verify(self) -> None:
@@ -1049,7 +1177,8 @@ class Pipeline:
         copy_fonts(self.public / "fonts")
         self._grain = make_grain(self.public / "fx") if self.spec.grain else []
         self._paper = make_paper(self.public / "fx") if self.spec.skin != "classic" else ""
-        links: list[tuple[Path, str]] = [(self.media / "proxy.mp4", "media/proxy.mp4")]
+        links: list[tuple[Path, str]] = [(self.media / Path(c.proxy).name, c.proxy) for c in self.smap.cams] \
+            or [(self.media / "proxy.mp4", "media/proxy.mp4")]
         self._render_prep = links
         return links
 
@@ -1107,13 +1236,21 @@ class Pipeline:
     def _hybrid(self) -> bool:
         return self.spec.skin in ("auto", "hybrid")
 
+    def _angles(self, pieces: list[Piece], tm: TimeMap) -> tuple[Optional[list[dict]], list[dict], list[float]]:
+        """(렌더 클립, 얼굴 트랙(가상 시각), 앵글이 바뀌는 편집 시각). 원본이 하나면 (None, 얼굴 트랙, [])."""
+        if self.smap.single or not pieces:
+            return None, self.face, []
+        return (clips_for(pieces, tm, self.smap), face_track(pieces, self.smap, self.face_cams),
+                angle_cut_times(pieces, tm))
+
     def _final_long_props(self, graphics: list[TimedGraphic], chapters: list[dict]) -> tuple[dict, EditDecisions]:
         """롱폼 props + 편집 문법 엔진 결과(카메라·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막) + 화면 그래픽과
-        같은 말인 자막 숨김. 음향은 따로 믹스."""
+        같은 말인 자막 숨김. 음향은 따로 믹스. 원본이 여러 개면 클립은 앵글 조각대로."""
         self._prepare_render()
+        clips, face_src, angle_cuts = self._angles(self.long_pieces, self.timemap)
         lp = long_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), utts=self.utts,
-                        timemap=self.timemap, graphics=graphics, chapters=chapters,
-                        emphasis=self.plan_long.get("emphasis", []), face_src=self.face,
+                        timemap=self.timemap, graphics=graphics, chapters=chapters, clips=clips,
+                        emphasis=self.plan_long.get("emphasis", []), face_src=face_src,
                         voice_src="media/long_voice.wav", bgm_src=None, sfx={}, grain_frames=self._grain,
                         skin="classic" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
@@ -1136,7 +1273,7 @@ class Pipeline:
                              text_graphic_spans=text_graphic_spans(lp["graphics"]), endcard=self.spec.endcard,
                              face=lp.get("face"),
                              P=PARAMS if (self.spec.skin == "paper" or looks) else {**PARAMS, "framed_every": 0},
-                             framed_ranges=looks.paper_ranges() if looks else None)
+                             framed_ranges=looks.paper_ranges() if looks else None, angle_cuts=angle_cuts)
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
         stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
@@ -1178,21 +1315,24 @@ class Pipeline:
                      f"{ed.stats['punches']} · 강조 자막 {ed.stats['impact_captions']} · 효과음 {ed.stats['sfx']}"
                      f" · 얼굴 화면 비율 {ed.stats['face_ratio'] * 100:.0f}%")
         self.short_props: list[dict] = []
+        short_pieces = getattr(self, "short_pieces", []) or []
         for i, (s, tm) in enumerate(zip(self.plan_shorts, getattr(self, "short_maps", [])), 1):
+            clips, face_src, angle_cuts = self._angles(short_pieces[i - 1] if i <= len(short_pieces) else [], tm)
             sg = time_graphics(self._short_graphics(s), self.utts, tm, total=tm.duration, min_start=3.0,
                                id_prefix=f"s{i}g")
             for g in sg:
                 g.layout = "split"
             series = f"{self.spec.series} #{self.spec.episode}" if self.spec.episode else self.spec.series
             sp = short_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), spec=s, utts=self.utts,
-                             timemap=tm, graphics=sg, face_src=self.face, voice_src=f"media/short_{i}_voice.wav",
+                             timemap=tm, graphics=sg, face_src=face_src, clips=clips,
+                             voice_src=f"media/short_{i}_voice.wav",
                              bgm_src=None, sfx={}, grain_frames=self._grain, grain=0.04 if self._grain else 0.0,
                              skin="hybrid" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                              layout=self.spec.shorts_layout, progress_bar=self.spec.progress_bar,
                              series_label=series, caption_preset=self._caption_presets()[1],
                              extra_emphasis=self.plan_long.get("emphasis", []), speech_onsets=self._edit_onsets(tm))
             ed = build_short_edit(timemap=tm, total=sp["duration"], graphics=sp["graphics"], cues=sp["captions"],
-                                  moments=self._moments(tm, set(s["segments"])), seed=i)
+                                  moments=self._moments(tm, set(s["segments"])), seed=i, angle_cuts=angle_cuts)
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
@@ -1284,10 +1424,18 @@ class Pipeline:
         self.results["long"] = str(self.masters[0]["dst"]) if self.masters and not self.masters[0]["short"] else ""
         self.results["shorts"] = [str(m["dst"]) for m in self.masters if m["short"]]
 
+    def _cam_at(self, t: float):
+        """가상 시각 t 에 롱폼이 쓰는 카메라(원본이 여러 개일 때)."""
+        for p in self.long_pieces:
+            if p.start - 1e-6 <= t <= p.end + 1e-6:
+                return self.smap.cam(p.cam)
+        return self.smap.group_at(t).cams[0]
+
     def _thumbnail_items(self) -> list[RenderItem]:
         assert self.info
         kept = self.timemap.keeps
-        cands = [s for s in self.face if 0.25 < s["x"] < 0.75 and any(k.start + 0.5 <= s["t"] <= k.end - 0.5 for k in kept)]
+        face = self._angles(self.long_pieces, self.timemap)[1]
+        cands = [s for s in face if 0.25 < s["x"] < 0.75 and any(k.start + 0.5 <= s["t"] <= k.end - 0.5 for k in kept)]
         cands.sort(key=lambda s: -s["s"])
         picks: list[dict] = []
         for s in cands:
@@ -1303,16 +1451,17 @@ class Pipeline:
         items = []
         img_dir = self.public / "images"
         img_dir.mkdir(parents=True, exist_ok=True)
-        cube = self.media / "grade.cube"
         for i in range(3):
             pk = picks[i % len(picks)]
             frame = img_dir / f"thumb_frame_{i + 1}.jpg"
-            vf = hdr_to_sdr_filter() if self.info.is_hdr else ""
+            cam = self._cam_at(pk["t"])
+            cube = self._cube(cam.idx)
+            vf = hdr_to_sdr_filter() if self.infos.get(cam.idx, self.info).is_hdr else ""
             if cube.exists() and self.spec.auto_grade and not self.spec.lut:
                 from .edit.assemble import _escape_filter_path
                 vf = (vf + "," if vf else "") + f"format=gbrp,lut3d=file={_escape_filter_path(cube)}:interp=tetrahedral"
             try:
-                self.ff.grab_frame(self.spec.video, pk["t"], frame, width=1920, extra_vf=vf)
+                self.ff.grab_frame(cam.path, self.smap.to_cam(pk["t"], cam), frame, width=1920, extra_vf=vf)
             except Exception as e:  # noqa: BLE001
                 self.log(f"썸네일 프레임 추출 실패: {e}")
                 continue
@@ -1355,17 +1504,27 @@ class Pipeline:
         if self.spec.export_xml:
             w, h = self.info.display_size
             voice = self.work / "voice.wav"
+            files = {c.path: (self.infos[c.idx].duration, *self.infos[c.idx].display_size) for c in self.smap.cams}
+
+            def xml_pieces(pieces: list[Piece]) -> Optional[list[tuple[Path, float, float, float]]]:
+                if self.smap.single:
+                    return None
+                return [(Path(self.smap.cam(p.cam).path), self.smap.to_cam(p.start, self.smap.cam(p.cam)), p.start,
+                         p.end - p.start) for p in pieces]
             if self.spec.make_long:
                 markers = [(c["start"], f"챕터 {c['number']} {c['title']}", "") for c in chapters]
                 markers += [(g["start"], g["template"], str(g["data"].get("title") or g["data"].get("body") or ""))
                             for g in self.long_props.get("graphics", [])]
                 export_xml(self.extras / "롱폼_premiere.xml", name=f"{self.title} (자동 컷)",
                            video=Path(self.spec.video), audio=voice, src_fps=self.info.fps, src_duration=self.info.duration,
-                           width=w, height=h, seq_width=w, seq_height=h, keeps=self.timemap.keeps, markers=markers)
+                           width=w, height=h, seq_width=w, seq_height=h, keeps=self.timemap.keeps, markers=markers,
+                           pieces=xml_pieces(self.long_pieces), files=files)
+            short_pieces = getattr(self, "short_pieces", []) or []
             for i, tm in enumerate(getattr(self, "short_maps", []), 1):
                 export_xml(self.extras / f"숏폼{i}_premiere.xml", name=f"숏폼 {i}", video=Path(self.spec.video),
                            audio=voice, src_fps=self.info.fps, src_duration=self.info.duration, width=w, height=h,
-                           seq_width=1080, seq_height=1920, keeps=tm.keeps, markers=[])
+                           seq_width=1080, seq_height=1920, keeps=tm.keeps, markers=[],
+                           pieces=xml_pieces(short_pieces[i - 1]) if i <= len(short_pieces) else None, files=files)
         report = edit_report(title=self.title, source_duration=self.info.duration,
                              long_duration=self.timemap.duration, align_report=self.align_report, utts=self.utts,
                              graphics=self.long_props.get("graphics", []) if self.long_props else [],
@@ -1401,6 +1560,10 @@ class Pipeline:
     def _craft_report(self) -> str:
         """리포트 뒤에 붙일 '어떻게 편집했나' 요약(색·소리·편집 기술)."""
         lines = ["", "## 🎛 자동 후반 작업", ""]
+        if not self.smap.single:
+            lines.append("- 원본 " + str(len(self.smap.cams)) + "개: " + self.smap.summary())
+            if self.smap.multicam and self.long_pieces:
+                lines.append("- 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
         if self.look_plan:
             lines.append("- 화면 구성(자동 · 하이브리드): " + self.look_plan.summary())
         g = self.grade_info or {}
@@ -1424,7 +1587,7 @@ class Pipeline:
         self.tags = [Tag.from_dict(t) for t in data.get("tags", [])]
         self.align_report = data.get("report", {})
         self.vad = [tuple(v) for v in data.get("vad", [])]
-        self.face = read_json(self.work / "face.json", {}).get("samples", [])
+        self._load_face(read_json(self.work / "face.json", {}))
         self.grade_info = read_json(self.work / "grade.json", {})
 
 

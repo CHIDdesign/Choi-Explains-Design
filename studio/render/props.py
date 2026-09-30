@@ -199,6 +199,15 @@ def sfx_events(graphics: list[dict], sfx: dict[str, str], *, min_gap: float = 6.
 # 롱폼
 # ---------------------------------------------------------------------------
 
+def keep_clips(timemap: TimeMap, src: str = "media/proxy.mp4") -> list[dict[str, Any]]:
+    """원본이 하나일 때: keep 마다 클립 하나(프록시 시각 = 원본 시각)."""
+    clips = []
+    for i, k in enumerate(timemap.keeps):
+        span = timemap.edit_span_of(i)
+        clips.append({"src": src, "srcStart": round(k.start, 4), "start": round(span.start, 4), "dur": round(k.dur, 4)})
+    return clips
+
+
 def panel_side_from_face(samples: list[dict]) -> str:
     if not samples:
         return "right"
@@ -240,7 +249,10 @@ def long_props(
     endcard: bool = True,
     use_sfx: bool = True,
     speech_onsets: Optional[list[float]] = None,
+    clips: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
+    """clips: 원본이 여러 개일 때 앵글 조각대로 만든 클립(studio/media/sources.clips_for). 없으면 keep 마다 proxy.mp4.
+    face_src 는 그때 앵글을 따라 이은 가상 시각 트랙."""
     speech_total = timemap.duration
     end_dur = 6.0 if endcard else 0.0
     total = speech_total + end_dur
@@ -250,11 +262,7 @@ def long_props(
     face = remap_track(face_src, timemap)
     chapter_starts = [c["start"] for c in chapters]
     gdicts = paper_layouts([g.to_dict() for g in graphics], skin)
-    clips = []
-    for i, k in enumerate(timemap.keeps):
-        span = timemap.edit_span_of(i)
-        clips.append({"src": "media/proxy.mp4", "srcStart": round(k.start, 4), "start": round(span.start, 4),
-                      "dur": round(k.dur, 4)})
+    clips = clips if clips is not None else keep_clips(timemap)
     swells = [(0.0, 1.2)] + [(c, c + 2.5) for c in chapter_starts if c > 1] + ([(speech_total, total)] if endcard else [])
     regions = speech_regions(cues)
     return {
@@ -317,6 +325,7 @@ def short_props(
     caption_preset: str = "paper",
     extra_emphasis: Optional[list[dict]] = None,
     speech_onsets: Optional[list[float]] = None,
+    clips: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     by_id = {u.id: u for u in utts}
     groups = []
@@ -336,11 +345,7 @@ def short_props(
                              max_dur=1.1 if layout == "reel" else 2.0)
     snap_cues_to_speech(cues, speech_onsets or [])
     total = timemap.duration
-    clips = []
-    for i, k in enumerate(timemap.keeps):
-        span = timemap.edit_span_of(i)
-        clips.append({"src": "media/proxy.mp4", "srcStart": round(k.start, 4), "start": round(span.start, 4),
-                      "dur": round(k.dur, 4)})
+    clips = clips if clips is not None else keep_clips(timemap)
     # 페이오프 강조(글라이드): 강조어가 있는 청크 중 전체의 55~90% 지점
     pun = []
     for c in cues:
@@ -406,14 +411,17 @@ def paper_layouts(gdicts: list[dict[str, Any]], skin: str) -> list[dict[str, Any
 def mark_soft_cuts(clips: list[dict[str, Any]], camera: list[dict[str, Any]], transitions: list[dict[str, Any]],
                    soft: float) -> int:
     """프레이밍이 그대로 이어지는 점프컷에 소프트 컷(앞 장면 마지막 프레임을 soft 초 동안 섞기)을 표시.
-    프레이밍이 바뀌는 컷(카메라 경계)·전환이 있는 컷은 그대로 둔다. 길이·싱크는 바뀌지 않는다."""
+    프레이밍이 바뀌는 컷(카메라 경계)·전환이 있는 컷·앵글이 바뀌는 컷은 그대로 둔다. 길이·싱크는 바뀌지 않는다.
+    같은 keep 안에서 앵글만 바뀌는 자리(원본 시각이 이어짐)는 점프컷이 아니므로 애초에 소프트 컷 대상이 아니다."""
     bounds = [float(s["start"]) for s in camera if not s.get("glide")]
     tx = [float(e["t"]) for e in transitions]
     n = 0
-    for c in clips[1:]:
+    for prev, c in zip(clips, clips[1:]):
         c.pop("soft", None)
         t = float(c["start"])
         if soft <= 0 or any(abs(b - t) < 0.05 for b in bounds) or any(abs(x - t) < 0.4 for x in tx):
+            continue
+        if prev.get("src") != c.get("src"):      # 앵글이 바뀌는 컷(다시점)은 하드 컷
             continue
         c["soft"] = round(soft, 3)
         n += 1

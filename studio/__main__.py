@@ -29,7 +29,8 @@ def cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="studio")
     sub = ap.add_subparsers(dest="cmd")
     r = sub.add_parser("run", help="새 작업 실행")
-    r.add_argument("--video", required=True, help="원본 영상")
+    r.add_argument("--video", required=True, nargs="+",
+                   help="원본 영상(여러 개 가능: 다른 각도로 동시에 찍은 것 · 나눠 찍은 것)")
     r.add_argument("--topic", default="", help="주제 설명(텍스트 파일 경로 또는 문장)")
     r.add_argument("--script", help="대본 파일(.txt/.md/.docx/.hwpx)")
     r.add_argument("--title", default="", help="(선택) 제목 — 비우면 AI 감독이 정한다")
@@ -65,7 +66,7 @@ def cli(argv: list[str]) -> int:
             print(f"  [{pct:3d}%] {stage} {frac * 100:.0f}%", flush=True)
 
     if args.cmd == "run":
-        spec = JobSpec(video=args.video, topic=_text_or_file(args.topic), title=args.title, audio=args.audio,
+        spec = JobSpec(video=args.video[0], videos=args.video[1:], topic=_text_or_file(args.topic), title=args.title, audio=args.audio,
                        script=_read(args.script), notes=_read(args.notes), episode=args.episode,
                        images_dir=args.images, bgm=args.bgm, lut=args.lut, shorts_count=args.shorts,
                        out_height=args.height, pace=args.pace, use_claude=not args.no_claude,

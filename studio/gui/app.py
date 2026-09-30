@@ -156,7 +156,9 @@ class StepCard(QFrame):
 
 
 class VideoDrop(QFrame):
-    """원본 영상 칸: 클릭 → 찾아보기, 끌어다 놓기, 파일 복사 후 Ctrl+V."""
+    """원본 영상 칸: 클릭 → 찾아보기(여러 개 선택 가능), 끌어다 놓기, 파일 복사 후 Ctrl+V.
+    여러 개면: 같은 내용을 다른 각도에서 동시에 찍은 것(다시점)은 소리로 싱크를 맞춰 구간마다 가장 잘 나온 앵글을 쓰고,
+    따로 찍은 것은 순서대로 이어 붙여 같은 문장은 더 나은 테이크를 쓴다(studio/media/sources.py)."""
     changed = Signal(str)
 
     def __init__(self):
@@ -164,7 +166,7 @@ class VideoDrop(QFrame):
         self.setObjectName("videoDrop")
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(260)
-        self.path = ""
+        self.paths: list[str] = []
         self._pix: Optional[QPixmap] = None
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 16, 16, 16)
@@ -173,46 +175,92 @@ class VideoDrop(QFrame):
         self.poster.setAlignment(Qt.AlignCenter)
         self.poster.setObjectName("poster")
         self.poster.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.empty = _label("＋\n\n여기를 눌러 영상 선택\n또는 탐색기에서 끌어다 놓기", "dropEmpty")
+        self.empty = _label("＋\n\n여기를 눌러 영상 선택\n또는 탐색기에서 끌어다 놓기\n\n여러 각도로 찍었으면 전부 넣어도 됩니다",
+                            "dropEmpty")
         self.empty.setAlignment(Qt.AlignCenter)
         self.name = _label("", "dropName")
         self.name.setAlignment(Qt.AlignCenter)
         self.meta = _label("", "dropMeta")
         self.meta.setAlignment(Qt.AlignCenter)
+        self.meta.setWordWrap(True)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.add_btn = QPushButton("＋ 다른 각도·추가 영상")
+        self.add_btn.setObjectName("ghost")
+        self.add_btn.setToolTip("같은 내용을 다른 각도에서 찍은 영상이나 이어서 찍은 영상을 더합니다")
+        self.add_btn.clicked.connect(self._add_dialog)
+        self.clear_btn = QPushButton("비우기")
+        self.clear_btn.setObjectName("ghost")
+        self.clear_btn.clicked.connect(lambda: self.set_paths([]))
+        row.addStretch(1)
+        row.addWidget(self.add_btn)
+        row.addWidget(self.clear_btn)
+        row.addStretch(1)
         v.addWidget(self.empty, 1)
         v.addWidget(self.poster, 1)
         v.addWidget(self.name)
         v.addWidget(self.meta)
+        v.addLayout(row)
         self.poster.hide()
+        self.add_btn.hide()
+        self.clear_btn.hide()
         if not is_admin():
             self.setAcceptDrops(True)
 
+    @property
+    def path(self) -> str:
+        return self.paths[0] if self.paths else ""
+
+    def _start_dir(self) -> str:
+        return str(Path(self.path).parent) if self.path else ""
+
     def mousePressEvent(self, e):  # noqa: N802
         if e.button() == Qt.LeftButton:
-            p, _ = QFileDialog.getOpenFileName(self, "원본 영상 선택", str(Path(self.path).parent) if self.path else "",
-                                               VIDEO_FILTER)
-            if p:
-                self.set_path(p)
+            ps, _ = QFileDialog.getOpenFileNames(self, "원본 영상 선택(여러 개 가능)", self._start_dir(), VIDEO_FILTER)
+            if ps:
+                self.set_paths(ps)
+
+    def _add_dialog(self) -> None:
+        ps, _ = QFileDialog.getOpenFileNames(self, "영상 추가(다른 각도·이어서 찍은 것)", self._start_dir(), VIDEO_FILTER)
+        if ps:
+            self.add_paths(ps)
 
     def dragEnterEvent(self, e):  # noqa: N802
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
 
     def dropEvent(self, e):  # noqa: N802
-        for u in e.mimeData().urls():
-            if u.isLocalFile():
-                self.set_path(u.toLocalFile())
-                break
+        ps = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        ps = [p for p in ps if Path(p).suffix.lower() in VIDEO_EXTS]
+        if ps:
+            self.add_paths(ps)
+
+    def add_paths(self, ps: list[str]) -> None:
+        self.set_paths(self.paths + [p for p in ps if p not in self.paths])
 
     def set_path(self, p: str) -> None:
-        self.path = p
-        self.empty.setVisible(not p)
-        self.poster.setVisible(bool(p))
-        self.name.setText(Path(p).name if p else "")
-        self.meta.setText("영상 정보를 읽는 중…" if p else "")
-        self._pix = None
-        self.poster.clear()
-        self.changed.emit(p)
+        self.set_paths([p] if p else [])
+
+    def set_paths(self, ps: list[str]) -> None:
+        ps = [p for i, p in enumerate(ps) if p and p not in ps[:i]]
+        first_changed = (ps[:1] != self.paths[:1])
+        self.paths = ps
+        has = bool(ps)
+        self.empty.setVisible(not has)
+        self.poster.setVisible(has)
+        self.add_btn.setVisible(has)
+        self.clear_btn.setVisible(has)
+        if len(ps) > 1:
+            self.name.setText(f"{Path(ps[0]).name} 외 {len(ps) - 1}개")
+            self.name.setToolTip("\n".join(Path(p).name for p in ps))
+        else:
+            self.name.setText(Path(ps[0]).name if ps else "")
+            self.name.setToolTip("")
+        self.meta.setText("영상 정보를 읽는 중…" if has else "")
+        if first_changed:
+            self._pix = None
+            self.poster.clear()
+        self.changed.emit(self.path)
 
     def set_info(self, text: str, poster: Optional[Path]) -> None:
         self.meta.setText(text)
@@ -373,8 +421,8 @@ class MainWindow(QMainWindow):
         for w in (self.topic, self.script):
             w.textChanged.connect(self._update_ready)
         grid.addWidget(StepCard("1", "주제", "이 영상이 무엇에 관한 것인지", self.topic), 3)
-        grid.addWidget(StepCard("2", "원본 영상", "대본을 말하는 모습을 찍은 긴 원본 그대로(여러 번 다시 말한 것 포함)",
-                                self.video), 4)
+        grid.addWidget(StepCard("2", "원본 영상", "대본을 말하는 모습을 찍은 긴 원본 그대로(여러 번 다시 말한 것 포함) · "
+                                "여러 각도로 찍었거나 나눠 찍었으면 전부", self.video), 4)
         grid.addWidget(StepCard("3", "대본", "읽은 대본 전체", self.script, load), 3)
         outer.addLayout(grid, 1)
         bar = QHBoxLayout()
@@ -509,12 +557,12 @@ class MainWindow(QMainWindow):
     # 입력 처리
     # ------------------------------------------------------------------
     def _on_files(self, paths: list[str]) -> None:
-        """탐색기에서 끌어다 놓거나 붙여넣은 파일: 영상이면 ②, 글이면 ③(또는 비어 있으면 ①)."""
+        """탐색기에서 끌어다 놓거나 붙여넣은 파일: 영상이면 ②(여러 개면 모두 더함), 글이면 ③."""
+        videos = [p for p in paths if Path(p).suffix.lower() in VIDEO_EXTS]
+        if videos:
+            self.video.add_paths(videos)
         for p in paths:
-            ext = Path(p).suffix.lower()
-            if ext in VIDEO_EXTS:
-                self.video.set_path(p)
-            elif ext in TEXT_EXTS:
+            if Path(p).suffix.lower() in TEXT_EXTS:
                 self._set_script_file(p)
 
     def _paste(self) -> None:
@@ -542,14 +590,14 @@ class MainWindow(QMainWindow):
 
     def _on_video(self, p: str) -> None:
         self._update_ready()
-        if not p:
+        paths = list(self.video.paths)
+        if not paths:
             return
 
         def info():
             from ..media.ffmpeg import FFmpeg
             ff = FFmpeg(self.settings.ffmpeg_path, self.settings.ffprobe_path)
-            mi = ff.probe(p)
-            return mi, make_poster(p)
+            return paths, [ff.probe(x) for x in paths], make_poster(paths[0])
 
         run_bg(self, info, self._on_video_info)
 
@@ -557,11 +605,20 @@ class MainWindow(QMainWindow):
         if isinstance(res, Exception):
             self.video.set_info(f"영상 정보를 읽지 못했습니다: {res}", None)
             return
-        mi, poster = res
+        paths, infos, poster = res
+        if paths != self.video.paths:      # 읽는 사이에 목록이 바뀜 → 새 결과를 기다린다
+            return
+        mi = infos[0]
         w, h = mi.display_size
-        self.video_seconds = mi.duration
-        extra = "" if mi.has_audio else "  ·  ⚠ 소리 없음"
-        self.video.set_info(f"{fmt_ts(mi.duration)}  ·  {w}×{h}  ·  {mi.fps:.0f}fps{extra}", poster)
+        self.video_seconds = max(i.duration for i in infos)
+        silent = sum(1 for i in infos if not i.has_audio)
+        extra = "" if not silent else ("  ·  ⚠ 소리 없음" if len(infos) == 1 else f"  ·  ⚠ 소리 없는 영상 {silent}개")
+        if len(infos) == 1:
+            text = f"{fmt_ts(mi.duration)}  ·  {w}×{h}  ·  {mi.fps:.0f}fps{extra}"
+        else:
+            text = (f"영상 {len(infos)}개 · " + " / ".join(fmt_ts(i.duration) for i in infos) + extra
+                    + "\n같은 순간을 여러 각도로 찍었으면 소리로 싱크를 맞춰 앵글을 고르고, 따로 찍었으면 순서대로 잇습니다")
+        self.video.set_info(text, poster)
         self._update_ready()
 
     def _update_ready(self) -> None:
@@ -584,21 +641,22 @@ class MainWindow(QMainWindow):
             self.summary.setText(f"결과: 롱폼 1편 · 숏폼 2편 · 썸네일 3장 · 자막 · 업로드 정보   |   예상 {est}")
 
     def _spec(self) -> JobSpec:
-        return JobSpec(video=self.video.path, topic=self.topic.toPlainText().strip(),
+        return JobSpec(video=self.video.path, videos=self.video.paths[1:], topic=self.topic.toPlainText().strip(),
                        script=self.script.toPlainText())
 
     def _save_inputs(self) -> None:
         ensure_user_dirs()
         write_json(LAST_INPUTS, {"topic": self.topic.toPlainText(), "script": self.script.toPlainText(),
-                                 "video": self.video.path})
+                                 "video": self.video.path, "videos": self.video.paths})
 
     def _restore_inputs(self) -> None:
         d = read_json(LAST_INPUTS, {})
         if d:
             self.topic.setPlainText(d.get("topic", ""))
             self.script.setPlainText(d.get("script", ""))
-            if d.get("video") and Path(d["video"]).exists():
-                self.video.set_path(d["video"])
+            vids = [v for v in (d.get("videos") or [d.get("video", "")]) if v and Path(v).exists()]
+            if vids:
+                self.video.set_paths(vids)
         self._update_ready()
 
     # ------------------------------------------------------------------
@@ -610,6 +668,10 @@ class MainWindow(QMainWindow):
         spec = spec or self._spec()
         if not spec.video or not Path(spec.video).exists():
             QMessageBox.information(self, "원본 영상", "② 원본 영상을 선택해 주세요.")
+            return
+        missing = [v for v in spec.sources() if not Path(v).exists()]
+        if missing:
+            QMessageBox.information(self, "원본 영상", "찾을 수 없는 영상이 있습니다:\n" + "\n".join(missing))
             return
         self._save_inputs()
         self.settings = Settings.load()
@@ -813,7 +875,7 @@ class MainWindow(QMainWindow):
         spec = JobSpec.from_dict(data)
         self.topic.setPlainText(spec.topic_text)
         self.script.setPlainText(spec.script)
-        self.video.set_path(spec.video)
+        self.video.set_paths(spec.sources())
         self._start(job_dir=job, spec=spec)
 
     # ------------------------------------------------------------------

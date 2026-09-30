@@ -234,11 +234,14 @@ def list_reveal_times(g: dict, fps: float = FPS_BASE) -> list[float]:
 
 def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], covers: list[tuple],
                 sentence_starts: list[float], P: dict = PARAMS, seed: int = 1,
-                framed_ranges: Optional[list[tuple[float, float]]] = None) -> list[dict]:
+                framed_ranges: Optional[list[tuple[float, float]]] = None,
+                angle_cuts: Optional[list[float]] = None) -> list[dict]:
     """점프컷 프레이밍(교육 영상용 젠틀 편집). 컷 지점에서만 와이드(1.00)/미디엄(1.06)을 번갈아 바꾼다 —
     챕터 시작·전체화면 그래픽 복귀·NG 를 잘라낸 큰 점프(≥big_jump)에서만(평범한 컷은 그대로).
     그 사이 같은 프레이밍의 점프컷은 소프트 컷(props.mark_soft_cuts)이 가린다. 얼굴만 max_shot 넘게 이어지면
-    문장 시작에서 한 번 더 — 컷이 아니면 glide 로 천천히. framed_every > 0(종이 스킨)이면 전환 몇 번에 한 번은 액자 샷."""
+    문장 시작에서 한 번 더 — 컷이 아니면 glide 로 천천히. framed_every > 0(종이 스킨)이면 전환 몇 번에 한 번은 액자 샷.
+    angle_cuts(다시점 앵글이 바뀌는 편집 시각)는 새 샷 — 앵글 자체가 컷을 가리므로 그 샷은 와이드(1.00)에서 시작하고,
+    앵글이 바뀌는 곳 가까이(2초)에서는 줌 프레이밍을 따로 바꾸지 않는다(앵글 교차와 줌 교차가 겹치면 어지럽다)."""
     rnd = random.Random(seed)
     cuts = timemap.cut_points()
     big: set[float] = set()
@@ -247,13 +250,15 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
             big.add(round(timemap.edit_span_of(i).start, 3))
     chapter_set = {round(c, 3) for c in chapter_starts}
     cover_ends = [round(b, 3) for _, b, _ in covers]
-    cands = sorted({round(c, 3) for c in cuts} | chapter_set | set(cover_ends))
+    angle_set = {round(c, 3) for c in angle_cuts or []}
+    cands = sorted({round(c, 3) for c in cuts} | chapter_set | set(cover_ends) | angle_set)
     bounds = [0.0]
     for c in cands:
         if c <= 0.05 or c >= total - 0.3:
             continue
         since = c - bounds[-1]
-        must = c in chapter_set or c in cover_ends or (c in big and since >= 1.2)
+        near_angle = any(abs(c - x) < 2.0 for x in angle_set) and c not in angle_set
+        must = c in chapter_set or c in cover_ends or c in angle_set or (c in big and since >= 1.2 and not near_angle)
         if must:                                    # 평범한 컷에서는 프레이밍을 바꾸지 않는다(교육 영상 — 얼굴 줌 교차 없음)
             bounds.append(c)
     # 얼굴만 너무 오래 이어지면 문장 경계에서 한 번 더 — 컷이 아닌 곳이면 컷 대신 천천히 옮겨 간다(glide)
@@ -277,7 +282,7 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
     merged: list[float] = []
     for b in sorted(set(round(b, 3) for b in filled)):
         if merged and b - merged[-1] < 1.0:
-            if b in chapter_set:
+            if b in chapter_set or b in angle_set:
                 merged[-1] = b
             continue
         merged.append(b)
@@ -290,7 +295,7 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
         a, b = bounds[i], bounds[i + 1]
         if b - a < 0.05:
             continue
-        if i == 0 or round(a, 3) in chapter_set:
+        if i == 0 or round(a, 3) in chapter_set or round(a, 3) in angle_set:
             level = "wide"
         elif level != "wide":
             level = "wide"
@@ -327,12 +332,14 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                     chapters: list[dict], moments: list[Moment], cues: list[dict], sentence_starts: list[float],
                     text_graphic_spans: Optional[list[tuple[float, float]]] = None, endcard: bool = True,
                     face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1,
-                    framed_ranges: Optional[list[tuple[float, float]]] = None) -> EditDecisions:
+                    framed_ranges: Optional[list[tuple[float, float]]] = None,
+                    angle_cuts: Optional[list[float]] = None) -> EditDecisions:
     ed = EditDecisions(soft_cut=P["soft_cut"])
     covers = _covers(graphics, speech_total)
     chapter_starts = [c["start"] for c in chapters if c["start"] > 0.5]
     ed.camera = camera_plan(timemap, speech_total, chapter_starts=chapter_starts, covers=covers,
-                            sentence_starts=sentence_starts, P=P, seed=seed, framed_ranges=framed_ranges)
+                            sentence_starts=sentence_starts, P=P, seed=seed, framed_ranges=framed_ranges,
+                            angle_cuts=angle_cuts)
 
     # ---- 전환 -------------------------------------------------------------
     tx: list[dict] = []
@@ -502,21 +509,32 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
 # ---------------------------------------------------------------------------
 
 def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cues: list[dict],
-                     moments: list[Moment], P: dict = PARAMS, seed: int = 2) -> EditDecisions:
+                     moments: list[Moment], P: dict = PARAMS, seed: int = 2,
+                     angle_cuts: Optional[list[float]] = None) -> EditDecisions:
     """숏폼: 롱폼보다 빠른 호흡이지만 교육 채널답게 부드럽게 — 프레이밍은 컷 지점에서만 작게(1.00↔1.06) 바꾸고,
-    같은 프레이밍 점프컷은 소프트 컷, 강조는 글라이드."""
+    같은 프레이밍 점프컷은 소프트 컷, 강조는 글라이드. 다시점 앵글이 바뀌는 곳은 새 샷(1.00부터)."""
     ed = EditDecisions(soft_cut=P["soft_cut"])
     rnd = random.Random(seed)
     # 1) 카메라: 컷 지점에서만 1.00 ↔ 1.06 교차(샷 최소 3.5초). 샷 안에서는 느린 드리프트(최대 4%).
-    marks = sorted({round(c, 3) for c in timemap.cut_points()})
+    angle_set = {round(c, 3) for c in angle_cuts or []}
+    marks = sorted({round(c, 3) for c in timemap.cut_points()} | angle_set)
     bounds = [0.0]
     for m in marks:
-        if m - bounds[-1] >= 3.5 and m < total - 1.0:
+        if m >= total - 1.0:
+            continue
+        if m in angle_set:
+            if m - bounds[-1] < 1.0 and len(bounds) > 1:
+                bounds[-1] = m
+            elif m - bounds[-1] >= 0.05:
+                bounds.append(m)
+        elif m - bounds[-1] >= 3.5 and not any(abs(m - x) < 2.0 for x in angle_set):
             bounds.append(m)
     bounds.append(total)
     level = rnd.choice([0, 1])
     for i in range(len(bounds) - 1):
         a, b = bounds[i], bounds[i + 1]
+        if round(a, 3) in angle_set:
+            level = 0
         z = 1.06 if level else 1.0
         level ^= 1
         push = min(0.04, 0.008 * (b - a)) if b - a > 3.5 else 0.0
