@@ -146,7 +146,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             {"start_seg": s_sketch, "end_seg": s_sketch, "start_word": "", "kind": "video", "query_en": "student sketching",
              "query_ko": "스케치하는 학생", "layout": "fullscreen", "purpose": "해결책부터 그리는 모습", "must_show": "손과 연필"},
             {"start_seg": s_trip, "end_seg": s_trip, "start_word": "", "kind": "photo", "query_en": "question mark notebook",
-             "query_ko": "질문", "layout": "split", "purpose": "질문의 상징", "must_show": "물음표"}]}
+             "query_ko": "질문", "layout": "split", "purpose": "질문의 상징", "must_show": "물음표"}],
+                "photos": []}
     if agent == "stock_pick":
         n = len(re.findall(r"^- R\d+", instruction, re.M))
         return {"picks": [{"request": i + 1, "candidate": 2, "reason": "톤이 맞음"} for i in range(n)]}

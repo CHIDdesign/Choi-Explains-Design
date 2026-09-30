@@ -82,7 +82,8 @@ MOTION = _obj({
     })},
 })
 
-# 🎞 자료 리서처 — 무료 스톡 요청(Pixabay·Unsplash·Coverr·Pexels)
+# 🎞 자료 리서처 — 무료 스톡 요청(Pixabay·Unsplash·Coverr·Pexels) + 고유명사 자료 사진(위키백과 대표 이미지)
+PHOTO_KINDS = ["person", "work", "object", "brand", "place", "religion", "other"]
 STOCK = _obj({
     "requests": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT, "start_word": STR,
@@ -91,6 +92,14 @@ STOCK = _obj({
         "layout": {"type": "string", "enum": list(LAYOUTS)},
         "purpose": STR,
         "must_show": STR,
+    })},
+    "photos": {"type": "array", "items": _obj({
+        "start_seg": INT, "start_word": STR,
+        "name_ko": STR,      # 대본 표기(화면 라벨)
+        "name_en": STR,      # 위키백과 문서 제목에 가까운 원어/영어 표기(없으면 빈 문자열)
+        "kind": {"type": "string", "enum": PHOTO_KINDS},
+        "layout": {"type": "string", "enum": ["pip", "split", "fullscreen"]},
+        "reason": STR,
     })},
 })
 
@@ -139,4 +148,4 @@ CARD_REVISE = _obj({"html": STR, "changes": STR})
 SHORTS = SHORTS_PLAN
 
 __all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
-           "CARD_REVISE", "CARD_STYLES", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
+           "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]

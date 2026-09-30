@@ -29,7 +29,9 @@ import numpy as np
 from . import diag
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
+from .broll.entities import find_entities
 from .broll.images import Wikimedia, list_local_images, resolve_image
+from .broll.wikipedia import WikipediaImages
 from .director import fallback
 from .director.catalog import TEMPLATES
 from .director.claude import ClaudeClient, DirectorError
@@ -37,8 +39,8 @@ from .director.claude_code import ClaudeCodeClient, find_claude, resolve_backend
 from .director.context import JobBrief, long_instruction, shared_context, shorts_instruction, system_prompt
 from .motion.card import card_settle_time, card_text
 from .motion.check import CheckError, check_cards, problem_lines
-from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, seg_edit_times, spec_settle_time,
-                            time_graphics, word_edit_time)
+from .director.plan import (TimedGraphic, blank_graphic, normalize_long, normalize_shorts, seg_edit_times,
+                            spec_settle_time, time_graphics, word_edit_time)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
@@ -65,7 +67,7 @@ from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
 from .stock.research import StockResearcher, strip_stock_images
-from .text.align import ScriptAligner, build_utterances
+from .text.align import ScriptAligner, build_utterances, norm
 from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
 from .text.script import glossary_terms, parse_script
@@ -750,6 +752,7 @@ class Pipeline:
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
         self._check_cards(tm0)
+        self._auto_photos()
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
         self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count)
@@ -769,6 +772,38 @@ class Pipeline:
         self.log(f"🎬 제목 「{self.title}」 · 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])}"
                  f"(모션 장면 {n_motion} · 스톡 {n_broll}) · 강조 순간 {len(self.plan_long.get('moments', []))}"
                  f" · 숏폼 {len(self.plan_shorts)} · 추가 컷 {len(drop_ids)}")
+
+    def _auto_photos(self) -> None:
+        """대본·전사의 고유명사(라틴 문자 이름 · 『』《》 제목 · 종교)를 규칙으로 찾아 photo 그래픽(wiki=True)으로 더한다 —
+        AI 가 놓친 것의 안전망. 그 문장에 이미 그래픽이 있으면 건너뛰고, 위키백과에 이미지가 없으면 자료 사진 단계에서 빠진다."""
+        if not self.spec.fetch_broll:
+            return
+        kept = [u for u in self.utts if u.kept]
+        text = "\n".join(u.text for u in kept)
+        ents = find_entities(text)
+        if not ents:
+            return
+        used = {g.get("start_seg") for g in self.plan_long.get("graphics", [])}
+        have = {norm(g.get("image") or g.get("title") or "") for g in self.plan_long.get("graphics", [])
+                if g.get("template") in ("photo", "broll")}
+        added = []
+        for e in ents:
+            key = norm(e.term)
+            if not key or key in have:
+                continue
+            seg = next((u.id for u in kept if key in norm(u.text)), None)
+            if seg is None or seg in used:
+                continue
+            g = blank_graphic("photo", seg)
+            g.update({"layout": "pip", "start_word": e.term.split()[0], "title": e.term, "image": e.term,
+                      "body": {"name": "인물·고유명사", "work": "작품", "religion": "종교"}.get(e.kind, ""),
+                      "reason": f"고유명사 자동({e.kind}) — 위키백과", "wiki": True})
+            self.plan_long["graphics"].append(g)
+            used.add(seg)
+            have.add(key)
+            added.append(e.term)
+        if added:
+            self.log("📷 고유명사 자료 사진(위키백과) 후보: " + " · ".join(added[:8]))
 
     def _check_cards(self, tm: TimeMap) -> None:
         """🃏 자유 HTML 카드의 렌더 전 검사(renderer/scripts/check.mjs — 글꼴·넘침·크기·대비·런타임 오류).
@@ -986,6 +1021,9 @@ class Pipeline:
         local = list_local_images(self.spec.images_dir)
         wm = Wikimedia(self.settings.wikimedia_contact, log=self.log, cache_dir=self.work / "wm_cache") \
             if self.spec.fetch_broll else None
+        # 고유명사(인물·종교·사물·브랜드·작품)는 위키백과 문서의 대표 이미지가 커먼즈 검색·스톡보다 정확하다
+        wp = WikipediaImages(self.settings.wikimedia_contact, log=self.log, cache_dir=self.work / "wm_cache") \
+            if self.spec.fetch_broll else None
         img_dir = self.public / "images"
         graphic_lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         total = sum(1 for gl in graphic_lists for g in gl if g["template"] == "photo") or 1
@@ -999,7 +1037,7 @@ class Pipeline:
                     continue
                 q = g.get("image", "").strip()
                 if q not in cache:
-                    cache[q] = resolve_image(q, local=local, dst_dir=img_dir, wikimedia=wm, log=self.log)
+                    cache[q] = resolve_image(q, local=local, dst_dir=img_dir, wikimedia=wm, wikipedia=wp, log=self.log)
                     res = cache[q]
                     self.broll_log.append({"query": q, **(res.to_dict() if res else {"origin": "없음"})})
                     if res is not None:
@@ -1008,6 +1046,10 @@ class Pipeline:
                 n += 1
                 self._stage("broll", n / total)
                 if res is None:
+                    if g.get("wiki"):
+                        # 위키백과 전용(고유명사): 문서·자유 이미지가 없으면 스톡으로 넘기지 않는다 — 틀린 사진보다 없는 게 낫다
+                        self.log(f"자료 사진: '{q}' 는 위키백과에 쓸 수 있는 이미지가 없어 뺍니다")
+                        continue
                     # 위키미디어·내 폴더에 없으면 버리지 않고 스톡 사진(Pixabay 등) 요청으로 넘긴다 — 다음 단계가 찾는다
                     if q and self._stock_enabled():
                         g = copy.deepcopy(g)

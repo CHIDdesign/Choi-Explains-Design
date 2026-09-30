@@ -194,6 +194,10 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
                 out[k] = g[k]
     if tn == "photo" and g.get("credit"):
         out["credit"] = g["credit"]
+    if tn == "photo" and g.get("wiki"):
+        out["wiki"] = True   # 위키백과 전용(고유명사): 못 찾으면 스톡으로 넘기지 않고 뺀다
+    if tn == "photo" and g.get("subtitle") and "image" in out and not out.get("image_en"):
+        pass
     return out
 
 

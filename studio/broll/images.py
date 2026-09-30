@@ -12,7 +12,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from rapidfuzz import fuzz
 
@@ -161,7 +161,8 @@ class Wikimedia:
 
 
 def resolve_image(query: str, *, local: list[Path], dst_dir: Path, wikimedia: Optional[Wikimedia],
-                  log: LogFn = noop_log) -> Optional[ImageResult]:
+                  wikipedia: Optional[Any] = None, log: LogFn = noop_log) -> Optional[ImageResult]:
+    """순서: ① 내 이미지 폴더 → ② 위키백과 문서의 대표 이미지(고유명사에 가장 정확) → ③ 위키미디어 커먼즈 검색."""
     hit = match_local(query, local)
     if hit:
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -169,6 +170,12 @@ def resolve_image(query: str, *, local: list[Path], dst_dir: Path, wikimedia: Op
         if not dst.exists():
             shutil.copyfile(hit, dst)
         return ImageResult(dst, "", origin="local")
+    if wikipedia:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        res = wikipedia.fetch(query, dst_dir)
+        if res:
+            log(f"자료 사진(위키백과): '{query}' → {res.path.name} ({res.license})")
+            return res
     if wikimedia:
         res = wikimedia.fetch(query, dst_dir)
         if res:

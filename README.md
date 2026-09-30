@@ -80,6 +80,7 @@ Choi Studio 는 디자인 이론 채널 *Choi Explains Design* 을 만들면서 
 **02 기획**
 - 총괄 감독이 브리프를 쓰면 전문가 여섯 명(편집, 모션, 자료, 자막, 숏폼, 카피)이 동시에 일합니다.
 - 말하는 내용이 화면에 보이도록 8–15초마다 도식·키워드·자료 사진·스톡·모션 장면을 둡니다. 모션 장면에는 Pixabay 그래픽 이미지(투명 오브젝트·일러스트·사진)를 직접 넣습니다.
+- 대본에 나오는 **인물·작품·사물·브랜드·장소·종교 이름**은 스톡 대신 **위키백과 문서의 대표 이미지**를 가져와 얼굴 옆 액자에 넣습니다(한국어 → 영어 위키 순, 자유 라이선스만, 크레딧 표기). 문서나 쓸 수 있는 이미지가 없으면 스톡으로 대체하지 않고 뺍니다 — 틀린 사진보다 없는 게 낫습니다.
 - 챕터의 핵심 개념 1~2곳은 **자유 HTML 카드**로 직접 디자인합니다(HeyGen HyperFrames 카드 규약 호환: HTML + 스코프 CSS + `data-anim` 선언, 스크립트·외부 URL 없음). 렌더 전에 실제 브라우저에서 글꼴·넘침·글자 크기·대비를 검사(`check`)하고, 걸리면 카드 디자이너가 고치고, 그래도 안 되면 템플릿으로 대체합니다.
 - 컬러리스트는 룩 비교 시트를 보고 톤을 고릅니다.
 - 아트 디렉터는 실제 렌더된 화면을 보고 글자 넘침이나 가독성 문제를 찾아 수정을 지시합니다.
@@ -355,6 +356,7 @@ output/
 | `studio/motion/` · `renderer/vendor/hyperframes/` | 모션 DSL(`spec.py`), 자유 HTML 카드(`card.py` 정리 · `check.py` 렌더 전 검사), HyperFrames 카드 규약의 GSAP 컴파일러 |
 | `studio/grade/` | 자동 색보정(레퍼런스 색 맞춤) |
 | `studio/sound/` · `studio/media/mix.py` | 효과음·음악 라이브러리, 믹스와 마스터링 |
+| `studio/broll/` | 자료 사진: 내 폴더 → 위키백과 대표 이미지(`wikipedia.py`) → 위키미디어 커먼즈, 고유명사 규칙 찾기(`entities.py`) |
 | `studio/stock/` · `studio/net.py` | 스톡·그래픽 이미지 검색(Pixabay · Unsplash · Coverr · Pexels · Openverse), 막힘에 강한 통신 |
 | `studio/review.py` · `studio/diag.py` · `studio/eta.py` | 검토 시트, 진단 자료, 남은 시간 예측 |
 | `renderer/` | Remotion 프로젝트(템플릿, 자막, 콜아웃, 전환, 종이 콜라주 `components/paper`, 릴스식 숏폼 `components/shorts`) |

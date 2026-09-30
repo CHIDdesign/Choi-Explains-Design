@@ -181,6 +181,19 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
                            cd.get("start_word", ""), title=cd.get("title", ""),
                            reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card))
         n_card += 1
+    # 📷 고유명사 자료 사진 — 위키백과 문서의 대표 이미지(인물·작품·사물·브랜드·장소·종교). 없으면 스톡으로 넘기지 않는다
+    for ph in stock.get("photos", []) or []:
+        if not isinstance(ph, dict):
+            continue
+        name_ko = str(ph.get("name_ko") or "").strip()
+        name_en = str(ph.get("name_en") or "").strip()
+        if not (name_ko or name_en):
+            continue
+        layout = ph.get("layout") if ph.get("layout") in ("pip", "split", "fullscreen") else "pip"
+        graphics.append(_g("photo", layout, ph.get("start_seg", -1), ph.get("start_seg", -1), ph.get("start_word", ""),
+                           title=name_ko or name_en, image=name_ko or name_en, subtitle=name_en,
+                           body=str(ph.get("kind") or ""), reason="자료 리서처(위키백과): " + str(ph.get("reason", "")),
+                           wiki=True))
     for r in stock.get("requests", []) or []:
         if not (r.get("query_en") or r.get("query_ko")):
             continue
@@ -221,6 +234,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "beats": brief.get("beats", []), "notes_for_team": brief.get("notes_for_team", ""),
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
             "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),
+            "wiki_photos": len(stock.get("photos", []) or []),
         },
     }
     return raw_long, shorts
