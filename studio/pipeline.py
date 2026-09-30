@@ -590,20 +590,23 @@ class Pipeline:
             if len(picks) == 3:
                 break
         picks = sorted(picks or [0])
-        if base is not None:          # 두 번째 카메라부터: 같은 룩, 이 카메라의 색에서 출발
-            choice = replace(base, src_lab=src_lab, ref_lab=ref_lab)
+        raw_frames = [f for _, f in frames]
+        if base is not None:          # 두 번째 카메라부터: 같은 룩·세기, 레시피는 이 카메라의 상태로 다시
+            choice = replace(grade.plan_choice(raw_frames, corr, base.look, ref_lab), strength=base.strength,
+                             exposure=base.exposure, warmth=base.warmth, saturation=base.saturation, reason=base.reason,
+                             by=base.by)
         else:
-            choice = grade.GradeChoice(src_lab=src_lab, ref_lab=ref_lab)
+            choice = grade.plan_choice(raw_frames, corr, "warm_rich", ref_lab)
             studio = self._ensure_studio()
             if studio is not None:
                 sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab)
                 (self.work / "grade_sheet.jpg").write_bytes(sheet)
                 try:
-                    notes = " · ".join(corr.notes) or "교정 필요 적음"
+                    notes = (" · ".join(corr.notes) or "교정 필요 적음") + " / 이 영상 레시피(웜 리치 기준): " + \
+                        grade.recipe_summary(choice.recipe)
                     r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
-                    choice = grade.GradeChoice(look=r.get("look", "warm_rich"),
-                                               strength=float(r.get("strength", 0.8) or 0.8),
-                                               src_lab=src_lab, ref_lab=ref_lab,
+                    choice = grade.plan_choice(raw_frames, corr, str(r.get("look", "warm_rich")), ref_lab,
+                                               strength=float(r.get("strength", 0.9) or 0.9),
                                                exposure=float(r.get("exposure", 0) or 0),
                                                warmth=float(r.get("warmth", 0) or 0),
                                                saturation=float(r.get("saturation", 1) or 1),
@@ -621,6 +624,7 @@ class Pipeline:
         self.log(f"🎨 {who}색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
                  f"(세기 {choice.strength:.1f}{', AI 선택' if choice.by == 'ai' else ''})"
                  + (f" — {choice.reason}" if choice.reason and first else ""))
+        self.log(f"🎨 {who}이 영상에 맞춘 양: {grade.recipe_summary(choice.recipe)}")
         return grade.plan_to_dict(stats, corr, choice, filters), choice
 
     # ------------------------------------------------------------------

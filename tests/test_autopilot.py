@@ -174,26 +174,94 @@ def test_grade_choice_is_clamped():
     assert (c.look, c.strength, c.exposure, c.warmth, c.saturation) == ("warm_rich", 1.0, 0.15, -0.4, 1.15)
 
 
-def test_reference_match_makes_gray_footage_warm_and_rich_but_keeps_skin():
-    """업로드된 결과물은 회색(얼굴 화면 b +2.5, C 5.9) — 레퍼런스(b +14.5, C 16.9) 쪽으로 눈에 띄게, 피부는 덜."""
-    from studio.grade.auto import REFERENCE_LAB, Correction, GradeChoice, grade, lab_stats, skin_mask
+def _patch(rgb, rng, n=40, noise=0.02):
+    return np.clip(np.array(rgb, np.float32) + rng.normal(0, noise, (n, n, 3)), 0, 1).astype(np.float32)
+
+
+def _lab(x):
+    from studio.grade.auto import srgb_to_lab
+    L, a, b = srgb_to_lab(x.reshape(-1, 3))
+    return float(L.mean()), float(a.mean()), float(b.mean()), float(np.hypot(a, b).mean(), ), \
+        float(np.degrees(np.arctan2(b.mean(), a.mean())) % 360)
+
+
+def _auto_grade(parts, face_rgb, face_luma):
+    """분석 → 교정 → 풍부함 → 룩 → 피부 보호(파이프라인과 같은 순서)."""
+    from studio.grade import auto as G
+    img = np.concatenate(parts, axis=1)
+    st = G.analyze([(0.0, img)], [None])
+    st["face_rgb"], st["face_luma"] = list(face_rgb), face_luma
+    c = G.correction_from_stats(st)
+    out = G.grade(img, c, G.plan_choice([img], c, "warm_rich"))
+    return [out[:, i * 40:(i + 1) * 40] for i in range(len(parts))], c
+
+
+def test_gray_warm_room_gets_richer_but_bounded():
+    """업로드본처럼 교정이 방의 온기를 지워 회색이 된 화면(벽 C 6.5): 진하고 조금 따뜻해지되(레퍼런스 b +14.5 로 '옮기지'
+    않고) 피부는 피부색 선에 채도 30 이하."""
     rng = np.random.default_rng(1)
-    wall = np.clip(0.62 + rng.normal(0, 0.03, (40, 40, 3)), 0, 1) * np.array([1.0, 1.0, 1.02])
-    skin = np.tile(np.array([0.78, 0.60, 0.50]), (40, 40, 1))
-    img = np.concatenate([wall, skin], axis=1).astype(np.float32)
+    (wall, skin, dark), _ = _auto_grade([_patch([0.55, 0.53, 0.50], rng), _patch([0.70, 0.55, 0.47], rng),
+                                         _patch([0.12, 0.11, 0.10], rng)], [0.70, 0.55, 0.47], 0.58)
+    Lw, aw, bw, Cw, hw = _lab(wall)
+    assert 9 <= Cw <= 20 and 7 <= bw <= 16 and aw > 0 and hw <= 78   # 진해지고 크림·황금빛(초록·노랑 아님), 과하지 않게
+    _, _, _, Cs, hs = _lab(skin)
+    assert 40 <= hs <= 60 and Cs <= 31
+    assert abs(_lab(dark)[2]) < 4                                   # 암부는 그대로
+
+
+def test_blue_monitor_room_keeps_its_light_but_skin_and_whites_are_fixed():
+    """모니터 불빛의 파란 방(피부 색상 335° · 흰 벽 b −14): 예전엔 평균을 레퍼런스에 맞추느라 통째로 주황이 됐다.
+    이제 피부는 피부색 선, 흰 것은 흰색, 배경은 차가운 채로."""
+    rng = np.random.default_rng(2)
+    blue = np.array([0.80, 0.90, 1.15], np.float32)
+    sk = np.clip(_patch([0.62, 0.50, 0.42], rng) * blue, 0, 1)
+    from studio.grade.auto import _luma
+    (skin, white, wall), c = _auto_grade([sk, np.clip(_patch([0.80, 0.85, 0.95], rng), 0, 1),
+                                          np.clip(_patch([0.30, 0.34, 0.48], rng), 0, 1)],
+                                         sk.reshape(-1, 3).mean(0), float(np.median(_luma(sk))))
+    _, _, _, Cs, hs = _lab(skin)
+    assert 32 <= hs <= 62 and 8 <= Cs <= 32, (hs, Cs)
+    Lw, aw, bw, Cw, _ = _lab(white)
+    assert abs(bw) <= 6 and Cw <= 8 and Lw > 85                      # 흰 벽·모니터는 흰색
+    assert _lab(wall)[2] <= -10                                       # 파란 배경은 파란 채로(노랗게 되지 않음)
+    assert any("피부" in n for n in c.notes)
+
+
+def test_correct_studio_footage_is_left_almost_alone():
+    rng = np.random.default_rng(3)
+    (skin, white, gray), _ = _auto_grade([_patch([0.76, 0.58, 0.48], rng), _patch([0.92, 0.92, 0.92], rng),
+                                          _patch([0.45, 0.45, 0.45], rng)], [0.76, 0.58, 0.48], 0.62)
+    Lw, aw, bw, _, _ = _lab(white)
+    assert abs(aw) <= 4 and abs(bw) <= 5 and Lw > 90                 # 흰 것은 흰색(살짝 크림까지만)
+    _, ag, bg, _, _ = _lab(gray)
+    assert abs(ag) <= 6 and abs(bg) <= 6                             # 회색은 은은한 온기까지만
+    _, _, _, Cs, hs = _lab(skin)
+    assert 40 <= hs <= 60 and Cs <= 31
+
+
+def test_yellow_and_green_faces_are_brought_to_the_skin_line():
+    """백열등의 노란 얼굴(80°) · 형광등의 초록 얼굴(100°) → 피부색 선 가까이(62° 이하), 채도 30 이하."""
+    rng = np.random.default_rng(4)
+    (skin, _), c = _auto_grade([np.clip(_patch([0.85, 0.66, 0.36], rng), 0, 1), _patch([0.62, 0.50, 0.30], rng)],
+                               [0.85, 0.66, 0.36], 0.62)
+    _, _, _, Cs, hs = _lab(skin)
+    assert hs <= 62 and Cs <= 32, (hs, Cs)
+    (skin, _), _ = _auto_grade([np.clip(_patch([0.62, 0.60, 0.44], rng), 0, 1), _patch([0.70, 0.72, 0.66], rng)],
+                               [0.62, 0.60, 0.44], 0.58)
+    _, _, _, Cs, hs = _lab(skin)
+    assert hs <= 64 and Cs <= 32, (hs, Cs)
+
+
+def test_enrich_never_shifts_the_whole_frame_and_can_be_switched_off():
+    from studio.grade.auto import REFERENCE_LAB, Correction, GradeChoice, grade, lab_stats
+    rng = np.random.default_rng(5)
+    img = np.concatenate([_patch([0.62, 0.62, 0.64], rng), _patch([0.78, 0.60, 0.50], rng)], axis=1)
     src = lab_stats(img)
     out = grade(img, Correction(), GradeChoice(look="warm_rich", src_lab=src))
-    L0, a0, b0, C0 = src
-    L1, a1, b1, C1 = lab_stats(out)
-    assert b1 - b0 > 4 and C1 > C0 + 3                           # 확실히 따뜻하고 진하게
-    assert b1 < REFERENCE_LAB["b"] + 4
-    w0, w1 = lab_stats(img[:, :40]), lab_stats(out[:, :40])       # 회색 벽: 노랗게, 초록으로 가지 않게
-    assert w1[2] - w0[2] > 5 and w1[1] >= w0[1] - 0.6
-    sk0, sk1 = lab_stats(img[:, 40:]), lab_stats(out[:, 40:])
-    assert sk1[3] < sk0[3] * 1.45 and skin_mask(out[:, 40:]).mean() > 0.5   # 피부는 피부색 그대로
-    # 레퍼런스 매칭을 끄면 거의 그대로
+    assert 0 <= lab_stats(out)[2] - src[2] <= 8                     # 온기는 +8 이하(예전엔 +12 넘게)
+    assert lab_stats(out)[2] < REFERENCE_LAB["b"]                    # 레퍼런스 평균으로 '옮기지' 않는다
     plain = grade(img, Correction(), GradeChoice(look="natural", match=0.0, strength=0.0))
-    assert abs(lab_stats(plain)[2] - b0) < 1.0
+    assert abs(lab_stats(plain)[2] - src[2]) < 1.5
 
 
 # ---------------------------------------------------------------------------
