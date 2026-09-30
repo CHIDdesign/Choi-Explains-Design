@@ -48,8 +48,8 @@ from .media.mix import BgmPlan, SfxCue, mix, mux_final
 from .models import Span, Tag, TimeMap, Utterance, Word
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
-from .render.props import (Episode, apply_edit, long_props, mark_soft_cuts, short_beats, short_props,
-                           strip_audio, text_graphic_spans)
+from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, long_props, mark_soft_cuts,
+                           short_beats, short_props, strip_audio, text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -1115,6 +1115,9 @@ class Pipeline:
                              face=lp.get("face"),
                              P=PARAMS if self.spec.skin == "paper" else {**PARAMS, "framed_every": 0})
         apply_edit(lp, ed)
+        hid = dedupe_captions(lp["captions"], caption_overlays(lp))
+        if hid:
+            self.log(f"💬 화면 그래픽이 같은 말을 보여 주는 자막 {hid}개는 화면에서 숨김(SRT 에는 남김)")
         strip_audio(lp)
         return lp, ed
 
@@ -1170,9 +1173,10 @@ class Pipeline:
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
             mark_soft_cuts(sp["clips"], ed.camera, ed.transitions, ed.soft_cut)
-            if self.spec.skin == "paper":
+            if self.spec.skin == "paper" or self.spec.shorts_layout == "reel":
                 sp["beats"] = short_beats(s, self.utts, tm, sp["captions"], self._moments(tm, set(s["segments"])),
                                           sp["duration"])
+            dedupe_captions(sp["captions"], caption_overlays(sp))
             strip_audio(sp)
             sp["peekEvery"] = peek_every
             self.short_props.append(sp)

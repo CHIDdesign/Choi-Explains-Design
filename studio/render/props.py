@@ -492,3 +492,52 @@ def short_beats(spec: dict[str, Any], utts: list[Utterance], timemap: TimeMap, c
         if b["accent"] and b["accent"] not in b["text"]:
             b["accent"] = ""
     return [{k: b[k] for k in ("start", "end", "text", "label", "accent")} for b in out if b["end"] - b["start"] >= min_len]
+
+
+# ---------------------------------------------------------------------------
+# 화면 그래픽과 겹치는 자막 숨기기
+# ---------------------------------------------------------------------------
+
+def _graphic_text(g: dict[str, Any]) -> str:
+    d = g.get("data", g)
+    parts = [str(d.get(k) or "") for k in ("title", "subtitle", "body", "title_b", "author", "number")]
+    parts += [str(x) for k in ("items", "items_b") for x in (d.get(k) or [])]
+    spec = d.get("spec")
+    if isinstance(spec, dict):
+        parts += [str(e.get("text", "")) for e in spec.get("elements", []) or [] if isinstance(e, dict)]
+        parts.append(str(spec.get("label", "")))
+    return " ".join(p for p in parts if p)
+
+
+def dedupe_captions(cues: list[dict[str, Any]], overlays: list[tuple[float, float, str]], *, share: float = 0.6,
+                    overlap: float = 0.5) -> int:
+    """화면 그래픽이 이미 같은 말을 보여 주는 동안의 자막에 hidden 표시(화면에서만 끔 — SRT 에는 남는다).
+    같은 말 = 자막 어절의 share 이상이 그 그래픽 글자에 있다(조사·어미가 달라도 같은 어간이면 같은 말)."""
+    from ..text.takes import ntok, same_word
+    ov = [(a, b, [ntok(w) for w in text.split() if ntok(w)]) for a, b, text in overlays if text.strip()]
+    n = 0
+    for c in cues:
+        c.pop("hidden", None)
+        words = [ntok(w["text"]) for line in c["lines"] for w in line]
+        words = [w for w in words if w]
+        if not words:
+            continue
+        dur = max(1e-3, c["end"] - c["start"])
+        for a, b, toks in ov:
+            if min(b, c["end"]) - max(a, c["start"]) < overlap * dur:
+                continue
+            hit = sum(1 for w in words if any(same_word(w, t) or (len(w) >= 2 and w in t) for t in toks))
+            if hit / len(words) >= share and (hit >= 2 or (len(words) == 1 and len(words[0]) >= 2)):
+                c["hidden"] = True
+                n += 1
+                break
+    return n
+
+
+def caption_overlays(props: dict[str, Any]) -> list[tuple[float, float, str]]:
+    """props 의 그래픽·콜아웃·(숏폼) 개념 텍스트 → (시작, 끝, 화면 글자)."""
+    out = [(g["start"], g["end"], _graphic_text(g)) for g in props.get("graphics", [])
+           if g.get("template") not in ("lower_third",)]
+    out += [(c["start"], c["end"], c.get("text", "")) for c in props.get("callouts", []) or []]
+    out += [(b["start"], b["end"], b.get("text", "")) for b in props.get("beats", []) or []]
+    return out

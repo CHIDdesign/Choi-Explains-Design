@@ -352,3 +352,18 @@ def test_shorts_inherit_long_graphics_in_their_segments():
     s = {"segments": [3, 4, 5], "graphics": [{"template": "keyword", "start_seg": 5}]}
     got = Pipeline._short_graphics(fake, s)
     assert [(g["template"], g["start_seg"]) for g in got] == [("keyword", 5), ("list", 3), ("broll", 4)]
+
+
+def test_captions_hidden_when_graphic_already_shows_the_words():
+    from studio.render.props import caption_overlays, dedupe_captions
+    cue = lambda a, b, txt: {"start": a, "end": b, "lines": [[{"text": w} for w in txt.split()]]}
+    cues = [cue(10.0, 11.5, "좋은 질문의 조건은"), cue(11.5, 13.0, "세 가지입니다"), cue(20.0, 21.0, "어포던스란"),
+            cue(30.0, 31.2, "전혀 다른 이야기")]
+    props = {"graphics": [{"template": "list", "start": 9.8, "end": 16.0,
+                           "data": {"title": "좋은 질문의 조건", "items": ["구체적이다", "열려 있다"]}},
+                          {"template": "definition", "start": 19.5, "end": 24.0,
+                           "data": {"title": "어포던스", "body": "형태가 사용법을 알려주는 성질"}}],
+             "callouts": [{"start": 29.0, "end": 33.0, "text": "질문이\n먼저"}]}
+    n = dedupe_captions(cues, caption_overlays(props))
+    assert n == 2
+    assert [bool(c.get("hidden")) for c in cues] == [True, False, True, False]

@@ -35,7 +35,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
   const i = lastIndexAtOrBefore(cues, t, (c) => c.start);
   if (i < 0) return null;
   const cue = cues[i];
-  if (t >= cue.end) return null;
+  if (t >= cue.end || cue.hidden) return null;
   const prev = i > 0 ? cues[i - 1] : null;
   const next = i + 1 < cues.length ? cues[i + 1] : null;
   const joinPrev = !!prev && cue.start - prev.end < 0.08;

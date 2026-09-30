@@ -128,7 +128,8 @@ export type CaptionWord = {text: string; start: number; end: number; em?: boolea
 export type LongCaptionPreset = 'paper' | 'editorial' | 'documentary' | 'glass' | 'boxed';
 export type ShortCaptionPreset = 'paper' | 'kinetic' | 'clean' | 'boxed' | 'bar';
 // style: 'impact' = 강조 순간(펀치인·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
-export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]; style?: 'impact'};
+// hidden: 화면 그래픽(개념 카드·도식·콜아웃·숏폼 카드)이 같은 말을 이미 보여 줄 때 — 화면 자막만 끈다(SRT 에는 남음)
+export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]; style?: 'impact'; hidden?: boolean};
 
 export type Clip = {
   src: string; // public 기준 경로

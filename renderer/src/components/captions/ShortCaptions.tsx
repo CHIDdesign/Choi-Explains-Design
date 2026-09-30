@@ -31,7 +31,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
   const i = lastIndexAtOrBefore(cues, t, (c) => c.start);
   if (i < 0) return null;
   const cue = cues[i];
-  if (t >= cue.end) return null;
+  if (t >= cue.end || cue.hidden) return null;
   const words: CaptionWord[] = cue.lines.flat();
   const text = words.map((w) => w.text).join(' ');
   const size = text.length > 12 ? 68 : 78;

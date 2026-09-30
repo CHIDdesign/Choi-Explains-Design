@@ -168,7 +168,7 @@ const titleAccent = (props: ShortProps, line: string, i: number, n: number): str
 const SeamCaption: React.FC<{cues: CaptionCue[]; t: number; fps: number; y: number; accent: string}> = ({cues, t, fps,
   y, accent}) => {
   const i = lastIndexAtOrBefore(cues, t, (c) => c.start);
-  if (i < 0 || t >= cues[i].end) return null;
+  if (i < 0 || t >= cues[i].end || cues[i].hidden) return null;
   const cue = cues[i];
   const words = cue.lines.flat();
   const text = words.map((w) => w.text).join(' ');
