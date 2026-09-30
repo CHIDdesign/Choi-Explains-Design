@@ -421,8 +421,8 @@ class MainWindow(QMainWindow):
         for w in (self.topic, self.script):
             w.textChanged.connect(self._update_ready)
         grid.addWidget(StepCard("1", "주제", "이 영상이 무엇에 관한 것인지", self.topic), 3)
-        grid.addWidget(StepCard("2", "원본 영상", "대본을 말하는 모습을 찍은 긴 원본 그대로(여러 번 다시 말한 것 포함) · "
-                                "여러 각도로 찍었거나 나눠 찍었으면 전부", self.video), 4)
+        grid.addWidget(StepCard("2", "원본 영상", "말하는 모습을 찍은 원본 그대로(다시 말한 것 포함) · 여러 각도·나눠 찍은 것도 전부",
+                                self.video), 4)
         grid.addWidget(StepCard("3", "대본", "읽은 대본 전체", self.script, load), 3)
         outer.addLayout(grid, 1)
         bar = QHBoxLayout()
