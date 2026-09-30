@@ -142,6 +142,8 @@ def track_faces(
         if int(t * sample_fps) % 20 == 0:
             progress(min(0.999, t / total))
     progress(1.0)
+    if not quality:   # 디코딩이 안 된 영상: 얼굴 트랙이 조용히 화면 가운데로 채워지지 않게 알린다
+        log(f"⚠ 영상 프레임을 읽지 못했습니다({video}) — 얼굴 위치를 화면 가운데로 둡니다")
     smooth = smooth_track(raw, total, sample_fps)
     found = len(raw)
     log(f"얼굴 검출 {found}프레임 / 약 {int(total * sample_fps)}프레임")
@@ -198,10 +200,16 @@ def remap_track(samples: list[dict], timemap, step: float = 0.25) -> list[dict]:
     for i, k in enumerate(timemap.keeps):
         span = timemap.edit_span_of(i)
         t = k.start
-        while t <= k.end + 1e-6:
+        while t < k.end - 0.002:      # keep 끝 시각은 다음 keep 의 첫 표본과 같은 편집 시각이라 넣지 않는다
             et = span.start + (t - k.start)
             out.append({"t": round(et, 3), "x": round(float(np.interp(t, ts, xs)), 4),
                         "y": round(float(np.interp(t, ts, ys)), 4), "s": round(float(np.interp(t, ts, ss)), 4)})
             t += step
+        # keep 끝 바로 앞 표본: 없으면 컷 직전 0.25초 동안 다음 keep 의 얼굴 위치로 미리 미끄러진다
+        end = k.end - 0.002
+        if end > k.start:
+            et = span.start + (end - k.start)
+            out.append({"t": round(et, 3), "x": round(float(np.interp(end, ts, xs)), 4),
+                        "y": round(float(np.interp(end, ts, ys)), 4), "s": round(float(np.interp(end, ts, ss)), 4)})
     out.sort(key=lambda d: d["t"])
     return out

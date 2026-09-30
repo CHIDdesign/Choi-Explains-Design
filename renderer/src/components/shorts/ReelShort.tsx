@@ -1,5 +1,5 @@
 import React, {useMemo} from 'react';
-import {AbsoluteFill, Img, interpolate, OffthreadVideo, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {cameraAt, punchFactor} from '../../compositions/LongForm';
 import {useFontForText} from '../../design/fonts';
 import {DUR, tween, tweenOut} from '../../design/motion';
@@ -331,8 +331,11 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
         <div style={{position: 'absolute', left: 0, top: 0, width: 1080, height: SEAM, overflow: 'hidden',
           opacity: tween((t - slides[si].start) * fps, 0, 10) * k}}>
           {/\.(mp4|webm|mov)$/i.test(mediaOf(slides[si].g)!) ? (
-            <OffthreadVideo src={staticFile(mediaOf(slides[si].g)!)} muted style={{width: '100%', height: '100%',
-              objectFit: 'cover', filter: 'blur(34px) brightness(0.92) saturate(1.1)', scale: '1.2'}} />
+            // 스톡 영상은 카드가 나온 순간부터 재생(Sequence 밖이면 숏폼 전체 시각으로 재생돼 끝났거나 중간부터 나온다)
+            <Sequence from={toFrame(slides[si].start, fps)} layout="none">
+              <OffthreadVideo src={staticFile(mediaOf(slides[si].g)!)} muted style={{width: '100%', height: '100%',
+                objectFit: 'cover', filter: 'blur(34px) brightness(0.92) saturate(1.1)', scale: '1.2'}} />
+            </Sequence>
           ) : (
             <Img src={staticFile(mediaOf(slides[si].g)!)} style={{width: '100%', height: '100%', objectFit: 'cover',
               filter: 'blur(34px) brightness(0.92) saturate(1.1)', scale: '1.2'}} />
@@ -354,8 +357,10 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
             scale: `${leaving ? interpolate(tween((t - slides[si].start) * fps, 0, 14), [0, 1], [1, 0.96]) : interpolate(p, [0, 1], [0.97, 1])}`,
             translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 40, 0])}px`,
             filter: !leaving && isMedia && p < 1 ? `blur(${interpolate(p, [0, 1], [10, 0])}px)` : undefined}}>
-            <CardContent s={s} f={f} fps={fps} props={props} theme={theme} marker={marker}
-              variant={(!s.g && s.kind === 'beat') || (!!s.g && !isMedia && CONCEPT.has(s.g.template)) ? i % 3 : 0} />
+            <Sequence from={toFrame(s.start, fps)} layout="none">
+              <CardContent s={s} f={f} fps={fps} props={props} theme={theme} marker={marker}
+                variant={(!s.g && s.kind === 'beat') || (!!s.g && !isMedia && CONCEPT.has(s.g.template)) ? i % 3 : 0} />
+            </Sequence>
           </div>
         );
       })}

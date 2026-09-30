@@ -114,7 +114,9 @@ def build_voice_track(
             pre = f"adelay={av_offset * 1000:.1f}:all=1,"
         else:
             pre = f"atrim=start={-av_offset:.4f},asetpts=PTS-STARTPTS,"
-    chain = pre + (voice_chain(denoise_model) + "," if enhance else "")
+    # 타임스탬프를 0부터로: 오디오가 늦게 시작한 파일은 첫 타임스탬프가 av_offset 이라, 그대로 두면 끝의 atrim(시각
+    # 기준)이 영상보다 av_offset 만큼 짧게 자른다
+    chain = "asetpts=PTS-STARTPTS," + pre + (voice_chain(denoise_model) + "," if enhance else "")
     info["denoise"] = "rnnoise" if (enhance and denoise_model) else ("afftdn" if enhance else "off")
     fit = f"apad,atrim=0:{duration:.3f}"
 

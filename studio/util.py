@@ -66,10 +66,22 @@ def noop_progress(_: float) -> None:
 # 파일/해시
 # ----------------------------------------------------------------------------
 
+_FP_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 def file_fingerprint(path: str | Path) -> str:
-    """큰 영상 파일도 빠르게: 크기 + 수정시각 + 앞/뒤 1MB 해시."""
+    """큰 영상 파일도 빠르게: 크기 + 수정시각 + 앞/뒤 1MB 해시. 같은 파일(경로·크기·수정시각)은 한 번만 읽는다
+    (단계마다 카메라마다 부르므로)."""
     p = Path(path)
     st = p.stat()
+    ck = (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    if ck in _FP_CACHE:
+        return _FP_CACHE[ck]
+    _FP_CACHE[ck] = fp = _fingerprint(p, st)
+    return fp
+
+
+def _fingerprint(p: Path, st: os.stat_result) -> str:
     h = hashlib.sha1()
     h.update(f"{st.st_size}:{int(st.st_mtime)}".encode())
     with p.open("rb") as f:

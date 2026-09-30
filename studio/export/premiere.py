@@ -72,8 +72,8 @@ def export_xml(
             continue
         start, end = tl, tl + length
         tl = end
-        vdur, vw, vh = files.get(str(vpath), (src_duration, width, height))
-        key = str(vpath)
+        key = str(Path(vpath))
+        vdur, vw, vh = files.get(key, (src_duration, width, height))
         if key not in v_ids:
             v_ids[key] = f"file-v{len(v_ids) + 1}"
             vfile = (f"<file id=\"{v_ids[key]}\"><name>{escape(Path(vpath).name)}</name>"

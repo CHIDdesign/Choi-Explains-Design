@@ -168,3 +168,38 @@ def test_visual_scorer_and_master_audio_args():
     graph = args[args.index("-filter_complex") + 1]
     assert args.count("-i") == 2 and "adelay=50.0" in graph and "atrim=start=0.0200" in graph
     assert "anullsrc" in graph and "atrim=0:2.000000" in graph and "concat=n=3" in graph
+
+
+def test_blurry_take_in_separate_file_scores_lower_and_audio_timestamps_reset():
+    sm = SourceMap([Group([Cam(0, "a.mp4", 62.0)], 0.0, 62.0), Group([Cam(1, "b.mp4", 62.0)], 64.0, 62.0)])
+    v = visual_scorer(sm, {0: _quality(sharp=6.0), 1: _quality(sharp=1.0)})
+    assert v(5, 8) > v(70, 73) + 0.15          # 따로 찍은 파일의 흐린 테이크는 감점(작업 전체 기준 초점)
+
+    class Info:
+        av_offset, has_audio = 0.3, True
+    args = master_audio_args(SourceMap.one("a.mp4", 10.0), {0: Info()}, "o.wav")
+    graph = args[args.index("-filter_complex") + 1]
+    # 늦게 시작한 오디오: 타임스탬프를 먼저 0으로(안 그러면 atrim 이 av_offset 만큼 짧게 잘라 뒤 묶음이 앞당겨짐)
+    assert graph.index("asetpts=PTS-STARTPTS") < graph.index("adelay=300.0")
+
+
+def test_cut_audio_slices_samples_with_fades(tmp_path):
+    import wave
+
+    from studio.edit.assemble import cut_audio
+    sr = 48000
+    x = np.full((sr * 3, 2), 10000, np.int16)
+    src = tmp_path / "v.wav"
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(x.tobytes())
+    keeps = [Span(0.5, 1.0), Span(2.0, 2.5), Span(2.9, 3.4)]      # 마지막은 원본 끝(3초)을 넘음 → 무음으로 채움
+    total = cut_audio(None, src, keeps, tmp_path / "o.wav", tmp_path)
+    with wave.open(str(tmp_path / "o.wav")) as r:
+        y = np.frombuffer(r.readframes(r.getnframes()), np.int16).reshape(-1, 2)
+    assert abs(total - 1.5) < 1e-9 and len(y) == int(1.5 * sr)
+    assert y[0, 0] == 0 and y[int(0.25 * sr), 0] == 10000        # 이음새마다 페이드 인, 가운데는 원래 값
+    assert y[int(0.5 * sr) - 1, 0] == 0 and y[int(0.5 * sr) + 1000, 0] == 10000
+    assert np.all(y[int(1.1 * sr):, 0] == 0)                      # 끝을 넘은 부분은 무음(길이는 영상과 같게)

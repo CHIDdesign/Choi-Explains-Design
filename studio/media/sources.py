@@ -10,7 +10,8 @@
 3) **앵글 고르기.** 남길 구간마다 그 순간을 담은 카메라들의 화면 품질(얼굴이 보이는가 · 초점 · 노출 · 정면을 보는가 ·
    얼굴 크기)을 비교해 가장 잘 나온 앵글을 쓴다. 점프컷 자리에서 앵글을 바꿔 컷을 가리고, 한 앵글이 너무 오래
    이어지면 비슷하게 좋은 다른 앵글로 교차한다. 바꾼 뒤 최소 유지 시간이 있어 앵글이 깜빡이지 않는다.
-원본이 하나면 이 모듈은 '카메라 1개 · 묶음 1개'로 동작하고 결과는 예전과 같다.
+원본이 하나면 이 모듈은 '카메라 1개 · 묶음 1개'로 동작한다(앵글 고르기 없음 · 테이크 고르기에는 화면 품질이
+조금(±6%) 반영된다 — 고개를 돌렸거나 초점이 나간 테이크보다 잘 나온 테이크).
 """
 from __future__ import annotations
 
@@ -112,8 +113,10 @@ class SourceMap:
         g = self.group_of(cam.idx)
         return t - cam.offset + g.start
 
-    def candidates(self, a: float, b: float, tol: float = 0.05) -> list[Cam]:
-        """[a, b](가상 시각)를 끝까지 담은 카메라들. 없으면 그 묶음의 기준 카메라."""
+    def candidates(self, a: float, b: float, tol: float = 1e-3) -> list[Cam]:
+        """[a, b](가상 시각)를 끝까지 담은 카메라들. 없으면 그 묶음의 기준 카메라.
+        여유는 반올림 오차만큼 — 카메라 첫 프레임보다 앞에서 시작하는 조각을 주면 클립이 0초로 당겨져 그 조각 내내
+        몇 프레임 어긋난다."""
         g = self.group_at((a + b) / 2)
         out = [c for c in g.cams if c.lo() - tol <= a - g.start and b - g.start <= c.hi(g.duration) + tol]
         return out or [g.cams[0]]
@@ -279,9 +282,14 @@ def to_video_time(pcm: np.ndarray, av_offset: float, rate: int = RATE) -> np.nda
 def group_sources(pcms: list[np.ndarray], paths: list[str], durations: list[float], *, fps: float,
                   log: LogFn = noop_log, rate: int = RATE) -> SourceMap:
     """영상 시각 PCM(8kHz 모노) 목록 → 묶음·오프셋·목소리 카메라·가상 타임라인."""
-    n = len(pcms)
-    envs = [envelope(p, rate) for p in pcms]
-    snrs = [voice_snr(p, rate) for p in pcms]
+    return group_envelopes([envelope(p, rate) for p in pcms], [voice_snr(p, rate) for p in pcms], paths, durations,
+                           fps=fps, log=log)
+
+
+def group_envelopes(envs: list[np.ndarray], snrs: list[float], paths: list[str], durations: list[float], *,
+                    fps: float, log: LogFn = noop_log) -> SourceMap:
+    """에너지 곡선 · 말소리 대 잡음 → 묶음·오프셋·목소리 카메라·가상 타임라인."""
+    n = len(envs)
     pair: dict[tuple[int, int], Match] = {}
     parent = list(range(n))
 
@@ -337,13 +345,16 @@ def analyze_sources(ff, paths: list[str], infos: list, *, fps: float, log: LogFn
     if len(paths) == 1:
         return SourceMap.one(paths[0], infos[0].duration)
     log(f"원본 {len(paths)}개 — 소리로 동시 촬영(다시점)인지, 따로 찍었는지 가립니다")
-    pcms = []
-    for p, info in zip(paths, infos):
+    envs, snrs = [], []
+    for p, info in zip(paths, infos):   # 파일 하나씩 읽어 곡선만 남긴다(1시간 PCM ≈ 115MB 를 모두 들고 있지 않게)
         if cancel:
             cancel.check()
         pcm = ff.read_pcm(p, RATE) if info.has_audio else np.zeros(int(info.duration * RATE), np.float32)
-        pcms.append(to_video_time(pcm, info.av_offset))
-    return group_sources(pcms, paths, [i.duration for i in infos], fps=fps, log=log)
+        pcm = to_video_time(pcm, info.av_offset)
+        envs.append(envelope(pcm))
+        snrs.append(voice_snr(pcm))
+        del pcm
+    return group_envelopes(envs, snrs, paths, [i.duration for i in infos], fps=fps, log=log)
 
 
 def master_audio_args(smap: SourceMap, infos: dict[int, Any], dst: str | Path) -> list[str]:
@@ -363,7 +374,9 @@ def master_audio_args(smap: SourceMap, infos: dict[int, Any], dst: str | Path) -
         d = infos[cam.idx].av_offset if infos[cam.idx].has_audio else 0.0
         shift = f"adelay={d * 1000:.1f}:all=1," if d > 0.0005 else (
             f"atrim=start={-d:.4f},asetpts=PTS-STARTPTS," if d < -0.0005 else "")
-        chains.append(f"[{k}:a:0]aresample=48000,aformat=channel_layouts=stereo,{shift}apad,"
+        # asetpts 먼저: 오디오 스트림이 영상보다 늦게 시작하면 타임스탬프가 av_offset 부터라 atrim(시각 기준)이
+        # 그만큼 짧게 잘라, 뒤 묶음 목소리가 영상보다 앞서게 된다
+        chains.append(f"[{k}:a:0]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,{shift}apad,"
                       f"atrim=0:{g.duration:.6f},asetpts=PTS-STARTPTS[g{k}]")
         labels.append(f"[g{k}]")
         cursor = g.end
@@ -381,6 +394,7 @@ class Quality:
 
     def __init__(self, samples: list[dict]):
         s = sorted(samples, key=lambda d: d["t"])
+        self.samples = s
         self.t = np.array([d["t"] for d in s], float)
         self.f = np.array([d.get("f", 0.0) for d in s], float)       # 얼굴 확신도(0 = 없음)
         self.sz = np.array([d.get("s", 0.0) for d in s], float)      # 얼굴 높이 / 화면 높이
@@ -406,12 +420,13 @@ class Quality:
                 "size": float(self.sz[i0:i1][face].mean()) if face.any() else 0.0}
 
 
-def angle_scores(stats: dict[int, Optional[dict[str, float]]], *, prefer_close: bool = False) -> dict[int, float]:
-    """같은 순간의 카메라들 → 점수(0~1). 초점은 서로 비교한 상대값."""
+def angle_scores(stats: dict[int, Optional[dict[str, float]]], *, prefer_close: bool = False,
+                 top: Optional[float] = None) -> dict[int, float]:
+    """같은 순간의 카메라들 → 점수(0~1). 초점은 기준(top: 없으면 이 순간 가장 또렷한 카메라)과 비교한 상대값."""
     ok = {k: v for k, v in stats.items() if v}
     if not ok:
         return {k: 0.5 for k in stats}
-    top = max(v["sharp"] for v in ok.values())
+    top = max([v["sharp"] for v in ok.values()] + ([top] if top is not None else []))
     out: dict[int, float] = {}
     for k in stats:
         v = stats[k]
@@ -532,13 +547,15 @@ def clips_for(pieces: list[Piece], timemap, smap: SourceMap) -> list[dict[str, A
 def face_track(pieces: list[Piece], smap: SourceMap, faces: dict[int, list[dict]], step: float = 0.25) -> list[dict]:
     """앵글 조각을 따라 카메라별 얼굴 트랙을 이어 붙인 가상 시각 트랙(remap_track 입력)."""
     out: list[dict] = []
+    arrays: dict[int, tuple[np.ndarray, dict[str, np.ndarray]]] = {}   # 카메라마다 한 번만(조각마다 만들면 긴 영상에서 느림)
     for p in pieces:
         cam = smap.cam(p.cam)
-        s = faces.get(p.cam) or []
-        if not s:
+        if p.cam not in arrays:
+            s = faces.get(p.cam) or []
+            arrays[p.cam] = (np.array([d["t"] for d in s]), {k: np.array([d[k] for d in s]) for k in ("x", "y", "s")})
+        ts, cols = arrays[p.cam]
+        if not len(ts):
             continue
-        ts = np.array([d["t"] for d in s])
-        cols = {k: np.array([d[k] for d in s]) for k in ("x", "y", "s")}
         # 조각 끝 바로 앞까지 — 다음 앵글의 첫 표본과 섞여 얼굴 위치가 미리 움직이지 않게
         for t in list(np.arange(p.start, p.end - 0.002, step)) + [p.end - 0.002]:
             ct = smap.to_cam(float(t), cam)
@@ -548,9 +565,13 @@ def face_track(pieces: list[Piece], smap: SourceMap, faces: dict[int, list[dict]
 
 
 def visual_scorer(smap: SourceMap, quality: dict[int, Quality]) -> Optional[Callable[[float, float], Optional[float]]]:
-    """테이크 고르기용: [a, b](가상 시각)에서 가장 잘 나온 앵글의 점수. 품질 표본이 없으면 None."""
+    """테이크 고르기용: [a, b](가상 시각)에서 가장 잘 나온 앵글의 점수. 품질 표본이 없으면 None.
+    초점은 작업 전체 기준(얼굴이 보이는 표본의 카메라별 중앙값 중 최고)과 비교 — 따로 찍은 파일의 테이크끼리도
+    흐린 쪽이 감점된다(같은 순간 카메라끼리만 비교하면 각 테이크가 자기 자신과만 비교된다)."""
     if not quality:
         return None
+    meds = [float(np.median(q.sh[q.f > 0])) for q in quality.values() if len(q.t) and (q.f > 0).any()]
+    top = max(meds) if meds else None
 
     def score(a: float, b: float) -> Optional[float]:
         cands = smap.candidates(a, b)
@@ -558,5 +579,5 @@ def visual_scorer(smap: SourceMap, quality: dict[int, Quality]) -> Optional[Call
                  for c in cands}
         if not any(stats.values()):
             return None
-        return max(angle_scores(stats).values())
+        return max(angle_scores(stats, top=top).values())
     return score

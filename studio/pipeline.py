@@ -354,17 +354,24 @@ class Pipeline:
     # ------------------------------------------------------------------
     def stage_probe(self) -> None:
         paths = self.spec.sources()
-        self.infos = {}
-        for i, path in enumerate(paths):
+        probed = []
+        for path in paths:
             info = self.ff.probe(path)
             if not info.has_video:
                 raise RuntimeError("영상 스트림이 없습니다: " + path)
-            self.infos[i] = info
-        info0 = self.infos[0]
-        if len(paths) == 1 and not info0.has_audio and not self.spec.audio:
+            probed.append((path, info))
+        if len(probed) == 1 and not probed[0][1].has_audio and not self.spec.audio:
             raise RuntimeError("영상에 소리가 없습니다. 목소리가 녹음된 영상을 넣어 주세요.")
-        if len(paths) > 1 and not any(i.has_audio for i in self.infos.values()):
-            raise RuntimeError("원본 영상 모두 소리가 없습니다. 목소리가 녹음된 영상을 넣어 주세요.")
+        if len(probed) > 1:
+            if not any(i.has_audio for _, i in probed):
+                raise RuntimeError("원본 영상 모두 소리가 없습니다. 목소리가 녹음된 영상을 넣어 주세요.")
+            silent = [p for p, i in probed if not i.has_audio]
+            if silent:   # 소리로 싱크를 맞추므로 소리 없는 카메라는 어디에 놓을지 알 수 없다
+                self.log("⚠ 소리가 없는 영상은 싱크를 맞출 수 없어 뺍니다: " + ", ".join(Path(p).name for p in silent))
+                probed = [(p, i) for p, i in probed if i.has_audio]
+        paths = [p for p, _ in probed]
+        self.infos = {i: info for i, (_, info) in enumerate(probed)}
+        info0 = self.infos[0]
         self.fps = pick_output_fps(info0)
         for i, info in self.infos.items():
             w, h = info.display_size
@@ -381,6 +388,8 @@ class Pipeline:
             cached = read_json(self.work / "sources.json", {})
             if cached.get("key") == key:
                 self.smap = SourceMap.from_dict(cached)
+                for c in self.smap.cams:      # 내용은 같고 이름·위치만 바뀐 파일(내용 지문이 같음)
+                    c.path = paths[c.idx]
             else:
                 self.smap = analyze_sources(self.ff, paths, [self.infos[i] for i in range(len(paths))], fps=self.fps,
                                             log=self.log, cancel=self.cancel)
@@ -412,7 +421,7 @@ class Pipeline:
         key = text_hash([file_fingerprint(p) for p in self.spec.sources()],
                         file_fingerprint(self.spec.audio) if (self.spec.audio and not multi) else "",
                         self.spec.enhance_voice, bool(model), round(self.info.av_offset, 3),
-                        self.smap.to_dict() if multi else "", "v4")
+                        self.smap.to_dict() if multi else "", "v5")
         voice = self.work / "voice.wav"
         asr = self.work / "asr16k.wav"
         meta = read_json(self.work / "audio.json", {})
@@ -832,8 +841,8 @@ class Pipeline:
         for i, s in enumerate(self.plan_shorts, 1):
             keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES["shorts"], vad=self.vad,
                                        media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
-            if drops:
-                keeps = subtract(keeps, drops)
+            if drops:   # 롱폼처럼 다시 프레임 격자에 맞춘다(안 맞추면 클립마다 반 프레임까지 어긋남)
+                keeps = quantize(subtract(keeps, drops), self.fps, self.info.duration)
             keeps = self._limit_short(self.smap.clamp_keeps(keeps, self.fps))
             tm = TimeMap(keeps, preserve_order=True)
             s["duration"] = tm.duration
@@ -1190,11 +1199,18 @@ class Pipeline:
 
     def _edit_onsets(self, tm: TimeMap) -> list[float]:
         """말소리 시작(VAD) → 편집 시간. 자막 시작을 여기에 맞춘다."""
+        import bisect
         out = [tm.edit_span_of(i).start + 0.06 for i in range(len(tm.keeps))]
+        # keep 을 원본 시각 순으로 한 번 정렬해 두고 이분 탐색(숏폼은 순서가 바뀌기도 함) — 긴 영상에서 VAD × keep 이중 반복이 느림
+        order = sorted(range(len(tm.keeps)), key=lambda i: tm.keeps[i].start)
+        starts = [tm.keeps[i].start for i in order]
         for a, _ in getattr(self, "vad", []) or []:
-            for i, k in enumerate(tm.keeps):
-                if k.start < a < k.end:
-                    out.append(tm.edit_span_of(i).start + (a - k.start))
+            j = bisect.bisect_left(starts, a) - 1
+            while j >= 0 and tm.keeps[order[j]].end > a:     # 겹치는 keep(숏폼)까지
+                i = order[j]
+                if tm.keeps[i].start < a:
+                    out.append(tm.edit_span_of(i).start + (a - tm.keeps[i].start))
+                j -= 1
         return sorted(set(round(x, 3) for x in out))
 
     def _short_graphics(self, s: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1435,7 +1451,13 @@ class Pipeline:
         assert self.info
         kept = self.timemap.keeps
         face = self._angles(self.long_pieces, self.timemap)[1]
-        cands = [s for s in face if 0.25 < s["x"] < 0.75 and any(k.start + 0.5 <= s["t"] <= k.end - 0.5 for k in kept)]
+        import bisect
+        ks = [k.start for k in kept]
+
+        def inside(t: float) -> bool:
+            j = bisect.bisect_right(ks, t - 0.5) - 1
+            return j >= 0 and t <= kept[j].end - 0.5
+        cands = [s for s in face if 0.25 < s["x"] < 0.75 and inside(s["t"])]
         cands.sort(key=lambda s: -s["s"])
         picks: list[dict] = []
         for s in cands:
@@ -1504,7 +1526,9 @@ class Pipeline:
         if self.spec.export_xml:
             w, h = self.info.display_size
             voice = self.work / "voice.wav"
-            files = {c.path: (self.infos[c.idx].duration, *self.infos[c.idx].display_size) for c in self.smap.cams}
+            # 키는 Path 로 한 번 정규화(창에서 받은 'C:/…' 와 Path 가 만든 'C:\\…' 가 달라 못 찾던 것)
+            files = {str(Path(c.path)): (self.infos[c.idx].duration, *self.infos[c.idx].display_size)
+                     for c in self.smap.cams}
 
             def xml_pieces(pieces: list[Piece]) -> Optional[list[tuple[Path, float, float, float]]]:
                 if self.smap.single:
@@ -1579,16 +1603,6 @@ class Pipeline:
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
-    def load_state(self) -> None:
-        """저장된 분석 결과를 다시 읽어 렌더만 다시 할 때 사용."""
-        self.stage_probe()
-        data = read_json(self.work / "align.json", {})
-        self.utts = [Utterance.from_dict(u) for u in data.get("utterances", [])]
-        self.tags = [Tag.from_dict(t) for t in data.get("tags", [])]
-        self.align_report = data.get("report", {})
-        self.vad = [tuple(v) for v in data.get("vad", [])]
-        self._load_face(read_json(self.work / "face.json", {}))
-        self.grade_info = read_json(self.work / "grade.json", {})
 
 
 def template_names() -> list[str]:

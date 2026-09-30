@@ -248,11 +248,11 @@ const ShapeEl: React.FC<{el: MotionEl; c: Ctx}> = ({el, c}) => {
       </g>
     );
   } else if (el.type === 'path') {
-    // d 는 0~100 좌표계 → 상자 크기로 스케일
+    // d 는 0~100 좌표계 → 상자 크기로 스케일. 선 굵기는 non-scaling-stroke 라 화면 px 그대로(다시 나누면 머리카락처럼 가늘어짐)
     node = (
       <g transform={`translate(${st.dx} ${st.dy}) scale(${c.W / 100} ${c.H / 100})`}>
         <path d={el.d} fill={colorOf(el.fill, s, 'none')} stroke={colorOf(el.stroke, s, s.fg)}
-          strokeWidth={(el.strokeWidth ?? 3) / (c.W / 100)} vectorEffect="non-scaling-stroke" pathLength={1}
+          strokeWidth={el.strokeWidth ?? 3} vectorEffect="non-scaling-stroke" pathLength={1}
           strokeDasharray={st.enter === 'draw' ? 1 : undefined} strokeDashoffset={st.enter === 'draw' ? 1 - draw : undefined} />
       </g>
     );
