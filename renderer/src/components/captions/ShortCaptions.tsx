@@ -4,6 +4,7 @@ import {EASE, tween, tweenOut} from '../../design/motion';
 import {FONT} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
+import {PaperCaption} from './LongCaptions';
 import type {CaptionCue, CaptionWord, ShortCaptionPreset} from '../../lib/types';
 import {emOf, EmWord} from './Emphasis';
 
@@ -40,6 +41,14 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
   const w = width - 65 - 140;
   const baseStyle: React.CSSProperties = {fontFamily: FONT.sans, fontWeight: 800, fontSize: size, lineHeight: 1.16,
     letterSpacing: '-0.025em', whiteSpace: 'nowrap'};
+
+  if (preset === 'paper') {
+    const prev = i > 0 ? cues[i - 1] : null;
+    const next = i + 1 < cues.length ? cues[i + 1] : null;
+    return <PaperCaption cue={cue} local={(t - cue.start) * fps} remain={remain}
+      joinPrev={!!prev && cue.start - prev.end < 0.08} joinNext={!!next && next.start - cue.end < 0.08}
+      left={0} width={width} bottom={1920 - y} size={text.length > 14 ? 50 : 56} />;
+  }
 
   if (preset === 'bar') {
     // 셜록현준 숏폼 자막: 창 안 하단, 불투명 검정 박스 한 줄, 흰 SemiBold 약 48px, 강조어 노랑(#FFE14D)

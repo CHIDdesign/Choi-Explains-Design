@@ -195,3 +195,86 @@ def cues_to_srt(cues: list[dict]) -> str:
         text = "\n".join(" ".join(w["text"] for w in line) for line in c["lines"])
         out.append(f"{i}\n{ts(c['start'])} --> {ts(c['end'])}\n{text}\n")
     return "\n".join(out)
+
+
+# 한국어 이음 어미·쉼표 뒤는 자연스러운 끊는 자리
+CONNECT_RE = re.compile(r"(고|며|면|서|데|지만|는데|니까|으니|어서|아서|도록|려고|다가|해도|든지|거나|는지)$")
+FINAL_RE = re.compile(r"(니다|어요|아요|예요|에요|해요|죠|다)$")
+
+
+def build_phrase_cues(
+    groups: Iterable[list[Word]],
+    *,
+    max_chars: int = 13,
+    max_dur: float = 2.4,
+    min_dur: float = 0.45,
+    tail: float = 0.12,
+    emphasis=None,
+) -> list[dict]:
+    """요즘 자막 호흡: 한 줄에 한두 마디(≈13자·2.4초 이하)씩 빠르게. 쉼표·문장 끝·이음 어미에서 끊는다.
+    (예전 롱폼 자막은 16자×2줄·5.5초까지 이어져 '너무 길다'는 평)"""
+    cues: list[dict] = []
+    for words in groups:
+        cur: list[dict] = []
+
+        def flush() -> None:
+            if cur:
+                cues.append({"start": cur[0]["start"], "end": cur[-1]["end"], "lines": [cur[:]]})
+                cur.clear()
+
+        for w in words:
+            txt = display_text(w.text)
+            if not txt:
+                continue
+            item = {"text": txt, "start": round(w.start, 3), "end": round(w.end, 3)}
+            em = _em_lookup(emphasis, w.start, txt)
+            if em:
+                item["em"] = em
+            raw = w.text.strip()
+            ends_phrase = bool(re.search(r"[.?!,]$", raw) or CONNECT_RE.search(re.sub(r"[^가-힣]", "", raw))
+                               or FINAL_RE.search(re.sub(r"[^가-힣]", "", raw)))
+            if cur:
+                length = sum(_clen(x["text"]) for x in cur) + len(cur) + _clen(txt)
+                # 이 단어로 구가 끝나면 4자까지는 넘겨도 한 덩어리로('설득력이 | 있는지' 처럼 끝말만 떨어지지 않게)
+                limit = max_chars + (4 if ends_phrase else 0)
+                if length > limit or w.end - cur[0]["start"] > max_dur:
+                    flush()
+            cur.append(item)
+            now = sum(_clen(x["text"]) for x in cur) + len(cur) - 1
+            if re.search(r"[.?!,]$", raw) or (now >= 7 and ends_phrase):
+                flush()
+        flush()
+    # 한 글자·두 글자만 남은 조각은 앞 청크에 붙인다(너무 길어지지 않으면)
+    merged: list[dict] = []
+    for c in cues:
+        words_c = c["lines"][0]
+        short = sum(_clen(x["text"]) for x in words_c) <= 2
+        if merged and short and c["start"] - merged[-1]["end"] < 0.3:
+            prev = merged[-1]["lines"][0]
+            if sum(_clen(x["text"]) for x in prev + words_c) + len(prev) <= max_chars + 3:
+                merged[-1]["lines"] = [prev + words_c]
+                merged[-1]["end"] = c["end"]
+                continue
+        merged.append(c)
+    for i, c in enumerate(merged):
+        nxt = merged[i + 1]["start"] if i + 1 < len(merged) else c["end"] + 0.5
+        c["end"] = round(min(max(c["end"] + tail, c["start"] + min_dur), nxt), 3)
+    one_em_per_cue(merged)
+    return merged
+
+
+def snap_cues_to_speech(cues: list[dict], onsets: list[float], *, before: float = 0.25, after: float = 0.3) -> None:
+    """자막 시작을 실제 말소리 시작(VAD, 편집 시간)에 맞춘다 — Whisper 단어 시작이 앞뒤로 흔들리는 것 보정."""
+    import bisect
+    if not onsets:
+        return
+    for i, c in enumerate(cues):
+        k = bisect.bisect_left(onsets, c["start"] - before)
+        if k < len(onsets) and onsets[k] <= c["start"] + after:
+            lo = cues[i - 1]["start"] + 0.2 if i > 0 else 0.0
+            new = max(lo, onsets[k] - 0.04)
+            if new < c["end"] - 0.25:
+                if i > 0 and cues[i - 1]["end"] > new:
+                    cues[i - 1]["end"] = round(new, 3)
+                c["start"] = round(new, 3)
+

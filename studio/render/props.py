@@ -9,12 +9,12 @@ from ..director.plan import TimedGraphic, word_edit_time
 from ..models import TimeMap, Utterance
 from ..settings import Brand
 from ..text.align import norm
-from ..text.captions import build_cues, build_short_chunks
+from ..text.captions import build_phrase_cues, snap_cues_to_speech
 from ..vision.face import remap_track
 
 
-LONG_PRESETS = ("editorial", "documentary", "glass", "boxed")
-SHORT_PRESETS = ("kinetic", "clean", "boxed", "bar")
+LONG_PRESETS = ("paper", "editorial", "documentary", "glass", "boxed")
+SHORT_PRESETS = ("paper", "kinetic", "clean", "boxed", "bar")
 
 
 def brand_props(b: Brand) -> dict[str, Any]:
@@ -228,15 +228,17 @@ def long_props(
     sfx: dict[str, str],
     grain_frames: list[str],
     grain: float,
-    caption_preset: str = "editorial",
+    caption_preset: str = "paper",
     endcard: bool = True,
     use_sfx: bool = True,
+    speech_onsets: Optional[list[float]] = None,
 ) -> dict[str, Any]:
     speech_total = timemap.duration
     end_dur = 6.0 if endcard else 0.0
     total = speech_total + end_dur
     em_keys = emphasis_keys(emphasis, utts, timemap)
-    cues = build_cues(utterance_word_groups(utts, timemap), emphasis=em_keys)
+    cues = build_phrase_cues(utterance_word_groups(utts, timemap), emphasis=em_keys)
+    snap_cues_to_speech(cues, speech_onsets or [])
     face = remap_track(face_src, timemap)
     chapter_starts = [c["start"] for c in chapters]
     gdicts = [g.to_dict() for g in graphics]
@@ -259,7 +261,7 @@ def long_props(
         "bgm": {"src": bgm_src, "envelope": bgm_envelope(regions, total, swells), "loop": True} if bgm_src else None,
         "sfx": sfx_events(gdicts, sfx) if use_sfx else [],
         "captions": cues,
-        "captionPreset": caption_preset if caption_preset in LONG_PRESETS else "editorial",
+        "captionPreset": caption_preset if caption_preset in LONG_PRESETS else "paper",
         "face": face,
         "camera": camera_shots(timemap, speech_total, chapter_starts),
         "punches": punches(emphasis, utts, timemap),
@@ -298,8 +300,9 @@ def short_props(
     layout: str = "full",
     progress_bar: bool = False,
     series_label: str = "",
-    caption_preset: str = "kinetic",
+    caption_preset: str = "paper",
     extra_emphasis: Optional[list[dict]] = None,
+    speech_onsets: Optional[list[float]] = None,
 ) -> dict[str, Any]:
     by_id = {u.id: u for u in utts}
     groups = []
@@ -314,7 +317,8 @@ def short_props(
     segs = set(spec["segments"])
     em = [e for e in extra_emphasis or [] if e.get("seg") in segs and e.get("kind") == "highlight"] + em
     em_keys = emphasis_keys(em, utts, timemap)
-    cues = build_short_chunks(groups, emphasis=em_keys)
+    cues = build_phrase_cues(groups, emphasis=em_keys, max_chars=12, max_dur=2.0)
+    snap_cues_to_speech(cues, speech_onsets or [])
     total = timemap.duration
     clips = []
     for i, k in enumerate(timemap.keeps):
@@ -355,7 +359,7 @@ def short_props(
         "hookHighlight": spec.get("hook_highlight", ""),
         "seriesLabel": series_label,
         "layout": layout,
-        "captionPreset": caption_preset if caption_preset in SHORT_PRESETS else "kinetic",
+        "captionPreset": caption_preset if caption_preset in SHORT_PRESETS else "paper",
         "progressBar": progress_bar,
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],

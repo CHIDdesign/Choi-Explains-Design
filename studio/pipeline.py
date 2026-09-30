@@ -1030,11 +1030,19 @@ class Pipeline:
         return links
 
     def _caption_presets(self) -> tuple[str, str]:
-        caps = self.plan_long.get("captions") or {}
-        lp = self.spec.caption_preset if self.spec.caption_preset != "auto" else (caps.get("preset_long") or "editorial")
-        sp = (self.spec.short_caption_preset if self.spec.short_caption_preset != "auto"
-              else (caps.get("preset_short") or "kinetic"))
+        """기본은 사용자 템플릿 자막(흰 종이 박스 · 핵심어 굵게) — 따로 고르지 않았으면 롱폼·숏폼 모두."""
+        lp = self.spec.caption_preset if self.spec.caption_preset != "auto" else "paper"
+        sp = self.spec.short_caption_preset if self.spec.short_caption_preset != "auto" else "paper"
         return lp, sp
+
+    def _edit_onsets(self, tm: TimeMap) -> list[float]:
+        """말소리 시작(VAD) → 편집 시간. 자막 시작을 여기에 맞춘다."""
+        out = [tm.edit_span_of(i).start + 0.06 for i in range(len(tm.keeps))]
+        for a, _ in getattr(self, "vad", []) or []:
+            for i, k in enumerate(tm.keeps):
+                if k.start < a < k.end:
+                    out.append(tm.edit_span_of(i).start + (a - k.start))
+        return sorted(set(round(x, 3) for x in out))
 
     def _moments(self, tm: TimeMap, segs: Optional[set[int]] = None) -> list[Moment]:
         by_id = {u.id: u for u in self.utts}
@@ -1062,7 +1070,7 @@ class Pipeline:
                         emphasis=self.plan_long.get("emphasis", []), face_src=self.face,
                         voice_src="media/long_voice.wav", bgm_src=None, sfx={}, grain_frames=self._grain,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
-                        endcard=self.spec.endcard, use_sfx=False)
+                        endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
         seg_t = seg_edit_times(self.utts, self.timemap)
         ed = build_long_edit(timemap=self.timemap, total=lp["duration"], speech_total=self.timemap.duration,
                              graphics=lp["graphics"], chapters=lp["chapters"], moments=self._moments(self.timemap),
@@ -1116,7 +1124,7 @@ class Pipeline:
                              bgm_src=None, sfx={}, grain_frames=self._grain, grain=0.04 if self._grain else 0.0,
                              layout=self.spec.shorts_layout, progress_bar=self.spec.progress_bar,
                              series_label=series, caption_preset=self._caption_presets()[1],
-                             extra_emphasis=self.plan_long.get("emphasis", []))
+                             extra_emphasis=self.plan_long.get("emphasis", []), speech_onsets=self._edit_onsets(tm))
             ed = build_short_edit(timemap=tm, total=sp["duration"], graphics=sp["graphics"], cues=sp["captions"],
                                   moments=self._moments(tm, set(s["segments"])), seed=i)
             sp["camera"] = ed.camera

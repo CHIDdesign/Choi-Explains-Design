@@ -119,8 +119,8 @@ export type Graphic = {
 // 강조 종류: keyword(핵심어 밑줄 스윕) · term(전문용어 형광 마커) · number(숫자 Anton) · contrast(대비어)
 export type EmType = 'keyword' | 'term' | 'number' | 'contrast';
 export type CaptionWord = {text: string; start: number; end: number; em?: boolean | EmType};
-export type LongCaptionPreset = 'editorial' | 'documentary' | 'glass' | 'boxed';
-export type ShortCaptionPreset = 'kinetic' | 'clean' | 'boxed' | 'bar';
+export type LongCaptionPreset = 'paper' | 'editorial' | 'documentary' | 'glass' | 'boxed';
+export type ShortCaptionPreset = 'paper' | 'kinetic' | 'clean' | 'boxed' | 'bar';
 // style: 'impact' = 강조 순간(펀치인·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
 export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]; style?: 'impact'};
 

@@ -5,7 +5,7 @@ import {FONT} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import type {CaptionCue, LongCaptionPreset} from '../../lib/types';
-import {EmWord} from './Emphasis';
+import {EmWord, splitTail} from './Emphasis';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -27,6 +27,7 @@ type Props = {
  *  documentary : 왼쪽 정렬 + 강조색 세로 바. 넷플릭스 다큐 톤.
  *  glass       : 반투명 유리 알약(backdrop blur). 모던·애플 톤.
  *  boxed       : 줄마다 잉크 박스, 왼쪽 강조색 엣지. 뉴스·리포트 톤.
+ *  paper       : 사용자 템플릿 — 흰 종이 박스 + 검은 글자, 핵심어 어간만 굵게. 한두 마디씩 빠르게 바뀐다.
  * 공통: 강조어 1개(밑줄 스윕/형광 마커/숫자), 이어지는 큐는 애니메이션 없이 교체(과잉 모션 방지).
  */
 export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, centerX, frameW = 1920, bottom = 70,
@@ -53,6 +54,11 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
         <EmWord word={plain ? {...w, em: undefined} : w} t={t} fps={fps} theme={theme} baseColor={base} />
       </React.Fragment>
     ));
+
+  if (preset === 'paper') {
+    return <PaperCaption cue={cue} local={local} remain={remain} joinPrev={joinPrev} joinNext={joinNext}
+      left={cx - frameW / 2} width={frameW} bottom={bottom} plain={plain} />;
+  }
 
   if (cue.style === 'impact' && !plain) {
     // 강조 자막: 크게, 가운데, 굵게 — 펀치인·효과음과 같은 순간에 '툭' 튀어나온다
@@ -159,3 +165,32 @@ export const CaptionScrim: React.FC<{height?: number; strength?: number}> = ({he
   <div style={{position: 'absolute', left: 0, right: 0, bottom: 0, height, pointerEvents: 'none',
     background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,${strength * 0.55}) 55%, rgba(0,0,0,${strength}) 100%)`}} />
 );
+
+/** 흰 종이 박스 자막(사용자 템플릿). 짧은 청크가 빠르게 바뀌므로 움직임은 2프레임 페이드뿐. */
+export const PaperCaption: React.FC<{cue: CaptionCue; local: number; remain: number; joinPrev: boolean;
+  joinNext: boolean; left: number; width: number; bottom: number; plain?: boolean; size?: number}> = (
+  {cue, local, remain, joinPrev, joinNext, left, width, bottom, plain = false, size = 46}) => {
+  const op = Math.min(joinPrev ? 1 : interpolate(local, [0, 2], [0, 1], clamp),
+    joinNext ? 1 : interpolate(remain, [0, 2], [0, 1], clamp));
+  return (
+    <div style={{position: 'absolute', left, width, bottom, display: 'flex', justifyContent: 'center', opacity: op}}>
+      <div style={{background: '#fbfaf5', border: '2px solid #1a1a1a', padding: `${size * 0.12}px ${size * 0.46}px ${size * 0.17}px`,
+        fontFamily: FONT.sans, fontWeight: 500, fontSize: size, lineHeight: 1.3, letterSpacing: '-0.01em',
+        color: '#171717', whiteSpace: 'nowrap', boxShadow: '0 4px 16px rgba(0,0,0,0.28)'}}>
+        {cue.lines.map((line, li) => (
+          <div key={li}>
+            {line.map((w, wi) => {
+              const [stem, tail] = w.em && !plain ? splitTail(w.text) : [w.text, ''];
+              return (
+                <React.Fragment key={wi}>
+                  {wi > 0 ? ' ' : ''}
+                  {w.em && !plain ? <><span style={{fontWeight: 900}}>{stem}</span>{tail}</> : w.text}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};

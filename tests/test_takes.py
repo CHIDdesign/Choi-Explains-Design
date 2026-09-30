@@ -122,3 +122,19 @@ def test_keep_extends_early_whisper_word_end_to_real_speech_end():
     keeps2 = build_keeps([u], pace=PACES["normal"], vad=[(0.58, 3.0)], media_duration=10, fps=30,
                          exclude=[Span(1.2, 2.9)])
     assert keeps2[0].end <= 1.25          # 프레임 격자(1/30초) 반올림까지
+
+
+def test_captions_are_short_phrases_and_follow_speech():
+    from studio.text.captions import _clen, build_phrase_cues, snap_cues_to_speech
+    ws = say("제품 디자인은 굉장히 실무적인 분야입니다.", 0.4,
+             "렌더링이 얼마나 설득력이 있는지, 목업의 완성도가 얼마나 높은지, 그 평가가 거의 전부처럼 느껴질 때가 많습니다.")
+    cues = build_phrase_cues([ws])
+    texts = [" ".join(w["text"] for w in c["lines"][0]) for c in cues]
+    assert all(len(c["lines"]) == 1 for c in cues)
+    assert all(sum(_clen(w["text"]) for w in c["lines"][0]) <= 16 for c in cues), texts
+    assert all(c["end"] - c["start"] <= 2.6 for c in cues)
+    assert "렌더링이 얼마나 설득력이 있는지" in texts and "목업의 완성도가 얼마나 높은지" in texts   # 구 단위로
+    # 자막 시작을 실제 말소리 시작에 맞춤(Whisper 단어 시작이 0.2초 이른 경우)
+    c0 = [{"start": 1.0, "end": 2.0, "lines": [[{"text": "안녕"}]]}]
+    snap_cues_to_speech(c0, [1.2])
+    assert abs(c0[0]["start"] - 1.16) < 1e-6
