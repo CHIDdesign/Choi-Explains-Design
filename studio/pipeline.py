@@ -62,7 +62,7 @@ from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
 from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
-                           short_props, strip_audio, text_graphic_spans)
+                           short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -1495,6 +1495,12 @@ class Pipeline:
         ps = face_safe_layouts(lp["graphics"], lp["face"])
         if ps["placed"] or ps["to_split"]:
             self.log(f"🙂 얼굴 옆 배치: 액자 {ps['placed']}개(줄임 {ps['shrunk']}) · 자리가 없어 패널로 {ps['to_split']}개")
+        # 롱폼 무대 편집법: 챕터 카드에 목차, 챕터 끝에 그 챕터의 핵심 개념을 모은 정리 보드(7초)
+        chapter_maps(lp["graphics"], lp["chapters"])
+        recaps = chapter_recaps(lp["graphics"], lp["chapters"], self.timemap.duration)
+        if recaps:
+            self.log("📋 챕터 정리 보드 " + " · ".join(
+                f"{fmt_ts(g['start'])}–{fmt_ts(g['end'])} {len(g['data']['items'])}개" for g in recaps))
         seg_t = seg_edit_times(self.utts, self.timemap)
         looks = None
         if self._hybrid:

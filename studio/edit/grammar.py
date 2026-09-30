@@ -115,7 +115,7 @@ SFX_FOR_TX = {"whip": "whoosh_soft", "zoom": "whoosh_soft", "blur": "whoosh_soft
 SFX_FOR_TEMPLATE = {"keyword": "pop", "definition": "typing", "quote": "typing", "photo": "camera_shutter",
                     "broll": "whoosh_soft", "motion": "swipe", "stat": "ding", "compare": "paper", "list": "paper",
                     "process": "paper", "cycle": "swipe", "timeline": "paper", "pyramid": "paper",
-                    "concept": "paper", "image_note": "paper", "lower_third": "swoosh_short"}
+                    "concept": "paper", "image_note": "paper", "lower_third": "swoosh_short", "recap": "paper"}
 LIST_TEMPLATES = ("list", "process", "cycle", "timeline", "pyramid")
 
 MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")

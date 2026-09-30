@@ -474,6 +474,116 @@ def shift_decisions(ed: Any, dt: float) -> None:
 # ---------------------------------------------------------------------------
 # 얼굴을 가리지 않는 배치(채널 피드백: 얼굴 옆 사진 액자·개념 텍스트가 자주 얼굴을 덮었다)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 🎓 롱폼 무대(docs/롱폼_무대_디자인.md) 편집법: 챕터 카드 목차 + 챕터 끝 정리 보드
+# ---------------------------------------------------------------------------
+RECAP_SOURCES = ("keyword", "definition", "stat", "list", "compare", "quote", "process", "cycle", "double_diamond",
+                 "matrix", "timeline", "venn", "pyramid", "motion", "card")
+RECAP_MIN_CHAPTER = 45.0      # 이보다 짧은 챕터는 정리하지 않는다
+RECAP_DUR = (7.0, 5.0)        # 먼저 7초, 안 되면 5초
+RECAP_SEARCH = 12.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다
+
+
+def _shorten(text: str, n: int = 26) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def recap_point(g: dict[str, Any]) -> str:
+    """그래픽 하나 → 정리 보드 한 줄(핵심 개념)."""
+    d = g.get("data") or {}
+    tpl = g.get("template", "")
+    title = str(d.get("title") or "").strip()
+    body = str(d.get("body") or "").strip()
+    if tpl == "definition":
+        return _shorten(f"{title}: {body}" if title and body else title or body, 30)
+    if tpl == "stat":
+        return _shorten(f"{title} — {body}" if title and body else title or body, 30)
+    if tpl == "compare":
+        b = str(d.get("title_b") or "").strip()
+        return _shorten(f"{title} vs {b}" if title and b else d.get("subtitle") or title or b)
+    if tpl == "quote":
+        who = str(d.get("author") or "").strip()
+        return _shorten(f"{who}: “{body}”" if who and body else body or title, 30)
+    if tpl == "card":
+        card = d.get("card")
+        if isinstance(card, dict) and not title:
+            from ..motion.card import card_text
+            return _shorten(card_text(card).split("\n")[0] if card_text(card) else "")
+    if tpl == "motion" and not title:
+        spec = d.get("spec")
+        if isinstance(spec, dict):
+            title = str(spec.get("label") or "")
+    return _shorten(title)
+
+
+def chapter_recaps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]], speech_total: float) -> list[dict]:
+    """챕터 끝 **정리 보드**(템플릿 recap, split): 그 챕터에서 나온 키워드·정의·숫자·목록·비교·도식 제목을 시간순으로 2~4개
+    모아, 챕터 끝 7초(안 되면 5초)에 다른 그래픽과 겹치지 않는 가장 늦은 창에 둔다. 45초 넘는 챕터만.
+    gdicts 에 바로 추가하고(시간순 유지) 추가한 것을 돌려준다. AI 가 만드는 목록과 다른, 앱의 롱폼 편집법."""
+    if not chapters:
+        return []
+    starts = sorted(float(c["start"]) for c in chapters)
+    bounds = starts + [float(speech_total)]
+    busy = [(g["start"] - 0.5, g["end"] + 0.3) for g in gdicts if g.get("template") != "lower_third"]
+    added: list[dict] = []
+    for ci, c in enumerate(sorted(chapters, key=lambda c: float(c["start"]))):
+        a, b = bounds[ci], bounds[ci + 1]
+        if b - a < RECAP_MIN_CHAPTER:
+            continue
+        points: list[str] = []
+        for g in sorted(gdicts, key=lambda g: g["start"]):
+            if not (a <= g["start"] < b) or g.get("template") not in RECAP_SOURCES:
+                continue
+            p = recap_point(g)
+            key = p.replace(" ", "").lower()
+            if p and key not in {q.replace(" ", "").lower() for q in points}:
+                points.append(p)
+        if len(points) < 2:
+            continue
+        points = points[:4]
+        placed = None
+        end = b - 0.4
+        while placed is None and end >= b - RECAP_SEARCH:
+            for dur in RECAP_DUR:
+                st = end - dur
+                if st < a + 20.0:
+                    continue
+                if not any(st < y and end > x for x, y in busy):
+                    placed = (st, end)
+                    break
+            end -= 0.5
+        if placed is None:
+            continue
+        st, end = placed
+        g = {"id": f"recap{c.get('number', ci + 1)}", "template": "recap", "layout": "split", "start": round(st, 3),
+             "end": round(end, 3), "priority": 6, "source": "auto",
+             "data": {"title": str(c.get("claim") or c.get("title") or ""), "subtitle": "이번 챕터 정리",
+                      "number": str(c.get("number", "")), "items": points}}
+        gdicts.append(g)
+        busy.append((st - 0.5, end + 0.3))
+        added.append(g)
+    if added:
+        gdicts.sort(key=lambda g: g["start"])
+    return added
+
+
+def chapter_maps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]]) -> int:
+    """챕터 카드에 **목차**(전체 챕터 제목 + 지금 챕터)를 넣는다 → 렌더러 ChapterCard 가 그린다."""
+    titles = [str(c.get("title") or "") for c in sorted(chapters, key=lambda c: float(c["start"]))]
+    numbers = [str(c.get("number") or "") for c in sorted(chapters, key=lambda c: float(c["start"]))]
+    n = 0
+    for g in gdicts:
+        if g.get("template") != "chapter":
+            continue
+        d = g.setdefault("data", {})
+        d["items"] = titles
+        num = str(d.get("number") or "")
+        d["highlight"] = numbers.index(num) if num in numbers else -1
+        n += 1
+    return n
+
+
 PIP_W, PIP_H = 700, 520       # renderer Collage.pipBoxes 기본 액자 크기
 PIP_MIN_W = 420               # 이보다 작아지면 액자 대신 화자 패널(split)로
 PIP_MARGIN = 60

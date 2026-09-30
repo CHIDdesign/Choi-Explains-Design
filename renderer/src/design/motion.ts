@@ -47,6 +47,17 @@ export const TRANSITION = {
   leak: 24,
 } as const;
 
+/** 롱폼 무대(components/longform/) 모션 시그니처 — docs/롱폼_무대_디자인.md */
+export const LONG = {
+  plateIn: 14, // 플레이트: 바깥 가장자리에서 안으로 쓸어 들어옴
+  boardIn: 18, // 보드 판
+  rule: 12, // 괘선 그리기
+  line: 14, // 줄 마스크 슬라이드
+  underline: 10, // 강조 낱말 밑줄 스윕
+  count: 24, // 숫자 카운트업(outExpo)
+  out: 10, // 퇴장(페이드 + 8px)
+} as const;
+
 /** 카메라: 펀치인 진입/복귀(ease 스타일) */
 export const CAMERA = {
   punchIn: 5,

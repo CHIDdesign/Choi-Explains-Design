@@ -8,13 +8,18 @@ import {DrawRule, MaskLine, ParenLabel} from '../layout/Editorial';
 import type {TemplateProps} from './common';
 
 // ---------------------------------------------------------------------------
-// 챕터 카드 — Ink 표면. 거대한 번호(Anton) + 챕터 제목.
+// 챕터 카드 — Ink 표면. 거대한 번호(Anton) + 챕터 제목 + 주장(명조 기울임) + 목차(전체 챕터, 지금 챕터 강조).
+// 롱폼 무대의 오리엔테이션 장치: 시청자가 '지금 어디쯤, 무슨 주장인지'를 챕터마다 다시 잡는다.
+// data.items = 전체 챕터 제목, data.highlight = 지금 챕터 인덱스(studio/render/props.py chapter_maps).
 // ---------------------------------------------------------------------------
-export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box}) => {
+export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box, theme}) => {
   const num = data.number || '01';
   const title = data.title || '';
-  const {size, lines} = fitBlock(title, box.w * 0.52, box.h * 0.55, 132, 64, 1.08, 3, -0.04);
+  const map = (data.items || []).slice(0, 8);
+  const cur = typeof data.highlight === 'number' ? data.highlight : -1;
+  const {size, lines} = fitBlock(title, box.w * 0.52, box.h * (map.length ? 0.4 : 0.55), 124, 60, 1.08, 3, -0.04);
   const numSize = Math.min(box.h * 0.78, 520);
+  const mapSize = 24;
   return (
     <div style={{position: 'absolute', inset: 0}}>
       <div
@@ -32,11 +37,11 @@ export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box}
       >
         {num}
       </div>
-      <div style={{position: 'absolute', right: 0, top: box.h * 0.1, width: box.w * 0.55}}>
+      <div style={{position: 'absolute', right: 0, top: box.h * 0.08, width: box.w * 0.55}}>
         <ParenLabel text={`chapter ${num}`} surface={surface} frame={frame} delay={4} size={24} />
-        <div style={{height: 28}} />
+        <div style={{height: 24}} />
         <DrawRule frame={frame} delay={6} color={surface.rule} />
-        <div style={{height: 36}} />
+        <div style={{height: 32}} />
         {lines.map((l, i) => (
           <MaskLine key={i} frame={frame} delay={8 + i * 4}>
             <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.08,
@@ -45,10 +50,31 @@ export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box}
         ))}
         {data.subtitle ? (
           <MaskLine frame={frame} delay={16}>
-            <div style={{marginTop: 28, fontFamily: FONT.sans, fontWeight: 500, fontSize: 34, color: surface.dim}}>
+            <div style={{marginTop: 26, fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 500, fontSize: 34,
+              lineHeight: 1.4, color: 'rgba(255,255,255,0.78)', letterSpacing: '-0.01em'}}>
               {data.subtitle}
             </div>
           </MaskLine>
+        ) : null}
+        {map.length > 1 ? (
+          <div style={{marginTop: 44, display: 'flex', flexDirection: 'column', gap: 10}}>
+            {map.map((m, i) => {
+              const on = i === cur;
+              const p = enter(frame, 20 + i * 3, 12);
+              return (
+                <div key={i} style={{display: 'flex', alignItems: 'center', gap: 14, opacity: p * (on ? 1 : 0.42),
+                  translate: `${interpolate(p, [0, 1], [12, 0])}px 0`}}>
+                  <span style={{width: 8, height: 8, borderRadius: 4, background: on ? theme.accent : surface.dim,
+                    flexShrink: 0}} />
+                  <span style={{fontFamily: FONT.latin, fontSize: mapSize * 0.95, color: on ? theme.accentLight : surface.dim,
+                    width: mapSize * 1.5, letterSpacing: '0.02em'}}>{String(i + 1).padStart(2, '0')}</span>
+                  <span style={{fontFamily: FONT.sans, fontWeight: on ? 700 : 500, fontSize: mapSize,
+                    color: surface.fg, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden',
+                    textOverflow: 'ellipsis'}}>{m}</span>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
       </div>
     </div>

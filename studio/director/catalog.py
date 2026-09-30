@@ -98,6 +98,8 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
 ]}
 
 TEMPLATE_NAMES = tuple(TEMPLATES.keys())
+# 디렉터가 고르지 않는 자동 템플릿(types.ts TemplateName 에도 있다): 타이틀 · 로어서드 · 챕터 끝 정리 보드(props.chapter_recaps)
+AUTO_TEMPLATES = ("title", "lower_third", "recap")
 
 # 대본 태그 종류 → 템플릿
 TAG_TO_TEMPLATE = {

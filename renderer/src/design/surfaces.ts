@@ -87,4 +87,5 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   broll: 'footage',
   title: 'episode',
   lower_third: '',
+  recap: '정리',
 };

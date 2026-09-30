@@ -75,8 +75,8 @@ export const ConceptCard: React.FC<{template: TemplateName; data: GraphicData; l
 
 /** 개념 텍스트(레퍼런스 3): 검정 라벨 + 큰 굵은 흰 글씨(그림자) — 얼굴 옆 빈 공간에 */
 export const DisplayText: React.FC<{label?: string; text: string; accent?: string; frame: number; dur: number;
-  x: number; y: number; w: number; align: 'left' | 'right'; size?: number; delay?: number}> = ({label, text, accent,
-  frame, dur, x, y, w, align, size = 84, delay = 0}) => {
+  x: number; y: number; w: number; align: 'left' | 'right'; size?: number; delay?: number; note?: string}> = ({label,
+  text, accent, frame, dur, x, y, w, align, size = 84, delay = 0, note}) => {
   const lines = wrap(text, size, w, 2).slice(0, 2);
   const s = Math.min(size, ...lines.map((l) => fitSize(l, w, size, 44, -0.03)));
   const out = tweenOut(frame, dur, 9);
@@ -93,6 +93,11 @@ export const DisplayText: React.FC<{label?: string; text: string; accent?: strin
           <AccentText text={l} accent={i === lines.length - 1 ? accent : null} accentColor={PAPER.accent} />
         </div>
       ))}
+      {note ? (
+        <div style={{marginTop: 10, fontFamily: FONT.sans, fontWeight: 500, fontSize: 24, color: PAPER.white,
+          opacity: 0.8, textShadow: '0 2px 8px rgba(0,0,0,0.6)', whiteSpace: 'nowrap',
+          ...rise(frame, delay + 12, 10, DUR.normal)}}>( {note} )</div>
+      ) : null}
     </div>
   );
 };
@@ -101,16 +106,14 @@ export const DisplayText: React.FC<{label?: string; text: string; accent?: strin
 export const FramedMedia: React.FC<{src: string; kind?: 'video' | 'photo'; b: Box; frame: number; dur: number;
   seed: number; enterDelay?: number; rotate?: number}> = ({src, kind = 'photo', b, frame, dur, seed, enterDelay = 0,
   rotate = 0}) => {
-  // 참고 릴스의 사진 카드처럼 위에서 떨어지듯(8프레임, 흐림 → 선명) 도착한다 — 예전의 느린 떠오름보다 또렷한 리듬
-  const p = tween(frame, enterDelay, 8, 'outCubic');
+  // 롱폼(종이 챕터): 살짝 아래에서 천천히 떠오른다(교육 영상용, 튀지 않게). 숏폼 카드의 드롭인은 ReelShort 가 따로 한다
+  const p = tween(frame, enterDelay, DUR.slow, 'outCubic');
   const out = tweenOut(frame, dur, 10);
   const push = interpolate(frame, [0, Math.max(1, dur)], [1.0, 1.06]);
   const isVideo = kind === 'video' || /\.(mp4|webm|mov)$/i.test(src);
   return (
     <div style={{position: 'absolute', inset: 0, opacity: Math.min(p, out),
-      translate: `0 ${interpolate(p, [0, 1], [-70, 0])}px`, scale: `${interpolate(p, [0, 1], [1.03, 1])}`,
-      filter: p < 1 ? `blur(${interpolate(p, [0, 1], [10, 0])}px)` : undefined,
-      transformOrigin: `${b.x + b.w / 2}px ${b.y + b.h / 2}px`}}>
+      translate: `0 ${interpolate(p, [0, 1], [18, 0])}px`}}>
       <TornFrame b={b} seed={seed} rotate={rotate}>
         {isVideo ? (
           <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover',

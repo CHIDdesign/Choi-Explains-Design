@@ -461,12 +461,14 @@ def test_hybrid_looks_follow_content_and_always_mix():
     plan = choose_looks(graphics, chapters, 120.0, lambda a, b: " ".join(v for k, v in texts.items() if a <= k < b))
     assert [c["look"] for c in plan.chapters] == ["paper", "classic"]
     assert plan.graphic_skins["pr"] == "classic" and plan.graphic_skins["m"] == "classic"
-    assert plan.graphic_skins["d"] == "paper" and plan.graphic_skins["k"] == "paper"   # 개념 카드는 어디서든 템플릿
+    # 개념 카드는 그 챕터의 구성을 따른다(기본 챕터 → 롱폼 무대 플레이트·보드, 종이 챕터 → 사용자 템플릿), 타이틀은 늘 종이
+    assert plan.graphic_skins["d"] == "classic" and plan.graphic_skins["k"] == "paper" and plan.graphic_skins["t"] == "paper"
     assert plan.paper_ranges() == [(0.0, 60.0)]
     props = {"graphics": [dict(x) for x in graphics], "chapters": [dict(c) for c in chapters]}
     apply_looks(props, plan)
     assert props["skin"] == "hybrid" and [c["look"] for c in props["chapters"]] == ["paper", "classic"]
-    assert next(x for x in props["graphics"] if x["id"] == "d")["layout"] == "split"          # 종이 개념 카드 → 화자 액자
+    assert next(x for x in props["graphics"] if x["id"] == "q")["layout"] == "split"          # 종이 개념 카드 → 화자 액자
+    assert next(x for x in props["graphics"] if x["id"] == "d")["layout"] == "fullscreen"     # 기본 챕터는 그대로
     # 모두 한쪽이면 하나는 반대로(섞기)
     same = choose_looks([g("a", "process", 5), g("b", "cycle", 65)], chapters, 120.0, lambda a, b: "")
     assert {c["look"] for c in same.chapters} == {"paper", "classic"}
@@ -502,3 +504,64 @@ def test_face_safe_pip_placement_picks_free_side_or_falls_back_to_split():
     # 얼굴 트랙이 없으면 손대지 않는다(렌더러가 faceX 로)
     gs = [g("p", "photo", 8)]
     assert face_safe_layouts(gs, []) == {"placed": 0, "shrunk": 0, "to_split": 0} and "pip" not in gs[0]
+
+
+# ---------------------------------------------------------------------------
+# 🎓 롱폼 무대 편집법: 챕터 끝 정리 보드 · 챕터 카드 목차 (studio/render/props.py)
+# ---------------------------------------------------------------------------
+
+def _g(i, tpl, a, b, layout="split", **data):
+    return {"id": i, "template": tpl, "layout": layout, "start": a, "end": b, "data": data}
+
+
+def test_chapter_recaps_collects_points_and_sits_in_free_window_at_chapter_end():
+    from studio.render.props import chapter_recaps
+    chapters = [{"start": 0.0, "title": "들어가며", "number": "01", "claim": ""},
+                {"start": 60.0, "title": "문제 정의", "number": "02", "claim": "좋은 답은 질문을 바꿀 때 나온다"}]
+    gs = [_g("k1", "keyword", 5, 9, "overlay", title="발산 먼저"),
+          _g("d1", "definition", 70, 76, title="어포던스", body="형태가 사용법을 알려주는 성질"),
+          _g("s1", "stat", 90, 94, "overlay", title="85%", body="다섯 명이면 충분"),
+          _g("l1", "list", 100, 108, title="좋은 질문의 조건", items=["가", "나"]),
+          _g("k2", "keyword", 100, 103, "overlay", title="좋은 질문의 조건"),      # 같은 말은 한 번만
+          _g("p1", "broll", 122, 126, "pip", src="x.mp4")]
+    added = chapter_recaps(gs, chapters, 130.0)
+    assert len(added) == 1, added
+    r = added[0]
+    assert r["template"] == "recap" and r["layout"] == "split" and r["id"] == "recap02"
+    assert r["data"]["title"] == "좋은 답은 질문을 바꿀 때 나온다"
+    assert r["data"]["items"] == ["어포던스: 형태가 사용법을 알려주는 성질", "85% — 다섯 명이면 충분", "좋은 질문의 조건"]
+    # 챕터 끝(129.6) 창은 122~126 스톡과 겹치므로 그 앞의 빈 창으로
+    assert r["end"] <= 129.6 and r["end"] - r["start"] in (7.0, 5.0)
+    assert not any(r["start"] < g["end"] + 0.3 and r["end"] > g["start"] - 0.5 for g in gs if g is not r)
+    assert gs == sorted(gs, key=lambda g: g["start"])          # 시간순 유지
+    # 첫 챕터(60초)는 개념이 하나뿐이라 정리하지 않는다
+
+
+def test_chapter_recaps_skips_short_chapters_and_busy_endings():
+    from studio.render.props import chapter_recaps
+    chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 30.0, "title": "B", "number": "02"}]
+    gs = [_g("k1", "keyword", 2, 5, "overlay", title="하나"), _g("k2", "keyword", 8, 11, "overlay", title="둘"),
+          _g("k3", "keyword", 40, 43, "overlay", title="셋"), _g("k4", "keyword", 50, 53, "overlay", title="넷"),
+          _g("m1", "motion", 62, 79.8, "fullscreen", title="장면")]
+    assert chapter_recaps(gs, chapters, 80.0) == []           # 30초 챕터 + 끝이 전체화면으로 꽉 찬 챕터
+
+
+def test_chapter_maps_fill_chapter_cards_with_table_of_contents():
+    from studio.render.props import chapter_maps
+    chapters = [{"start": 0.0, "title": "들어가며", "number": "01"}, {"start": 60.0, "title": "문제 정의", "number": "02"},
+                {"start": 120.0, "title": "정리", "number": "03"}]
+    gs = [_g("ch02", "chapter", 59.9, 63.1, "fullscreen", title="문제 정의", number="02"),
+          _g("ch03", "chapter", 119.9, 123.1, "fullscreen", title="정리", number="03"),
+          _g("k", "keyword", 5, 8, "overlay", title="x")]
+    assert chapter_maps(gs, chapters) == 2
+    assert gs[0]["data"]["items"] == ["들어가며", "문제 정의", "정리"] and gs[0]["data"]["highlight"] == 1
+    assert gs[1]["data"]["highlight"] == 2 and "items" not in gs[2]["data"]
+
+
+def test_recap_point_texts():
+    from studio.render.props import recap_point
+    assert recap_point(_g("a", "compare", 0, 1, title="발산", title_b="수렴")) == "발산 vs 수렴"
+    assert recap_point(_g("a", "quote", 0, 1, body="적게, 그러나 더 좋게", author="디터 람스")) == "디터 람스: “적게, 그러나 더 좋게”"
+    assert recap_point(_g("a", "motion", 0, 1, spec={"label": "게슈탈트 · 근접성", "elements": []})) == "게슈탈트 · 근접성"
+    long = recap_point(_g("a", "keyword", 0, 1, title="아주 아주 아주 아주 아주 아주 아주 긴 제목입니다 정말로"))
+    assert long.endswith("…") and len(long) <= 26

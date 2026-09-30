@@ -33,8 +33,9 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - `studio/eta.py` — 남은 시간 예측: 단계별 시간 모델(원본 길이·fps·GPU·AI·출력 프레임, 첫 작업은 넉넉히) + 진행 중 실측 보정 + `user/eta_history.json` 에 이 PC 속도 학습. 단계를 추가하면 `DEFAULTS`·`GROUPS` 도.
 - `studio/review.py` — 완성 영상 검토 시트(2.5초마다 한 장, 시간·자막) → `부가자료/검토시트_*.jpg`.
 - `studio/gui/` — 오토파일럿 창: `app.py`(① 주제 ② 원본 영상(여러 개: 다른 각도·나눠 찍은 것) ③ 대본 → 진행 화면(남은 시간·실시간 미리보기) → 결과 화면), `winshell.py`(관리자 창에서 탐색기 끌어다 놓기: WM_DROPFILES 허용), `poster.py`, `icon.py`, `theme.py`, `settings_dialog.py`(고급 설정 — AI 연결·스톡 키·브랜드·경로. 화면 스타일은 고르지 않는다(자동)).
-- `studio/edit/style.py` — **화면 구성 자동 선택(하이브리드)**: 대본·전사·그래픽 종류로 챕터마다 종이(개념·사례 중심)/기본(구조·도식 중심)을 고르고 한쪽으로만 쏠리면 섞는다. 개념 카드·타이틀은 어디서든 종이. `apply_looks` → `Graphic.skin`·`Chapter.look`·props `skin="hybrid"`, 액자 샷은 종이 챕터에서만(`framed_ranges`).
-- `renderer/src/components/graphics/` — 템플릿. 새 템플릿은 types.ts TemplateName + graphics/index.tsx + director/catalog.py 세 곳에 추가.
+- `studio/edit/style.py` — **화면 구성 자동 선택(하이브리드)**: 대본·전사·그래픽 종류로 챕터마다 종이(개념·사례 중심)/기본(구조·도식 중심)을 고르고 한쪽으로만 쏠리면 섞는다. 타이틀은 어디서든 종이, 개념 카드는 그 챕터의 구성(기본 → 롱폼 무대 플레이트·보드, 종이 → 사용자 템플릿). `apply_looks` → `Graphic.skin`·`Chapter.look`·props `skin="hybrid"`, 액자 샷은 종이 챕터에서만(`framed_ranges`).
+- **롱폼 무대(Stage)** — 기본(classic) 챕터의 롱폼 고유 디자인·편집법(`docs/롱폼_무대_디자인.md`, 숏폼 카드를 옮겨 오지 않는다): `renderer/src/components/longform/Stage.tsx`(그리드 `STAGE`·화자 판 `speakerCard`·보드 판 `boardCard`·컨텍스트 스트립 `ContextStrip`·쓸어 들어오기 `slideIn`·밑줄 스윕 `Annotated`·`LabelChip`·`Rule`·`RiseLine`), `Plates.tsx`(얼굴 반대편 유리 플레이트 `ConceptPlate` — 키워드·정의·숫자 카운트업·인용, 사진·스톡 `MediaPlate`), `Board.tsx`(split 보드 판 `BoardPanel`, 챕터 끝 정리 보드 템플릿 `RecapBoard`). `LongForm.tsx` 는 classic split 구간에서 화자를 둥근 화자 판에 넣고 챕터 라벨 대신 스트립을 그린다. 파이프라인 편집법은 `studio/render/props.py chapter_recaps`(45초 넘는 챕터 끝 7초, 그 챕터의 키워드·정의·숫자·목록·비교·도식 제목 2~4개, 다른 그래픽과 안 겹치는 가장 늦은 창) + `chapter_maps`(챕터 카드에 목차 `items`/`highlight`). `recap` 은 자동 템플릿(`catalog.AUTO_TEMPLATES`). 모션 토큰 `motion.ts LONG`.
+- `renderer/src/components/graphics/` — 템플릿. 새 템플릿은 types.ts TemplateName + graphics/index.tsx + director/catalog.py 세 곳에 추가(디렉터가 안 고르는 자동 템플릿은 `catalog.AUTO_TEMPLATES`).
 - **화면 스킨**(props `skin`: 실제 작업은 늘 `hybrid` — `JobSpec.skin="auto"`. `classic`·`paper` 는 한쪽만 쓰는 개발·시험용):
   - `classic`(기본) = 에디토리얼 디자인(칠판 패널·잉크·시그널) + 사용자 템플릿에서 가져온 부분: 얼굴 옆 찢어진 액자 사진·개념 텍스트(pip/overlay), 개념 카드 글 위계(split), 타이틀(글 왼쪽 + 화자 액자), 우상단 출처, 엔드카드 '오늘의 정리'. 공통 부분은 `components/paper/PaperGraphic.tsx referenceGraphic`.
   - `paper` = 템플릿 전체: 구겨진 짙은 종이(`studio/render/assets.py make_paper`, 절차적)·회색 거친 테두리·액자 샷(`CameraShot.framed`, paper 일 때만 생성). 부품은 `components/paper/`(`Paper.tsx`·`Collage.tsx`·`PaperGraphic.tsx`·`PaperShort.tsx`).
@@ -49,7 +50,7 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - Remotion 은 4.0.530 고정. 애니메이션은 `useCurrentFrame()` + `interpolate()` 로만(CSS transition 금지).
 - 영상 컷은 Remotion 이 CFR 프록시에서 프레임 단위로(`OffthreadVideo trimBefore`), 음성은 FFmpeg 로 샘플 단위 컷. 싱크를 깨는 변경 금지.
 - 편집은 젠틀하게(교육 영상): 하드컷 줌·휩·플래시 금지, 강조는 `glide`, 같은 프레이밍 점프컷은 `Clip.soft`(0.1초 섞기, 길이 불변), 컷이 아닌 곳의 프레이밍 변화는 `CameraShot.glide`.
-- 롱폼 얼굴 옆 개념 카드(pip/overlay 의 keyword·definition·quote·stat)는 숏폼과 같은 `components/cards/ConceptVariants.tsx`(`ConceptCardBody` 세 변형 · `ReelConceptCard`) 를 쓴다 — 카드 언어를 바꾸면 롱폼·숏폼이 같이 바뀐다.
+- 숏폼 카드 세 변형(`components/cards/ConceptVariants.tsx`)은 **숏폼(ReelShort) 전용**. 롱폼은 자기 언어(`components/longform/`, 밑줄 스윕·괘선·쓸어 들어오기)를 쓰고 형광펜·드롭인·팝을 쓰지 않는다.
 - 렌더는 **무음**(`RenderItem.muted`), 음향은 `stage_master` 에서 믹스. 영상 길이를 바꾸는 전환(xfade·TransitionSeries) 금지 — 전환은 컷 지점 중심 오버레이(`components/fx/Transitions.tsx`).
 - Windows 가 1차 타깃: 경로는 pathlib, 서브프로세스는 `util.run_process`(콘솔 창 숨김), 긴 filter 는 `FFmpeg.filter_script_args`(FFmpeg 7+ `-/filter_complex`).
 - `.bat` 은 모두 첫머리에서 **관리자 권한으로 자동 재실행**(fltmc 확인 → `Start-Process -Verb RunAs`). 새 .bat 을 만들면 같은 블록을 넣는다. 실행 .bat 은 requirements.txt 가 바뀌면 패키지를 다시 설치한다(`.venv\.req_stamp`). 관리자 창에는 OLE 드래그 앤 드롭이 안 들어오므로 GUI 는 클릭·Ctrl+V·WM_DROPFILES 로 받는다.

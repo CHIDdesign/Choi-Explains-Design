@@ -21,7 +21,8 @@ export type TemplateName =
   | 'broll' // 스톡 영상/사진(Pixabay·Unsplash·Coverr·Pexels)
   // 자동 템플릿(디렉터가 직접 고르지 않음)
   | 'title'
-  | 'lower_third';
+  | 'lower_third'
+  | 'recap'; // 챕터 끝 정리 보드(studio/render/props.py chapter_recaps — 그 챕터의 핵심 개념 2~4개)
 
 export type Layout = 'fullscreen' | 'split' | 'overlay' | 'pip';
 

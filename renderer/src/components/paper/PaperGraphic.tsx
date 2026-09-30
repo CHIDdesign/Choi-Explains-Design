@@ -3,11 +3,10 @@ import {interpolate} from 'remotion';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
-import {FONT, rgba} from '../../design/tokens';
+import {FONT} from '../../design/tokens';
 import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
-import {ReelConceptCard} from '../cards/ConceptVariants';
 import {ConceptCard, conceptText, DisplayText, FramedMedia, pipBoxes} from './Collage';
 import {AccentText, hashSeed, LabelTag, PAPER, PaperBg, RoughBorder, SourceCredit} from './Paper';
 import type {Box} from './Paper';
@@ -167,7 +166,7 @@ export type RefArgs = {g: Graphic; frame: number; dur: number; W: number; H: num
 /**
  * 사용자 레퍼런스에서 가져온 부분 — 기본(classic) 스타일에도 그대로 쓰인다.
  *  · 얼굴 위 사진·스톡: 찢어진 흰 액자 + 검정 라벨 + 큰 개념 텍스트(레퍼런스 3), 화자는 그대로
- *  · 얼굴 위 키워드·숫자: 개념 텍스트(레퍼런스 3)
+ *  · 얼굴 옆 키워드·정의·숫자·인용: 개념 텍스트(레퍼런스 3, 종이 챕터)
  *  · 타이틀: 왼쪽 개념 카드(라벨 태그 → 주황 한 낱말 헤드라인 → 부제 → 회색 주석) + 오른쪽 화자 액자(레퍼런스 1)
  */
 export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode, theme,
@@ -190,14 +189,12 @@ export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, fa
       );
     }
     if (CONCEPT.has(g.template)) {
-      // 얼굴 옆 개념 카드 — 숏폼(릴스식) 위 카드와 같은 카드 언어(고딕+형광펜 · 명조 · 짙은 종이)를 번갈아 쓴다
-      const {head, body} = conceptText(g.template, g.data);
-      const w = b.w;
-      const h = Math.round(w * 0.74);
+      // 얼굴 옆 개념 텍스트(레퍼런스 3): 검정 라벨 + 큰 굵은 흰 글씨 — 종이 챕터의 언어(classic 챕터는 longform/Plates)
+      const {head, body, note} = conceptText(g.template, g.data);
       return (
-        <ReelConceptCard x={b.x} y={b.y} w={w} h={h} dur={dur} f={frame} label={body || label} head={head}
-          accent={g.data.accent} big={g.template === 'stat'} theme={theme} marker={rgba(theme.accent, 0.3)}
-          variant={seed % 3} paperTexture={paperTexture} scale={w / 980} tilt={right ? 1.2 : -1.2} />
+        <DisplayText label={body || label} text={head} accent={g.data.accent} frame={frame} dur={dur} x={textX}
+          y={b.y + 8} w={textW} align={right ? 'right' : 'left'} size={g.template === 'stat' ? 120 : 84} delay={2}
+          note={note} />
       );
     }
   }

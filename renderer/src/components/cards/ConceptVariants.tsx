@@ -8,11 +8,12 @@ import {warmOf} from '../captions/Stack';
 import {AccentText, LabelTag, PaperBg, pickAccent} from '../paper/Paper';
 
 /**
- * 개념 카드 세 가지(참고 릴스에서 옮긴 카드 언어) — 숏폼(ReelShort 위 카드)과 롱폼(얼굴 옆 개념 카드)이 같이 쓴다.
+ * 숏폼 개념 카드 세 가지(참고 릴스에서 옮긴 카드 언어) — ReelShort 위 카드 **전용**. 롱폼은 자기 언어(components/longform/,
+ * docs/롱폼_무대_디자인.md)를 쓰고 이 카드를 옮겨 오지 않는다.
  *  0 = 흰 카드 + 짙은 굵은 고딕 + 형광펜(핵심어 아래 마커가 쓸리듯 칠해진다)
  *  1 = 크림 카드 + 기울인 명조 라벨 + 큰 명조 헤드라인(한 낱말만 따뜻한 강조색), 흐림 → 선명
  *  2 = 구겨진 짙은 종이 + 흰 라벨 태그 + 흰 헤드라인(한 낱말만 주황) + 회색 주석
- * 크기는 980×720 카드 기준으로 설계돼 있고 `scale` 로 줄인다(롱폼 얼굴 옆 카드 700×520 → 0.71).
+ * 크기는 980×720 카드 기준이고 `scale` 로 줄일 수 있다.
  */
 export const INK = '#17181C';
 
@@ -136,25 +137,6 @@ export const ConceptCardBody: React.FC<ConceptCardProps> = ({label, head, body, 
       {bodyLines.length ? <div style={{marginTop: 22 * scale, fontFamily: FONT.sans, fontWeight: 500,
         fontSize: 38 * scale, lineHeight: 1.4, color: '#5A5A60', opacity: tween(f, 10, 12)}}>
         {bodyLines.map((l, i) => <div key={i}>{l}</div>)}</div> : null}
-    </div>
-  );
-};
-
-/**
- * 롱폼 얼굴 옆 개념 카드: 둥근 카드가 살짝 아래에서 떠오르며(기울기 → 0) 위 카드 언어(세 변형)를 담는다.
- * box 는 얼굴을 피해 파이프라인이 정한 자리(pipBoxes).
- */
-export const ReelConceptCard: React.FC<ConceptCardProps & {x: number; y: number; h: number; dur: number;
-  tilt?: number}> = ({x, y, w, h, dur, tilt = 0, ...rest}) => {
-  const p = tween(rest.f, 0, 14, 'outCubic');
-  const out = rest.f > dur - 9 ? interpolate(rest.f, [dur - 9, dur], [1, 0], {extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp'}) : 1;
-  return (
-    <div style={{position: 'absolute', left: x, top: y, width: w, height: h, borderRadius: 26 * (rest.scale ?? 1) + 4,
-      overflow: 'hidden', background: '#fff', boxShadow: '0 26px 60px rgba(0,0,0,0.28)', opacity: p * out,
-      rotate: `${interpolate(p, [0, 1], [tilt + 1.5, 0])}deg`, scale: `${interpolate(p, [0, 1], [0.97, 1])}`,
-      translate: `0 ${interpolate(p, [0, 1], [40, 0])}px`}}>
-      <ConceptCardBody {...rest} w={w} />
     </div>
   );
 };

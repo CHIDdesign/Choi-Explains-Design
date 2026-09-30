@@ -1,6 +1,6 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
-import {GraphicLayer, SPLIT_SPEAKER} from '../components/graphics';
+import {GraphicLayer} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
 import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
@@ -8,12 +8,13 @@ import {LivePeek} from '../components/fx/LivePeek';
 import {PaperEndCard} from '../components/layout/EndCard';
 import {PAPER, PaperBg, RoughBorder, SourceCredit, TornFrame} from '../components/paper/Paper';
 import {paperSpeakerBox} from '../components/paper/PaperGraphic';
+import {boardCard, ContextStrip, speakerCard, STAGE, stripOpacity} from '../components/longform/Stage';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts, useFontForText, useFontGuard} from '../design/fonts';
 import {CAMERA, EASE} from '../design/motion';
-import {FONT, makeTheme} from '../design/tokens';
+import {makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
 import type {CameraShot, Graphic, Look, LongFormProps, Punch} from '../lib/types';
@@ -176,11 +177,13 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
       let target: Rect;
       let tBox;
       if (span.kind === 'split') {
-        const cw = W * SPLIT_SPEAKER;
-        target = props.panelSide === 'right' ? {x: 0, y: 0, w: cw, h: H} : {x: W - cw, y: 0, w: cw, h: H};
-        tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t, fps), 'center', 0.4);
-        const panelCenter = props.panelSide === 'right' ? cw + (W - cw) / 2 : (W - cw) / 2;
-        capCenter = W / 2 + (panelCenter - W / 2) * p;
+        // 롱폼 무대(classic): 화자는 둥근 화자 판(40/96 여백, 반경 22)에, 옆에 보드 판 — 잉크 위 두 장의 판
+        target = speakerCard(props.panelSide, W, H);
+        tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t, fps), 'center', 0.42);
+        const bc = boardCard(props.panelSide, W, H);
+        capCenter = W / 2 + (bc.x + bc.w / 2 - W / 2) * p;
+        radius = STAGE.radius * p;
+        border = `1px solid rgba(255,255,255,${0.14 * p})`;
       } else if (span.kind === 'pip') {
         target = {x: W - 96 - 520, y: H - 96 - 292 - 70, w: 520, h: 292};
         tBox = videoBoxFor(target, face, 1.0, 'anchor');
@@ -207,6 +210,9 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     return k >= 0 ? `ch ${props.chapters[k].number}` : '';
   };
   const fullscreenActive = props.graphics.some((g) => g.layout === 'fullscreen' && t >= g.start && t < g.end);
+  // 챕터 카드·타이틀 ±0.3초(전환이 걸리는 동안)에도 스트립을 숨긴다
+  const coverActive = props.graphics.some((g) => (g.template === 'chapter' || g.template === 'title')
+    && t >= g.start - 0.3 && t < g.end + 0.3);
   // 화면에 글자 그래픽이 떠 있으면 자막 강조는 끈다(강조색은 화면당 한 곳)
   const textGraphicActive = props.graphics.some((g) => t >= g.start && t < g.end
     && !['lower_third', 'broll', 'photo', 'title'].includes(g.template));
@@ -251,21 +257,14 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
             shadow={radius > 0} />
         ) : null}
         {region === full ? <Vignette strength={0.22} /> : null}
-        {chapterLook === 'paper' && props.showChapterLabel && chapter && paperP === 0 && !span
-          && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3) ? (
-          <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw
-            opacity={enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9} />
-        ) : null}
-        {chapterLook !== 'paper' && props.showChapterLabel && chapter && !fullscreenActive && !span
-          && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3 && g.layout !== 'split') ? (
-          <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
-            color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
-            opacity: enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9}}>
-            ( {chapter.number} ) {chapter.title}
-          </div>
+        {props.showChapterLabel && chapter && ci >= 0 && !fullscreenActive && !span && paperP === 0
+          && frame < endStart && !coverActive ? (
+          // 컨텍스트 스트립(롱폼 무대): 지금 챕터 번호·제목 + 챕터 눈금 — 전체화면·보드·타이틀·챕터 카드 동안은 숨김
+          <ContextStrip chapters={props.chapters} index={ci} t={t} total={props.duration} theme={theme}
+            opacity={stripOpacity(frame, toFrame(chapter.start + 3.2, fps))} />
         ) : null}
         {over.map(seq)}
-        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} paper
+        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} look={chapterLook}
           face={screenFace} zoom={1} />
       </TransitionStage>
       {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
