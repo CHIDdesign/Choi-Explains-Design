@@ -1359,6 +1359,26 @@ class Pipeline:
                 out.append(copy.deepcopy(g))
         return out
 
+    def _punch_spans(self, seg_t: dict[int, tuple[float, float]], segs: Optional[set[int]] = None) -> list[tuple[float, float]]:
+        """⚡ 편집 감독의 energy_spans(발화 ID 범위) → 편집 시각 구간. 합쳐서 전체의 25% 를 넘으면 앞에서부터 자른다."""
+        out: list[tuple[float, float]] = []
+        total = max(0.0, *[b for _, b in seg_t.values()]) if seg_t else 0.0
+        budget = total * 0.25
+        for e in self.plan_long.get("energy_spans", []) or []:
+            ids = [i for i in range(int(e.get("start_seg", -1)), int(e.get("end_seg", -1)) + 1)
+                   if i in seg_t and (segs is None or i in segs)]
+            if not ids:
+                continue
+            a, b = min(seg_t[i][0] for i in ids), max(seg_t[i][1] for i in ids)
+            if b - a <= 0.5:
+                continue
+            if sum(y - x for x, y in out) + (b - a) > budget:
+                b = a + max(0.0, budget - sum(y - x for x, y in out))
+                if b - a <= 0.5:
+                    break
+            out.append((round(a, 3), round(b, 3)))
+        return out
+
     def _moments(self, tm: TimeMap, segs: Optional[set[int]] = None) -> list[Moment]:
         by_id = {u.id: u for u in self.utts}
         out = []
@@ -1412,13 +1432,18 @@ class Pipeline:
             apply_looks(lp, looks)
             self.look_plan = looks
             self.log("🎨 화면 구성(자동 · 하이브리드): " + looks.summary())
+        punch_spans = self._punch_spans(seg_t)
+        if punch_spans:
+            self.log("⚡ 펀치 구간(하드 펀치인·단어 슬램·휩·임팩트 허용): "
+                     + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in punch_spans))
         ed = build_long_edit(timemap=self.timemap, total=lp["duration"], speech_total=self.timemap.duration,
                              graphics=lp["graphics"], chapters=lp["chapters"], moments=self._moments(self.timemap),
                              cues=lp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
                              text_graphic_spans=text_graphic_spans(lp["graphics"]), endcard=self.spec.endcard,
                              face=lp.get("face"),
                              P=PARAMS if (self.spec.skin == "paper" or looks) else {**PARAMS, "framed_every": 0},
-                             framed_ranges=looks.paper_ranges() if looks else None, angle_cuts=angle_cuts)
+                             framed_ranges=looks.paper_ranges() if looks else None, angle_cuts=angle_cuts,
+                             punch_spans=punch_spans)
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
         stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
@@ -1477,7 +1502,8 @@ class Pipeline:
                              series_label=series, caption_preset=self._caption_presets()[1],
                              extra_emphasis=self.plan_long.get("emphasis", []), speech_onsets=self._edit_onsets(tm))
             ed = build_short_edit(timemap=tm, total=sp["duration"], graphics=sp["graphics"], cues=sp["captions"],
-                                  moments=self._moments(tm, set(s["segments"])), seed=i, angle_cuts=angle_cuts)
+                                  moments=self._moments(tm, set(s["segments"])), seed=i, angle_cuts=angle_cuts,
+                                  punch_spans=self._punch_spans(seg_edit_times(self.utts, tm), set(s["segments"])))
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])

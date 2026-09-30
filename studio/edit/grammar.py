@@ -77,6 +77,25 @@ PARAMS: dict[str, Any] = {
     "swell_intro": 1.4,
 }
 
+# ⚡ 펀치 구간(✂️ 편집 감독의 energy_spans) 안에서만 쓰는 값 — 크리에이터식 펀치 편집(참고: Claude+HyperFrames 계열 편집
+# 데모의 하드 펀치인·단어 슬램·휩·임팩트). 훅·클라이맥스·빠른 열거 같은 특정 부분에만, 전체의 20% 이하. 그 밖은 PARAMS 그대로.
+PUNCH: dict[str, Any] = {
+    "punch": {1: 0.06, 2: 0.10, 3: 0.14},   # 하드 펀치인(cut) 배율
+    "punch_min_gap": 6.0,
+    "punch_max": 2.2,                        # 당긴 채 오래 두지 않는다 — 다음 말에서 되돌아옴
+    "punch_style": "cut",
+    "impact_min_gap": 8.0,                   # 큰 단어 슬램 자막·콜아웃 간격
+    "tx_min_gap": 8.0,                       # 휩·푸시 전환 간격
+    "tx_kind": "whip",                       # 사진·스톡·키워드가 들어올 때의 전환
+    "sfx_min_gap": 1.2,
+    "sfx_for_punch": {3: "impact", 2: "whoosh_fast", 1: "pop"},
+}
+
+
+def in_spans(t: float, spans: Optional[list[tuple[float, float]]]) -> bool:
+    return bool(spans) and any(a <= t <= b for a, b in spans)
+
+
 TX_FOR_TEMPLATE = {
     # 얼굴 → 전체화면 그래픽으로 들어갈 때 — 부드러운 것만(휩·플래시·줌 없음)
     "chapter": "wipe",
@@ -333,8 +352,11 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                     text_graphic_spans: Optional[list[tuple[float, float]]] = None, endcard: bool = True,
                     face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1,
                     framed_ranges: Optional[list[tuple[float, float]]] = None,
-                    angle_cuts: Optional[list[float]] = None) -> EditDecisions:
+                    angle_cuts: Optional[list[float]] = None,
+                    punch_spans: Optional[list[tuple[float, float]]] = None, PU: dict = PUNCH) -> EditDecisions:
+    """punch_spans: ⚡ 펀치 구간(편집 시각). 그 안에서는 PU 의 값으로 하드 펀치인·단어 슬램·휩·임팩트를 허용한다."""
     ed = EditDecisions(soft_cut=P["soft_cut"])
+    spans = [(a, b) for a, b in (punch_spans or []) if b > a]
     covers = _covers(graphics, speech_total)
     chapter_starts = [c["start"] for c in chapters if c["start"] > 0.5]
     ed.camera = camera_plan(timemap, speech_total, chapter_starts=chapter_starts, covers=covers,
@@ -348,6 +370,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     for k, (a, b, g) in enumerate(covers):
         tpl = g.get("template", "")
         kind = TX_FOR_TEMPLATE.get(tpl, TX_DEFAULT_IN)
+        if in_spans(a, spans) and tpl in ("photo", "broll", "keyword", "stat", "card"):
+            kind = PU["tx_kind"]
         if kind == "whip":
             kind_dir = whip_dir[k % 2]
         elif kind == "push":
@@ -365,8 +389,9 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                        "why": f"{tpl} → 얼굴"})
     major = _thin_by_gap([e for e in tx if e["prio"] >= 3], 8.0)          # 챕터·타이틀: 항상
     minor = [e for e in tx if e["prio"] < 3 and all(abs(e["t"] - m["t"]) >= 20.0 for m in major)]
-    minor = _thin_by_gap(minor, P["tx_min_gap"])
-    tx = sorted(major + _cap_per_minute(minor, P["tx_per_min"]), key=lambda e: e["t"])
+    hot = [e for e in minor if in_spans(e["t"], spans)]                    # 펀치 구간: 간격만 짧게, 분당 상한 없음
+    calm = _thin_by_gap([e for e in minor if not in_spans(e["t"], spans)], P["tx_min_gap"])
+    tx = sorted(major + _cap_per_minute(calm, P["tx_per_min"]) + _thin_by_gap(hot, PU["tx_min_gap"]), key=lambda e: e["t"])
     for e in tx:
         e["dur"] = round(P["tx_frames"].get(e["type"], 14) / fps, 3)
     ed.transitions = [{k: v for k, v in e.items() if k in ("t", "type", "dur", "dir") and v is not None} for e in tx]
@@ -374,23 +399,27 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     # ---- 강조 글라이드 + 강조 자막 ------------------------------------------
     punches: list[dict] = []
     for m in sorted(moments, key=lambda m: (-m.intensity, m.t)):
-        if m.intensity < 2 and m.kind not in ("joke",):
+        hot = in_spans(m.t, spans)
+        if m.intensity < 2 and m.kind not in ("joke",) and not hot:
             continue
         if _inside(m.t, covers, pad=0.4) or _inside(m.t, [(e["t"] - 0.5, e["t"] + 0.5) for e in tx]):
             continue
-        if any(abs(m.t - p["t"]) < P["punch_min_gap"] for p in punches):
+        # 간격: 같은 온도끼리는 각자의 규칙(젠틀 40초 · 펀치 6초), 펀치 구간과 젠틀 구간 사이는 6초만 띄우면 된다
+        gap = PU["punch_min_gap"] if hot else P["punch_min_gap"]
+        if any(abs(m.t - p["t"]) < (gap if p["hot"] == hot else PU["punch_min_gap"]) for p in punches):
             continue
-        end = min(max(m.end + 0.15, m.t + 1.0), m.t + P["punch_max"])
+        end = min(max(m.end + 0.15, m.t + 1.0), m.t + (PU["punch_max"] if hot else P["punch_max"]))
         nxt_cover = min([a for a, _, _ in covers if a > m.t] + [speech_total])
         end = min(end, nxt_cover - 0.05)
         if end - m.t < 0.6:
             continue
-        style = "glide"
-        amt = P["punch"].get(max(1, min(3, m.intensity)), 0.16)
+        # ⚡ 펀치 구간: 하드 펀치인(한 프레임에 당김) — 그 밖은 교육 영상용 글라이드
+        style = PU["punch_style"] if hot else "glide"
+        amt = (PU if hot else P)["punch"].get(max(1, min(3, m.intensity)), 0.16)
         punches.append({"t": round(m.t, 3), "end": round(end, 3), "amount": amt, "style": style,
-                        "kind": m.kind, "intensity": m.intensity})
-    punches = sorted(punches, key=lambda p: (-p["intensity"], p["t"]))[: P["punch_cap"]]
-    punches.sort(key=lambda p: p["t"])
+                        "kind": m.kind, "intensity": m.intensity, "hot": hot})
+    calm_p = sorted([p for p in punches if not p["hot"]], key=lambda p: (-p["intensity"], p["t"]))[: P["punch_cap"]]
+    punches = sorted(calm_p + [p for p in punches if p["hot"]], key=lambda p: p["t"])
     ed.camera = _merge_shots_near(ed.camera, [p["t"] for p in punches], 1.0)
     ed.punches = [{k: p[k] for k in ("t", "end", "amount", "style")} for p in punches]
 
@@ -404,7 +433,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     for p in punches:
         m = by_t.get(p["t"])
         text = (m.callout if m else "").strip()
-        if not text or p["t"] - last_callout < P["impact_min_gap"] or _inside(p["t"], busy, pad=0.3):
+        if not text or p["t"] - last_callout < (PU if p.get("hot") else P)["impact_min_gap"] or _inside(p["t"], busy, pad=0.3):
             continue
         nxt = min([a for a, _, _ in covers if a > p["t"]] + [a for a, _, _ in busy if a > p["t"]] + [speech_total])
         end = min(p["t"] + 4.2, max(p["end"] + 0.8, p["t"] + 2.8), nxt - 0.15)
@@ -436,7 +465,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     for p in punches:
         if p["t"] in called:
             continue
-        if p["intensity"] < 2 or p["t"] - last_impact < P["impact_min_gap"] or _inside(p["t"], text_spans):
+        if (p["intensity"] < 2 and not p.get("hot")) or p["t"] - last_impact < (PU if p.get("hot") else P)["impact_min_gap"] \
+                or _inside(p["t"], text_spans):
             continue
         for i, c in enumerate(cues):
             if c["start"] - 0.05 <= p["t"] < c["end"]:
@@ -471,7 +501,10 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                 if i:  # 첫 항목은 등장 효과음과 겹치므로 생략
                     add(rt, "click", 1, "목록 항목")
     for p in punches:
-        add(p["t"], "pop" if p["intensity"] >= 2 else "", 4 if p["intensity"] >= 3 else 2, f"강조({p['kind']})")
+        if p.get("hot"):
+            add(p["t"], PU["sfx_for_punch"].get(p["intensity"], "pop"), 5, f"펀치 강조({p['kind']})")
+        else:
+            add(p["t"], "pop" if p["intensity"] >= 2 else "", 4 if p["intensity"] >= 3 else 2, f"강조({p['kind']})")
     # 결론·감정 문장 밑에는 효과음을 깔지 않는다(리서치) — 대신 배경음악을 0.8초 전에 비워 '숨'을 준다
     if endcard and total > speech_total + 0.5:
         add(speech_total + 0.2, "whoosh_soft", 3, "엔드카드")
@@ -479,9 +512,11 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     # riser 는 소리가 '앞으로' 깔리고 피크가 챕터 진입(와이프 whoosh)과 겹치도록 설계된 짝이라 함께 둔다.
     lead = ("click", "riser")
     clicks = [s for s in sfx if s["category"] in lead]
-    others = _thin_by_gap([s for s in sfx if s["category"] not in lead], P["sfx_min_gap"])
+    rest = [s for s in sfx if s["category"] not in lead]
+    hot_sfx = _thin_by_gap([s for s in rest if in_spans(s["t"], spans)], PU["sfx_min_gap"])   # 펀치 구간: 촘촘히
+    others = _thin_by_gap([s for s in rest if not in_spans(s["t"], spans)], P["sfx_min_gap"])
     others = _cap_per_minute(others, P["sfx_per_min"])
-    ed.sfx = sorted(others + clicks, key=lambda s: s["t"])
+    ed.sfx = sorted(others + hot_sfx + clicks, key=lambda s: s["t"])
 
     # ---- 배경음악 부풀리기 --------------------------------------------------
     first_speech = cues[0]["start"] if cues else 0.0
@@ -500,7 +535,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     face_time = speech_total - sum(b - a for a, b, _ in covers)
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),
                 "sfx": len(ed.sfx), "impact_captions": len(ed.impact_cues), "callouts": len(ed.callouts),
-                "face_ratio": round(face_time / max(1e-6, speech_total), 3)}
+                "face_ratio": round(face_time / max(1e-6, speech_total), 3),
+                "punch_spans": len(spans), "hot_punches": sum(1 for p in punches if p.get("hot"))}
     return ed
 
 
@@ -510,11 +546,15 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
 
 def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cues: list[dict],
                      moments: list[Moment], P: dict = PARAMS, seed: int = 2,
-                     angle_cuts: Optional[list[float]] = None) -> EditDecisions:
+                     angle_cuts: Optional[list[float]] = None,
+                     punch_spans: Optional[list[tuple[float, float]]] = None, hook: float = 3.0,
+                     PU: dict = PUNCH) -> EditDecisions:
     """숏폼: 롱폼보다 빠른 호흡이지만 교육 채널답게 부드럽게 — 프레이밍은 컷 지점에서만 작게(1.00↔1.06) 바꾸고,
     같은 프레이밍 점프컷은 소프트 컷, 강조는 글라이드. 다시점 앵글이 바뀌는 곳은 새 샷(1.00부터)."""
     ed = EditDecisions(soft_cut=P["soft_cut"])
     rnd = random.Random(seed)
+    # ⚡ 숏폼의 훅(첫 hook 초)과 편집 감독의 펀치 구간에서는 하드 펀치인 허용
+    spans = [(0.0, hook)] + [(a, b) for a, b in (punch_spans or []) if b > a] if hook > 0 else list(punch_spans or [])
     # 1) 카메라: 컷 지점에서만 1.00 ↔ 1.06 교차(샷 최소 3.5초). 샷 안에서는 느린 드리프트(최대 4%).
     angle_set = {round(c, 3) for c in angle_cuts or []}
     marks = sorted({round(c, 3) for c in timemap.cut_points()} | angle_set)
@@ -551,10 +591,15 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
     for m in sorted(moments, key=lambda m: -m.intensity):
         if len(ed.punches) >= 3:
             break
-        if any(abs(m.t - p["t"]) < 5 for p in ed.punches) or m.t < 1.0 or m.t > total - 1.0:
+        hot = in_spans(m.t, spans)
+        if any(abs(m.t - p["t"]) < (3 if hot else 5) for p in ed.punches) or m.t < (0.4 if hot else 1.0) or m.t > total - 1.0:
             continue
-        ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.3, m.t + 1.8), m.t + 3.0, total), 3),
-                           "amount": 0.07 if m.intensity >= 3 else 0.05, "style": "glide"})
+        if hot:
+            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.2, m.t + 1.2), m.t + PU["punch_max"], total), 3),
+                               "amount": PU["punch"][3 if m.intensity >= 3 else 2], "style": PU["punch_style"]})
+        else:
+            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.3, m.t + 1.8), m.t + 3.0, total), 3),
+                               "amount": 0.07 if m.intensity >= 3 else 0.05, "style": "glide"})
     ed.punches.sort(key=lambda p: p["t"])
     # 4) 효과음 — 참고 채널(Nick Saraev 숏폼) 실측: 컷에는 whoosh 가 없고(컷 지점 고음 에너지가 평소와 같음),
     #    카드·아이콘이 떨어질 때 작은 pop, 그 밖은 잔잔한 음악만. 그래픽 성격에 맞춰 종류는 다양하게, 5초에 하나 이하.
@@ -565,7 +610,8 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
         sfx.append({"t": g["start"], "category": cat, "gain_db": P["sfx_gain"].get(cat, -26), "prio": 3,
                     "why": f"{g.get('template', '')} 등장"})
     for p in ed.punches:
-        sfx.append({"t": p["t"], "category": "pop", "gain_db": P["sfx_gain"]["pop"] - 2, "prio": 2, "why": "강조"})
+        cat = "whoosh_fast" if p["style"] == "cut" else "pop"
+        sfx.append({"t": p["t"], "category": cat, "gain_db": P["sfx_gain"][cat] - 2, "prio": 2, "why": "강조"})
     if total > 8:
         sfx.append({"t": max(0.0, total - 1.6), "category": "ding", "gain_db": P["sfx_gain"]["ding"], "prio": 2,
                     "why": "페이오프"})

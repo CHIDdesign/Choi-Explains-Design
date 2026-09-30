@@ -128,6 +128,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
              "label": "핵심"},
             {"seg": last, "word": "", "kind": "conclusion", "intensity": 2, "callout": "", "label": ""},
             {"seg": s_q, "word": "", "kind": "number", "intensity": 2, "callout": "", "label": ""}],
+            # ⚡ 펀치 구간: 핵심 한 방 문장 하나만 — 그 안의 강조는 하드 펀치인(cut)이 된다
+            "energy_spans": [{"start_seg": s_pencil, "end_seg": s_pencil, "reason": "핵심 한 방"}],
             "pacing_notes": "차분하게"}
     if agent == "motion":
         spec = copy.deepcopy(EXAMPLES["proximity"])
@@ -422,7 +424,11 @@ def main() -> int:
     assert lp["camera"] and all(1.0 <= c["zoom"] <= 1.12 and c["zoomEnd"] <= 1.17 for c in lp["camera"]), lp["camera"]
     # 강조 글라이드: 있으면 glide 뿐이고, 그래픽(전면·분할) 위에는 놓이지 않는다. 몇 개인지는 기획의 그래픽 배치에 따라
     # 0 도 될 수 있다(그래픽 위 · 콜아웃 40초 안의 강조 순간은 건너뛴다)
-    assert all(p.get("style") == "glide" for p in lp["punches"]), lp["punches"]
+    # ⚡ 펀치 구간(s_pencil) 안의 강조는 하드 펀치인(cut, +10% 이상), 그 밖은 글라이드뿐
+    assert all(p.get("style") in ("glide", "cut") for p in lp["punches"]), lp["punches"]
+    hot = [p for p in lp["punches"] if p["style"] == "cut"]
+    assert len(hot) == 1 and hot[0]["amount"] >= 0.1 and hot[0]["end"] - hot[0]["t"] <= 2.3, lp["punches"]
+    assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")
     covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
     assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]

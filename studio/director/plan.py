@@ -228,6 +228,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "captions": raw.get("captions") or {},   # 🔤 자막 디자이너의 프리셋 선택
         "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
         "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)
+        "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
         "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
         "bgm_mood": str(raw.get("bgm_mood", "") or ""),
         "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
@@ -262,6 +263,15 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
                     "label": str(m.get("label", "") or "").strip()[:16]}
             if not any(x["seg"] == item["seg"] and x["kind"] == item["kind"] for x in plan["moments"]):
                 plan["moments"].append(item)
+    for e in (raw.get("energy_spans", []) or [])[:3]:
+        if not isinstance(e, dict):
+            continue
+        a, b = _nearest(kept, e.get("start_seg")), _nearest(kept, e.get("end_seg", e.get("start_seg")))
+        if a is None or b is None:
+            continue
+        if b < a:
+            a, b = b, a
+        plan["energy_spans"].append({"start_seg": a, "end_seg": b, "reason": str(e.get("reason", "") or "")[:60]})
 
     # 대본 태그는 반드시 반영(디렉터가 빠뜨렸으면 추가)
     enforce_tags(plan, tags, kept)
