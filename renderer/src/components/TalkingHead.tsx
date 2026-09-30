@@ -1,5 +1,5 @@
 import React from 'react';
-import {OffthreadVideo, Sequence, staticFile} from 'remotion';
+import {Freeze, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame} from 'remotion';
 import {lerp} from '../lib/anim';
 import {toFrame} from '../lib/time';
 import type {Clip, FaceSample} from '../lib/types';
@@ -57,6 +57,19 @@ export const videoBoxFor = (
   return {w, h, tx, ty};
 };
 
+const FILL: React.CSSProperties = {position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'};
+
+/** 소프트 컷: 앞 장면의 마지막 프레임을 멈춰 두고 몇 프레임에 걸쳐 걷어낸다(같은 프레이밍 점프컷의 '튐'을 줄임). */
+const SoftCut: React.FC<{src: string; srcFrame: number; frames: number}> = ({src, srcFrame, frames}) => {
+  const f = useCurrentFrame();
+  const o = interpolate(f, [0, frames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  return (
+    <Freeze frame={0}>
+      <OffthreadVideo src={staticFile(src)} trimBefore={Math.max(0, srcFrame)} muted style={{...FILL, opacity: o}} />
+    </Freeze>
+  );
+};
+
 export const TalkingHead: React.FC<{
   clips: Clip[];
   fps: number;
@@ -88,14 +101,20 @@ export const TalkingHead: React.FC<{
           const from = toFrame(c.start, fps);
           const to = toFrame(c.start + c.dur, fps);
           if (to <= from) return null;
+          const prev = i > 0 ? clips[i - 1] : null;
+          const softFrames = prev && c.soft ? Math.min(Math.max(2, Math.round(c.soft * fps)), to - from) : 0;
+          // 앞 클립이 화면에 마지막으로 보여 준 원본 프레임
+          const prevLast = prev
+            ? toFrame(prev.srcStart, fps) + (toFrame(prev.start + prev.dur, fps) - toFrame(prev.start, fps)) - 1
+            : 0;
           return (
             <Sequence key={i} from={from} durationInFrames={to - from} layout="none" name={`clip ${i}`}>
-              <OffthreadVideo
-                src={staticFile(c.src)}
-                trimBefore={toFrame(c.srcStart, fps)}
-                muted
-                style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'}}
-              />
+              <OffthreadVideo src={staticFile(c.src)} trimBefore={toFrame(c.srcStart, fps)} muted style={FILL} />
+              {prev && softFrames > 0 ? (
+                <Sequence durationInFrames={softFrames} layout="none" name={`soft ${i}`}>
+                  <SoftCut src={prev.src} srcFrame={prevLast} frames={softFrames} />
+                </Sequence>
+              ) : null}
             </Sequence>
           );
         })}

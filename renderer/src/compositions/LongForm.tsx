@@ -5,7 +5,9 @@ import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
 import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
 import {LivePeek} from '../components/fx/LivePeek';
-import {EndCard} from '../components/layout/EndCard';
+import {EndCard, PaperEndCard} from '../components/layout/EndCard';
+import {PAPER, PaperBg, RoughBorder, SourceCredit, TornFrame} from '../components/paper/Paper';
+import {paperSpeakerBox} from '../components/paper/PaperGraphic';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
@@ -21,11 +23,13 @@ ensureFonts();
 type RegionSpan = {start: number; end: number; kind: 'split' | 'pip' | 'title'};
 
 /** 화자 영역이 바뀌는 구간(칠판 패널/PiP/타이틀). 거의 붙어 있는 같은 종류는 하나로 합쳐 들락날락하지 않게. */
-export const buildRegionSpans = (graphics: Graphic[]): RegionSpan[] => {
+export const buildRegionSpans = (graphics: Graphic[], paper = false): RegionSpan[] => {
   const spans: RegionSpan[] = [];
   const sorted = [...graphics].sort((a, b) => a.start - b.start);
   for (const g of sorted) {
-    const kind = g.template === 'title' ? 'title' : g.layout === 'split' ? 'split' : g.layout === 'pip' ? 'pip' : null;
+    // 종이 스킨의 pip 는 화자를 그대로 두고 사진 액자만 띄운다(레퍼런스 3)
+    const kind = g.template === 'title' ? 'title' : g.layout === 'split' ? 'split'
+      : g.layout === 'pip' && !paper ? 'pip' : null;
     if (!kind) continue;
     const last = spans[spans.length - 1];
     if (last && last.kind === kind && g.start - last.end < 1.0) {
@@ -37,14 +41,25 @@ export const buildRegionSpans = (graphics: Graphic[]): RegionSpan[] => {
   return spans;
 };
 
-export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: number} => {
+export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: number; framed: number} => {
   const i = lastIndexAtOrBefore(shots, t, (s) => s.start);
-  if (i < 0) return {zoom: 1, x: 0};
+  if (i < 0) return {zoom: 1, x: 0, framed: 0};
   const s = shots[i];
-  if (t > s.end) return {zoom: s.zoomEnd, x: s.x ?? 0};
+  const fr = s.framed ? 1 : 0;
+  if (t > s.end) return {zoom: s.zoomEnd, x: s.x ?? 0, framed: fr};
   const f = s.end > s.start ? (t - s.start) / (s.end - s.start) : 0;
   // 샷 안의 느린 푸시인은 가감속(inOut)으로 — 선형이면 시작/끝에서 '툭' 걸린다
-  return {zoom: s.zoom + (s.zoomEnd - s.zoom) * EASE.inOutCubic(f), x: s.x ?? 0};
+  const cur = {zoom: s.zoom + (s.zoomEnd - s.zoom) * EASE.inOutCubic(f), x: s.x ?? 0, framed: fr};
+  const g = s.glide ?? 0;
+  if (g > 0 && i > 0 && t < s.start + g) {
+    // 컷 대신 앞 샷의 마지막 프레이밍에서 천천히 옮겨 온다(교육 영상용 젠틀 리프레이밍)
+    const p = shots[i - 1];
+    const k = EASE.inOutCubic(Math.max(0, (t - s.start) / g));
+    const pf = p.framed ? 1 : 0;
+    return {zoom: p.zoomEnd + (cur.zoom - p.zoomEnd) * k, x: (p.x ?? 0) + (cur.x - (p.x ?? 0)) * k,
+      framed: pf + (fr - pf) * k};
+  }
+  return cur;
 };
 
 export const cameraZoom = (shots: CameraShot[], t: number): number => cameraAt(shots, t).zoom;
@@ -59,7 +74,12 @@ export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
   for (const p of punches) {
     if (t < p.t || t >= p.end) continue;
     let k = 1;
-    if (p.style === 'ease') {
+    if (p.style === 'glide') {
+      // 교육 영상용: 0.7초에 걸쳐 천천히 당기고 0.9초에 걸쳐 풀린다(튀지 않게)
+      const inP = Math.min(1, (t - p.t) / 0.7);
+      const outP = Math.min(1, (p.end - t) / 0.9);
+      k = Math.min(EASE.inOutCubic(inP), EASE.inOutCubic(outP));
+    } else if (p.style === 'ease') {
       const inP = Math.min(1, ((t - p.t) * fps) / CAMERA.punchIn);
       const outP = Math.min(1, ((p.end - t) * fps) / CAMERA.punchOut);
       k = Math.min(EASE.outCubic(inP), EASE.inOutCubic(outP));
@@ -75,12 +95,15 @@ const GraphicSeq: React.FC<{
   props: LongFormProps;
   theme: ReturnType<typeof makeTheme>;
   pageLabel: string;
-}> = ({g, dur, props, theme, pageLabel}) => {
+  chapterTag: string;
+  faceX: number;
+}> = ({g, dur, props, theme, pageLabel, chapterTag, faceX}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
   return (
     <GraphicLayer g={g} frame={frame} dur={dur} fps={fps} theme={theme} brand={props.brand} episode={props.episode}
-      W={width} H={height} panelSide={props.panelSide} pageLabel={pageLabel} />
+      W={width} H={height} panelSide={props.panelSide} pageLabel={pageLabel} skin={props.skin}
+      paperTexture={props.paperTexture} chapterTag={chapterTag} faceX={faceX} />
   );
 };
 
@@ -89,9 +112,11 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const {fps, width: W, height: H} = useVideoConfig();
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
-  const spans = useMemo(() => buildRegionSpans(props.graphics), [props.graphics]);
-  const under = useMemo(() => props.graphics.filter((g) => g.template === 'title' || g.layout === 'pip'), [props.graphics]);
-  const over = useMemo(() => props.graphics.filter((g) => !(g.template === 'title' || g.layout === 'pip')), [props.graphics]);
+  const paper = props.skin === 'paper';
+  const spans = useMemo(() => buildRegionSpans(props.graphics, paper), [props.graphics, paper]);
+  const isUnder = (g: Graphic) => !paper && (g.template === 'title' || g.layout === 'pip');
+  const under = useMemo(() => props.graphics.filter(isUnder), [props.graphics, paper]);
+  const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)), [props.graphics, paper]);
 
   // ---- 카메라 ----
   const face = sampleFace(props.face, t);
@@ -107,11 +132,30 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   let radius = 0;
   let border: string | undefined;
   let capCenter = W / 2;
+  // 종이 스킨: 화자를 찢어진 액자에 담는 정도(0~1) — 칠판 패널·타이틀 구간 또는 액자 샷(레퍼런스 1·2)
+  let paperP = 0;
+  let paperBorder = 0;
+  if (paper && cam.framed > 0) {
+    const target = PAPER.framed;
+    region = lerpRect(full, target, cam.framed);
+    box = lerpBox(box, videoBoxFor(target, face, zoom, 'anchor'), cam.framed);
+    paperP = cam.framed;
+  }
   const si = lastIndexAtOrBefore(spans, t, (s) => s.start);
   const span = si >= 0 && t < spans[si].end + 0.5 ? spans[si] : null;
   if (span) {
-    const p = Math.min(enter(frame, toFrame(span.start, fps), 16), exit(frame, toFrame(span.end, fps), 12));
-    if (p > 0) {
+    // 종이 스킨은 천천히(0.7초) 액자로 들어가고 0.5초에 걸쳐 돌아온다
+    const p = paper
+      ? Math.min(enter(frame, toFrame(span.start, fps), 21, EASE.inOutCubic), exit(frame, toFrame(span.end, fps), 15))
+      : Math.min(enter(frame, toFrame(span.start, fps), 16), exit(frame, toFrame(span.end, fps), 12));
+    if (p > 0 && paper && (span.kind === 'split' || span.kind === 'title')) {
+      const target = paperSpeakerBox(props.panelSide, W);
+      const tBox = videoBoxFor(target, face, 1.02 * punchFactor(props.punches, t, fps), 'center', 0.42);
+      region = lerpRect(region, target, p);
+      box = lerpBox(box, tBox, p);
+      paperP = Math.max(paperP, p);
+      paperBorder = p;
+    } else if (p > 0) {
       let target: Rect;
       let tBox;
       if (span.kind === 'split') {
@@ -146,12 +190,20 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const textGraphicActive = props.graphics.some((g) => t >= g.start && t < g.end
     && !['lower_third', 'broll', 'photo', 'title'].includes(g.template));
 
+  const tagFor = (g: Graphic) => {
+    const k = lastIndexAtOrBefore(props.chapters, g.start + 0.05, (c) => c.start);
+    if (k < 0) return '';
+    const c = props.chapters[k];
+    const n = parseInt(c.number, 10);
+    return Number.isFinite(n) ? `${n}. ${c.title}` : c.title;
+  };
   const seq = (g: Graphic) => {
     const from = toFrame(g.start, fps);
     const dur = Math.max(1, toFrame(g.end, fps) - from);
     return (
       <Sequence key={g.id} from={from} durationInFrames={dur} name={`${g.template} ${g.id}`}>
-        <GraphicSeq g={g} dur={dur} props={props} theme={theme} pageLabel={pageFor(g)} />
+        <GraphicSeq g={g} dur={dur} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
+          faceX={sampleFace(props.face, g.start + 0.3).x} />
       </Sequence>
     );
   };
@@ -163,12 +215,27 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     <AbsoluteFill style={{background: theme.ink}}>
       <TransitionStage tx={tx}>
         {under.map(seq)}
+        {paper && paperP > 0 && frame < endStart ? (
+          <>
+            <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} />
+            <RoughBorder opacity={paperBorder} />
+            <TornFrame b={region} opacity={Math.min(1, paperP * 2)} seed={7} />
+            {cam.framed > 0.5 && chapter && !span ? (
+              <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw opacity={cam.framed} />
+            ) : null}
+          </>
+        ) : null}
         {frame < endStart ? (
           <TalkingHead clips={props.clips} fps={fps} region={region} box={box} radius={radius} border={border}
             shadow={radius > 0} />
         ) : null}
         {region === full ? <Vignette strength={0.22} /> : null}
-        {props.showChapterLabel && chapter && !fullscreenActive && !span ? (
+        {paper && props.showChapterLabel && chapter && paperP === 0 && !span
+          && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3) ? (
+          <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw
+            opacity={enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9} />
+        ) : null}
+        {!paper && props.showChapterLabel && chapter && !fullscreenActive && !span ? (
           <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
             color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
             opacity: enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9}}>
@@ -176,7 +243,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
           </div>
         ) : null}
         {over.map(seq)}
-        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} />
+        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} paper={paper}
+          face={face} zoom={zoom} />
       </TransitionStage>
       {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
       {tx.hideCaptions ? null : (
@@ -208,5 +276,9 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
 const EndCardSeq: React.FC<{theme: ReturnType<typeof makeTheme>; props: LongFormProps}> = ({theme, props}) => {
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
+  if (props.skin === 'paper') {
+    return <PaperEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters}
+      texture={props.paperTexture} W={width} H={height} />;
+  }
   return <EndCard frame={frame} theme={theme} brand={props.brand} episode={props.episode} W={width} H={height} />;
 };

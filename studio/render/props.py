@@ -227,6 +227,8 @@ def long_props(
     bgm_src: Optional[str],
     sfx: dict[str, str],
     grain_frames: list[str],
+    skin: str = "paper",
+    paper_texture: str = "",
     grain: float,
     caption_preset: str = "paper",
     endcard: bool = True,
@@ -241,7 +243,7 @@ def long_props(
     snap_cues_to_speech(cues, speech_onsets or [])
     face = remap_track(face_src, timemap)
     chapter_starts = [c["start"] for c in chapters]
-    gdicts = [g.to_dict() for g in graphics]
+    gdicts = paper_layouts([g.to_dict() for g in graphics], skin)
     clips = []
     for i, k in enumerate(timemap.keeps):
         span = timemap.edit_span_of(i)
@@ -275,6 +277,8 @@ def long_props(
         "grainFrames": [f"fx/{f}" for f in grain_frames],
         "showChapterLabel": True,
         "peekEvery": 0,   # 렌더 중 진행 화면 미리보기 간격(프레임). 최종 렌더에서만 켠다
+        "skin": skin,     # paper = 사용자 레퍼런스(구겨진 종이·찢어진 액자·주황 강조), classic = 예전 에디토리얼
+        "paperTexture": f"fx/{paper_texture}" if paper_texture else "",
     }
 
 
@@ -296,6 +300,8 @@ def short_props(
     bgm_src: Optional[str],
     sfx: dict[str, str],
     grain_frames: list[str],
+    skin: str = "paper",
+    paper_texture: str = "",
     grain: float,
     layout: str = "full",
     progress_bar: bool = False,
@@ -329,12 +335,12 @@ def short_props(
     pun = []
     for c in cues:
         if any(w.get("em") for line in c["lines"] for w in line) and 0.55 * total <= c["start"] <= 0.9 * total:
-            pun.append({"t": c["start"], "end": min(total, c["end"] + 1.2), "amount": 0.1})
+            pun.append({"t": c["start"], "end": min(total, c["end"] + 1.2), "amount": 0.06, "style": "glide"})
             break
     if cues and cues[0]["start"] < 1.5:
         # 시각 훅: 살짝 당긴 프레이밍으로 시작해 첫 자막 청크가 끝나는 자연스러운 쉼에서 풀어준다
         release = min(cues[0]["end"], 3.0, total)
-        pun.insert(0, {"t": 0.0, "end": round(max(0.8, release), 3), "amount": 0.08})
+        pun.insert(0, {"t": 0.0, "end": round(max(0.8, release), 3), "amount": 0.06, "style": "glide"})
     gdicts = [g.to_dict() for g in graphics]
     regions = speech_regions([{"lines": c["lines"]} for c in cues], merge_gap=0.8)
     return {
@@ -364,6 +370,8 @@ def short_props(
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],
         "peekEvery": 0,
+        "skin": skin,
+        "paperTexture": f"fx/{paper_texture}" if paper_texture else "",
     }
 
 
@@ -371,11 +379,43 @@ def short_props(
 # 편집 문법 엔진 결과 반영
 # ---------------------------------------------------------------------------
 
+PAPER_SPLIT = ("keyword", "definition", "quote", "stat")
+
+
+def paper_layouts(gdicts: list[dict[str, Any]], skin: str) -> list[dict[str, Any]]:
+    """종이 스킨: 전면 개념 카드(키워드·정의·인용·숫자)는 '글 왼쪽 + 화자 액자 오른쪽'(사용자 레퍼런스 1)으로.
+    전면 종이에 글만 있으면 오른쪽 절반이 비고 화자도 사라진다."""
+    if skin != "paper":
+        return gdicts
+    for g in gdicts:
+        if g.get("template") in PAPER_SPLIT and g.get("layout") == "fullscreen":
+            g["layout"] = "split"
+    return gdicts
+
+
+def mark_soft_cuts(clips: list[dict[str, Any]], camera: list[dict[str, Any]], transitions: list[dict[str, Any]],
+                   soft: float) -> int:
+    """프레이밍이 그대로 이어지는 점프컷에 소프트 컷(앞 장면 마지막 프레임을 soft 초 동안 섞기)을 표시.
+    프레이밍이 바뀌는 컷(카메라 경계)·전환이 있는 컷은 그대로 둔다. 길이·싱크는 바뀌지 않는다."""
+    bounds = [float(s["start"]) for s in camera if not s.get("glide")]
+    tx = [float(e["t"]) for e in transitions]
+    n = 0
+    for c in clips[1:]:
+        c.pop("soft", None)
+        t = float(c["start"])
+        if soft <= 0 or any(abs(b - t) < 0.05 for b in bounds) or any(abs(x - t) < 0.4 for x in tx):
+            continue
+        c["soft"] = round(soft, 3)
+        n += 1
+    return n
+
+
 def apply_edit(props: dict[str, Any], ed: Any) -> dict[str, Any]:
-    """studio/edit/grammar.py 의 EditDecisions → props(카메라·펀치인·전환·강조 자막)."""
+    """studio/edit/grammar.py 의 EditDecisions → props(카메라·펀치인·전환·강조 자막·소프트 컷)."""
     props["camera"] = ed.camera
     props["punches"] = ed.punches
     props["transitions"] = ed.transitions
+    mark_soft_cuts(props["clips"], ed.camera, ed.transitions, float(getattr(ed, "soft_cut", 0.0) or 0.0))
     if "callouts" in props or getattr(ed, "callouts", None):
         props["callouts"] = list(getattr(ed, "callouts", []) or [])
     for i in ed.impact_cues:

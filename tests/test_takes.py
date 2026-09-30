@@ -64,6 +64,18 @@ def test_intentional_repetition_is_kept():
     assert text(kept) == s and not rem
 
 
+def test_completed_sentence_between_similar_openings_is_not_a_restart():
+    """'좋은 질문에는 … 있습니다.' 다음 문장이 '좋은 질문에서'를 다시 말해도 앞 문장은 완성된 문장 — 지우면 안 된다.
+    (VAD 가 어절마다 쉼을 잡아도)"""
+    ws = say("좋은 질문에는 세 가지 조건이 있습니다.", 0.9, "결국 좋은 디자인은", 0.4, "좋은 질문에서 시작합니다.")
+    kept, rem = clean_words(ws, pause=lambda a, b: 0.5)
+    assert text(kept) == text(ws) and not rem
+    # 끝난 문장이라도 'NG(다시 할게요)'가 끼어 있으면 버린 시도
+    ws = say("좋은 질문에는 세 가지가 있습니다.", 0.6, "아 다시 할게요", 1.0, "좋은 질문에는 세 가지 조건이 있습니다.")
+    kept, _ = clean_words(ws, pause=lambda a, b: 0.5)
+    assert text(kept) == "좋은 질문에는 세 가지 조건이 있습니다."
+
+
 def test_fillers_are_removed_but_words_starting_with_them_stay():
     kept, rem = clean_words(say("어", 0.3, "저는 일단", 0.2, "어", 0.2, "홍익대학교 산업 디자인을 전공하고 있어요. 아이디어가 중요해요."))
     assert text(kept) == "저는 일단 홍익대학교 산업 디자인을 전공하고 있어요. 아이디어가 중요해요."

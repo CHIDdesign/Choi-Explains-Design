@@ -1,7 +1,7 @@
 import type {Layout, TemplateName} from '../lib/types';
 import type {Theme} from './tokens';
 
-export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo';
+export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo' | 'crumple';
 
 export type Surface = {
   name: SurfaceName;
@@ -28,6 +28,10 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
     case 'signal':
       return {name, bg: theme.accent, fg: theme.accentDeep, dim: 'rgba(0,0,0,0.45)', faint: 'rgba(0,0,0,0.12)',
         accent: '#111111', rule: 'rgba(0,0,0,0.25)', chalk: false};
+    case 'crumple':
+      // 종이 콜라주 스킨: 구겨진 짙은 종이 위 흰 글씨 + 주황 강조(레퍼런스 측정값)
+      return {name, bg: '#2A2A2F', fg: '#F4F4F5', dim: 'rgba(244,244,245,0.66)', faint: 'rgba(244,244,245,0.14)',
+        accent: '#F85301', rule: 'rgba(244,244,245,0.28)', chalk: false};
     case 'photo':
       return {name, bg: '#0B0B0B', fg: '#FFFFFF', dim: 'rgba(255,255,255,0.7)', faint: 'rgba(255,255,255,0.15)',
         accent: theme.accentLight, rule: 'rgba(255,255,255,0.3)', chalk: false};

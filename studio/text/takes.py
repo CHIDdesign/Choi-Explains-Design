@@ -129,10 +129,12 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             if not ((j_start and (i_start or strong)) or (strong and i_start)):
                 continue
             tail = [live[x] for x in range(ki + k, kj) if not drop[live[x]]]
-            if len(tail) > MAX_TAIL:
-                if len(tail) > MAX_TAIL_OPEN or any(is_final(words[x]) and not _covered(toks, live, x, ki, kj)
-                                                     for x in tail[:-1]):
-                    continue
+            # 꼬리 안에서 문장이 끝났는데(다시 나오지 않는 끝말) NG 말도 없으면 버려진 시도가 아니라 완성된 다른 문장이다
+            # 예) '좋은 질문에는 … 있습니다. 결국 좋은 디자인은 / 좋은 질문에서' — 짧은 꼬리여도 지우지 않는다
+            ng_tail = any(k_ in "".join(toks[x] for x in tail) for k_ in NG_WORDS)
+            open_final = any(is_final(words[x]) and not _covered(toks, live, x, ki, kj) for x in tail[:-1])
+            if (open_final and not ng_tail) or len(tail) > MAX_TAIL_OPEN:
+                continue
             cand = (k, chars, -ki)
             if best is None or cand > best[0]:
                 best = (cand, ki)

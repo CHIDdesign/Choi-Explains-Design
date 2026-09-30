@@ -24,56 +24,72 @@ FPS_BASE = 30.0
 PARAMS: dict[str, Any] = {
     # 카메라(점프컷 프레이밍)
     # 셜록현준 스토리보드 실측: 2~3 앵글을 5~8초마다 교차, 1080p 소스는 100/112/120%, 점프컷마다 12% 이상 차이
+    # 2026-09-30 사용자 피드백: "너무 훅훅 튀어 정신없다, 교육 영상이니 젠틀하게" → 프레이밍 차이를 줄이고(112→106%),
+    # 5~8초마다 바꾸던 앵글 교차를 없앴다. 프레이밍은 NG 를 잘라낸 큰 점프·챕터·그래픽 복귀에서만 바꾸고,
+    # 그 사이는 아주 느린 드리프트(가감속). 같은 프레이밍의 점프컷은 0.1초 부드러운 섞기(soft_cut)로 가린다.
     "wide": 1.0,
-    "medium": 1.12,             # 컷마다 교차하는 두 번째 '카메라'
-    "medium_x": 0.028,          # 미디엄은 얼굴을 살짝 옆으로(3분할) — 교차 방향(눈 위치 이동 ≤10%)
-    "min_shot": 4.0,            # 이보다 짧게 프레이밍을 바꾸지 않는다(초)
-    "max_shot": 8.5,            # 같은 프레이밍이 이보다 길면 문장 경계에서 전환(상한 20초)
-    "big_jump": 1.5,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 반드시 프레이밍 전환
-    "push_per_sec": 0.005,      # 긴 샷의 느린 푸시인 0.5%/초 — 최대 6%, 하드컷으로 리셋
-    "push_max": 0.06,
-    # 펀치인
-    # 강조 펀치인 +15~20%(하드컷), 1~4초 유지, 분당 0.75회(최대 1.5), 영상당 12회
-    "punch": {1: 0.10, 2: 0.15, 3: 0.20},
-    "punch_min_gap": 30.0,
-    "punch_max": 3.8,           # 펀치인 유지 최대(초)
-    "punch_cap": 12,
+    "medium": 1.06,             # 두 번째 '카메라'(차이는 작게)
+    "medium_x": 0.016,
+    "min_shot": 6.0,            # 이보다 짧게 프레이밍을 바꾸지 않는다(초)
+    "max_shot": 60.0,           # 문장 경계에서 억지로 바꾸지 않는다(사실상 끔)
+    "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
+    "push_per_sec": 0.004,      # 느린 드리프트 0.4%/초 — 최대 5%
+    "push_max": 0.05,
+    "soft_cut": 0.1,            # 같은 프레이밍으로 이어지는 점프컷: 앞 장면 마지막 프레임을 0.1초 동안 섞어 튐을 줄임
+    # 종이 스킨의 세 번째 '앵글': 화자를 찢어진 액자에 담아 종이 위에(사용자 레퍼런스 2). 와이드↔미디엄 사이사이,
+    # 8초 이상인 샷만, 0.6초에 걸쳐 천천히 들어가고 나온다.
+    "framed_every": 2,          # 앵글 전환 두 번에 한 번은 액자 샷
+    "framed_min": 8.0,
+    "framed_glide": 0.6,
+    # 강조: 하드컷 펀치인(+15~20%) 대신 0.7초에 걸쳐 천천히 당기는 글라이드(+4~9%), 영상당 8회
+    "punch": {1: 0.04, 2: 0.06, 3: 0.09},
+    "punch_min_gap": 40.0,
+    "punch_max": 4.5,           # 강조 유지 최대(초)
+    "punch_cap": 8,
     # 전환 — 프리미엄 채널은 하드컷·펀치컷이 95% 이상. 눈에 띄는 전환은 롱폼 45~90초에 하나, 챕터 경계는 항상.
-    "tx_min_gap": 60.0,         # 챕터 외 전환 사이 최소 간격(초) — 넘치면 하드컷(하드컷 ≥90%)
+    "tx_min_gap": 45.0,         # 챕터 외 전환 사이 최소 간격(초) — 부드러운 전환만(블러·푸시·와이프)
     "tx_per_min": 1,            # ±30초 창 안의 최대 전환 수(챕터 포함)
     "tx_frames": {"whip": 8, "zoom": 10, "blur": 12, "push": 12, "flash": 9, "dip": 15, "wipe": 15, "leak": 24},
     # 효과음(피크 -1dBFS 정규화 후 게인, dB). 최종 마스터(-14 LUFS)에서 피크가 대략 게인+1dB:
     # whoosh ≈ -20dBFS · pop ≈ -22 · impact ≈ -16 (리서치: whoosh -24 · pop -26 · impact -18, 숏폼은 목소리보다 10~18dB 아래)
-    "sfx_gain": {"whoosh_fast": -21, "whoosh_soft": -22, "whoosh_deep": -21, "swoosh_short": -23, "pop": -23,
-                 "click": -27, "riser": -23, "impact": -17, "sub_drop": -19, "ding": -25, "camera_shutter": -22,
-                 "reverse": -22, "typing": -28, "paper": -24, "glitch": -26},
+    # 교육 영상이라 한 단계 낮고 부드럽게, 종류는 다양하게(종이·스와이프·팝·클릭·타자·작은 종·셔터)
+    "sfx_gain": {"whoosh_fast": -25, "whoosh_soft": -25, "whoosh_deep": -25, "swoosh_short": -26, "pop": -27,
+                 "click": -29, "riser": -28, "impact": -24, "sub_drop": -26, "ding": -28, "camera_shutter": -26,
+                 "reverse": -26, "typing": -31, "paper": -24, "glitch": -30, "swipe": -26, "bell_soft": -28,
+                 "notification": -30},
     "sfx_min_gap": 2.0,         # 효과음 사이 최소 2초
     "sfx_per_min": 4,           # ±30초 창에 최대 4개(평균 분당 2개)
     "list_click_max": 6,
     # 강조 자막·콜아웃
     "impact_min_gap": 22.0,
     "callout_center": 0.14,     # 얼굴이 가운데에서 이 비율 안이면 콜아웃 동안 반대쪽으로 리프레이밍
-    "callout_zoom": 1.18,
-    "callout_shift": 0.085,     # 화면 폭 비율(확대 여유 안에서만 실제로 움직인다)
+    "callout_zoom": 1.10,
+    "callout_shift": 0.06,      # 화면 폭 비율(확대 여유 안에서만 실제로 움직인다)
+    "callout_glide": 0.7,       # 콜아웃 자리 만들기: 컷 대신 0.7초에 걸쳐 천천히 옮기고(돌아올 때 0.9초)
     # 배경음악
     "swell_intro": 1.4,
 }
 
 TX_FOR_TEMPLATE = {
-    # 얼굴 → 전체화면 그래픽으로 들어갈 때
+    # 얼굴 → 전체화면 그래픽으로 들어갈 때 — 부드러운 것만(휩·플래시·줌 없음)
     "chapter": "wipe",
     "title": "leak",
-    "keyword": "whip",
+    "keyword": "blur",
     "definition": "push",
     "quote": "blur",
-    "broll": "whip",
+    "broll": "blur",
     "photo": "blur",
-    "motion": "zoom",
-    "stat": "flash",
+    "motion": "push",
+    "stat": "blur",
 }
 TX_DEFAULT_IN = "push"
-SFX_FOR_TX = {"whip": "whoosh_fast", "zoom": "whoosh_deep", "blur": "whoosh_soft", "push": "swoosh_short",
-              "wipe": "whoosh_soft", "leak": "reverse", "flash": "impact", "dip": ""}
+SFX_FOR_TX = {"whip": "whoosh_soft", "zoom": "whoosh_soft", "blur": "whoosh_soft", "push": "swipe",
+              "wipe": "paper", "leak": "reverse", "flash": "whoosh_soft", "dip": ""}
+# 그래픽이 나올 때 효과음 — 종류를 다양하게(템플릿 성격에 맞춰)
+SFX_FOR_TEMPLATE = {"keyword": "pop", "definition": "typing", "quote": "typing", "photo": "camera_shutter",
+                    "broll": "whoosh_soft", "motion": "swipe", "stat": "ding", "compare": "paper", "list": "paper",
+                    "process": "paper", "cycle": "swipe", "timeline": "paper", "pyramid": "paper",
+                    "concept": "paper", "image_note": "paper", "lower_third": "swoosh_short"}
 LIST_TEMPLATES = ("list", "process", "cycle", "timeline", "pyramid")
 
 MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")
@@ -103,6 +119,7 @@ class EditDecisions:
     bgm_swells: list[tuple[float, float]] = field(default_factory=list)
     bgm_switch: list[float] = field(default_factory=list)  # 배경음악을 다음 곡으로 바꿀 시각(챕터 카드)
     bgm_dips: list[tuple[float, float]] = field(default_factory=list)  # 음악을 비울 구간(핵심 문장 직전)
+    soft_cut: float = 0.0          # 같은 프레이밍 점프컷을 섞는 시간(초) — props.mark_soft_cuts
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -142,8 +159,10 @@ def _cap_per_minute(events: list[dict], per_min: int, key: str = "t") -> list[di
     return sorted(out, key=lambda e: e[key])
 
 
-def _carve_shot(shots: list[dict], a: float, b: float, new: dict, min_len: float = 1.0) -> list[dict]:
-    """[a, b] 구간을 new 샷으로 바꾼다. 남는 조각이 min_len 보다 짧으면 이웃에 붙인다."""
+def _carve_shot(shots: list[dict], a: float, b: float, new: dict, min_len: float = 1.0,
+                glide_back: float = 0.0) -> list[dict]:
+    """[a, b] 구간을 new 샷으로 바꾼다. 남는 조각이 min_len 보다 짧으면 이웃에 붙인다.
+    glide_back > 0 이면 b 뒤 조각은 그 시간 동안 원래 프레이밍으로 천천히 돌아온다."""
     out: list[dict] = []
     for sh in shots:
         if sh["end"] <= a or sh["start"] >= b:
@@ -152,7 +171,10 @@ def _carve_shot(shots: list[dict], a: float, b: float, new: dict, min_len: float
         if sh["start"] < a:
             out.append({**sh, "end": round(a, 3), "zoomEnd": sh["zoom"]})
         if sh["end"] > b:
-            out.append({**sh, "start": round(b, 3), "zoom": sh["zoomEnd"]})
+            back = {**sh, "start": round(b, 3), "zoom": sh["zoomEnd"]}
+            if glide_back > 0:
+                back["glide"] = glide_back
+            out.append(back)
     out.append(dict(new))
     out.sort(key=lambda s: s["start"])
     merged: list[dict] = []
@@ -223,8 +245,10 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
         must = c in chapter_set or c in cover_ends or (c in big and since >= 1.2)
         if must or since >= P["min_shot"]:
             bounds.append(c)
-    # 얼굴만 너무 오래 이어지면 문장 경계에서 한 번 더(2캠 스위칭 느낌)
+    # 얼굴만 너무 오래 이어지면 문장 경계에서 한 번 더 — 컷이 아닌 곳이면 컷 대신 천천히 옮겨 간다(glide)
     filled = [bounds[0]]
+    cut_set = {round(c, 3) for c in cuts}
+    fillers: set[float] = set()
     extra = sorted(s for s in sentence_starts if 0.5 < s < total - 1.0)
     for b in bounds[1:] + [total]:
         while b - filled[-1] > P["max_shot"]:
@@ -233,7 +257,9 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
             if not mid:
                 break
             target = filled[-1] + P["max_shot"] * 0.6
-            filled.append(min(mid, key=lambda s: abs(s - target)))
+            pick = min(mid, key=lambda s: abs(s - target))
+            filled.append(pick)
+            fillers.add(round(pick, 3))
         if b < total:
             filled.append(b)
     # 너무 가까운 경계(1초 미만)는 하나로 — 0.1초짜리 샷은 튀어 보인다(앞 경계를 남김, 챕터 경계 우선)
@@ -248,22 +274,35 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
     shots: list[dict] = []
     level = "wide"
     side = 1 if rnd.random() > 0.5 else -1
+    switches = 0
     for i in range(len(bounds) - 1):
         a, b = bounds[i], bounds[i + 1]
         if b - a < 0.05:
             continue
         if i == 0 or round(a, 3) in chapter_set:
             level = "wide"
+        elif level != "wide":
+            level = "wide"
         else:
-            level = "medium" if level == "wide" else "wide"
-        zoom = P[level]
+            switches += 1
+            every = int(P.get("framed_every", 0) or 0)
+            level = "framed" if every and switches % every == 0 and b - a >= P.get("framed_min", 8.0) else "medium"
+        zoom = P["wide"] if level == "framed" else P[level]
         x = 0.0
         if level == "medium":
             side = -side
             x = side * P["medium_x"]
         push = min(P["push_max"], P["push_per_sec"] * (b - a)) if b - a > 5.0 else 0.0
-        shots.append({"start": round(a, 3), "end": round(b, 3), "zoom": round(zoom, 4),
-                      "zoomEnd": round(zoom * (1 + push), 4), "x": round(x, 4)})
+        shot = {"start": round(a, 3), "end": round(b, 3), "zoom": round(zoom, 4),
+                "zoomEnd": round(zoom * (1 + push), 4), "x": round(x, 4)}
+        if round(a, 3) in fillers and not any(abs(a - c) < 0.05 for c in cut_set):
+            shot["glide"] = 1.2
+        if level == "framed":
+            shot["framed"] = True
+            shot["glide"] = P["framed_glide"]
+        elif shots and shots[-1].get("framed"):
+            shot["glide"] = P["framed_glide"]          # 액자에서 나올 때도 천천히
+        shots.append(shot)
     return shots
 
 
@@ -275,7 +314,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                     chapters: list[dict], moments: list[Moment], cues: list[dict], sentence_starts: list[float],
                     text_graphic_spans: Optional[list[tuple[float, float]]] = None, endcard: bool = True,
                     face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1) -> EditDecisions:
-    ed = EditDecisions()
+    ed = EditDecisions(soft_cut=P["soft_cut"])
     covers = _covers(graphics, speech_total)
     chapter_starts = [c["start"] for c in chapters if c["start"] > 0.5]
     ed.camera = camera_plan(timemap, speech_total, chapter_starts=chapter_starts, covers=covers,
@@ -300,9 +339,9 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         # 그래픽 → 얼굴 복귀: 다음 커버가 바로 붙어 있으면 그 전환이 대신한다
         nxt = covers[k + 1][0] if k + 1 < len(covers) else None
         if b < speech_total - 0.5 and (nxt is None or nxt - b > 0.6):
-            back = "blur" if tpl in ("chapter", "title", "quote", "photo") else ("whip" if tpl == "broll" else "push")
-            tx.append({"t": b, "type": back, "dir": ("right" if kind_dir == "left" else "left") if back == "whip"
-                       else ("down" if back == "push" else None), "prio": 1, "why": f"{tpl} → 얼굴"})
+            back = "blur" if tpl in ("chapter", "title", "quote", "photo", "broll") else "push"
+            tx.append({"t": b, "type": back, "dir": "down" if back == "push" else None, "prio": 1,
+                       "why": f"{tpl} → 얼굴"})
     major = _thin_by_gap([e for e in tx if e["prio"] >= 3], 8.0)          # 챕터·타이틀: 항상
     minor = [e for e in tx if e["prio"] < 3 and all(abs(e["t"] - m["t"]) >= 20.0 for m in major)]
     minor = _thin_by_gap(minor, P["tx_min_gap"])
@@ -325,7 +364,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         end = min(end, nxt_cover - 0.05)
         if end - m.t < 0.6:
             continue
-        style = "ease" if m.kind in ("joke", "question") else "cut"
+        style = "glide"
         amt = P["punch"].get(max(1, min(3, m.intensity)), 0.16)
         punches.append({"t": round(m.t, 3), "end": round(end, 3), "amount": amt, "style": style,
                         "kind": m.kind, "intensity": m.intensity})
@@ -367,7 +406,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
             continue
         x = -P["callout_shift"] if c["side"] == "right" else P["callout_shift"]
         ed.camera = _carve_shot(ed.camera, c["start"], c["end"], {
-            "start": c["start"], "end": c["end"], "zoom": P["callout_zoom"], "zoomEnd": P["callout_zoom"], "x": x})
+            "start": c["start"], "end": c["end"], "zoom": P["callout_zoom"], "zoomEnd": P["callout_zoom"], "x": x,
+            "glide": P["callout_glide"]}, glide_back=P["callout_glide"] + 0.2)
         reframed.add(round(c["start"] + 0.08, 3))
     if reframed:
         ed.punches = [p for p in ed.punches if round(p["t"], 3) not in reframed]
@@ -402,18 +442,15 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         if tpl == "chapter":
             add(a, "riser", 4, "챕터 진입 riser")
         elif tpl == "title":
-            add(a + 0.15, "impact", 6, "타이틀 카드")
-        elif tpl == "lower_third":
-            add(a, "swoosh_short", 1, "이름 자막")
+            add(a + 0.15, "bell_soft", 6, "타이틀 카드")
         elif not near_tx:
-            add(a, "camera_shutter" if tpl == "photo" else "swoosh_short", 2, f"{tpl} 등장")
+            add(a, SFX_FOR_TEMPLATE.get(tpl, "paper"), 2, f"{tpl} 등장")
         if tpl in LIST_TEMPLATES:
             for i, rt in enumerate(list_reveal_times(g)[: P["list_click_max"]]):
                 if i:  # 첫 항목은 등장 효과음과 겹치므로 생략
                     add(rt, "click", 1, "목록 항목")
     for p in punches:
-        cat = "sub_drop" if p["intensity"] >= 3 else ("pop" if p["style"] == "cut" else "")
-        add(p["t"], cat, 4 if p["intensity"] >= 3 else 2, f"펀치인({p['kind']})")
+        add(p["t"], "pop" if p["intensity"] >= 2 else "", 4 if p["intensity"] >= 3 else 2, f"강조({p['kind']})")
     # 결론·감정 문장 밑에는 효과음을 깔지 않는다(리서치) — 대신 배경음악을 0.8초 전에 비워 '숨'을 준다
     if endcard and total > speech_total + 0.5:
         add(speech_total + 0.2, "whoosh_soft", 3, "엔드카드")
@@ -452,23 +489,23 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
 
 def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cues: list[dict],
                      moments: list[Moment], P: dict = PARAMS, seed: int = 2) -> EditDecisions:
-    """숏폼: 더 빠른 호흡 — 2~3초마다 프레이밍이 바뀌고, 재배치(콜드 오픈)된 이음새는 휩으로 넘긴다."""
-    ed = EditDecisions()
+    """숏폼: 롱폼보다 빠른 호흡이지만 교육 채널답게 부드럽게 — 프레이밍은 컷 지점에서만 작게(1.00↔1.06) 바꾸고,
+    같은 프레이밍 점프컷은 소프트 컷, 강조는 글라이드."""
+    ed = EditDecisions(soft_cut=P["soft_cut"])
     rnd = random.Random(seed)
-    # 1) 카메라: 컷/자막 청크마다 1.00 ↔ 1.10 교차(세로 크롭이 이미 1.78배 확대라 1.12 이하), 샷 최소 1.2초,
-    #    3초마다 화면 변화. 샷 안에서는 초당 1.2% 이하의 느린 푸시(최대 5%).
-    marks = sorted({round(c, 3) for c in timemap.cut_points()} | {round(c["start"], 3) for c in cues})
+    # 1) 카메라: 컷 지점에서만 1.00 ↔ 1.06 교차(샷 최소 3.5초). 샷 안에서는 느린 드리프트(최대 4%).
+    marks = sorted({round(c, 3) for c in timemap.cut_points()})
     bounds = [0.0]
     for m in marks:
-        if m - bounds[-1] >= 2.4 and m < total - 1.0:
+        if m - bounds[-1] >= 3.5 and m < total - 1.0:
             bounds.append(m)
     bounds.append(total)
     level = rnd.choice([0, 1])
     for i in range(len(bounds) - 1):
         a, b = bounds[i], bounds[i + 1]
-        z = 1.10 if level else 1.0
+        z = 1.06 if level else 1.0
         level ^= 1
-        push = min(0.05, 0.012 * (b - a)) if b - a > 3.5 else 0.0
+        push = min(0.04, 0.008 * (b - a)) if b - a > 3.5 else 0.0
         ed.camera.append({"start": round(a, 3), "end": round(b, 3), "zoom": z, "zoomEnd": round(z * (1 + push), 4)})
     # 2) 전환: 콜드 오픈 → 본론으로 되감는 이음새 하나만(블러 디졸브 9프레임 = '되감기' 신호). 나머지는 하드컷.
     keeps = timemap.keeps
@@ -483,18 +520,19 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
             break
         if any(abs(m.t - p["t"]) < 5 for p in ed.punches) or m.t < 1.0 or m.t > total - 1.0:
             continue
-        ed.punches.append({"t": round(m.t, 3), "end": round(min(m.end + 0.1, m.t + 2.5, total), 3),
-                           "amount": 0.08 if m.intensity >= 3 else 0.05, "style": "cut"})
+        ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.3, m.t + 1.8), m.t + 3.0, total), 3),
+                           "amount": 0.07 if m.intensity >= 3 else 0.05, "style": "glide"})
     ed.punches.sort(key=lambda p: p["t"])
-    # 4) 효과음: 한 편에 2~4개, 10초에 하나 이하(목소리보다 10~18dB 아래)
-    sfx: list[dict] = [{"t": 0.02, "category": "impact", "gain_db": P["sfx_gain"]["impact"] - 2, "prio": 6,
+    # 4) 효과음: 그래픽 성격에 맞춰 다양하게(종이·팝·타자·스와이프…), 6초에 하나 이하, 한 편에 최대 6개
+    sfx: list[dict] = [{"t": 0.02, "category": "swipe", "gain_db": P["sfx_gain"]["swipe"], "prio": 6,
                         "why": "훅 첫 프레임"}]
     for e in ed.transitions:
-        sfx.append({"t": e["t"], "category": "whoosh_soft", "gain_db": P["sfx_gain"]["whoosh_soft"], "prio": 5,
+        sfx.append({"t": e["t"], "category": "reverse", "gain_db": P["sfx_gain"]["reverse"], "prio": 5,
                     "why": "되감기 이음새"})
     for g in graphics:
-        sfx.append({"t": g["start"], "category": "swoosh_short", "gain_db": P["sfx_gain"]["swoosh_short"],
-                    "prio": 3, "why": "도식 패널"})
+        cat = SFX_FOR_TEMPLATE.get(g.get("template", ""), "paper")
+        sfx.append({"t": g["start"], "category": cat, "gain_db": P["sfx_gain"].get(cat, -26), "prio": 3,
+                    "why": f"{g.get('template', '')} 등장"})
     for p in ed.punches:
         sfx.append({"t": p["t"], "category": "pop", "gain_db": P["sfx_gain"]["pop"], "prio": 2, "why": "펀치인"})
     for c in cues:
@@ -504,7 +542,7 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
     if total > 8:
         sfx.append({"t": max(0.0, total - 1.6), "category": "ding", "gain_db": P["sfx_gain"]["ding"], "prio": 2,
                     "why": "페이오프"})
-    ed.sfx = _thin_by_gap(sfx, 10.0)[:4]
+    ed.sfx = _thin_by_gap(sfx, 6.0)[:6]
     ed.bgm_swells = [(0.0, 0.8)]
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),
                 "sfx": len(ed.sfx)}

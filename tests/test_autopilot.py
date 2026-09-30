@@ -48,9 +48,15 @@ def test_camera_alternates_and_never_flickers():
     zooms = [c["zoom"] for c in ed.camera]
     assert set(zooms) == {PARAMS["wide"], PARAMS["medium"]}
     assert all(c["end"] - c["start"] >= 0.99 for c in ed.camera[:-1])
-    # 같은 프레이밍이 20초 넘게 이어지지 않는다(셜록현준: 5~8초마다 앵글 교차)
-    assert max(c["end"] - c["start"] for c in ed.camera) <= 20.0
-    # 긴 샷은 느린 푸시인(최대 6%)
+    # 교육 영상용 젠틀 편집: 앵글 차이는 작고(≤6%), 프레이밍은 NG 점프·챕터·그래픽 복귀에서만 바뀐다
+    assert PARAMS["medium"] <= 1.07
+    cuts = {round(c, 3) for c in tm.cut_points()} | {100.1}
+    covers_end = {17.4, 48.0, 75.0, 102.6, 140.0}
+    for c in ed.camera[1:]:
+        if c.get("glide"):
+            continue
+        assert any(abs(c["start"] - x) < 0.01 for x in cuts | covers_end), c
+    # 긴 샷은 느린 드리프트(최대 5%)
     assert all(c["zoomEnd"] / c["zoom"] - 1 <= PARAMS["push_max"] + 1e-6 for c in ed.camera)
 
 
@@ -62,13 +68,16 @@ def test_transitions_are_restrained():
     for a, b in zip(minor, minor[1:]):
         assert b["t"] - a["t"] >= PARAMS["tx_min_gap"]  # 하드컷 ≥ 90%
     assert all(0.2 <= t["dur"] <= 1.0 for t in ed.transitions)
+    assert not {"whip", "flash", "zoom"} & set(types)      # 튀는 전환은 쓰지 않는다
 
 
 def test_punch_callout_and_sfx_rules():
     _, _, ed = _long_case()
     ts = [p["t"] for p in ed.punches]
     assert 30.0 in ts and 31.0 not in ts and 44.0 not in ts     # 간격·풀스크린 그래픽 규칙
-    assert ed.punches[0]["amount"] == PARAMS["punch"][3]
+    assert ed.punches[0]["amount"] == PARAMS["punch"][3] <= 0.1
+    assert all(p["style"] == "glide" for p in ed.punches)      # 하드컷 줌 없이 천천히 당긴다
+    assert not {"impact", "sub_drop", "glitch"} & {s["category"] for s in ed.sfx}   # 거친 효과음 없음
     c = ed.callouts[0]
     assert c["text"] == "좋은 디자인은\n질문에서" and c["highlight"] == "질문" and c["label"] == "핵심"
     assert c["side"] == "right"                                  # 얼굴이 왼쪽(x=0.35) → 오른쪽 빈 공간
@@ -93,8 +102,11 @@ def test_centered_speaker_is_reframed_for_callout():
     assert shot["start"] == pytest.approx(c["start"]) and shot["end"] == pytest.approx(c["end"])
     assert shot["zoom"] == PARAMS["callout_zoom"]
     assert (shot["x"] < 0) == (c["side"] == "right")          # 콜아웃 반대쪽으로 화자를 민다
+    assert shot["glide"] > 0.3                                 # 컷이 아니라 천천히 옮겨 간다
+    back = next(s for s in ed.camera if abs(s["start"] - c["end"]) < 0.01)
+    assert back["glide"] > 0.3                                 # 돌아올 때도
     assert not any(abs(p["t"] - 20.0) < 0.01 for p in ed.punches)
-    assert any(s["category"] in ("sub_drop", "pop") and abs(s["t"] - 20.0) < 0.01 for s in ed.sfx)
+    assert any(s["category"] == "pop" and abs(s["t"] - 20.0) < 0.01 for s in ed.sfx)
     assert all(s["end"] - s["start"] >= 0.99 for s in ed.camera[:-1])
 
 
@@ -112,9 +124,23 @@ def test_short_edit_is_fast_but_sparse():
     ed = build_short_edit(timemap=tm, total=total, graphics=[{"start": 8.0, "end": 12.0}], cues=cues,
                           moments=[Moment(t=20.0, end=22.0, intensity=3)])
     assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "blur"       # 되감기 이음새 하나
-    assert {c["zoom"] for c in ed.camera} == {1.0, 1.1}
-    assert all(c["end"] - c["start"] >= 1.0 for c in ed.camera[:-1])
-    assert 2 <= len(ed.sfx) <= 4
+    assert {c["zoom"] for c in ed.camera} <= {1.0, 1.06}
+    assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
+    assert all(p["style"] == "glide" for p in ed.punches)
+    assert 2 <= len(ed.sfx) <= 6 and not {"impact", "sub_drop"} & {s["category"] for s in ed.sfx}
+    assert ed.soft_cut > 0
+
+
+def test_soft_cuts_only_where_framing_continues():
+    from studio.render.props import mark_soft_cuts
+    clips = [{"start": 0.0}, {"start": 5.0}, {"start": 9.0}, {"start": 14.0}, {"start": 20.0}]
+    camera = [{"start": 0.0, "end": 9.0}, {"start": 9.0, "end": 20.0},
+              {"start": 20.0, "end": 30.0, "glide": 0.7}]
+    n = mark_soft_cuts(clips, camera, [{"t": 14.1}], 0.1)
+    assert n == 2
+    assert clips[1]["soft"] == 0.1 and clips[4]["soft"] == 0.1    # 같은 프레이밍·글라이드 샷
+    assert "soft" not in clips[2] and "soft" not in clips[3]       # 앵글 전환·전환 효과가 있는 컷
+    assert "soft" not in clips[0]
 
 
 # ---------------------------------------------------------------------------
@@ -262,3 +288,36 @@ def test_voice_is_aligned_when_audio_stream_starts_late(tmp_path):
                           "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
     flash = int(np.argmax(np.frombuffer(raw, np.uint8).reshape(-1, 64).mean(1) > 128)) / 30
     assert abs((beep - flash) - 0.3) < 0.05, (beep, flash)   # 원본처럼 소리가 화면보다 0.3초 늦게
+
+
+# ---------------------------------------------------------------------------
+# 종이 콜라주 스킨(사용자 레퍼런스)
+# ---------------------------------------------------------------------------
+
+def test_paper_texture_matches_reference_paper():
+    """레퍼런스 종이 측정값: 평균 RGB ≈ (40, 40, 45), 밝기 편차 ≈ 3."""
+    from studio.render.assets import crumpled_paper
+    a = crumpled_paper(480, 270).astype(float)
+    mean = a.mean((0, 1))
+    assert abs(mean[0] - 40) < 5 and mean[2] - mean[0] > 3        # 짙은 차콜, 살짝 푸른 기
+    assert 1.5 < a.mean(-1).std() < 7
+
+
+def test_paper_skin_moves_fullscreen_concepts_next_to_speaker():
+    from studio.render.props import paper_layouts
+    gs = [{"template": "definition", "layout": "fullscreen"}, {"template": "process", "layout": "fullscreen"},
+          {"template": "keyword", "layout": "overlay"}]
+    out = paper_layouts([dict(g) for g in gs], "paper")
+    assert [g["layout"] for g in out] == ["split", "fullscreen", "overlay"]
+    assert [g["layout"] for g in paper_layouts([dict(g) for g in gs], "classic")] == ["fullscreen", "fullscreen",
+                                                                                      "overlay"]
+
+
+def test_camera_plan_uses_framed_shots_gently():
+    tm = TimeMap([Span(0, 12), Span(14, 30), Span(32, 50), Span(52, 70), Span(72, 90)])
+    shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[])
+    framed = [s for s in shots if s.get("framed")]
+    assert framed and all(s["end"] - s["start"] >= PARAMS["framed_min"] for s in framed)
+    for i, s in enumerate(shots):
+        if s.get("framed") or (i and shots[i - 1].get("framed")):
+            assert s["glide"] == PARAMS["framed_glide"]          # 액자 들어가고 나올 때 천천히

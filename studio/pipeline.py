@@ -47,8 +47,9 @@ from .media.ffmpeg import FFmpeg, MediaInfo, hdr_to_sdr_filter, pick_output_fps
 from .media.mix import BgmPlan, SfxCue, mix, mux_final
 from .models import Span, Tag, TimeMap, Utterance, Word
 from .paths import USER_DIR
-from .render.assets import copy_fonts, make_grain
-from .render.props import Episode, apply_edit, long_props, short_props, strip_audio, text_graphic_spans
+from .render.assets import copy_fonts, make_grain, make_paper
+from .render.props import (Episode, apply_edit, long_props, mark_soft_cuts, short_props, strip_audio,
+                           text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -115,6 +116,7 @@ class JobSpec:
     studio_mode: bool = True
     fetch_stock: bool = True
     verify_edit: bool = True       # 편집 후 목소리를 다시 인식해 남은 되풀이·무음을 한 번 더 자른다
+    skin: str = "paper"            # 화면 스킨: paper(사용자 레퍼런스 종이 콜라주) | classic
     motion_scenes: bool = True
     qa_rounds: int = 1
     direction: str = ""
@@ -1025,6 +1027,7 @@ class Pipeline:
             return self._render_prep
         copy_fonts(self.public / "fonts")
         self._grain = make_grain(self.public / "fx") if self.spec.grain else []
+        self._paper = make_paper(self.public / "fx") if self.spec.skin == "paper" else ""
         links: list[tuple[Path, str]] = [(self.media / "proxy.mp4", "media/proxy.mp4")]
         self._render_prep = links
         return links
@@ -1069,6 +1072,7 @@ class Pipeline:
                         timemap=self.timemap, graphics=graphics, chapters=chapters,
                         emphasis=self.plan_long.get("emphasis", []), face_src=self.face,
                         voice_src="media/long_voice.wav", bgm_src=None, sfx={}, grain_frames=self._grain,
+                        skin=self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
                         endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
         seg_t = seg_edit_times(self.utts, self.timemap)
@@ -1122,6 +1126,7 @@ class Pipeline:
             sp = short_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), spec=s, utts=self.utts,
                              timemap=tm, graphics=sg, face_src=self.face, voice_src=f"media/short_{i}_voice.wav",
                              bgm_src=None, sfx={}, grain_frames=self._grain, grain=0.04 if self._grain else 0.0,
+                             skin=self.spec.skin, paper_texture=self._paper,
                              layout=self.spec.shorts_layout, progress_bar=self.spec.progress_bar,
                              series_label=series, caption_preset=self._caption_presets()[1],
                              extra_emphasis=self.plan_long.get("emphasis", []), speech_onsets=self._edit_onsets(tm))
@@ -1130,6 +1135,7 @@ class Pipeline:
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
+            mark_soft_cuts(sp["clips"], ed.camera, ed.transitions, ed.soft_cut)
             strip_audio(sp)
             sp["peekEvery"] = peek_every
             self.short_props.append(sp)

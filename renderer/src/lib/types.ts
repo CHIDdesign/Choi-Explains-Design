@@ -42,7 +42,11 @@ export type GraphicData = {
   kind?: 'video' | 'photo'; // broll
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
+  accent?: string; // 종이 스킨: 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)
 };
+
+// 화면 스킨: paper = 사용자 레퍼런스(구겨진 종이·찢어진 액자·주황 강조), classic = 이전 에디토리얼(칠판·잉크)
+export type Skin = 'paper' | 'classic';
 
 // ---------------------------------------------------------------------------
 // MotionSpec — 모션 디자이너 에이전트가 JSON 으로 쓰는 장면 기술(코드 실행 없이 안전하게 렌더)
@@ -129,13 +133,17 @@ export type Clip = {
   srcStart: number; // 원본(proxy) 시각(초)
   start: number; // 편집 타임라인 시각(초)
   dur: number;
+  soft?: number; // 같은 프레이밍의 점프컷: 앞 장면 마지막 프레임을 이 초만큼 섞는다
 };
 
 export type FaceSample = {t: number; x: number; y: number; s: number};
 // 점프컷 프레이밍: 컷마다 와이드(1.0) ↔ 타이트(1.12~1.2) 교차, x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
-export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number};
+// glide: 이 샷이 시작할 때 앞 샷의 프레이밍에서 이 초만큼 천천히 옮겨 온다(없으면 컷)
+// framed: 종이 스킨에서 화자를 찢어진 액자에 담아 종이 위에(레퍼런스 2)
+export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number; glide?: number;
+  framed?: boolean};
 // 펀치인: 강조 단어에서 카메라를 확 당김. style cut = 하드컷(한 프레임), ease = 5프레임 푸시
-export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease'};
+export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'};
 
 // 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착
 export type TransitionType = 'whip' | 'zoom' | 'blur' | 'push' | 'flash' | 'dip' | 'wipe' | 'leak';
@@ -197,6 +205,8 @@ export type LongFormProps = {
   grainFrames: string[];
   showChapterLabel: boolean;
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
+  skin?: Skin;
+  paperTexture?: string; // public 기준 구겨진 종이 텍스처(없으면 단색)
 };
 
 export type ShortProps = {
@@ -226,6 +236,8 @@ export type ShortProps = {
   grain: number;
   grainFrames: string[];
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
+  skin?: Skin;
+  paperTexture?: string;
 };
 
 export type ThumbnailProps = {

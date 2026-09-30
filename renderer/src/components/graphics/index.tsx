@@ -4,7 +4,7 @@ import {EASE_IN_OUT, EASE_OUT, enter, exit} from '../../lib/anim';
 import {surface as mkSurface, surfaceFor, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
 import {GRID} from '../../design/tokens';
-import type {Brand, Episode, Graphic, TemplateName} from '../../lib/types';
+import type {Brand, Episode, Graphic, Skin, TemplateName} from '../../lib/types';
 import {RunningHeader} from '../layout/Editorial';
 import {ChapterCard, DefinitionCard, KeywordCard, LowerThird, QuoteCard, StatCard, TitleCard} from './Cards';
 import type {TemplateProps} from './common';
@@ -13,6 +13,7 @@ import {CompareCard, ListCard, TimelineCard} from './Lists';
 import {PhotoCard} from './Photo';
 import {BrollCard} from './Broll';
 import {MotionScene} from '../motion/MotionScene';
+import {PaperGraphic} from '../paper/PaperGraphic';
 
 export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> = {
   chapter: ChapterCard,
@@ -51,12 +52,22 @@ type Props = {
   H: number;
   panelSide: 'left' | 'right';
   pageLabel: string;
+  skin?: Skin;
+  paperTexture?: string;
+  chapterTag?: string;
+  faceX?: number;
 };
 
 /** 한 그래픽을 레이아웃(풀스크린/칠판 패널/오버레이)에 맞게 배치 */
-export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand, episode, W, H, panelSide, pageLabel}) => {
+export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand, episode, W, H, panelSide, pageLabel,
+  skin, paperTexture, chapterTag = '', faceX = 0.5}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
   if (!Comp) return null;
+  if (skin === 'paper') {
+    return <PaperGraphic g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand}
+      episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
+      paperTexture={paperTexture} />;
+  }
   const specBg = g.template === 'motion' ? g.data.spec?.bg : undefined;
   const sName = specBg && specBg !== 'transparent' ? specBg : surfaceFor(g.template, g.layout);
   const s = mkSurface(theme, sName);
