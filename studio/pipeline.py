@@ -996,7 +996,7 @@ class Pipeline:
         """🎬 오프닝 하이라이트: 편집 감독이 고른 임팩트 문장 2~4개(각 ≤7초, 합쳐 ≤highlight_max_sec)를 본편 앞에 붙일
         컷(원본 시각 순, 조각 사이 숨 한 번). 목소리는 하이라이트 + 본편을 이어 long_voice_full.wav 로."""
         self.hl_map, self.hl_pieces, self.hl_segs, self.hl_duration = None, [], [], 0.0
-        if not self.spec.opening_highlight:
+        if not self.spec.opening_highlight or self.timemap.duration < 45.0:     # 아주 짧은 영상은 하이라이트가 되풀이로 들린다
             return
         by_id = {u.id: u for u in self.utts}
         segs = [h["seg"] for h in self.plan_long.get("highlights", []) or [] if h.get("seg") in by_id and by_id[h["seg"]].kept]
