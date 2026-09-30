@@ -108,6 +108,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     s_gestalt = _seg_with(segs, "게슈탈트")
     s_sketch = _seg_with(segs, "스케치가 가득")
     s_trip = _seg_with(segs, "방향 없는")
+    s_ask = _seg_with(segs, "잘 묻지")     # 태그·다른 그래픽이 없는 문장 → 자유 HTML 카드 자리
     if agent == "director":
         return {"title": "질문이 먼저다", "logline": "좋은 디자인은 좋은 질문에서 시작한다", "audience": "디자인 전공 1~2학년",
                 "tone": "차분한 강의", "bgm_mood": "minimal", "shorts_bgm_mood": "upbeat",
@@ -135,7 +136,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                                             "title": "근접성", "spec_json": json.dumps(spec, ensure_ascii=False),
                                             "reason": "모이는 움직임이 곧 설명"}],
                 # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
-                "cards": [{"start_seg": s_aff, "end_seg": s_aff, "start_word": "", "layout": "fullscreen", "style": "editorial",
+                "cards": [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen", "style": "editorial",
                            "title": "질문이 먼저다", "html": card, "reason": "선언 한 방"}]}
     if agent == "card_revise":
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
