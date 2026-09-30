@@ -189,7 +189,7 @@ class Pipeline:
         """preview(이미지 경로, 설명): 진행 화면 미리보기 — 색보정 전후 · 자료 사진 · 검수 장면 · 렌더 중 프레임 · 썸네일."""
         self.spec = spec
         self.settings = settings
-        self.dir = Path(job_dir)
+        self.dir = Path(job_dir).resolve()   # 렌더 스크립트는 renderer/ 에서 돈다 — 상대 경로면 못 찾음
         self.work = self.dir / "work"
         self.media = self.dir / "media"
         self.render_dir = self.dir / "render"
