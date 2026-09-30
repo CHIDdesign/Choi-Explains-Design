@@ -52,6 +52,15 @@ def test_long_edit_punch_only_inside_spans():
     assert tx[44.0]["type"] == "whip" and tx[44.0]["dir"] in ("left", "right")
 
 
+def test_no_punch_over_split_panel_even_when_hot():
+    tm = TimeMap([Span(0, 60)])
+    moments = [Moment(t=20.0, end=21.0, kind="number", intensity=3), Moment(t=40.0, end=41.0, kind="reveal", intensity=3)]
+    graphics = [{"id": "g0", "template": "definition", "layout": "split", "start": 18.0, "end": 24.0}]
+    ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=graphics, chapters=[], moments=moments,
+                         cues=_cues(60), sentence_starts=[0.0, 30.0], punch_spans=[(15.0, 45.0)])
+    assert [p["t"] for p in ed.punches] == [40.0] and ed.punches[0]["style"] == "cut"
+
+
 def test_long_edit_without_spans_is_unchanged():
     tm = TimeMap([Span(0, 60)])
     moments = [Moment(t=10.0, end=11.0, kind="punchline", intensity=3), Moment(t=40.0, end=41.0, kind="reveal", intensity=1)]

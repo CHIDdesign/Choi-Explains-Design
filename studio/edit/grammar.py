@@ -398,11 +398,14 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
 
     # ---- 강조 글라이드 + 강조 자막 ------------------------------------------
     punches: list[dict] = []
+    # 화자가 옆 패널에 밀려 있는 분할 구간에도 강조 줌은 두지 않는다(전체화면 그래픽과 같은 취급)
+    side = [(g["start"], g["end"], None) for g in graphics if g.get("layout") == "split" and g["end"] > g["start"]]
     for m in sorted(moments, key=lambda m: (-m.intensity, m.t)):
         hot = in_spans(m.t, spans)
         if m.intensity < 2 and m.kind not in ("joke",) and not hot:
             continue
-        if _inside(m.t, covers, pad=0.4) or _inside(m.t, [(e["t"] - 0.5, e["t"] + 0.5) for e in tx]):
+        if _inside(m.t, covers, pad=0.4) or _inside(m.t, side, pad=0.4) \
+                or _inside(m.t, [(e["t"] - 0.5, e["t"] + 0.5) for e in tx]):
             continue
         # 간격: 같은 온도끼리는 각자의 규칙(젠틀 40초 · 펀치 6초), 펀치 구간과 젠틀 구간 사이는 6초만 띄우면 된다
         gap = PU["punch_min_gap"] if hot else P["punch_min_gap"]
