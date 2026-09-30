@@ -1564,13 +1564,21 @@ class Pipeline:
             src = by_main.get(f"g{subset[k][0]}") if 0 <= k < len(subset) else None
             g["skin"] = src["skin"] if src and src.get("skin") else "classic"
         face_safe_layouts(hp["graphics"], hp["face"])
-        moments = self._moments(tm, segs)
-        have = {m.seg for m in moments}
-        for sid, (a, b) in seg_t.items():          # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막)
-            if sid not in have and b - a > 1.2:
-                # 조각 시작 0.5초 뒤 — 앞 조각의 그래픽이 끝나는 자리(±0.4초 여유) 바로 뒤에 놓여야 강조가 살아남는다
-                moments.append(Moment(t=round(a + 0.5, 3), end=round(b, 3), kind="punchline", intensity=2, seg=sid,
-                                      word="", callout="", label=""))
+        # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막). 편집 문법 엔진은 분할 패널·전체화면 그래픽 ±0.4초 안의
+        # 강조를 버리므로, 그 조각의 그래픽이 끝난 뒤(또는 조각 시작 0.5초 뒤)로 옮겨 놓는다
+        planned = {m.seg: m for m in self._moments(tm, segs)}
+        moments: list[Moment] = []
+        for sid, (a, b) in seg_t.items():
+            t = a + 0.5
+            for g in hp["graphics"]:
+                if g.get("layout") in ("split", "fullscreen") and g["start"] < b and g["end"] > a:
+                    t = max(t, g["end"] + 0.45)
+            if b - t < 0.6:
+                continue
+            m = planned.get(sid)
+            moments.append(Moment(t=round(t, 3), end=round(b, 3), kind=m.kind if m else "punchline",
+                                  intensity=max(2, m.intensity) if m else 2, seg=sid, word="",
+                                  callout="", label=""))
         hd = tm.duration
         ed_h = build_long_edit(timemap=tm, total=hp["duration"], speech_total=hd, graphics=hp["graphics"], chapters=[],
                                moments=moments, cues=hp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
