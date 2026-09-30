@@ -217,6 +217,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "title": brief.get("title", ""),
         "moments": moments,
         "energy_spans": [e for e in editor.get("energy_spans", []) or [] if isinstance(e, dict)],
+        "highlights": [h for h in editor.get("highlights", []) or [] if isinstance(h, dict)],
         "bgm_mood": brief.get("bgm_mood", ""),
         "shorts_bgm_mood": brief.get("shorts_bgm_mood", ""),
         "summary": brief.get("logline", ""),

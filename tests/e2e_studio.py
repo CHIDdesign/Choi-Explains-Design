@@ -130,6 +130,9 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             {"seg": s_q, "word": "", "kind": "number", "intensity": 2, "callout": "", "label": ""}],
             # ⚡ 펀치 구간: 핵심 한 방 문장 하나만 — 그 안의 강조는 하드 펀치인(cut)이 된다
             "energy_spans": [{"start_seg": s_pencil, "end_seg": s_pencil, "reason": "핵심 한 방"}],
+            # 🎬 오프닝 하이라이트: 숫자 문장 + 결론 문장(첫 두 발화는 앱이 제외한다)
+            "highlights": [{"seg": ids[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": s_q, "reason": "숫자"},
+                           {"seg": last, "reason": "결론"}],
             "pacing_notes": "차분하게"}
     if agent == "motion":
         spec = copy.deepcopy(EXAMPLES["proximity"])
@@ -163,11 +166,13 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         return {"shorts": [{"title": "질문", "hook_type": "contrarian", "hook_title": "해결책부터 그리면\n망합니다",
                             "hook_highlight": "", "cold_open_seg": last, "segments": seg, "graphics": [],
                             "emphasis": [{"seg": last, "word": "질문에서"}], "cta": "", "loop_line": "", "caption": "질문",
-                            "hashtags": ["#디자인"], "why": "통념 반박", "score": 8},
+                            "hashtags": ["#디자인"], "viewer_takeaway": "해결책보다 질문이 먼저다", "why": "통념 반박",
+                            "score": 8},
+                           # 둘째 편은 다른 구간·8점 이상일 때만 만들어진다(제대로 된 한 편 우선)
                            {"title": "넓게", "hook_type": "everyday_why", "hook_title": "디자인은 왜\n넓게 시작할까",
                             "hook_highlight": "넓게", "cold_open_seg": -1, "segments": seg2, "graphics": [],
                             "emphasis": [], "cta": "", "loop_line": "", "caption": "넓게", "hashtags": ["#디자인"],
-                            "why": "일상의 왜", "score": 7}]}
+                            "viewer_takeaway": "디자인은 넓게 펼친 뒤 좁힌다", "why": "일상의 왜", "score": 8}]}
     if agent == "copy":
         return {"titles": ["디자인 학생 90%가 건너뛰는 단계"], "description": "#디자인 #더블다이아몬드\n요약\n\n{{CHAPTERS}}",
                 "hashtags": ["#디자인"], "tags": ["디자인"], "thumbnail_texts": ["질문이 먼저"], "pinned_comment": "여러분은?"}
@@ -426,7 +431,8 @@ def main() -> int:
     # 0 도 될 수 있다(그래픽 위 · 콜아웃 40초 안의 강조 순간은 건너뛴다)
     # ⚡ 펀치 구간(s_pencil) 안의 강조는 하드 펀치인(cut, +10% 이상), 그 밖은 글라이드뿐
     assert all(p.get("style") in ("glide", "cut") for p in lp["punches"]), lp["punches"]
-    hot = [p for p in lp["punches"] if p["style"] == "cut"]
+    hl_dur = next(t["t"] for t in lp["transitions"] if t["type"] == "leak" and t["t"] > 2.0)   # 🎬 하이라이트 → 본편
+    hot = [p for p in lp["punches"] if p["style"] == "cut" and p["t"] >= hl_dur]
     assert len(hot) == 1 and hot[0]["amount"] >= 0.1 and hot[0]["end"] - hot[0]["t"] <= 2.3, lp["punches"]
     assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")
     covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
@@ -435,6 +441,20 @@ def main() -> int:
     assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
     assert any(t["type"] in ("wipe", "leak") for t in lp["transitions"]), lp["transitions"]
     assert lp["voice"] is None and lp["sfx"] == []          # 음향은 FFmpeg 에서 따로 믹스
+    # 🎬 오프닝 하이라이트: 편집 감독이 고른 문장 2개(첫 발화는 제외)가 본편 앞에 붙고, 본편(타이틀·챕터)은 그만큼 뒤로
+    hl = plan["long"]["highlights"]
+    assert [h["reason"] for h in hl] == ["숫자", "결론"], hl
+    assert 3.0 <= hl_dur <= 20.0, hl_dur
+    assert lp["chapters"][0]["start"] == 0.0 or lp["chapters"][0]["start"] >= hl_dur - 0.01, lp["chapters"][:2]
+    title_g = next(g for g in lp["graphics"] if g["template"] == "title")
+    assert abs(title_g["start"] - (hl_dur + 0.2)) < 0.3, (title_g["start"], hl_dur)
+    first_src = lp["clips"][0]["srcStart"]
+    main_first = next(c for c in lp["clips"] if c["start"] >= hl_dur - 0.01)["srcStart"]
+    assert first_src > main_first, (first_src, main_first)                  # 하이라이트는 뒤쪽 문장에서 가져온다
+    assert lp["captions"][0]["start"] < hl_dur and lp["captions"][0]["lines"][0][0]["text"], lp["captions"][:1]
+    assert any(p["style"] == "cut" and p["t"] < hl_dur for p in lp["punches"]), lp["punches"]   # 조각마다 펀치인
+    report_hl = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
+    assert "오프닝 하이라이트" in report_hl
     grade_info = json.loads((job / "work" / "grade.json").read_text(encoding="utf-8"))
     assert grade_info["choice"]["look"] == "warm_film" and grade_info["choice"]["by"] == "ai", grade_info["choice"]
     assert (job / "media" / "grade.cube").exists() and (out / "부가자료" / "색보정_전후.jpg").exists()

@@ -279,3 +279,52 @@ def test_losing_take_keeps_its_unique_script_sentence():
     assert sum("좁히죠" in t for t in kept) == 1, kept
     assert rep.trimmed_takes == 1 and rep.script_coverage > 0.3
     assert not any("디자인은 먼저" in m for m in (rep.missing_sentences or []))
+
+
+def test_shorts_coherence_repairs_stitched_segments_and_prefers_one_good_short():
+    """숏폼 PD 가 떨어진 발화를 이어 붙이거나 '그래서…' 로 시작하면 이해 가능성이 떨어진다 → 연속 구간으로 고치고,
+    둘째 편은 8점 이상·다른 구간일 때만 남긴다."""
+    from studio.director.plan import short_coherence
+    from studio.models import Utterance
+    texts = ["좋은 디자인은 무엇일까요?", "그래서 저는 질문부터 봅니다.", "문 손잡이를 보면 밀지 당길지 압니다.",
+             "이걸 어포던스라고 부릅니다.", "형태가 사용법을 말해 주는 성질이죠.", "결국 좋은 디자인은 설명이 필요 없습니다.",
+             "다음 주제는 게슈탈트입니다.", "가까운 것은 한 무리로 보입니다."]
+    utts = []
+    t = 0.0
+    for i, tx in enumerate(texts):
+        ws = [Word(w, t + k * 0.9, t + k * 0.9 + 0.8) for k, w in enumerate(tx.split())]
+        utts.append(Utterance(i, ws[0].start, ws[-1].end, tx, tx, ws))
+        t += len(ws) * 0.9 + 1.0        # 어절마다 0.9초 → 네 문장이면 12초 하한을 넘는다
+    kept = [u.id for u in utts]
+    by_id = {u.id: u for u in utts}
+    good, prob = short_coherence([2, 3, 4, 5], by_id, kept, hook_title="문 손잡이의\n비밀")
+    assert good == 1.0 and not prob
+    bad, prob = short_coherence([1, 3, 7], by_id, kept, hook_title="색채 이론")
+    assert bad < 0.5 and len(prob) >= 3, prob
+    raw = {"shorts": [
+        {"title": "A", "hook_type": "everyday_why", "hook_title": "문 손잡이의\n비밀", "hook_highlight": "", "cold_open_seg": 5,
+         "segments": [2, 4, 7], "graphics": [], "emphasis": [], "beats": [], "cta": "", "loop_line": "", "caption": "",
+         "hashtags": [], "viewer_takeaway": "형태가 사용법을 말한다", "why": "", "score": 8},
+        {"title": "B", "hook_type": "open_loop", "hook_title": "질문이\n먼저", "hook_highlight": "", "cold_open_seg": -1,
+         "segments": [3, 4, 5], "graphics": [], "emphasis": [], "beats": [], "cta": "", "loop_line": "", "caption": "",
+         "hashtags": [], "viewer_takeaway": "", "why": "", "score": 7}]}
+    logs = []
+    out = normalize_shorts(raw, utts, count=2, max_sec=60, log=logs.append)
+    assert len(out) == 1, [(s["title"], s["score"], s["coherence"]) for s in out]      # 둘째는 7점·겹침 → 만들지 않음
+    a = out[0]
+    assert a["segments"] == [5, 2, 3, 4] and a["coherence"] >= 0.7, a["segments"]   # 콜드 오픈 + 연속 구간으로 고침
+    assert a["viewer_takeaway"] == "형태가 사용법을 말한다" and "연속 구간으로 고침" in a["why"]
+    assert any("연속 구간" in m for m in logs) and any("만들지 않음" in m for m in logs)
+
+
+def test_highlights_normalized_and_fallback_picks_hooky_sentences():
+    utts, tags, _ = _aligned(per=0.8)
+    kept = [u.id for u in utts if u.kept]
+    raw = fallback.long_plan(JobBrief(title="t"), utts, tags)
+    raw["highlights"] = [{"seg": kept[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": kept[-1], "reason": "결론"},
+                         {"seg": kept[-1], "reason": "중복"}, {"seg": 999, "reason": "없는 발화"}]
+    plan = normalize_long(raw, utts, tags)
+    assert plan["highlights"] == [{"seg": kept[-1], "reason": "결론"}]
+    # 규칙 후보: 첫 두 발화 뒤, 앞 문맥에 매달리지 않는 짧은 문장만
+    hl = fallback.highlight_segs(utts)
+    assert all(h["seg"] not in kept[:2] for h in hl)

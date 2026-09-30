@@ -417,6 +417,61 @@ def paper_layouts(gdicts: list[dict[str, Any]], skin: str) -> list[dict[str, Any
 
 
 # ---------------------------------------------------------------------------
+# 🎬 오프닝 하이라이트: 본편 props 를 뒤로 밀고 앞에 하이라이트 props 를 붙인다
+# ---------------------------------------------------------------------------
+def shift_props(props: dict[str, Any], dt: float) -> None:
+    """props 의 모든 시각 필드를 dt 만큼 뒤로(제자리)."""
+    def sh(d: dict[str, Any], *keys: str) -> None:
+        for k in keys:
+            if k in d and d[k] is not None:
+                d[k] = round(float(d[k]) + dt, 3)
+    for c in props.get("clips") or []:
+        c["start"] = round(c["start"] + dt, 4)
+    for c in props.get("captions") or []:
+        sh(c, "start", "end")
+        for line in c.get("lines") or []:
+            for w in line:
+                sh(w, "start", "end")
+    for f in props.get("face") or []:
+        sh(f, "t")
+    for x in props.get("camera") or []:
+        sh(x, "start", "end")
+    for x in props.get("punches") or []:
+        sh(x, "t", "end")
+    for x in props.get("graphics") or []:
+        sh(x, "start", "end")
+    for x in props.get("transitions") or []:
+        sh(x, "t")
+    for x in props.get("callouts") or []:
+        sh(x, "start", "end")
+    for x in props.get("chapters") or []:
+        sh(x, "start")
+    for x in props.get("sfx") or []:
+        sh(x, "t")
+    if props.get("endcard"):
+        sh(props["endcard"], "start")
+    if props.get("bgm"):
+        for k in props["bgm"].get("envelope") or []:
+            sh(k, "t")
+    props["duration"] = round(props["duration"] + dt, 3)
+
+
+def prepend_props(main: dict[str, Any], head: dict[str, Any]) -> None:
+    """head(하이라이트, 0초부터) 의 시간 목록을 main(이미 shift_props 로 밀어 둔 본편) 앞에 붙인다."""
+    for k in ("clips", "captions", "face", "camera", "punches", "graphics", "transitions", "callouts", "sfx"):
+        main[k] = list(head.get(k) or []) + list(main.get(k) or [])
+
+
+def shift_decisions(ed: Any, dt: float) -> None:
+    """편집 문법 결정(음향 믹스가 쓰는 효과음·음악 큐)을 dt 만큼 뒤로."""
+    for s_ in ed.sfx:
+        s_["t"] = round(s_["t"] + dt, 3)
+    ed.bgm_swells = [(round(a + dt, 3), round(b + dt, 3)) for a, b in ed.bgm_swells]
+    ed.bgm_dips = [(round(a + dt, 3), round(b + dt, 3)) for a, b in ed.bgm_dips]
+    ed.bgm_switch = [round(t + dt, 3) for t in ed.bgm_switch]
+
+
+# ---------------------------------------------------------------------------
 # 얼굴을 가리지 않는 배치(채널 피드백: 얼굴 옆 사진 액자·개념 텍스트가 자주 얼굴을 덮었다)
 # ---------------------------------------------------------------------------
 PIP_W, PIP_H = 700, 520       # renderer Collage.pipBoxes 기본 액자 크기

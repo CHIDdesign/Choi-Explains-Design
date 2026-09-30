@@ -31,6 +31,9 @@ PACES: dict[str, Pace] = {
     # 숏폼: 데드에어 제거
     "shorts": Pace("shorts", pre_pad=0.04, post_pad=0.08, keep_gap=0.14, inner_gap=0.28, min_keep=0.15,
                    max_silence=0.24, pause_after=0.1, pause_before=0.1),
+    # 오프닝 하이라이트: 문장 조각 사이에 숨 한 번(앞 0.12 + 뒤 0.38초)이 남게
+    "highlight": Pace("highlight", pre_pad=0.12, post_pad=0.38, keep_gap=0.3, inner_gap=0.6, min_keep=0.2,
+                      max_silence=0.45, pause_after=0.16, pause_before=0.12),
 }
 
 

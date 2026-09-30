@@ -229,6 +229,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
         "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)
         "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
+        "highlights": [],                        # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 발화들
         "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
         "bgm_mood": str(raw.get("bgm_mood", "") or ""),
         "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
@@ -273,6 +274,11 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             a, b = b, a
         plan["energy_spans"].append({"start_seg": a, "end_seg": b, "reason": str(e.get("reason", "") or "")[:60]})
 
+    for h in raw.get("highlights", []) or []:
+        seg = h.get("seg") if isinstance(h, dict) else h
+        if seg in kept and seg not in kept[:2] and not any(x["seg"] == seg for x in plan["highlights"]):
+            plan["highlights"].append({"seg": seg, "reason": str((h.get("reason", "") if isinstance(h, dict) else "") or "")[:60]})
+    plan["highlights"] = plan["highlights"][:4]
     # 대본 태그는 반드시 반영(디렉터가 빠뜨렸으면 추가)
     enforce_tags(plan, tags, kept)
     # 챕터 중복 제거 + 정렬
@@ -323,7 +329,102 @@ def enforce_tags(plan: dict[str, Any], tags: list[Tag], kept: list[int]) -> None
         plan["graphics"].append(g)
 
 
-def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int) -> list[dict[str, Any]]:
+# 앞 문맥 없이는 뜻이 안 서는 첫말(숏폼 첫 문장·콜드 오픈에 오면 '뭔 내용인지 모르겠다')
+DANGLING_START = ("그래서", "그런데", "그러니까", "그니까", "근데", "그리고", "이게", "그게", "이건", "그건", "이런", "그런",
+                  "그럼", "그러면", "또", "여기서", "즉", "이렇게", "그렇게", "다음", "두 번째", "세 번째", "마지막으로",
+                  "아까", "앞에서", "그때", "이때", "이 부분", "그 부분", "그 다음", "이제 그", "왜냐하면")
+_STOP = set("이것 그것 우리 여러분 오늘 영상 정말 진짜 이유 방법 사실 하나 정도 부분 때문 그리고 그래서 하지만 디자인".split())
+
+
+def _content_words(text: str) -> set[str]:
+    out = set()
+    for w in re.findall(r"[가-힣A-Za-z]{2,}", text):
+        w = re.sub(r"(은|는|이|가|을|를|의|에|에서|으로|로|와|과|도|만|까지|부터|이라는|라는|입니다|이에요|예요|이란|란)$", "", w)
+        if len(w) >= 2 and w not in _STOP:
+            out.add(w)
+    return out
+
+
+def short_coherence(segs: list[int], by_id: dict[int, Utterance], kept: list[int], *, cold: int = -1,
+                    hook_title: str = "") -> tuple[float, list[str]]:
+    """숏폼이 롱폼을 안 본 사람에게도 한 덩어리로 이해되는지(0~1) + 문제 목록.
+    - 떨어진 발화 이어붙이기: 본문(콜드 오픈 제외) 안의 건너뛴 발화 수마다 감점(1개까지는 허용)
+    - 첫 문장이 '그래서·이게·아까' 처럼 앞 문맥에 매달리면 감점
+    - 마지막 문장이 끝나지 않으면(문장부호·종결 어미 없음) 감점
+    - 훅 타이틀의 명사가 말 속에 하나도 없으면(약속-해소 불일치) 감점"""
+    problems: list[str] = []
+    score = 1.0
+    body = [x for x in segs if x != cold] if cold in segs else list(segs)
+    pos = {u: i for i, u in enumerate(kept)}
+    skipped = 0
+    for a, b in zip(body, body[1:]):
+        if a in pos and b in pos:
+            d = pos[b] - pos[a]
+            if d <= 0:
+                skipped += 2          # 순서가 뒤바뀜
+            else:
+                skipped += d - 1
+    if skipped > 1:
+        score -= min(0.6, 0.15 * skipped)
+        problems.append(f"발화 {skipped}개를 건너뛰며 이어 붙임")
+    first = by_id.get(segs[0])
+    if first is not None:
+        t = first.text.strip()
+        if any(t.startswith(d) for d in DANGLING_START):
+            score -= 0.3
+            problems.append(f"첫 문장이 앞 문맥에 매달림: 「{t[:20]}」")
+    last = by_id.get(body[-1] if body else segs[-1])
+    if last is not None:
+        t = last.text.strip()
+        if not re.search(r"([.?!。？！]|다|요|죠|까|네)$", t):
+            score -= 0.2
+            problems.append(f"끝 문장이 끝나지 않음: 「{t[-20:]}」")
+    if hook_title:
+        spoken = " ".join(by_id[i].text for i in segs if i in by_id)
+        nouns = _content_words(hook_title.replace("\n", " "))
+        if nouns and not (nouns & _content_words(spoken)):
+            score -= 0.2
+            problems.append("훅 타이틀의 명사가 말 속에 없음(약속-해소 불일치)")
+    return max(0.0, round(score, 2)), problems
+
+
+def repair_segments(segs: list[int], by_id: dict[int, Utterance], kept: list[int], *, cold: int, max_sec: float
+                    ) -> list[int]:
+    """떨어진 발화를 이어 붙인 숏폼 → 첫 발화부터 끝 발화까지 **연속 구간**으로 고친다(빠진 문장을 되살림). 너무 길면
+    콜드 오픈(또는 마지막 발화)을 포함하는 뒤쪽 연속 구간을 max_sec 안에서 남긴다."""
+    body = [x for x in segs if x != cold]
+    if not body:
+        return segs
+    pos = {u: i for i, u in enumerate(kept)}
+
+    def dur(ids: list[int]) -> float:
+        return sum(by_id[i].end - by_id[i].start for i in ids if i in by_id)
+    # 본문을 '가까운 발화 묶음'으로 나눈다(2개 이상 건너뛰면 다른 묶음) → 가장 긴 묶음만 쓴다(멀리서 끌어온 문장은 뺀다)
+    ordered = sorted(body, key=lambda x: pos.get(x, 0))
+    clusters: list[list[int]] = [[ordered[0]]]
+    for a, b in zip(ordered, ordered[1:]):
+        if pos.get(b, 0) - pos.get(a, 0) - 1 >= 2:
+            clusters.append([b])
+        else:
+            clusters[-1].append(b)
+    main = max(clusters, key=lambda c: dur(kept[pos[c[0]]:pos[c[-1]] + 1]))
+    run = kept[pos[main[0]]:pos[main[-1]] + 1]
+    while len(run) > 1 and dur(run) > max_sec:
+        run = run[1:]           # 앞에서부터 줄인다 — 페이오프(뒤쪽)를 남긴다
+    out = list(run)
+    if cold in by_id:
+        # 콜드 오픈은 앞 문맥 없이 서는 문장일 때만 맨 앞에(아니면 뺀다)
+        if cold in out:
+            out.remove(cold)
+        if not any(by_id[cold].text.strip().startswith(d) for d in DANGLING_START):
+            out.insert(0, cold)
+    return out
+
+
+def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int, max_sec: int = 60,
+                     log: Any = None) -> list[dict[str, Any]]:
+    """숏폼 기획 정리. **제대로 된 한 편**이 우선: 이해 가능성(short_coherence)이 낮으면 연속 구간으로 고치고,
+    둘째 편은 첫 편과 다른 구간이면서 점수 8 이상일 때만 남긴다(채널 피드백: 둘을 억지로 채우지 말 것)."""
     kept = [u.id for u in utts if u.kept]
     by_id = {u.id: u for u in utts}
     out: list[dict[str, Any]] = []
@@ -343,6 +444,16 @@ def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int) 
             cold = -1
         if not segs:
             continue
+        hook_title = str(s.get("hook_title", "")).strip()
+        coherence, problems = short_coherence(segs, by_id, kept, cold=cold, hook_title=hook_title)
+        repaired = False
+        if coherence < 0.7 and any("건너뛰" in p or "뒤바뀜" in p for p in problems):
+            new = repair_segments(segs, by_id, kept, cold=cold, max_sec=max_sec)
+            if new != segs:
+                segs, repaired = new, True
+                coherence, problems = short_coherence(segs, by_id, kept, cold=cold, hook_title=hook_title)
+                if log:
+                    log(f"📱 숏폼 「{s.get('title', '')}」: 떨어진 발화를 이어 붙여 이해가 어려움 → 연속 구간으로 고침")
         dur = sum(by_id[i].end - by_id[i].start for i in segs)
         if dur < 12:
             continue
@@ -365,11 +476,28 @@ def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int) 
             "loop_line": str(s.get("loop_line", "")).strip(),
             "caption": str(s.get("caption", "")).strip(),
             "hashtags": [str(h).strip() for h in s.get("hashtags", []) or [] if str(h).strip()][:8],
-            "why": str(s.get("why", "")).strip(),
+            "viewer_takeaway": str(s.get("viewer_takeaway", "") or "").strip()[:80],
+            "why": str(s.get("why", "")).strip() + (f" · 이해 가능성 {coherence:.1f}" + (f"({'; '.join(problems)})" if problems else "")
+                                                    + (" → 연속 구간으로 고침" if repaired else "")),
+            "coherence": coherence,
             "score": int(s.get("score", 5) or 5),
         })
-    out.sort(key=lambda s: -s["score"])
-    return out[:count]
+    # 정렬: 이해 가능성이 낮은 편(0.5 미만)은 뒤로, 그 안에서 점수순
+    out.sort(key=lambda s: (s["coherence"] < 0.5, -s["score"], -s["coherence"]))
+    picked: list[dict[str, Any]] = []
+    for s in out:
+        if not picked:
+            picked.append(s)
+            continue
+        if len(picked) >= count:
+            break
+        overlap = set(s["segments"]) & set(picked[0]["segments"])
+        if s["score"] >= 8 and s["coherence"] >= 0.7 and len(overlap) <= 1:
+            picked.append(s)
+        elif log:
+            log(f"📱 숏폼 「{s.get('title', '')}」 은 만들지 않음(점수 {s['score']} · 이해 가능성 {s['coherence']:.1f} · "
+                f"첫 편과 겹침 {len(overlap)}) — 제대로 된 한 편이 우선")
+    return picked
 
 
 # ----------------------------------------------------------------------------

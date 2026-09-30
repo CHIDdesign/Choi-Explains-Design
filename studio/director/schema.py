@@ -68,6 +68,8 @@ LONG_PLAN = _obj({
     "graphics": {"type": "array", "items": GRAPHIC},
     "emphasis": {"type": "array", "items": EMPHASIS},
     "drop": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
+    # 🎬 오프닝 하이라이트: 본편 앞에 붙일 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내) — 그 뒤 처음부터 시작
+    "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
     "youtube": _obj({
         "titles": STR_LIST,
         "description": STR,
@@ -95,6 +97,7 @@ SHORT = _obj({
     "loop_line": STR,
     "caption": STR,
     "hashtags": STR_LIST,
+    "viewer_takeaway": STR,   # 롱폼을 안 본 시청자가 이 한 편에서 얻는 한 문장(이해 가능성 자기 점검)
     "why": STR,
     "score": INT,
 })

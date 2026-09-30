@@ -61,7 +61,8 @@ from .net import redact
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
 from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, face_safe_layouts, long_props,
-                           mark_soft_cuts, mark_stack_cues, short_beats, short_props, strip_audio, text_graphic_spans)
+                           mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
+                           short_props, strip_audio, text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -119,8 +120,10 @@ class JobSpec:
     bgm: str = ""                       # 직접 고른 배경음악(비우면 라이브러리에서 무드로 자동)
     lut: str = ""                       # 직접 만든 LUT(비우면 자동 색보정)
     make_long: bool = True
-    shorts_count: int = 2
+    shorts_count: int = 2               # 최대 편수 — 제대로 된 1편이 우선, 둘째는 다른 아이디어·8점 이상일 때만
     short_max_sec: int = 55
+    opening_highlight: bool = True      # 롱폼 맨 앞에 임팩트 있는 문장 2~4개(≤20초)를 붙이고 처음부터 시작
+    highlight_max_sec: int = 20
     out_height: int = 1080
     pace: str = "calm"
     use_claude: bool = True
@@ -221,6 +224,10 @@ class Pipeline:
         self.face_cams: dict[int, list[dict]] = {}     # 카메라 → 얼굴 트랙(카메라 영상 시각)
         self.long_pieces: list[Piece] = []             # 롱폼 앵글 조각
         self.short_pieces: list[list[Piece]] = []
+        self.hl_map: Optional[TimeMap] = None          # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 컷
+        self.hl_pieces: list[Piece] = []
+        self.hl_segs: list[int] = []
+        self.hl_duration = 0.0
         self.fps = 30
         self.utts: list[Utterance] = []
         self.tags: list[Tag] = []
@@ -716,11 +723,10 @@ class Pipeline:
             try:
                 raw_long, raw_shorts = studio.plan(brief, ctx, shorts_count=self.spec.shorts_count,
                                                    progress=lambda f: self._stage("director", 0.95 * f))
-                if self.spec.shorts_count > 0 and len((raw_shorts or {}).get("shorts") or []) < self.spec.shorts_count:
-                    extra = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
-                                                 max_sec=self.spec.short_max_sec)
-                    have = (raw_shorts or {}).get("shorts") or []
-                    raw_shorts = {"shorts": have + extra["shorts"][: self.spec.shorts_count - len(have)]}
+                # 숏폼 PD 가 한 편도 못 냈을 때만 규칙으로 채운다 — 둘째 편을 억지로 채우지 않는다(제대로 된 한 편이 우선)
+                if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
+                    raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1,
+                                                      max_sec=self.spec.short_max_sec)
             except DirectorError as e:
                 self.log(f"🎬 총괄 감독 실패 → 단일 디렉터로 진행: {e}")
                 raw_long = raw_shorts = None
@@ -761,7 +767,12 @@ class Pipeline:
         self._auto_photos()
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
-        self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count)
+        self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count,
+                                            max_sec=self.spec.short_max_sec, log=self.log)
+        for i, sh in enumerate(self.plan_shorts, 1):
+            self.log(f"📱 숏폼 {i} 「{sh.get('title', '')}」: 발화 {len(sh['segments'])}개 · 점수 {sh.get('score')} · "
+                     f"이해 가능성 {sh.get('coherence', 1):.1f}"
+                     + (f" · 시청자가 얻는 것: {sh['viewer_takeaway']}" if sh.get("viewer_takeaway") else ""))
         if not self.spec.title.strip() and self.plan_long.get("title"):
             self.title = self.plan_long["title"]
             self.slug = slugify(self.title, 30)
@@ -958,6 +969,7 @@ class Pipeline:
         if self.spec.make_long:
             cut_audio(self.ff, self.work / "voice.wav", self.timemap.keeps, self.media / "long_voice.wav", self.work,
                       log=self.log, cancel=self.cancel)
+            self._make_highlight_cuts(drops, starts)
         self.short_maps: list[TimeMap] = []
         self.short_pieces = []
         for i, s in enumerate(self.plan_shorts, 1):
@@ -979,6 +991,46 @@ class Pipeline:
             write_json(self.work / "angles.json", {
                 "long": [vars(p) for p in self.long_pieces],
                 "shorts": [[vars(p) for p in ps] for ps in self.short_pieces]})
+
+    def _make_highlight_cuts(self, drops: list[Span], starts: list[float]) -> None:
+        """🎬 오프닝 하이라이트: 편집 감독이 고른 임팩트 문장 2~4개(각 ≤7초, 합쳐 ≤highlight_max_sec)를 본편 앞에 붙일
+        컷(원본 시각 순, 조각 사이 숨 한 번). 목소리는 하이라이트 + 본편을 이어 long_voice_full.wav 로."""
+        self.hl_map, self.hl_pieces, self.hl_segs, self.hl_duration = None, [], [], 0.0
+        if not self.spec.opening_highlight:
+            return
+        by_id = {u.id: u for u in self.utts}
+        segs = [h["seg"] for h in self.plan_long.get("highlights", []) or [] if h.get("seg") in by_id and by_id[h["seg"]].kept]
+        segs = [s for s in segs if by_id[s].end - by_id[s].start <= 7.5]
+        segs = sorted(dict.fromkeys(segs), key=lambda i: by_id[i].start)[:4]
+        if len(segs) < 2:
+            return
+        from .edit.cuts import quantize
+        keeps: list[Span] = []
+        total = 0.0
+        used: list[int] = []
+        for sid in segs:
+            ks = keeps_for_segments(self.utts, [sid], pace=PACES["highlight"], vad=self.vad,
+                                    media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
+            if drops:
+                ks = quantize(subtract(ks, drops), self.fps, self.info.duration)
+            ks = self.smap.clamp_keeps(ks, self.fps)
+            d = sum(k.dur for k in ks)
+            if not ks or total + d > float(self.spec.highlight_max_sec):
+                continue
+            keeps += ks
+            total += d
+            used.append(sid)
+        if len(used) < 2:
+            return
+        self.hl_map = TimeMap(keeps, preserve_order=True)
+        self.hl_segs = used
+        self.hl_duration = self.hl_map.duration
+        self.hl_pieces = choose_angles(self.hl_map.keeps, self.smap, self.quality, sentence_starts=starts,
+                                       prefer_close=True, max_hold=7.0)
+        cut_audio(self.ff, self.work / "voice.wav", list(self.hl_map.keeps) + list(self.timemap.keeps),
+                  self.media / "long_voice_full.wav", self.work, log=self.log, cancel=self.cancel)
+        self.log("🎬 오프닝 하이라이트 " + f"{len(used)}조각 · {total:.1f}초: "
+                 + " / ".join(f"「{by_id[i].text[:24]}」" for i in used))
 
     # ------------------------------------------------------------------
     def stage_verify(self) -> None:
@@ -1472,6 +1524,70 @@ class Pipeline:
         strip_audio(lp)
         return lp, ed
 
+    def _add_highlight(self, lp: dict, ed: EditDecisions) -> float:
+        """🎬 오프닝 하이라이트를 본편 props·편집 결정 앞에 붙인다(본편은 그만큼 뒤로). 하이라이트 자체도 편집 문법 엔진을
+        거친다(펀치 구간 = 전체: 조각마다 하드 펀치인·큰 자막·휩) → 그 구간의 그래픽·자막·얼굴 트랙 그대로, 마지막에 빛샘
+        전환으로 타이틀(본편 처음)로. 반환: 하이라이트 길이(없으면 0)."""
+        tm = self.hl_map
+        if tm is None or not (self.media / "long_voice_full.wav").exists():
+            return 0.0
+        segs = set(self.hl_segs)
+        plan_g = self.plan_long.get("graphics", []) or []
+        subset = [(i, g) for i, g in enumerate(plan_g)
+                  if g.get("start_seg") in segs and g.get("template") not in ("chapter", "title", "lower_third")]
+        timed = time_graphics([g for _, g in subset], self.utts, tm, total=tm.duration, min_start=0.2, id_prefix="h")
+        clips, face_src, angle_cuts = self._angles(self.hl_pieces, tm)
+        hp = long_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), utts=self.utts, timemap=tm,
+                        graphics=timed, chapters=[], clips=clips, emphasis=self.plan_long.get("emphasis", []),
+                        face_src=face_src, voice_src="", bgm_src=None, sfx={}, grain_frames=[],
+                        skin=lp.get("skin", "classic") if lp.get("skin") != "hybrid" else "classic",
+                        paper_texture=self._paper, grain=0.0, caption_preset=lp.get("captionPreset", "paper"),
+                        endcard=False, use_sfx=False, speech_onsets=self._edit_onsets(tm))
+        # 스킨은 본편에서 같은 그래픽이 받은 것을 따른다(하이브리드)
+        by_main = {g["id"]: g for g in lp.get("graphics", [])}
+        for g in hp["graphics"]:
+            k = int(g["id"][1:]) if g["id"][1:].isdigit() else -1
+            src = by_main.get(f"g{subset[k][0]}") if 0 <= k < len(subset) else None
+            g["skin"] = src["skin"] if src and src.get("skin") else "classic"
+        face_safe_layouts(hp["graphics"], hp["face"])
+        seg_t = seg_edit_times([u for u in self.utts if u.id in segs], tm)
+        moments = self._moments(tm, segs)
+        have = {m.seg for m in moments}
+        for sid, (a, b) in seg_t.items():          # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막)
+            if sid not in have:
+                moments.append(Moment(t=round(a + 0.05, 3), end=round(b, 3), kind="punchline", intensity=2, seg=sid,
+                                      word="", callout="", label=""))
+        hd = tm.duration
+        ed_h = build_long_edit(timemap=tm, total=hp["duration"], speech_total=hd, graphics=hp["graphics"], chapters=[],
+                               moments=moments, cues=hp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
+                               text_graphic_spans=text_graphic_spans(hp["graphics"]), endcard=False, face=hp.get("face"),
+                               P={**PARAMS, "framed_every": 0}, angle_cuts=angle_cuts, punch_spans=[(0.0, hd)], seed=7)
+        apply_edit(hp, ed_h)
+        dedupe_captions(hp["captions"], caption_overlays(hp))
+        mark_stack_cues(hp["captions"], min_gap=4.0, avoid=text_graphic_spans(hp["graphics"]))
+        strip_audio(hp)
+        # 본편을 뒤로 밀고 앞에 붙인다
+        shift_props(lp, hd)
+        shift_decisions(ed, hd)
+        prepend_props(lp, hp)
+        ed.sfx = list(ed_h.sfx) + ed.sfx
+        ed.bgm_swells = list(ed_h.bgm_swells) + ed.bgm_swells
+        ed.bgm_dips = list(ed_h.bgm_dips) + ed.bgm_dips
+        ed.bgm_switch = [round(hd, 3)] + ed.bgm_switch          # 본편은 새 곡으로
+        # 하이라이트 → 본편(타이틀): 빛샘 전환 + 라이저
+        fps = float(self.fps)
+        lp["transitions"] = sorted(lp["transitions"] + [{"t": round(hd, 3), "type": "leak",
+                                                         "dur": round(PARAMS["tx_frames"]["leak"] / fps, 3)}],
+                                   key=lambda t: t["t"])
+        ed.sfx.append({"t": round(max(0.0, hd - 2.5), 3), "category": "riser",
+                       "gain_db": PARAMS["sfx_gain"].get("riser", -28), "prio": 5, "why": "하이라이트 → 본편"})
+        ed.sfx.sort(key=lambda x: x["t"])
+        ed.stats["highlight_sec"] = round(hd, 1)
+        ed.stats["shots"] = len(lp["camera"])
+        self.log(f"🎬 오프닝 하이라이트 {hd:.1f}초를 본편 앞에 붙임(그래픽 {len(hp['graphics'])} · 강조 "
+                 f"{len(ed_h.punches)} · 자막 {len(hp['captions'])}) → 본편 시작 {fmt_ts(hd)}")
+        return hd
+
     def stage_render(self) -> None:
         assert self.info
         links = self._prepare_render()
@@ -1490,6 +1606,9 @@ class Pipeline:
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
             lp, ed = self._final_long_props(graphics, chapters)
+            voice = self.media / "long_voice.wav"
+            if self._add_highlight(lp, ed):
+                voice = self.media / "long_voice_full.wav"
             self.long_props = lp
             lp["peekEvery"] = peek_every
             p = self.render_dir / "props_long.json"
@@ -1498,7 +1617,7 @@ class Pipeline:
             items.append(RenderItem("video", "LongForm", p, raw, scale=scale, crf=rs.crf, x264_preset=rs.x264_preset,
                                     weight=lp["duration"], muted=True, peek_dir=str(peek_dir)))
             labels.append(("롱폼", lp["duration"]))
-            self.masters.append({"name": "롱폼", "raw": raw, "voice": self.media / "long_voice.wav",
+            self.masters.append({"name": "롱폼", "raw": raw, "voice": voice,
                                  "dst": self.out / f"1_롱폼_{self.slug}.mp4", "edit": ed, "total": lp["duration"],
                                  "moods": MOODS_LONG, "mood": self.plan_long.get("bgm_mood", ""), "short": False})
             self.log(f"✂️ 롱폼 편집: 샷 {ed.stats['shots']} · 전환 {ed.stats['transitions']} · 강조 글라이드 "
@@ -1714,10 +1833,11 @@ class Pipeline:
                 markers = [(c["start"], f"챕터 {c['number']} {c['title']}", "") for c in chapters]
                 markers += [(g["start"], g["template"], str(g["data"].get("title") or g["data"].get("body") or ""))
                             for g in self.long_props.get("graphics", [])]
+                hl_keeps = list(self.hl_map.keeps) if self.hl_map is not None else []
                 export_xml(self.extras / "롱폼_premiere.xml", name=f"{self.title} (자동 컷)",
                            video=Path(self.spec.video), audio=voice, src_fps=self.info.fps, src_duration=self.info.duration,
-                           width=w, height=h, seq_width=w, seq_height=h, keeps=self.timemap.keeps, markers=markers,
-                           pieces=xml_pieces(self.long_pieces), files=files)
+                           width=w, height=h, seq_width=w, seq_height=h, keeps=hl_keeps + list(self.timemap.keeps),
+                           markers=markers, pieces=xml_pieces(self.hl_pieces + self.long_pieces), files=files)
             short_pieces = getattr(self, "short_pieces", []) or []
             for i, tm in enumerate(getattr(self, "short_maps", []), 1):
                 export_xml(self.extras / f"숏폼{i}_premiere.xml", name=f"숏폼 {i}", video=Path(self.spec.video),
@@ -1725,7 +1845,8 @@ class Pipeline:
                            seq_width=1080, seq_height=1920, keeps=tm.keeps, markers=[],
                            pieces=xml_pieces(short_pieces[i - 1]) if i <= len(short_pieces) else None, files=files)
         report = edit_report(title=self.title, source_duration=self.info.duration,
-                             long_duration=self.timemap.duration, align_report=self.align_report, utts=self.utts,
+                             long_duration=self.timemap.duration + self.hl_duration, align_report=self.align_report,
+                             utts=self.utts,
                              graphics=self.long_props.get("graphics", []) if self.long_props else [],
                              chapters=chapters, shorts=self.plan_shorts, director=self.director_name,
                              usage=self.claude.usage if self.claude else read_json(self.work / "plan.json", {}).get("usage", []),
@@ -1763,6 +1884,10 @@ class Pipeline:
             lines.append("- 원본 " + str(len(self.smap.cams)) + "개: " + self.smap.summary())
             if self.smap.multicam and self.long_pieces:
                 lines.append("- 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
+        if self.hl_map is not None and self.hl_segs:
+            by_id = {u.id: u for u in self.utts}
+            lines.append(f"- 오프닝 하이라이트 {self.hl_duration:.1f}초: "
+                         + " / ".join(f"「{by_id[i].text[:30]}」" for i in self.hl_segs if i in by_id) + " → 처음부터")
         if self.look_plan:
             lines.append("- 화면 구성(자동 · 하이브리드): " + self.look_plan.summary())
         au = read_json(self.work / "audio.json", {})

@@ -78,6 +78,7 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
             moments.append({"seg": u.id, "word": "", "kind": "question", "intensity": 1})
     terms = sorted({a for t in tags for a in t.args if 1 < len(a) <= 12})[:12]
     return {
+        "highlights": highlight_segs(utts),
         "summary": brief.title,
         "hook_segs": hook,
         "title_card_seg": kept[1].id if len(kept) > 3 else -1,
@@ -180,6 +181,37 @@ def _make_short(ids: list[int], by_id: dict[int, Utterance], hint: str, max_sec:
         "loop_line": "",
         "caption": first_text,
         "hashtags": ["#디자인", "#제품디자인", "#디자인이론"],
+        "viewer_takeaway": re.sub(r"[.?!…]+$", "", by_id[ids[-1]].text.strip())[:60],
         "why": "규칙 기반 자동 선택(API 키 없음)",
         "score": 5,
     }
+
+
+def highlight_segs(utts: list[Utterance], *, max_sec: float = 20.0, each_max: float = 7.0, n: int = 3) -> list[dict]:
+    """🎬 오프닝 하이라이트 후보(규칙): 첫 두 발화 뒤에서 훅 신호(결론·반전·질문·숫자)가 강한 짧은 문장 2~3개 —
+    앞 문맥에 매달리는 첫말('그래서·이게…')은 뺀다. 시간순."""
+    from .plan import DANGLING_START
+    kept = [u for u in utts if u.kept]
+    cands = []
+    for u in kept[2:]:
+        d = u.end - u.start
+        t = u.text.strip()
+        if not 1.4 <= d <= each_max or any(t.startswith(x) for x in DANGLING_START):
+            continue
+        h, _ = _hookiness(t)
+        if re.search(r"[.?!]$", t):
+            h += 1
+        if h >= 2:
+            cands.append((h, d, u))
+    cands.sort(key=lambda c: (-c[0], c[2].start))
+    picked: list[Utterance] = []
+    total = 0.0
+    for h, d, u in cands:
+        if len(picked) >= n or total + d > max_sec:
+            continue
+        if any(abs(u.start - p.start) < 20 for p in picked):
+            continue
+        picked.append(u)
+        total += d
+    picked.sort(key=lambda u: u.start)
+    return [{"seg": u.id, "reason": "규칙: 훅 신호가 강한 문장"} for u in picked] if len(picked) >= 2 else []

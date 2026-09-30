@@ -5,7 +5,7 @@
 │                          [ 영상 만들기 ▶ ]                                            │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 → 진행 화면(남은 시간 · 단계 체크리스트 · AI 팀 작업 기록 · 실시간 미리보기)
-→ 결과 화면(롱폼 1 · 숏폼 2 · 썸네일 후보 · 색보정 전후 · 업로드 정보)
+→ 결과 화면(롱폼 1 · 숏폼 1~2 · 썸네일 후보 · 색보정 전후 · 업로드 정보)
 
 편집 툴처럼 만질 것이 없다: 구성·컷·얼굴/그래픽 배분·색·자막·효과음·음악은 전부 자동.
 화면 구성(기본 디자인 × 내 템플릿 하이브리드)과 숏폼 구성은 영상·대본을 보고 자동으로 정한다(고르는 설정 없음).
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(18)
         outer.addWidget(_label("새 영상 만들기", "pageTitle"))
         outer.addWidget(_label("세 가지를 넣으면 기획, 컷 편집, 색보정, 모션그래픽, 자막, 효과음과 음악, 렌더링을 차례로 "
-                               "진행해 롱폼 1편과 숏폼 2편을 만듭니다.", "pageSub", wrap=True))
+                               "진행해 롱폼 1편과 숏폼(제대로 된 1편, 확실하면 2편)을 만듭니다.", "pageSub", wrap=True))
         grid = QHBoxLayout()
         grid.setSpacing(16)
         self.topic = QPlainTextEdit()
@@ -638,7 +638,7 @@ class MainWindow(QMainWindow):
         else:
             mins = self.video_seconds / 60
             est = f"약 {max(5, int(8 + mins * 1.4))}분" if mins else "영상 길이에 따라 다름"
-            self.summary.setText(f"결과: 롱폼 1편 · 숏폼 2편 · 썸네일 3장 · 자막 · 업로드 정보   |   예상 {est}")
+            self.summary.setText(f"결과: 롱폼 1편 · 숏폼 1~2편 · 썸네일 3장 · 자막 · 업로드 정보   |   예상 {est}")
 
     def _spec(self) -> JobSpec:
         return JobSpec(video=self.video.path, videos=self.video.paths[1:], topic=self.topic.toPlainText().strip(),
