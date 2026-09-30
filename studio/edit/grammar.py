@@ -460,7 +460,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
             "glide": P["callout_glide"]}, glide_back=P["callout_glide"] + 0.2)
         reframed.add(round(c["start"] + 0.08, 3))
     if reframed:
-        ed.punches = [p for p in ed.punches if round(p["t"], 3) not in reframed]
+        # ⚡ 펀치 구간의 하드 펀치인(cut)은 리프레이밍과 겹쳐도 남긴다(펀치 편집의 핵심). 젠틀 글라이드만 리프레이밍이 대신한다
+        ed.punches = [p for p in ed.punches if round(p["t"], 3) not in reframed or p["style"] == "cut"]
     last_impact = -1e9
     for p in punches:
         if p["t"] in called:
