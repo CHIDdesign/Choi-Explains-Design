@@ -122,7 +122,7 @@ def main() -> int:
     settings.keyless_stock = False
     settings.download_sounds = False
     spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다", episode="01", script=SCRIPT,
-                      shorts_count=1, use_claude=False, fetch_broll=False, thumbnails=True, short_max_sec=40)
+                      shorts_count=1, use_claude=False, fetch_broll=False, thumbnails=True, short_max_sec=40, verify_edit=False)
     job = work / "job"
 
     def log(m: str) -> None:

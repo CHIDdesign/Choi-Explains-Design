@@ -21,6 +21,13 @@ class FFmpegError(RuntimeError):
     pass
 
 
+def _num(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass
 class MediaInfo:
     path: str
@@ -40,6 +47,13 @@ class MediaInfo:
     color_transfer: str = ""
     color_space: str = ""
     bit_depth: int = 8
+    v_start: float = 0.0       # 영상 스트림 시작 시각(start_time)
+    a_start: float = 0.0       # 오디오 스트림 시작 시각 — 폰·카메라·OBS 녹화는 영상과 수십~수백 ms 어긋나기도 함
+
+    @property
+    def av_offset(self) -> float:
+        """오디오가 첫 영상 프레임보다 몇 초 늦게 시작하는가(음수면 먼저). 목소리 트랙을 이만큼 옮겨야 입이 맞는다."""
+        return (self.a_start - self.v_start) if (self.has_audio and self.has_video) else 0.0
 
     @property
     def is_hdr(self) -> bool:
@@ -183,12 +197,14 @@ class FFmpeg:
                     if "rotation" in sd:
                         rot = int(float(sd["rotation"]))
                 info.rotation = rot % 360
+                info.v_start = _num(st.get("start_time"))
                 if not info.duration:
                     info.duration = float(st.get("duration") or 0.0)
             elif st.get("codec_type") == "audio" and not info.has_audio:
                 info.has_audio = True
                 info.audio_rate = int(st.get("sample_rate") or 48000)
                 info.audio_channels = int(st.get("channels") or 2)
+                info.a_start = _num(st.get("start_time"))
                 if not info.duration:
                     info.duration = float(st.get("duration") or 0.0)
         return info

@@ -28,6 +28,8 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "director@ai": lambda f: 150 + 20 * f["m"],
     "director@rule": lambda f: 15,
     "proxy": lambda f: 15 + 25 * f["m"] * f["k"],
+    "verify@gpu": lambda f: 30 + 12 * f["out_s"] / 60,     # 편집된 목소리 다시 인식(최대 2차)
+    "verify@cpu": lambda f: 30 + 100 * f["out_s"] / 60,
     "broll": lambda f: 40,
     "stock@ai": lambda f: 90,
     "stock@rule": lambda f: 45,

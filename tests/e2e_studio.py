@@ -352,7 +352,7 @@ def main() -> int:
         settings.claude_code_path = str(shim)
         os.environ["ANTHROPIC_API_KEY"] = "sk-should-be-stripped"  # 구독 모드에서는 자식 프로세스에 넘어가면 안 된다
     spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다 — 디자인 전공 1~2학년 대상", episode="01",
-                      script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, qa_rounds=2,
+                      script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
                       direction="모션 장면은 크게")
     job = work / "job"
     previews: list[str] = []

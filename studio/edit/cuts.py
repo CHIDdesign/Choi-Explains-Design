@@ -15,15 +15,17 @@ class Pace:
     keep_gap: float       # 이보다 짧은 쉼은 그대로 둔다
     inner_gap: float      # 발화 내부 머뭇거림이 이보다 길면 잘라낸다
     min_keep: float = 0.22
+    max_silence: float = 0.6   # 남긴 구간 안의 무음(VAD)이 이보다 길면 줄인다(Whisper 단어가 쉼을 덮어도)
 
 
 PACES: dict[str, Pace] = {
     # 셜록현준처럼 생각하는 '호흡'이 살아있는 설명형
-    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.55, inner_gap=0.9),
-    "normal": Pace("normal", pre_pad=0.08, post_pad=0.16, keep_gap=0.38, inner_gap=0.65),
-    "fast": Pace("fast", pre_pad=0.05, post_pad=0.10, keep_gap=0.22, inner_gap=0.4),
+    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.55, inner_gap=0.9, max_silence=0.6),
+    "normal": Pace("normal", pre_pad=0.08, post_pad=0.16, keep_gap=0.38, inner_gap=0.65, max_silence=0.45),
+    "fast": Pace("fast", pre_pad=0.05, post_pad=0.10, keep_gap=0.22, inner_gap=0.4, max_silence=0.32),
     # 숏폼: 데드에어 제거
-    "shorts": Pace("shorts", pre_pad=0.04, post_pad=0.08, keep_gap=0.14, inner_gap=0.28, min_keep=0.15),
+    "shorts": Pace("shorts", pre_pad=0.04, post_pad=0.08, keep_gap=0.14, inner_gap=0.28, min_keep=0.15,
+                   max_silence=0.24),
 }
 
 
@@ -83,8 +85,40 @@ def build_keeps(
             merged[-1] = Span(merged[-1].start, max(merged[-1].end, s.end))
         else:
             merged.append(s)
+    word_starts = sorted(w.start for u in utts if (u.kept or include_all) for w in u.words)
+    merged = trim_dead_air(merged, vad, word_starts, max_silence=pace.max_silence,
+                           pad_after=min(0.16, pace.post_pad + 0.02), pad_before=min(0.12, pace.pre_pad + 0.04))
     merged = [s for s in merged if s.dur >= pace.min_keep]
     return quantize(merged, fps, media_duration)
+
+
+def trim_dead_air(spans: list[Span], vad: list[tuple[float, float]], word_starts: list[float], *,
+                  max_silence: float, pad_after: float = 0.14, pad_before: float = 0.1) -> list[Span]:
+    """남긴 구간 안에서 VAD 가 조용하다고 본 곳이 max_silence 보다 길면 가운데를 잘라 자연스러운 쉼만 남긴다.
+    그 조용한 곳에서 시작하는 단어가 있으면(VAD 가 작은 소리를 놓친 것) 자르지 않는다."""
+    if not vad:
+        return spans
+    out: list[Span] = []
+    for sp in spans:
+        cuts: list[tuple[float, float]] = []
+        prev_end = None
+        for a, b in vad:
+            if b <= sp.start or a >= sp.end:
+                continue
+            if prev_end is not None:
+                s0, s1 = max(prev_end, sp.start), min(a, sp.end)
+                if s1 - s0 > max_silence:
+                    lo, hi = s0 + pad_after, s1 - pad_before
+                    i = bisect.bisect_left(word_starts, s0 + 0.05)
+                    if hi > lo and not (i < len(word_starts) and word_starts[i] < s1 - 0.05):
+                        cuts.append((lo, hi))
+            prev_end = b if prev_end is None else max(prev_end, b)
+        cur = sp.start
+        for lo, hi in cuts:
+            out.append(Span(cur, lo))
+            cur = hi
+        out.append(Span(cur, sp.end))
+    return out
 
 
 def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]:

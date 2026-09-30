@@ -35,6 +35,7 @@ from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
 from .edit.grammar import EditDecisions, Moment, build_long_edit, build_short_edit
+from .edit.verify import find_issues, subtract, to_source
 from .eta import Eta, features
 from .export.premiere import export_xml
 from .export.report import edit_report, write_text, youtube_text
@@ -52,6 +53,7 @@ from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
 from .stock.research import StockResearcher
 from .text.align import ScriptAligner, build_utterances
+from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
 from .text.script import glossary_terms, parse_script
 from .util import (CancelToken, LogFn, file_fingerprint, fmt_ts, noop_log, read_json, slugify, text_hash,
@@ -69,6 +71,7 @@ STAGES: list[tuple[str, str, float]] = [
     ("grade", "자동 색보정", 3),
     ("director", "AI 기획(감독 + 전문 팀)", 9),
     ("proxy", "편집본 만들기(컷·색)", 8),
+    ("verify", "편집 오류 검사(음성 다시 인식)", 5),
     ("broll", "자료 사진", 2),
     ("stock", "스톡 영상·사진", 3),
     ("sound", "효과음·배경음악 준비", 2),
@@ -109,6 +112,7 @@ class JobSpec:
     short_caption_preset: str = "auto"
     studio_mode: bool = True
     fetch_stock: bool = True
+    verify_edit: bool = True       # 편집 후 목소리를 다시 인식해 남은 되풀이·무음을 한 번 더 자른다
     motion_scenes: bool = True
     qa_rounds: int = 1
     direction: str = ""
@@ -249,7 +253,7 @@ class Pipeline:
     def _eta_plan(self, keys: list[str]) -> None:
         ai = self._use_api()
         gpu = gpu_expected(self.settings.whisper_device, self.log)
-        variants = {"asr": "asr@gpu" if gpu else "asr@cpu",
+        variants = {"asr": "asr@gpu" if gpu else "asr@cpu", "verify": "verify@gpu" if gpu else "verify@cpu",
                     "director": "director@ai" if ai else "director@rule",
                     "qa": "qa@ai" if ai else "qa@rule",
                     "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
@@ -261,7 +265,7 @@ class Pipeline:
         long_s = tm.duration if (tm is not None and self.spec.make_long) else 0.0
         shorts_s = sum(t.duration for t in getattr(self, "short_maps", []) or [])
         feats = self._eta_features(long_s=long_s, shorts_s=shorts_s)
-        for key in ("render", "master"):
+        for key in ("verify", "render", "master"):
             self.eta.refine(key, feats)
 
     def _sp(self, key: str):
@@ -277,7 +281,8 @@ class Pipeline:
             ("director", self.stage_director),
         ]
         if until != "plan":
-            steps += [("proxy", self.stage_proxy), ("broll", self.stage_broll), ("stock", self.stage_stock),
+            steps += [("proxy", self.stage_proxy), ("verify", self.stage_verify), ("broll", self.stage_broll),
+                      ("stock", self.stage_stock),
                       ("sound", self.stage_sound), ("qa", self.stage_qa), ("render", self.stage_render),
                       ("master", self.stage_master), ("export", self.stage_export)]
         self.eta.begin()
@@ -346,7 +351,7 @@ class Pipeline:
                 self.log(f"(잡음 제거 모델 준비 실패 → 기본 필터 사용: {e})")
         key = text_hash(file_fingerprint(self.spec.video),
                         file_fingerprint(self.spec.audio) if self.spec.audio else "", self.spec.enhance_voice,
-                        bool(model), "v3")
+                        bool(model), round(self.info.av_offset, 3), "v4")
         voice = self.work / "voice.wav"
         asr = self.work / "asr16k.wav"
         meta = read_json(self.work / "audio.json", {})
@@ -357,6 +362,7 @@ class Pipeline:
                               else "잡음 제거 + 방송용 EQ·컴프레서"))
         info = build_voice_track(self.ff, self.spec.video, voice, external_audio=self.spec.audio or None,
                                  duration=self.info.duration, enhance=self.spec.enhance_voice, denoise_model=model,
+                                 av_offset=self.info.av_offset,
                                  log=self.log, progress=lambda f: self._stage("audio", f * 0.85), cancel=self.cancel)
         self.ff.extract_audio(voice, asr, rate=16000, mono=True, cancel=self.cancel, duration=self.info.duration)
         write_json(self.work / "audio.json", {"key": key, **info})
@@ -365,7 +371,7 @@ class Pipeline:
         assert self.info
         parsed = parse_script(self.spec.script)
         hints = glossary_terms(parsed, extra=list(self.settings.glossary.values()))
-        key = text_hash(file_fingerprint(self.work / "asr16k.wav"), self.settings.whisper_model, hints, "v1")
+        key = text_hash(file_fingerprint(self.work / "asr16k.wav"), self.settings.whisper_model, hints, "v2")
         cached = read_json(self.work / "transcript.json", {})
         if cached.get("key") == key and cached.get("words"):
             self.log(f"음성 인식: 캐시 사용 ({len(cached['words'])}단어)")
@@ -385,11 +391,20 @@ class Pipeline:
             raise RuntimeError("인식된 음성이 없습니다(오디오를 확인하세요).")
         parsed = parse_script(self.spec.script)
         audio = load_audio_16k(self.work / "asr16k.wav")
+        self.vad = speech_regions(audio)
+        # 단어 단위 정리: 다시 말한 앞부분·추임새(쉼은 VAD 로 잰다 — Whisper 단어 시간이 쉼을 덮어도 잡힘)
+        words, removed = clean_words(words, pause=vad_pause(self.vad))
+        self.removed = [r.to_dict() for r in removed]
+        n_re = sum(1 for r in removed if r.reason.startswith("되풀이"))
+        self.log(f"✂️ 단어 정리: 다시 말한 앞부분 {n_re}곳 · 추임새 {len(removed) - n_re}곳 삭제")
+        for r in removed:
+            if r.reason.startswith("되풀이"):
+                self.log(f"   - {fmt_ts(r.start)} 「{r.text[:40]}」")
         utts = build_utterances(words)
         aligner = ScriptAligner(parsed, self.settings.glossary, audio=audio)
         self.utts, self.tags, rep = aligner.run(utts)
         self.align_report = rep.to_dict()
-        self.vad = speech_regions(audio)
+        self.align_report["words_removed"] = self.removed
         write_json(self.work / "align.json", {"utterances": [u.to_dict() for u in self.utts],
                                               "tags": [t.to_dict() for t in self.tags],
                                               "report": self.align_report, "vad": self.vad})
@@ -635,7 +650,7 @@ class Pipeline:
         pre = [f for f in filters if f.startswith("hqdn3d")]
         post = [f for f in filters if not f.startswith("hqdn3d")]
         key = text_hash(file_fingerprint(self.spec.video), self.fps, height, file_fingerprint(lut) if lut else "",
-                        filters, "proxy-v2")
+                        filters, "proxy-v3")
         meta = read_json(self.media / "proxy.json", {})
         if meta.get("key") == key and proxy.exists():
             self.log("편집본: 캐시 사용")
@@ -646,8 +661,22 @@ class Pipeline:
                         lut=lut or None, pre_filters=pre, post_filters=post, log=self.log,
                         progress=lambda f: self._stage("proxy", 0.8 * f), cancel=self.cancel)
             write_json(self.media / "proxy.json", {"key": key, "height": height})
-        self.timemap = TimeMap(build_keeps(self.utts, pace=self._pace(), vad=self.vad,
-                                           media_duration=self.info.duration, fps=self.fps))
+        self.base_keeps = build_keeps(self.utts, pace=self._pace(), vad=self.vad,
+                                      media_duration=self.info.duration, fps=self.fps)
+        ver = read_json(self.work / "verify.json", {})
+        self.edit_drops = [Span(a, b) for a, b in ver.get("drops", [])] \
+            if ver.get("base") == self._keeps_key(self.base_keeps) else []
+        self._make_cuts()
+
+    def _keeps_key(self, keeps: list[Span]) -> str:
+        return text_hash([(round(k.start, 3), round(k.end, 3)) for k in keeps], "verify-v1")
+
+    def _make_cuts(self) -> None:
+        """keep 구간(편집 검사에서 찾은 문제 구간은 뺀다) → 롱폼·숏폼 목소리 컷."""
+        from .edit.cuts import quantize
+        drops = getattr(self, "edit_drops", [])
+        keeps = quantize(subtract(self.base_keeps, drops), self.fps, self.info.duration) if drops else self.base_keeps
+        self.timemap = TimeMap(keeps)
         write_json(self.work / "keeps_long.json", self.timemap.to_list())
         if self.spec.make_long:
             cut_audio(self.ff, self.work / "voice.wav", self.timemap.keeps, self.media / "long_voice.wav", self.work,
@@ -656,6 +685,8 @@ class Pipeline:
         for i, s in enumerate(self.plan_shorts, 1):
             keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES["shorts"], vad=self.vad,
                                        media_duration=self.info.duration, fps=self.fps)
+            if drops:
+                keeps = subtract(keeps, drops)
             keeps = self._limit_short(keeps)
             tm = TimeMap(keeps, preserve_order=True)
             s["duration"] = tm.duration
@@ -663,6 +694,48 @@ class Pipeline:
             cut_audio(self.ff, self.work / "voice.wav", keeps, self.media / f"short_{i}_voice.wav", self.work,
                       log=self.log, cancel=self.cancel)
             self.log(f"숏폼 {i}: {tm.duration:.1f}초 · 구간 {len(keeps)}개")
+
+    # ------------------------------------------------------------------
+    def stage_verify(self) -> None:
+        """🔎 편집 검사: 잘라 붙인 롱폼 목소리를 Whisper 로 다시 받아 적어, 남은 되풀이·추임새·긴 무음을 찾아 더 자른다."""
+        if not (self.spec.make_long and self.spec.verify_edit and (self.media / "long_voice.wav").exists()):
+            return
+        base = self._keeps_key(self.base_keeps)
+        ver = read_json(self.work / "verify.json", {})
+        if ver.get("base") == base and ver.get("done"):
+            self.log(f"🔎 편집 검사: 캐시 사용(추가로 자른 곳 {len(ver.get('drops', []))}곳)")
+            return
+        parsed = parse_script(self.spec.script)
+        hints = glossary_terms(parsed, extra=list(self.settings.glossary.values()))
+        rounds: list[dict] = []
+        drops = list(getattr(self, "edit_drops", []))
+        for rnd in (1, 2):
+            wav = self.work / "verify16k.wav"
+            self.ff.extract_audio(self.media / "long_voice.wav", wav, rate=16000, mono=True, cancel=self.cancel)
+            res = transcribe(wav, model_name=self.settings.whisper_model, device=self.settings.whisper_device,
+                             compute_type=self.settings.whisper_compute, hint_terms=hints,
+                             duration=self.timemap.duration, log=lambda m: None,
+                             progress=lambda f, r=rnd: self._stage("verify", (r - 1) * 0.5 + 0.45 * f),
+                             cancel=self.cancel)
+            words = [Word.from_dict(w) for w in res.get("words", [])]
+            vad = speech_regions(load_audio_16k(wav))
+            issues = find_issues(words, vad, max_silence=self._pace().max_silence, duration=self.timemap.duration)
+            rounds.append({"round": rnd, "words": len(words), "issues": [i.to_dict() for i in issues]})
+            if not issues:
+                self.log(f"🔎 편집 검사 {rnd}차: 남은 되풀이·추임새·긴 무음 없음")
+                break
+            kinds = {}
+            for it in issues:
+                kinds[it.reason] = kinds.get(it.reason, 0) + 1
+            self.log(f"🔎 편집 검사 {rnd}차: " + " · ".join(f"{k} {v}곳" for k, v in kinds.items()) + " → 더 자릅니다")
+            for it in issues[:12]:
+                self.log(f"   - {fmt_ts(it.start)} {it.reason}" + (f" 「{it.text[:40]}」" if it.text else ""))
+            drops += to_source(issues, self.timemap)
+            self.edit_drops = drops
+            self._make_cuts()
+        write_json(self.work / "verify.json", {"base": base, "done": True, "drops": [[d.start, d.end] for d in drops],
+                                               "rounds": rounds})
+        self.verify_report = rounds
 
     def _limit_short(self, keeps: list[Span]) -> list[Span]:
         limit = float(self.spec.short_max_sec) + 5.0

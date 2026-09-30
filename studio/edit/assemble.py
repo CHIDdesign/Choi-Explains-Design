@@ -48,6 +48,7 @@ def build_proxy(
     if info.is_hdr:
         log("HDR(HLG/PQ) 영상 감지 → SDR 톤매핑")
         vf.append(hdr_to_sdr_filter())
+    vf.append("setpts=PTS-STARTPTS")   # 프록시 0초 = 첫 영상 프레임(목소리도 여기에 맞춤: MediaInfo.av_offset)
     vf.append(f"fps={fps}")
     # 태그 없는 HD 영상을 BT.601 로 잘못 읽지 않도록(색이 살짝 틀어짐) 색 행렬을 명시
     matrix = info.color_space if info.color_space in ("bt709", "bt470bg", "smpte170m", "bt2020nc") else (

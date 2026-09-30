@@ -206,3 +206,37 @@ def test_sound_library_prefers_real_then_falls_back(tmp_path):
     assert lib.pick("reverse_cymbal").category == "reverse"
     assert lib.pick("chime").category == "ding"
     assert lib.pick_bgm(("minimal",)) is None and lib.rnnoise_model() is None
+
+
+def test_voice_is_aligned_when_audio_stream_starts_late(tmp_path):
+    """폰·카메라·OBS 녹화처럼 오디오 스트림이 영상보다 늦게 시작하면(start_time) 예전엔 그만큼 소리가 앞당겨졌다."""
+    import shutil
+    import subprocess
+    import wave
+
+    import numpy as np
+    import pytest
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg 없음")
+    from studio.edit.assemble import build_proxy
+    from studio.media.audio import build_voice_track
+    from studio.media.ffmpeg import FFmpeg
+    base, src = tmp_path / "v.mp4", tmp_path / "off.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=160x120:r=30:d=4,drawbox=c=white:t=fill:enable='between(t,2,2.1)'",
+                    "-f", "lavfi", "-i", "sine=f=1000:d=4:sample_rate=48000,volume=enable='not(between(t,2,2.1))':volume=0",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(base)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(base), "-itsoffset", "0.3", "-i", str(base),
+                    "-map", "0:v", "-map", "1:a", "-c", "copy", str(src)], check=True)
+    ff = FFmpeg()
+    info = ff.probe(src)
+    assert info.av_offset > 0.2
+    build_voice_track(ff, src, tmp_path / "voice.wav", duration=info.duration, enhance=False, av_offset=info.av_offset)
+    build_proxy(ff, src, info, tmp_path / "proxy.mp4", fps=30, height=120)
+    with wave.open(str(tmp_path / "voice.wav")) as w:
+        a = np.frombuffer(w.readframes(w.getnframes()), np.int16).reshape(-1, 2)[:, 0]
+    beep = int(np.argmax(np.abs(a) > 2000)) / 48000
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(tmp_path / "proxy.mp4"), "-vf", "scale=8:8,format=gray",
+                          "-f", "rawvideo", "-"], capture_output=True, check=True).stdout
+    flash = int(np.argmax(np.frombuffer(raw, np.uint8).reshape(-1, 64).mean(1) > 128)) / 30
+    assert abs((beep - flash) - 0.3) < 0.05, (beep, flash)   # 원본처럼 소리가 화면보다 0.3초 늦게

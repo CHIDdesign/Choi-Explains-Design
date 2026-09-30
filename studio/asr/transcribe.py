@@ -19,6 +19,7 @@ from ..paths import MODELS_DIR
 os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 
 _DLL_READY = False
+_MODELS: dict[tuple[str, str, str], object] = {}   # 같은 작업 안에서 모델 재사용(첫 인식 → 편집 검사)
 
 
 def _prepare_windows_cuda(log: LogFn) -> None:
@@ -156,21 +157,27 @@ def transcribe(
         device = "cuda" if cuda_available() else "cpu"
     if compute_type == "auto":
         compute_type = "float16" if device == "cuda" else "int8"
-    log(f"Whisper 모델 로드: {model_name} ({device}/{compute_type}) — 첫 실행은 모델 다운로드로 오래 걸립니다")
-    t0 = time.time()
-    try:
-        model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    except Exception as e:  # noqa: BLE001
-        if device == "cuda":
-            log(f"GPU 로드 실패 → CPU 로 전환합니다: {e}")
-            device, compute_type = "cpu", "int8"
+    model = _MODELS.get((model_name, device, compute_type))
+    if model is None:
+        log(f"Whisper 모델 로드: {model_name} ({device}/{compute_type}) — 첫 실행은 모델 다운로드로 오래 걸립니다")
+        t0 = time.time()
+        try:
             model = WhisperModel(model_name, device=device, compute_type=compute_type)
-        else:
-            raise
-    log(f"모델 로드 {time.time() - t0:.1f}s")
+        except Exception as e:  # noqa: BLE001
+            if device == "cuda":
+                log(f"GPU 로드 실패 → CPU 로 전환합니다: {e}")
+                device, compute_type = "cpu", "int8"
+                model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            else:
+                raise
+        _MODELS.clear()   # GPU 메모리: 한 번에 하나만
+        _MODELS[(model_name, device, compute_type)] = model
+        log(f"모델 로드 {time.time() - t0:.1f}s")
 
     hot = ", ".join(hint_terms or [])[:400]
-    prompt = initial_prompt or ("다음은 디자인 이론을 설명하는 한국어 강의입니다. " + (hot[:200] if hot else ""))
+    # 추임새·되풀이까지 받아 적게 하는 말투의 프롬프트(Whisper 는 프롬프트 문체를 따라 한다) — 그래야 잘라낼 수 있다
+    prompt = initial_prompt or ("음, 어… 오늘은, 어, 디자인 이론을 설명하는 한국어 강의입니다. 그러니까, 음, 다시 말하면… "
+                                + (hot[:200] if hot else ""))
     kwargs = dict(
         language=language,
         beam_size=5,

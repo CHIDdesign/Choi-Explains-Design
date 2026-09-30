@@ -77,11 +77,13 @@ def build_voice_track(
     enhance: bool = True,
     denoise_model: Optional[str | Path] = None,
     target_lufs: float = -16.0,
+    av_offset: float = 0.0,
     log: LogFn = noop_log,
     progress: ProgressFn = noop_progress,
     cancel: Optional[CancelToken] = None,
 ) -> dict:
     """영상 길이에 정확히 맞춘 48kHz 스테레오 보이스 WAV 를 만든다.
+    av_offset: 원본 안에서 오디오가 첫 영상 프레임보다 늦게 시작한 초(MediaInfo.av_offset) — 이만큼 옮겨 입을 맞춘다.
 
     외부 녹음이 있으면 카메라 오디오와 교차상관으로 싱크를 맞춰 대체한다.
     """
@@ -104,6 +106,14 @@ def build_voice_track(
             pre = f"adelay={int(off * 1000)}:all=1,"
         else:
             pre = f"atrim=start={-off:.3f},asetpts=PTS-STARTPTS,"
+    elif abs(av_offset) >= 0.005:
+        # 원본 안에서 오디오 스트림이 첫 영상 프레임보다 늦게/먼저 시작 → 목소리를 영상 타임라인(프록시 0초)에 맞춘다
+        info["av_offset"] = round(av_offset, 4)
+        log(f"오디오·영상 시작 차이 {av_offset * 1000:+.0f}ms → 목소리 위치를 맞춥니다")
+        if av_offset > 0:
+            pre = f"adelay={av_offset * 1000:.1f}:all=1,"
+        else:
+            pre = f"atrim=start={-av_offset:.4f},asetpts=PTS-STARTPTS,"
     chain = pre + (voice_chain(denoise_model) + "," if enhance else "")
     info["denoise"] = "rnnoise" if (enhance and denoise_model) else ("afftdn" if enhance else "off")
     fit = f"apad,atrim=0:{duration:.3f}"
