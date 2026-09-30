@@ -401,8 +401,12 @@ def main() -> int:
     # 젠틀 편집: 프레이밍은 100↔106%(콜아웃 110%)에 느린 푸시(최대 +5%)뿐. 콜아웃 뒤 조각은 원래 푸시가 닿았을 값(예 1.05)에서
     # 이어지므로 정확한 집합이 아니라 범위로 본다
     assert lp["camera"] and all(1.0 <= c["zoom"] <= 1.12 and c["zoomEnd"] <= 1.17 for c in lp["camera"]), lp["camera"]
+    # 강조 글라이드: 있으면 glide 뿐이고, 그래픽(전면·분할) 위에는 놓이지 않는다. 몇 개인지는 기획의 그래픽 배치에 따라
+    # 0 도 될 수 있다(그래픽 위 · 콜아웃 40초 안의 강조 순간은 건너뛴다)
     assert all(p.get("style") == "glide" for p in lp["punches"]), lp["punches"]
-    assert lp["punches"] and lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
+    covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
+    assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
+    assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
     assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
     assert any(t["type"] in ("wipe", "leak") for t in lp["transitions"]), lp["transitions"]
     assert lp["voice"] is None and lp["sfx"] == []          # 음향은 FFmpeg 에서 따로 믹스
