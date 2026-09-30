@@ -121,10 +121,10 @@ def test_time_graphics_motion_spec_and_broll_rules():
     by_t = {g.template: g for g in timed}
     assert "motion" in by_t and by_t["motion"].data["spec"]["elements"]
     assert by_t["motion"].end - by_t["motion"].start >= min(spec_settle_time(EXAMPLES["proximity"]) + 1.2, 12) - 0.01
-    # 소재 없는 B-roll 은 버리고, 있는 B-roll 은 단어보다 살짝 늦게 들어간다
+    # 소재 없는 B-roll 은 버리고, 있는 B-roll 은 말보다 조금 먼저(0.3초) 들어간다(참고 채널: 화면이 말보다 먼저)
     brolls = [g for g in timed if g.template == "broll"]
     assert len(brolls) == 1 and brolls[0].data["src"] == "broll/v1.mp4" and brolls[0].data["credit"] == "A / Pexels"
-    assert brolls[0].start >= utts[4].start + 0.2
+    assert utts[4].start - 0.35 <= brolls[0].start <= utts[4].start - 0.25
 
 
 def test_caption_emphasis_types_and_one_per_cue():

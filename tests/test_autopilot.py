@@ -127,7 +127,8 @@ def test_short_edit_is_fast_but_sparse():
     assert {c["zoom"] for c in ed.camera} <= {1.0, 1.06}
     assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
     assert all(p["style"] == "glide" for p in ed.punches)
-    assert 2 <= len(ed.sfx) <= 6 and not {"impact", "sub_drop"} & {s["category"] for s in ed.sfx}
+    assert 2 <= len(ed.sfx) <= 6 and not {"impact", "sub_drop", "whoosh_fast", "reverse", "swipe"} & {
+        s["category"] for s in ed.sfx}                                   # 컷·이음새에 whoosh 없음(참고 채널)
     assert ed.soft_cut > 0
 
 
@@ -367,3 +368,14 @@ def test_captions_hidden_when_graphic_already_shows_the_words():
     n = dedupe_captions(cues, caption_overlays(props))
     assert n == 2
     assert [bool(c.get("hidden")) for c in cues] == [True, False, True, False]
+
+
+def test_stack_captions_are_rare_and_skip_busy_or_hidden():
+    from studio.render.props import mark_stack_cues
+    cue = lambda a, txt, em=None, **kw: {"start": a, "end": a + 1.0, "lines": [[
+        {"text": w, "start": a, "end": a + 1.0, **({"em": "keyword"} if w == em else {})} for w in txt.split()]], **kw}
+    cues = [cue(1, "좋은 질문이", "질문이"), cue(5, "먼저 입니다", "먼저"), cue(20, "디자인의 시작", "시작"),
+            cue(30, "숨긴 자막", "자막", hidden=True), cue(45, "아주 아주 긴 문장이라 두 층으로는 안 된다", "문장이라"),
+            cue(60, "그래픽 위", "위"), cue(80, "결론은 질문", "질문", style="impact"), cue(85, "바로 다음", "다음")]
+    n = mark_stack_cues(cues, min_gap=18.0, avoid=[(59.5, 62.0)])
+    assert [c.get("style") for c in cues] == ["stack", None, "stack", None, None, None, "impact", None] and n == 2

@@ -466,10 +466,11 @@ def time_graphics(
                 k += 1
             end = max(end, seg_t[order[k]][1])
         end = min(end, start + t.max_dur, total - 0.3)
+        # 참고 채널 실측: 화면이 말보다 0.3~1.0초 먼저 도착한다(시청자가 들을 때 이미 보고 있음)
         if g["template"] == "broll":
-            start = max(start + 0.25, min_start)  # 컷어웨이는 단어보다 살짝 늦게(의도로 읽힘)
+            start = max(start - 0.3, min_start)
         else:
-            start = max(start - 0.15, min_start)  # 도식은 말보다 살짝 먼저 도착
+            start = max(start - 0.45, min_start)
         if end - start < t.min_dur * 0.7:
             continue
         data = {k: g.get(k) for k in DATA_KEYS}

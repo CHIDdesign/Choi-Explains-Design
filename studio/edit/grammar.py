@@ -534,26 +534,20 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
         ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.3, m.t + 1.8), m.t + 3.0, total), 3),
                            "amount": 0.07 if m.intensity >= 3 else 0.05, "style": "glide"})
     ed.punches.sort(key=lambda p: p["t"])
-    # 4) 효과음: 그래픽 성격에 맞춰 다양하게(종이·팝·타자·스와이프…), 6초에 하나 이하, 한 편에 최대 6개
-    sfx: list[dict] = [{"t": 0.02, "category": "swipe", "gain_db": P["sfx_gain"]["swipe"], "prio": 6,
-                        "why": "훅 첫 프레임"}]
-    for e in ed.transitions:
-        sfx.append({"t": e["t"], "category": "reverse", "gain_db": P["sfx_gain"]["reverse"], "prio": 5,
-                    "why": "되감기 이음새"})
+    # 4) 효과음 — 참고 채널(Nick Saraev 숏폼) 실측: 컷에는 whoosh 가 없고(컷 지점 고음 에너지가 평소와 같음),
+    #    카드·아이콘이 떨어질 때 작은 pop, 그 밖은 잔잔한 음악만. 그래픽 성격에 맞춰 종류는 다양하게, 5초에 하나 이하.
+    sfx: list[dict] = []
     for g in graphics:
-        cat = SFX_FOR_TEMPLATE.get(g.get("template", ""), "paper")
+        media = g.get("template") in ("photo", "broll")
+        cat = "pop" if media else SFX_FOR_TEMPLATE.get(g.get("template", ""), "paper")
         sfx.append({"t": g["start"], "category": cat, "gain_db": P["sfx_gain"].get(cat, -26), "prio": 3,
                     "why": f"{g.get('template', '')} 등장"})
     for p in ed.punches:
-        sfx.append({"t": p["t"], "category": "pop", "gain_db": P["sfx_gain"]["pop"], "prio": 2, "why": "펀치인"})
-    for c in cues:
-        if any(w.get("em") for line in c["lines"] for w in line):
-            sfx.append({"t": c["start"], "category": "pop", "gain_db": P["sfx_gain"]["pop"] - 3, "prio": 1,
-                        "why": "강조 자막"})
+        sfx.append({"t": p["t"], "category": "pop", "gain_db": P["sfx_gain"]["pop"] - 2, "prio": 2, "why": "강조"})
     if total > 8:
         sfx.append({"t": max(0.0, total - 1.6), "category": "ding", "gain_db": P["sfx_gain"]["ding"], "prio": 2,
                     "why": "페이오프"})
-    ed.sfx = _thin_by_gap(sfx, 6.0)[:6]
+    ed.sfx = _thin_by_gap(sfx, 5.0)[:6]
     ed.bgm_swells = [(0.0, 0.8)]
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),
                 "sfx": len(ed.sfx)}

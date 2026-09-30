@@ -332,8 +332,8 @@ def short_props(
     em = [e for e in extra_emphasis or [] if e.get("seg") in segs and e.get("kind") == "highlight"] + em
     em_keys = emphasis_keys(em, utts, timemap)
     # 릴스식은 한두 마디씩 아주 크게(참고 릴스: 5~8자), 그 밖은 12자
-    cues = build_phrase_cues(groups, emphasis=em_keys, max_chars=8 if layout == "reel" else 12,
-                             max_dur=1.6 if layout == "reel" else 2.0)
+    cues = build_phrase_cues(groups, emphasis=em_keys, max_chars=6 if layout == "reel" else 12,
+                             max_dur=1.1 if layout == "reel" else 2.0)
     snap_cues_to_speech(cues, speech_onsets or [])
     total = timemap.duration
     clips = []
@@ -549,3 +549,29 @@ def caption_overlays(props: dict[str, Any]) -> list[tuple[float, float, str]]:
     out += [(c["start"], c["end"], c.get("text", "")) for c in props.get("callouts", []) or []]
     out += [(b["start"], b["end"], b.get("text", "")) for b in props.get("beats", []) or []]
     return out
+
+
+def mark_stack_cues(cues: list[dict[str, Any]], *, min_gap: float, avoid: Optional[list[tuple[float, float]]] = None,
+                    max_chars: int = 16) -> int:
+    """두 층 강조 자막(기울인 명조 앞말 + 굵은 그라데이션 핵심어)을 쓸 큐에 style='stack'.
+    참고 채널 실측: 몇 초에 한 번, 핵심어가 든 한 마디에만(롱폼은 18초 안팎, 숏폼은 3~5초에 하나).
+    grammar 가 이미 'impact' 로 고른 큐도 같은 모양으로 그리므로 간격 계산에 넣는다."""
+    avoid = avoid or []
+    last = -1e9
+    n = 0
+    for c in cues:
+        if c.get("style") == "impact":
+            last = c["start"]
+            continue
+        if c.get("hidden") or c.get("style"):
+            continue
+        words = [w for line in c["lines"] for w in line]
+        text = "".join(w["text"] for w in words)
+        if not any(w.get("em") for w in words) or len(text) > max_chars:
+            continue
+        if c["start"] - last < min_gap or any(a - 0.2 <= c["start"] < b + 0.2 for a, b in avoid):
+            continue
+        c["style"] = "stack"
+        last = c["start"]
+        n += 1
+    return n

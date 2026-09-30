@@ -51,7 +51,7 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
 from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, long_props, mark_soft_cuts,
-                           short_beats, short_props, strip_audio, text_graphic_spans)
+                           mark_stack_cues, short_beats, short_props, strip_audio, text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -1121,8 +1121,9 @@ class Pipeline:
                              P=PARAMS if self.spec.skin == "paper" else {**PARAMS, "framed_every": 0})
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
-        if hid:
-            self.log(f"💬 화면 그래픽이 같은 말을 보여 주는 자막 {hid}개는 화면에서 숨김(SRT 에는 남김)")
+        stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
+        self.log(f"💬 자막: 한두 마디 {len(lp['captions'])}개 · 두 층 강조 {stacks}개"
+                 + (f" · 화면 그래픽과 같은 말이라 숨김 {hid}개(SRT 에는 남김)" if hid else ""))
         strip_audio(lp)
         return lp, ed
 
@@ -1182,6 +1183,7 @@ class Pipeline:
                 sp["beats"] = short_beats(s, self.utts, tm, sp["captions"], self._moments(tm, set(s["segments"])),
                                           sp["duration"])
             dedupe_captions(sp["captions"], caption_overlays(sp))
+            mark_stack_cues(sp["captions"], min_gap=3.5, max_chars=12)
             strip_audio(sp)
             sp["peekEvery"] = peek_every
             self.short_props.append(sp)
@@ -1247,7 +1249,9 @@ class Pipeline:
                 if track is not None:
                     songs = lib.playlist(track, len(ed.bgm_switch) + 1, seed=k) if ed.bgm_switch else [track]
                     bgm = BgmPlan(path=str(track.path), lufs=track.lufs, swells=ed.bgm_swells, dips=ed.bgm_dips,
-                                  under_db=-20.0 if m["short"] else -21.0, gap_db=-12.0 if m["short"] else -9.0,
+                                  # 참고 채널 실측: 목소리 아래 계속 깔리는 잔잔한 음악(숏폼 15~20dB, 롱폼 24~28dB 아래),
+                                  # 쉼에서 크게 부풀지 않게
+                                  under_db=-18.0 if m["short"] else -25.0, gap_db=-14.0 if m["short"] else -15.0,
                                   fade_out=1.2 if m["short"] else 3.0,
                                   playlist=[(str(t.path), t.lufs) for t in songs], switch_at=ed.bgm_switch)
             mix_wav = self.work / f"mix_{k}.wav"

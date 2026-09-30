@@ -6,6 +6,7 @@ import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import type {CaptionCue, LongCaptionPreset} from '../../lib/types';
 import {EmWord, splitTail} from './Emphasis';
+import {StackCaption, stackParts} from './Stack';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -55,6 +56,12 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
         <EmWord word={plain ? {...w, em: undefined} : w} t={t} fps={fps} theme={theme} baseColor={base} />
       </React.Fragment>
     ));
+
+  if ((cue.style === 'impact' || cue.style === 'stack') && !plain) {
+    // 두 층 강조 자막(참고 채널): 기울인 명조 앞말 + 굵은 그라데이션 핵심어 — 이 순간에는 자막 상자 대신 이것이 자막
+    return <StackCaption parts={stackParts(cue)} local={local} remain={remain} fps={fps} cueStart={cue.start}
+      accent={theme.accent} x={cx - frameW / 2} width={frameW} bottom={bottom + 18} size={cue.style === 'impact' ? 118 : 104} />;
+  }
 
   if (preset === 'paper') {
     return <PaperCaption cue={cue} local={local} remain={remain} joinPrev={joinPrev} joinNext={joinNext}
