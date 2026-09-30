@@ -6,7 +6,7 @@
     python tests/e2e_synthetic.py [--browser /path/to/chrome] [--keep] [--face 얼굴클립.mp4] [--multi multicam|split]
 
 --multi multicam: 같은 순간을 두 각도로 찍은 원본 2개(B 는 1.2초 먼저 녹화 시작 · 소리 작고 잡음 많음 · 좌우 반전·
-                  가까운 앵글 · 9~15초 초점 나감) → 소리 싱크 · 목소리 카메라 · 앵글 고르기(흐린 구간 피하기) 확인
+                  가까운 앵글 · 17~23초 초점 나감) → 소리 싱크 · 목소리 카메라 · 앵글 고르기(흐린 구간 피하기) 확인
 --multi split:    나눠 찍은 원본 2개(두 번째 파일이 앞 파일 마지막 문장을 다시 말하며 시작) → 가상 타임라인 이어 붙이기 ·
                   파일을 넘나드는 테이크 고르기 확인
 """
@@ -122,8 +122,8 @@ def check_multi(mode: str, job: Path) -> None:
         a, b = src["groups"][0]["cams"]
         assert Path(a["path"]).name == "source.mp4", "목소리는 깨끗한 카메라에서"
         assert abs(b["offset"] - 1.2) < 0.04, b     # B 시각 = A 시각 + 1.2
-        # B 가 초점이 나간 구간(B 시각 9~15초 = 가상 7.8~13.8초)에서는 B 를 쓰지 않는다
-        bad = sum(max(0.0, min(p["end"], 13.3) - max(p["start"], 8.3)) for p in angles["long"] if p["cam"] == 1)
+        # B 가 초점이 나간 구간(B 시각 17~23초 = 가상 15.8~21.8초, 남기는 말 한가운데)에서는 B 를 쓰지 않는다
+        bad = sum(max(0.0, min(p["end"], 21.3) - max(p["start"], 16.3)) for p in angles["long"] if p["cam"] == 1)
         assert bad < 0.6, bad
     else:
         assert len(src["groups"]) == 2
@@ -167,7 +167,7 @@ def main() -> int:
         if args.multi == "multicam":
             if not (work / "source_b.mp4").exists():
                 make_media(work / "source_b.mp4", words, duration, args.face, lead=1.2, gain=0.12, noise=0.012,
-                           angle="b", blur=(9.0, 15.0))
+                           angle="b", blur=(17.0, 23.0))
             videos = [work / "source_b.mp4"]
 
     # 음성 인식 대신 합성 결과 사용 — 원본이 여러 개면 파일 시각 → 가상 타임라인(work/sources.json)으로 옮긴다

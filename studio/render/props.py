@@ -197,6 +197,16 @@ def sfx_events(graphics: list[dict], sfx: dict[str, str], *, min_gap: float = 6.
 # 롱폼
 # ---------------------------------------------------------------------------
 
+def two_lines(title: str, min_len: int = 10) -> str:
+    """숏폼 첫 장면 큰 제목: 한 줄로 길면 가운데에 가까운 띄어쓰기에서 두 줄로(AI 가 hook_title 을 비웠을 때)."""
+    title = (title or "").strip()
+    spaces = [i for i, ch in enumerate(title) if ch == " "]
+    if "\n" in title or len(title) <= min_len or not spaces:
+        return title
+    sp = min(spaces, key=lambda i: abs(i - len(title) / 2))
+    return title[:sp] + "\n" + title[sp + 1:]
+
+
 def keep_clips(timemap: TimeMap, src: str = "media/proxy.mp4") -> list[dict[str, Any]]:
     """원본이 하나일 때: keep 마다 클립 하나(프록시 시각 = 원본 시각)."""
     clips = []
@@ -374,7 +384,7 @@ def short_props(
         "punches": pun,
         "graphics": gdicts,
         "transitions": [],
-        "hookTitle": spec.get("hook_title") or episode.title,
+        "hookTitle": spec.get("hook_title") or two_lines(episode.title),
         "hookHighlight": spec.get("hook_highlight", ""),
         "seriesLabel": series_label,
         "layout": layout,

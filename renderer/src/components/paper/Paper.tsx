@@ -50,10 +50,13 @@ export const hashSeed = (text: string) => {
  * 가끔 더 깊게 뜯긴 자리(notch)를 섞어 손으로 찢은 느낌을 낸다.
  */
 export const tornRectPath = (b: Box, amp: number, step: number, seed: number, inward = false): string => {
-  const r = seeded(seed);
   const pts: [number, number][] = [];
   let o = amp * 0.5;
+  let edgeNo = 0;
   const edge = (x0: number, y0: number, x1: number, y1: number, nx: number, ny: number) => {
+    // 변마다 따로 시드 — 한 난수열을 네 변이 나눠 쓰면 윗변 길이가 바뀔 때(액자가 커지고 작아지는 동안) 나머지 변의
+    // 모양이 매 프레임 새로 뽑혀 가장자리가 지글거렸다. 이제 길이가 바뀌어도 이미 있던 점은 그대로다
+    const r = seeded(seed * 31 + ++edgeNo);
     const len = Math.hypot(x1 - x0, y1 - y0);
     let d = 0;
     while (d < len) {

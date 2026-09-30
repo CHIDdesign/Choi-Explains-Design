@@ -314,9 +314,12 @@ def hdr_to_sdr_filter() -> str:
 
 
 def pick_output_fps(info: MediaInfo) -> int:
-    """출력 프레임레이트: 원본에 가까운 표준값(24/25/30/50/60)."""
+    """출력 프레임레이트: 원본에 가까운 표준값 24/25/30. 50·60fps(휴대폰 촬영에 흔함)는 절반(25·30)으로.
+    렌더러의 모든 움직임(그래픽 등장·자막·전환)이 30fps 프레임 수로 짜여 있어 60fps 로 내보내면 두 배 빨라져
+    교육 영상의 부드러운 편집이 깨진다. 토킹헤드는 30fps 가 표준이고 렌더 시간도 절반."""
     f = info.fps or 30.0
     for std in (23.976, 24, 25, 29.97, 30, 50, 59.94, 60):
         if abs(f - std) < 0.6:
-            return int(round(std))
-    return 30 if f < 45 else 60
+            n = int(round(std))
+            return (25 if n == 50 else 30) if n >= 50 else n
+    return 30

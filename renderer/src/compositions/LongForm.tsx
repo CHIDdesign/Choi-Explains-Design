@@ -177,7 +177,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
       if (span.kind === 'split') {
         const cw = W * SPLIT_SPEAKER;
         target = props.panelSide === 'right' ? {x: 0, y: 0, w: cw, h: H} : {x: W - cw, y: 0, w: cw, h: H};
-        tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t), 'center', 0.4);
+        tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t, fps), 'center', 0.4);
         const panelCenter = props.panelSide === 'right' ? cw + (W - cw) / 2 : (W - cw) / 2;
         capCenter = W / 2 + (panelCenter - W / 2) * p;
       } else if (span.kind === 'pip') {

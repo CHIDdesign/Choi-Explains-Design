@@ -22,9 +22,32 @@ export const fitSize = (text: string, maxW: number, maxSize: number, minSize = 1
   return Math.max(minSize, Math.min(maxSize, maxW / unit));
 };
 
-/** 어절 단위 줄바꿈(한국어: 공백 기준). 최대 줄 수를 넘으면 마지막 줄에 합침. */
+/** 한 어절이 줄보다 길면 글자 단위로 나눈다(띄어쓰기 없는 긴 제목·합성어) */
+const splitLong = (w: string, size: number, maxW: number, tracking: number): string[] => {
+  if (estWidth(w, size, tracking) <= maxW) return [w];
+  const out: string[] = [];
+  let cur = '';
+  for (const ch of w) {
+    if (cur && estWidth(cur + ch, size, tracking) > maxW) {
+      out.push(cur);
+      cur = ch;
+    } else cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
+};
+
+/** 줄 끝을 말줄임(…)으로 — 폭 안에 들어갈 때까지 뒤에서 글자를 뺀다 */
+const ellipsize = (line: string, size: number, maxW: number, tracking: number): string => {
+  let t = line;
+  while (t.length > 1 && estWidth(t + '…', size, tracking) > maxW) t = t.slice(0, -1);
+  return t.trimEnd() + '…';
+};
+
+/** 어절 단위 줄바꿈(한국어: 공백 기준). 최대 줄 수를 넘으면 마지막 줄을 말줄임으로 — 예전엔 남은 글을 모두 마지막
+ *  줄에 이어 붙여(nowrap) 상자 밖으로 나가거나 잘렸다. 줄보다 긴 어절은 글자 단위로 나눈다. */
 export const wrap = (text: string, size: number, maxW: number, maxLines = 3, tracking = 0): string[] => {
-  const words = text.split(/\s+/).filter(Boolean);
+  const words = text.split(/\s+/).filter(Boolean).flatMap((w) => splitLong(w, size, maxW, tracking));
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
@@ -39,7 +62,7 @@ export const wrap = (text: string, size: number, maxW: number, maxLines = 3, tra
   if (cur) lines.push(cur);
   if (lines.length > maxLines) {
     const head = lines.slice(0, maxLines - 1);
-    head.push(lines.slice(maxLines - 1).join(' '));
+    head.push(ellipsize(lines.slice(maxLines - 1).join(' '), size, maxW, tracking));
     return head;
   }
   return lines;

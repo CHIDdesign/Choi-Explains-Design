@@ -344,6 +344,8 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
       ) : null}
       {slides.map((s, i) => {
         if (i < si - 1 || i > si) return null;
+        // 앞 카드는 새 카드가 다 덮은 뒤(14프레임 + 여유)엔 내린다 — 스톡 영상이면 보이지도 않는 디코딩이 계속됐다
+        if (i < si && (t - slides[si].start) * fps > 18) return null;
         const f = (t - s.start) * fps;
         const isMedia = !!mediaOf(s.g);
         // 사진은 위에서 떨어지듯 6프레임(모션 블러), 그 밖은 아래에서 부드럽게 14프레임
@@ -364,9 +366,11 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
           </div>
         );
       })}
-      <div style={{opacity: k}}>
-        <TalkingHead clips={props.clips} fps={fps} region={faceRegion} box={box} />
-      </div>
+      {k > 0 ? (   // 첫 장면(부채꼴 카드) 동안은 보이지 않으니 화자 영상을 디코딩하지 않는다
+        <div style={{opacity: k}}>
+          <TalkingHead clips={props.clips} fps={fps} region={faceRegion} box={box} />
+        </div>
+      ) : null}
       {heroEnd > 0 && frame < toFrame(heroEnd, fps) + 18 ? <Hero props={props} frame={frame} fps={fps} out={1 - k} marker={marker} />
         : null}
       <SeamCaption cues={props.captions} t={t} fps={fps} y={k > 0.5 ? SEAM + 70 : 1740} accent={theme.accent}
