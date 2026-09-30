@@ -74,6 +74,15 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
                 lines.append(f"- {i.get('target')} [{i.get('severity')}] {i.get('problem')} → {i.get('action')}")
             lines.append("")
         lines += ["> 페이싱의 느낌·음악 취향·그래픽의 전반적 인상은 기계가 판단할 수 없습니다. 위 타임코드를 직접 확인하세요.", ""]
+    lines += ["## 📜 대본 충실도", "",
+              f"- 대본 커버리지 {align_report.get('script_coverage', 0) * 100:.0f}% · 다시 말한 부분만 잘라 낸 테이크 "
+              f"{align_report.get('trimmed_takes', 0)}개 · 되살린 문장 {len(align_report.get('restored') or [])}개 · "
+              f"편집 감독의 삭제 요청 중 대본 문장이라 거절 {len(align_report.get('director_drop_refused') or [])}개"]
+    for t in align_report.get("restored") or []:
+        lines.append(f"- 되살림: {t}")
+    for t in align_report.get("director_drop_refused") or []:
+        lines.append(f"- 삭제 거절: {t}")
+    lines.append("")
     missing = align_report.get("missing_sentences") or []
     if missing:
         lines += ["## 영상에서 찾지 못한 대본 문장(말하지 않았거나 인식 실패)", ""] + [f"- {m}" for m in missing] + [""]

@@ -111,6 +111,8 @@ class AlignReport:
     unmatched: int = 0
     script_coverage: float = 0.0
     missing_sentences: list[str] | None = None
+    trimmed_takes: int = 0        # 다시 말한 부분만 잘라내고 고유한 앞부분은 살린 테이크
+    restored: list[str] | None = None   # 다른 테이크가 담지 않아 되살린 발화(대본 문장)
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -127,6 +129,7 @@ class ScriptAligner:
         self.snorm, self.smap = norm_with_map(script.clean)
         self.match_threshold = match_threshold
         self.script_text_threshold = script_text_threshold
+        self._trimmed = 0
 
     # --------------------------------------------------------------
     def run(self, utts: list[Utterance]) -> tuple[list[Utterance], list[Tag], AlignReport]:
@@ -138,6 +141,9 @@ class ScriptAligner:
         if has_script:
             self._mark_retakes_by_script(utts)
         self._mark_retakes_by_similarity(utts)
+        if has_script:
+            rep.restored = self._restore_uncovered(utts)
+            rep.trimmed_takes = self._trimmed
         for u in utts:
             if not u.kept:
                 continue
@@ -293,6 +299,7 @@ class ScriptAligner:
             scored.append((s, u))
         scored.sort(key=lambda p: -p[0])
         chosen: list[tuple[float, Utterance]] = []
+        losers: list[tuple[float, Utterance]] = []
         for s, u in scored:
             if all(overlap(u, c) < 0.2 for _, c in chosen):
                 chosen.append((s, u))
@@ -301,8 +308,148 @@ class ScriptAligner:
             u.status = "retake"
             u.note = f"#{best.id} 가 더 또렷함 ({s * 100:.0f} < {best_s * 100:.0f}점)"
             u.take_score = round(s, 3)
+            losers.append((s, u))
         for s, u in chosen:
             u.take_score = round(s, 3)
+        if span is None:
+            return
+        # 대본 충실도 1: A+B 를 말한 뒤 B 만 더 또렷하게 다시 말했으면(짧은 테이크는 커버리지 점수에서 늘 진다) B 는 나중
+        # 테이크를 쓰고 A 는 앞 테이크에서 살린다 — 고쳐 말한 문장이 버려지고 실수한 B 가 남던 문제
+        for s, v in list(losers):
+            c = next((c for _, c in chosen if c.kept and span(c) and self._inside(span(v), span(c))), None)
+            if c is None or v.start < c.end or not self._complete_sentences(v):
+                continue
+            if self._quality(v, med_rate) < self._quality(c, med_rate) - 0.02:
+                continue
+            if self._trim_to_uncovered(c, [span(v)]):
+                v.status = "keep"
+                v.note = f"고쳐 말한 문장(#{c.id} 에서 이 부분은 제외)"
+                losers.remove((s, v))
+                self._trimmed += 1
+        # 대본 충실도 2: 진 테이크가 '이긴 테이크들이 담지 않은 대본 글자'를 8자 이상 갖고 있으면 통째로 버리지 않고
+        # 겹치는 부분만 잘라 낸다 — 예전엔 그 문장이 영상에서 사라졌다
+        covered = [span(c) for _, c in chosen if c.kept and span(c)] + [span(v) for _, v in losers if v.kept and span(v)]
+        for s, u in losers:
+            if u.kept:
+                continue
+            if self._trim_to_uncovered(u, covered):
+                u.status = "keep"
+                u.take_score = round(s, 3)
+                covered.append(u.script_span)   # type: ignore[arg-type]
+                self._trimmed += 1
+
+    @staticmethod
+    def _inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
+        a, b = inner
+        c, d = outer
+        return b - a > 0 and (min(b, d) - max(a, c)) >= 0.9 * (b - a) and (d - c) > (b - a) + 4
+
+    def _complete_sentences(self, u: Utterance) -> bool:
+        """발화가 대본 문장(들)을 온전히 담는가 — 걸치는 문장마다 80% 이상."""
+        if not u.script_span:
+            return False
+        a, b = u.script_span
+        hit = False
+        for s0, e0, _ in self.script.sentences:
+            ov = min(b, e0) - max(a, s0)
+            if ov < 3:
+                continue
+            hit = True
+            if ov < 0.8 * (e0 - s0):
+                return False
+        return hit
+
+    @staticmethod
+    def _quality(u: Utterance, med_rate: float) -> float:
+        """커버리지·최신성을 뺀 테이크 품질(또렷함·유창성) — 겹치는 부분끼리 비교할 때."""
+        return take_score(u, coverage=1.0, med_rate=med_rate)
+
+    def _word_script_pos(self, u: Utterance) -> list[Optional[tuple[int, int]]]:
+        """발화의 어절마다 대본(clean) 글자 구간 — 글자 단위 정렬(difflib)로. 못 맞춘 어절은 None."""
+        if not u.script_span:
+            return [None] * len(u.words)
+        a, b = u.script_span
+        sub = self.script.clean[a:b]
+        sub_norm, sub_map = norm_with_map(sub)
+        chars: list[str] = []
+        owner: list[int] = []
+        for wi, w in enumerate(u.words):
+            for ch in norm(w.text):
+                chars.append(ch)
+                owner.append(wi)
+        if not chars or not sub_norm:
+            return [None] * len(u.words)
+        sm = difflib.SequenceMatcher(None, "".join(chars), sub_norm, autojunk=False)
+        pos: list[list[int]] = [[] for _ in u.words]
+        for bl in sm.get_matching_blocks():
+            for k in range(bl.size):
+                pos[owner[bl.a + k]].append(a + sub_map[bl.b + k])
+        return [(min(p), max(p) + 1) if p else None for p in pos]
+
+    def _trim_to_uncovered(self, u: Utterance, covered: list[tuple[int, int]]) -> bool:
+        """진 테이크에서 이긴 테이크들이 덮는 대본 부분의 어절을 지우고, 남는 고유 부분(8자·2어절 이상, 구간의 25% 이상)만
+        남긴다. 남길 것이 없으면 False(통째로 retake)."""
+        if not u.script_span or len(u.words) < 3:
+            return False
+        a, b = u.script_span
+
+        def is_covered(p: tuple[int, int]) -> bool:
+            x, y = p
+            return any(min(y, d) - max(x, c) >= 0.5 * max(1, y - x) for c, d in covered)
+
+        pos = self._word_script_pos(u)
+        keep = [i for i, p in enumerate(pos) if p is not None and not is_covered(p)]
+        if len(keep) < 2:
+            return False
+        # 고유 부분은 앞 또는 뒤에 이어져 있어야 한다(중간만 남기면 말이 조각난다)
+        lo, hi = keep[0], keep[-1]
+        if hi - lo + 1 != len(keep):
+            return False
+        if lo != 0 and hi != len(u.words) - 1:
+            return False
+        chars = sum(len(norm(u.words[i].text)) for i in keep)
+        span_lo = min(pos[i][0] for i in keep)   # type: ignore[index]
+        span_hi = max(pos[i][1] for i in keep)   # type: ignore[index]
+        if chars < 8 or (span_hi - span_lo) < 0.25 * max(1, b - a):
+            return False
+        dropped = [w.text for i, w in enumerate(u.words) if i not in keep]
+        u.words = [u.words[i] for i in keep]
+        u.start, u.end = u.words[0].start, u.words[-1].end
+        u.text = u.asr_text = " ".join(w.text for w in u.words)
+        u.script_span = (span_lo, span_hi)
+        u.note = f"다시 말한 부분만 제외: 「{' '.join(dropped)[:30]}」"
+        return True
+
+    def _restore_uncovered(self, utts: list[Utterance]) -> list[str]:
+        """대본 문장인데 남긴 발화 어디에도 없으면, 그 문장을 담은 retake 발화를 되살린다(다른 테이크가 그 문장을 담지 않는데
+        통째로 버려진 경우). 되살린 발화의 구간이 이미 40% 넘게 덮여 있으면(같은 말 두 번) 되살리지 않는다."""
+        restored: list[str] = []
+        kept_spans = [u.script_span for u in utts if u.kept and u.script_span]
+
+        def covered_ratio(a: int, b: int) -> float:
+            n = max(1, b - a)
+            hit = 0
+            for k in range(a, b):
+                if any(c <= k < d for c, d in kept_spans):
+                    hit += 1
+            return hit / n
+
+        for s0, e0, text in self.script.sentences:
+            if len(text) <= 6 or covered_ratio(s0, e0) >= 0.3:
+                continue
+            cands = [u for u in utts if u.status == "retake" and u.script_span
+                     and min(u.script_span[1], e0) - max(u.script_span[0], s0) >= 0.5 * (e0 - s0)]
+            if not cands:
+                continue
+            u = max(cands, key=lambda x: (x.take_score, x.score))
+            a, b = u.script_span   # type: ignore[misc]
+            if covered_ratio(a, b) > 0.4:
+                continue
+            u.status = "keep"
+            u.note = "대본 문장 복원(다른 테이크가 이 문장을 담지 않음)"
+            kept_spans.append(u.script_span)
+            restored.append(text)
+        return restored
 
     def _energy(self, u: Utterance) -> Optional[float]:
         """발화 구간의 평균 음량(dBFS) — 16kHz 오디오가 있을 때만."""

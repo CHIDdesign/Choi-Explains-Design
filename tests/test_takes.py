@@ -145,8 +145,68 @@ def test_captions_are_short_phrases_and_follow_speech():
     assert all(len(c["lines"]) == 1 for c in cues)
     assert all(sum(_clen(w["text"]) for w in c["lines"][0]) <= 16 for c in cues), texts
     assert all(c["end"] - c["start"] <= 2.6 for c in cues)
-    assert "렌더링이 얼마나 설득력이 있는지" in texts and "목업의 완성도가 얼마나 높은지" in texts   # 구 단위로
+    # 구 단위로(호흡): 목적어·관형어·부사는 뒷말과 함께, 이음 어미·쉼표 뒤에서 끊는다
+    assert "설득력이 있는지" in texts and "목업의 완성도가" in texts and "거의 전부처럼" in texts, texts
+    assert all(len(c["lines"][0]) <= 3 for c in cues), texts
     # 자막 시작을 실제 말소리 시작에 맞춤(Whisper 단어 시작이 0.2초 이른 경우)
     c0 = [{"start": 1.0, "end": 2.0, "lines": [[{"text": "안녕"}]]}]
     snap_cues_to_speech(c0, [1.2])
     assert abs(c0[0]["start"] - 1.16) < 1e-6
+
+
+def test_same_word_needs_same_stem_not_just_prefix():
+    from studio.text.takes import same_word
+    assert same_word("평가가", "평가는") and same_word("어디서", "어디인지") and same_word("여러분과", "여러분들이랑")
+    assert not same_word("디자인은", "디자이너는") and not same_word("말", "말고")
+
+
+def test_sentences_sharing_a_discourse_marker_are_not_a_restart():
+    """'그래서 이제 …' 로 시작하는 문장이 잇달아 나와도(끝말이 어미로 안 잡혀도) 되풀이가 아니다."""
+    ws = say("그래서 이제 형태를 먼저 그리게 되죠", 0.9, "그래서 이제 문제를 정의하는 단계로 갑니다.")
+    kept, rem = clean_words(ws)
+    assert text(kept) == text(ws) and not rem
+
+
+def test_strict_mode_only_removes_certain_restarts():
+    ws = say("좋은 디자인은", 0.8, "좋은 디자인은 설명이 필요 없습니다.")      # 2어절 되풀이 — 1차에서는 지움, 2차(strict)는 안 지움
+    kept, rem = clean_words(ws)
+    assert text(kept) == "좋은 디자인은 설명이 필요 없습니다." and rem
+    kept2, rem2 = clean_words(ws, strict=True)
+    assert text(kept2) == text(ws) and not rem2
+    ws3 = say("그것의 평가가 거의 전부처럼", 0.8, "그것의 평가가 거의 전부처럼 느껴집니다.")
+    kept3, _ = clean_words(ws3, strict=True)
+    assert text(kept3) == "그것의 평가가 거의 전부처럼 느껴집니다."
+
+
+def test_removed_span_is_cut_inside_real_silence():
+    """지운 되풀이의 경계를 Whisper 단어 시각이 아니라 실제 쉼(VAD)에 맞춘다 — 꼬리가 새지 않고 다음 말 앞에 숨 한 번."""
+    from studio.edit.cuts import PACES, build_keeps
+    from studio.models import Span, Utterance
+    # 남는 말: 0.0–1.0 '좋은 디자인은' … 지운 시도: 1.3–2.0(Whisper) 실제 말소리 1.25–2.35 … 다시 말함 2.9–4.0
+    u = Utterance(id=0, start=0.0, end=4.0, text="좋은 디자인은 설명이 필요 없습니다.", asr_text="",
+                  words=[Word("좋은", 0.0, 0.4), Word("디자인은", 0.45, 1.0), Word("설명이", 2.9, 3.4), Word("필요", 3.45, 3.7),
+                         Word("없습니다.", 3.72, 4.0)])
+    vad = [(0.0, 1.05), (1.25, 2.35), (2.85, 4.1)]
+    keeps = build_keeps([u], pace=PACES["calm"], vad=vad, media_duration=10, fps=30, exclude=[Span(1.3, 2.0)])
+    assert len(keeps) == 2
+    assert keeps[0].end <= 1.3 + 0.02 + 1 / 30            # 지운 시도의 말소리(1.25~) 앞에서 끊고
+    assert 2.35 <= keeps[1].start <= 2.85                  # 꼬리(2.0~2.35)는 버리고 다음 말 앞 쉼에서 다시 시작
+
+
+def test_captions_break_on_phrase_breath_not_char_count():
+    """채널 피드백 예시: '철수는 오늘 / 비행기를 타고 / 로스앤젤레스로 향하는 / 길이었다' — 글자 수로만 끊으면
+    '철수는 오늘 비행기를 / 타고 로스앤젤레스로 / 향하는 길이었다' 처럼 구가 갈라진다."""
+    from studio.text.captions import build_phrase_cues, split_phrases
+    ws = say("철수는 오늘 비행기를 타고 로스앤젤레스로 향하는 길이었다.")
+    cues = build_phrase_cues([ws])
+    texts = [" ".join(w["text"] for w in c["lines"][0]) for c in cues]
+    assert texts == ["철수는 오늘", "비행기를 타고", "로스앤젤레스로 향하는", "길이었다"], texts
+    # 부사·관형사·목적어·'수/것' 앞에서는 끊지 않는다
+    ws = say("그래서 우리는 이 문제를 해결할 수 있는 방법을 찾아야 합니다.")
+    texts = [" ".join(w["text"] for w in c["lines"][0]) for c in build_phrase_cues([ws])]
+    joined = " / ".join(texts)
+    assert "이 / 문제를" not in joined and "해결할 / 수" not in joined and "방법을 / 찾아야" not in joined, joined
+    # 실제 쉼(0.6초)은 강한 경계
+    items = [{"text": w.text, "raw": w.text, "start": w.start, "end": w.end} for w in say("좋은 디자인은", 0.7, "설명이 필요 없다")]
+    chunks = split_phrases(items)
+    assert [len(c) for c in chunks] == [2, 3] or [" ".join(x["text"] for x in c) for c in chunks][0] == "좋은 디자인은"

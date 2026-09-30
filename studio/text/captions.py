@@ -204,6 +204,119 @@ CONNECT_RE = re.compile(r"(고|며|면|서|데|지만|는데|니까|으니|어�
 FINAL_RE = re.compile(r"(니다|어요|아요|예요|에요|해요|죠|다)$")
 
 
+# ---------------------------------------------------------------------------
+# 호흡 단위 자막(build_phrase_cues)
+#   글자 수로만 끊으면 '철수는 오늘 비행기를 / 타고 로스앤젤레스로 / 향하는 길이었다' 처럼 구가 갈라진다(채널 피드백).
+#   원하는 것: '철수는 오늘 / 비행기를 타고 / 로스앤젤레스로 향하는 / 길이었다' — 2어절 안팎의 **구(句)** 단위.
+#   어절 사이마다 '끊기 좋은 정도'를 매기고(문장부호·쉼·이음 어미는 좋고, 목적어·관형어·부사 뒤는 나쁘다),
+#   큐마다 '모양 비용'(2~3어절·13자 안팎·2.4초 안)을 더해 DP 로 가장 자연스러운 분할을 고른다.
+# ---------------------------------------------------------------------------
+_HANGUL = re.compile(r"[^가-힣]")
+# 관형형 어미(뒤의 명사와 떨어져도 호흡은 산다: '로스앤젤레스로 향하는 / 길이었다')
+ADNOMINAL_RE = re.compile(r"(하는|되는|있는|없는|이는|오는|가는|보는|주는|만드는|이라는|라는|다는|하던|했던|되던|된|한|할|될|볼|인|던)$")
+OBJECT_RE = re.compile(r"(을|를)$")
+GENITIVE_RE = re.compile(r"의$")
+ADVERBIAL_RE = re.compile(r"(에|에서|로|으로|에게|께|부터|까지|보다|처럼|와|과|랑|이랑|마다|대로)$")
+SUBJECT_RE = re.compile(r"(이|가|은|는|께서)$")
+# 뒤 어절이 의존 명사·보조 용언이면 앞 어절과 절대 떼지 않는다('할 수 있다', '하는 것이', '그런 게')
+BOUND_NEXT = {"것", "것이", "것을", "것은", "것도", "거", "게", "건", "걸", "거야", "거죠", "거예요", "겁니다", "거고", "거든요",
+              "수", "때", "때가", "때는", "데", "지", "줄", "뿐", "채", "듯", "만큼", "정도", "중", "후", "전", "때문에",
+              "때문이죠", "경우", "대로", "편", "리", "법", "쪽", "탓", "김에", "나름", "따름", "바", "적", "척", "체",
+              "않는", "않고", "않아요", "않습니다", "못", "못해요", "있어요", "있습니다", "없어요", "없습니다", "싶어요",
+              "싶은", "싶습니다", "봐요", "보세요", "주세요", "됩니다", "돼요"}
+# 뒤에 오는 말에 붙는 부사·관형사(뒤에서 끊지 않는다)
+ATTACH_NEXT = {"매우", "아주", "정말", "너무", "더", "가장", "잘", "못", "안", "꼭", "좀", "약간", "되게", "굉장히", "훨씬",
+               "거의", "바로", "계속", "이미", "아직", "막", "딱", "참", "진짜", "완전", "제일", "항상", "늘", "자주", "전혀",
+               "절대", "결코", "또", "또한", "다시", "이", "그", "저", "이런", "그런", "저런", "어떤", "무슨", "모든", "각",
+               "한", "두", "세", "네", "첫", "여러", "다른", "같은", "새로운", "어느", "몇", "온갖", "별", "약", "총", "단",
+               "즉", "곧", "안", "잘못"}
+# 문장 부사·접속 부사(뒤에서 끊기 좋다: '철수는 오늘 /', '그래서 /')
+SENT_ADV = {"오늘", "지금", "이제", "그래서", "그런데", "하지만", "결국", "사실", "먼저", "그리고", "또는", "즉", "물론",
+            "특히", "다만", "그러나", "그래도", "그러면", "그럼", "예를", "보통", "대개", "원래", "실제로", "당연히", "아마",
+            "물론이죠", "어쨌든", "근데", "그러니까", "그니까", "그러다", "다음으로", "마지막으로", "첫째", "둘째", "셋째"}
+
+
+def _boundary_cost(cur: dict, nxt: dict) -> float:
+    """cur 와 nxt 사이에서 끊는 비용(낮을수록 좋다)."""
+    raw = cur["raw"]
+    h = _HANGUL.sub("", raw)
+    nh = _HANGUL.sub("", nxt["raw"])
+    if re.search(r"[.?!。？！]$", raw):
+        return -20.0
+    cost = 0.0
+    if re.search(r"[,，、]$", raw):
+        cost -= 6.0
+    gap = nxt["start"] - cur["end"]
+    if gap >= 0.6:
+        cost -= 8.0
+    elif gap >= 0.35:
+        cost -= 4.0
+    elif gap >= 0.2:
+        cost -= 1.5
+    if nh in BOUND_NEXT:
+        return cost + 8.0
+    if h in ATTACH_NEXT:
+        return cost + 4.0
+    if CONNECT_RE.search(h) or FINAL_RE.search(h):
+        cost -= 3.0
+    elif ADNOMINAL_RE.search(h):
+        cost -= 0.5
+    elif OBJECT_RE.search(h) or GENITIVE_RE.search(h):
+        cost += 5.0
+    elif ADVERBIAL_RE.search(h):
+        cost += 2.5
+    elif SUBJECT_RE.search(h):
+        cost += 1.5
+    if h in SENT_ADV:
+        cost -= 1.5
+    return cost
+
+
+def _chunk_cost(words: list[dict], max_chars: int, max_dur: float) -> float:
+    n = len(words)
+    chars = sum(_clen(w["text"]) for w in words) + (n - 1)
+    cost = 0.0
+    if chars > max_chars:
+        cost += 30.0 + 5.0 * (chars - max_chars)
+    if words[-1]["end"] - words[0]["start"] > max_dur:
+        cost += 25.0
+    if n == 1:
+        cost += 2.0 + (6.0 if _clen(words[0]["text"]) < 4 else 0.0)
+    elif n >= 4:
+        cost += 3.0 * (n - 3)
+    if chars < 4:
+        cost += 3.0
+    return cost
+
+
+def split_phrases(items: list[dict], *, max_chars: int = 13, max_dur: float = 2.4, max_words: int = 5) -> list[list[dict]]:
+    """어절 목록(text·raw·start·end) → 호흡 단위 청크들(DP)."""
+    n = len(items)
+    if n == 0:
+        return []
+    INF = float("inf")
+    best = [INF] * (n + 1)
+    prev = [-1] * (n + 1)
+    best[0] = 0.0
+    for j in range(1, n + 1):
+        for i in range(max(0, j - max_words), j):
+            if best[i] == INF:
+                continue
+            c = best[i] + _chunk_cost(items[i:j], max_chars, max_dur)
+            if i > 0:
+                c += _boundary_cost(items[i - 1], items[i])
+            if c < best[j]:
+                best[j], prev[j] = c, i
+    out: list[list[dict]] = []
+    j = n
+    while j > 0:
+        i = prev[j]
+        out.append(items[i:j])
+        j = i
+    out.reverse()
+    return out
+
+
 def build_phrase_cues(
     groups: Iterable[list[Word]],
     *,
@@ -213,39 +326,24 @@ def build_phrase_cues(
     tail: float = 0.12,
     emphasis=None,
 ) -> list[dict]:
-    """요즘 자막 호흡: 한 줄에 한두 마디(≈13자·2.4초 이하)씩 빠르게. 쉼표·문장 끝·이음 어미에서 끊는다.
-    (예전 롱폼 자막은 16자×2줄·5.5초까지 이어져 '너무 길다'는 평)"""
+    """요즘 자막 호흡: 한 줄에 한두 마디(≈13자·2.4초 이하)씩 빠르게 — **구 단위**로 끊는다(split_phrases).
+    '철수는 오늘 / 비행기를 타고 / 로스앤젤레스로 향하는 / 길이었다' 처럼 목적어와 서술어, 부사와 뒷말, 관형사와 명사는
+    떼지 않고, 문장부호·쉼·이음 어미·문장 부사 뒤에서 끊는다."""
     cues: list[dict] = []
     for words in groups:
-        cur: list[dict] = []
-
-        def flush() -> None:
-            if cur:
-                cues.append({"start": cur[0]["start"], "end": cur[-1]["end"], "lines": [cur[:]]})
-                cur.clear()
-
+        items: list[dict] = []
         for w in words:
             txt = display_text(w.text)
             if not txt:
                 continue
-            item = {"text": txt, "start": round(w.start, 3), "end": round(w.end, 3)}
+            item = {"text": txt, "start": round(w.start, 3), "end": round(w.end, 3), "raw": w.text.strip()}
             em = _em_lookup(emphasis, w.start, txt)
             if em:
                 item["em"] = em
-            raw = w.text.strip()
-            ends_phrase = bool(re.search(r"[.?!,]$", raw) or CONNECT_RE.search(re.sub(r"[^가-힣]", "", raw))
-                               or FINAL_RE.search(re.sub(r"[^가-힣]", "", raw)))
-            if cur:
-                length = sum(_clen(x["text"]) for x in cur) + len(cur) + _clen(txt)
-                # 이 단어로 구가 끝나면 4자까지는 넘겨도 한 덩어리로('설득력이 | 있는지' 처럼 끝말만 떨어지지 않게)
-                limit = max_chars + (4 if ends_phrase else 0)
-                if length > limit or w.end - cur[0]["start"] > max_dur:
-                    flush()
-            cur.append(item)
-            now = sum(_clen(x["text"]) for x in cur) + len(cur) - 1
-            if re.search(r"[.?!,]$", raw) or (now >= 7 and ends_phrase):
-                flush()
-        flush()
+            items.append(item)
+        for chunk in split_phrases(items, max_chars=max_chars, max_dur=max_dur):
+            line = [{k: v for k, v in it.items() if k != "raw"} for it in chunk]
+            cues.append({"start": line[0]["start"], "end": line[-1]["end"], "lines": [line]})
     # 편집 시각 순으로(숏폼 재배치·겹친 단어가 있어도 끝 시각 계산이 음수가 되지 않게)
     cues.sort(key=lambda c: c["start"])
     # 한 글자·두 글자만 남은 조각은 앞 청크에 붙인다(너무 길어지지 않으면)

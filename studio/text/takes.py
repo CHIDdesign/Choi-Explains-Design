@@ -35,8 +35,19 @@ def ntok(text: str) -> str:
     return "".join(NORM_RE.findall(text)).lower()
 
 
+# 어절 끝에 붙는 조사·어미(같은 낱말인지 볼 때 무시) — '평가가/평가는', '어디서/어디인지', '여러분과/여러분들이랑'
+PARTICLE_RE = re.compile(
+    r"^(들)?(은|는|이|가|을|를|의|에|에서|에게|께|께서|한테|로|으로|로서|로써|으로서|으로써|와|과|랑|이랑|도|만|밖에|조차|마저|뿐"
+    r"|부터|까지|처럼|보다|서|고|며|면|지만|는데|니까|다|요|죠|란|이란|나|이나|든지|이든지|라도|이라도|라면|이라면"
+    r"|인지|이다|이라|라고|라는|이라는|이며|라서|이라서|인|인데|이고|이면|이지|예요|이에요|에요|네|야|니다|습니다|입니다)?$")
+# 문장 첫머리 담화 표지 — '그래서 이제 …'처럼 같은 말로 시작해도 되풀이의 증거로 치지 않는다
+DISCOURSE = {"그래서", "그런데", "근데", "그리고", "이제", "그니까", "그러니까", "사실", "또", "그럼", "자", "뭐",
+             "이게", "그게", "일단", "그냥", "약간", "이렇게", "그렇게", "다음", "먼저"}
+
+
 def same_word(a: str, b: str) -> bool:
-    """어절이 같은가 — 조사·어미가 다른 정도는 같게(어디서/어디/어디인지)."""
+    """어절이 같은가 — 조사·어미가 다른 정도는 같게(어디서/어디/어디인지). 어간 자체가 다르면(디자인은/디자이너는) 다르다.
+    (예전엔 앞 2글자·60% 만 같으면 같다고 봐서 '디자인은…' 문장을 '디자이너는…' 의 되풀이로 지웠다)"""
     if not a or not b:
         return False
     if a == b:
@@ -46,7 +57,10 @@ def same_word(a: str, b: str) -> bool:
         if x != y:
             break
         n += 1
-    return n >= 2 and n >= 0.6 * min(len(a), len(b))
+    if n < 2 or n < 0.6 * min(len(a), len(b)):
+        return False
+    # 공통 어간 뒤에 남는 것이 둘 다 조사·어미(또는 없음)여야 같은 낱말
+    return bool(PARTICLE_RE.match(a[n:])) and bool(PARTICLE_RE.match(b[n:]))
 
 
 def is_final(w: Word) -> bool:
@@ -70,8 +84,10 @@ def default_pause(a: Word, b: Word) -> float:
 
 
 def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], float]] = None,
-                fillers: bool = True) -> tuple[list[Word], list[Removal]]:
-    """되풀이한 앞부분과 추임새를 지운 단어 목록과 지운 구간들."""
+                fillers: bool = True, strict: bool = False) -> tuple[list[Word], list[Removal]]:
+    """되풀이한 앞부분과 추임새를 지운 단어 목록과 지운 구간들.
+    strict: 편집 검사(2차) 용 — 확실한 되풀이(3어절·8글자 이상, 또는 NG 말이 낀 것)만 지운다. 잘라 붙인 결과물에서 다시
+    받아 적은 전사는 문맥이 끊겨 있어 약한 증거로 지우면 대본 문장을 잃는다."""
     pause = pause or default_pause
     toks = [ntok(w.text) for w in words]
     drop = [False] * len(words)
@@ -122,9 +138,13 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             while ki + k < kj and kj + k < len(live) and same_word(toks[live[ki + k]], toks[live[kj + k]]):
                 chars += len(toks[live[kj + k]])
                 k += 1
-            if k < 2 or chars < 4:
+            # 첫 어절이 담화 표지('그래서', '이제' …)면 증거에서 뺀다 — 문장마다 같은 말로 시작하는 화자가 많다
+            k_eff, chars_eff = k, chars
+            if k and toks[live[kj]] in DISCOURSE:
+                k_eff, chars_eff = k - 1, chars - len(toks[live[kj]])
+            if k_eff < 2 or chars_eff < 4:
                 continue
-            strong = k >= 3 and chars >= 8
+            strong = k_eff >= 3 and chars_eff >= 8
             i_start = attempt_start(i) or any(attempt_start(live[x]) for x in range(max(0, ki - 2), ki))
             # 새 시도는 보통 쉼·문장 끝 뒤에서 시작 — 쉼 없이 곧바로 고쳐 말한 경우는 같은 말이 길 때만(3어절·8글자)
             if not ((j_start and (i_start or strong)) or (strong and i_start)):
@@ -135,6 +155,8 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             ng_tail = any(k_ in "".join(toks[x] for x in tail) for k_ in NG_WORDS)
             open_final = any(is_final(words[x]) and not _covered(toks, live, x, ki, kj) for x in tail[:-1])
             if (open_final and not ng_tail) or len(tail) > MAX_TAIL_OPEN:
+                continue
+            if strict and not (strong or ng_tail):
                 continue
             cand = (k, chars, -ki)
             if best is None or cand > best[0]:

@@ -260,3 +260,22 @@ def test_transcribe_passes_array_and_drops_unknown_options(tmp_path, monkeypatch
 def test_gpu_expected_follows_explicit_setting():
     from studio.asr.transcribe import gpu_expected
     assert gpu_expected("cuda") is True and gpu_expected("cpu") is False
+
+
+def test_losing_take_keeps_its_unique_script_sentence():
+    """A+B 를 한 번에 말한 뒤 B 만 더 또렷하게 다시 말함 → B 는 둘째 테이크, A 는 첫 테이크에서 살아남아야 한다
+    (예전엔 첫 테이크가 통째로 retake 가 되어 A 문장이 영상에서 사라졌다)."""
+    p = parse_script(SCRIPT)
+    words = _words([("안녕하세요.", 0.8),
+                    ("디자인은 먼저 넓게 펼쳐야 합니다 그 다음에 좁히죠.", 1.2),
+                    ("그 다음에 좁히죠.", 0.8)])
+    for w in words[1:10]:
+        w.prob = 0.6
+    for w in words[10:]:
+        w.prob = 0.98
+    utts, _, rep = ScriptAligner(p).run(build_utterances(words))
+    kept = [u.text for u in utts if u.kept]
+    assert any(t.startswith("디자인은 먼저 넓게") for t in kept), kept
+    assert sum("좁히죠" in t for t in kept) == 1, kept
+    assert rep.trimmed_takes == 1 and rep.script_coverage > 0.3
+    assert not any("디자인은 먼저" in m for m in (rep.missing_sentences or []))

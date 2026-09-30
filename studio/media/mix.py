@@ -322,7 +322,9 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
 
 def loudness_args(ff: FFmpeg, wav: str | Path, *, target: float = -14.0, tp: float = -1.0,
                   cancel: Optional[CancelToken] = None) -> str:
-    """loudnorm 1-pass 측정 → 2-pass 필터 문자열."""
+    """loudnorm 1-pass 측정 → 2-pass 필터 문자열. **항상 선형**: loudnorm 은 목표 LRA 가 측정 LRA 보다 작거나 게인이
+    피크를 넘기면 동적 모드로 바뀌어(펌핑·눌림) 목소리가 먹먹해진다 — LRA 는 측정값 이상으로 두고, 피크가 넘치면
+    volume + 룩어헤드 리미터로 간다."""
     lines: list[str] = []
     code, tail = run_process([ff.ffmpeg, "-hide_banner", "-nostdin", "-i", str(wav), "-af",
                               f"loudnorm=I={target}:TP={tp}:LRA=11:print_format=json", "-f", "null", "-"],
@@ -331,9 +333,19 @@ def loudness_args(ff: FFmpeg, wav: str | Path, *, target: float = -14.0, tp: flo
         raise FFmpegError(f"라우드니스 측정 실패\n{tail}")
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", "\n".join(lines), re.S)
     if not m:
-        return f"loudnorm=I={target}:TP={tp}:LRA=11"
+        return f"loudnorm=I={target}:TP={tp}:LRA=18"
     d = json.loads(m.group(0))
-    return (f"loudnorm=I={target}:TP={tp}:LRA=11:measured_I={d['input_i']}:measured_TP={d['input_tp']}:"
+    try:
+        gain = target - float(d["input_i"])
+        lra = max(11.0, float(d["input_lra"]) + 1.0)
+        peak_after = float(d["input_tp"]) + gain
+    except (KeyError, ValueError, TypeError):
+        return f"loudnorm=I={target}:TP={tp}:LRA=18"
+    if peak_after > tp - 0.2:
+        # 선형 게인 + 리미터(넘치는 피크만 잡는다)
+        lim = 10 ** (tp / 20)
+        return f"volume={gain:+.2f}dB,alimiter=limit={lim:.3f}:attack=5:release=80:level=false,aresample=48000"
+    return (f"loudnorm=I={target}:TP={tp}:LRA={lra:.0f}:measured_I={d['input_i']}:measured_TP={d['input_tp']}:"
             f"measured_LRA={d['input_lra']}:measured_thresh={d['input_thresh']}:offset={d.get('target_offset', 0)}:"
             f"linear=true,aresample=48000")
 

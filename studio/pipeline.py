@@ -427,15 +427,15 @@ class Pipeline:
         key = text_hash([file_fingerprint(p) for p in self.spec.sources()],
                         file_fingerprint(self.spec.audio) if (self.spec.audio and not multi) else "",
                         self.spec.enhance_voice, bool(model), round(self.info.av_offset, 3),
-                        self.smap.to_dict() if multi else "", "v5")
+                        self.smap.to_dict() if multi else "", "v6")
         voice = self.work / "voice.wav"
         asr = self.work / "asr16k.wav"
         meta = read_json(self.work / "audio.json", {})
         if meta.get("key") == key and voice.exists() and asr.exists():
             self.log("목소리: 캐시 사용")
             return
-        self.log("목소리: " + ("신경망 잡음 제거(RNNoise) + 방송용 EQ·컴프레서" if model
-                              else "잡음 제거 + 방송용 EQ·컴프레서"))
+        self.log("목소리: 원본 분석 → 필요한 만큼만 맞춤 보정(정상 범위면 손대지 않음)"
+                 + ("" if model else " · RNNoise 모델 없음(잡음이 많을 때만 afftdn)"))
         src = self.spec.video
         if multi:   # 묶음마다 가장 깨끗한 카메라 소리를 가상 타임라인에 이어 붙인 원본 목소리
             src = str(self.work / "master_audio.wav")
@@ -493,6 +493,12 @@ class Pipeline:
         self.log(f"발화 {len(self.utts)}개 · 대본 일치 {rep.matched} · 반복 테이크 중 또렷한 것만 남김(제외 {rep.retakes})"
                  f" · NG {rep.meta}"
                  + (f" · 대본 커버리지 {rep.script_coverage * 100:.0f}%" if parsed.has_text else " (대본 없음)"))
+        if rep.trimmed_takes:
+            self.log(f"📜 대본 충실: 다시 말한 부분만 잘라 내고 고유한 앞부분을 살린 테이크 {rep.trimmed_takes}개")
+        for t in rep.restored or []:
+            self.log(f"📜 대본 충실: 되살린 문장 「{t[:40]}」")
+        if parsed.has_text and rep.missing_sentences:
+            self.log(f"📜 영상에서 찾지 못한 대본 문장 {len(rep.missing_sentences)}개(말하지 않았거나 인식 실패) — 편집리포트 참고")
 
     def stage_face(self) -> None:
         """얼굴 추적 + 화면 품질 표본 — 카메라마다. 원본이 여러 개면 얼굴 트랙은 묶음 기준 카메라를 따라 잇는다
@@ -762,11 +768,21 @@ class Pipeline:
         self._plan_key = key
         self._save_plan()
         write_json(self.work / "plan_raw.json", {"long": raw_long, "shorts": raw_shorts})
+        # ✂️ 편집 감독의 drop — 대본에 있는 문장은 절대 빼지 않는다(대본 충실). 대본 밖 애드리브·혼잣말만 뺀다
         drop_ids = {d["seg"] for d in self.plan_long.get("drop", [])}
+        refused: list[str] = []
         for u in self.utts:
             if u.id in drop_ids and u.kept:
+                if u.script_span and u.score >= 80:
+                    refused.append(f"S{u.id} 「{u.text[:30]}」")
+                    continue
                 u.status = "director_drop"
                 u.note = next((d["reason"] for d in self.plan_long["drop"] if d["seg"] == u.id), "")
+        if refused:
+            self.align_report["director_drop_refused"] = refused
+            self.log(f"✂️ 편집 감독이 빼자고 한 발화 중 대본 문장 {len(refused)}개는 남깁니다(대본 충실): "
+                     + " · ".join(refused[:4]))
+        drop_ids = {u.id for u in self.utts if u.status == "director_drop"}
         n_motion = sum(1 for g in self.plan_long["graphics"] if g["template"] == "motion")
         n_broll = sum(1 for g in self.plan_long["graphics"] if g["template"] == "broll")
         self.log(f"🎬 제목 「{self.title}」 · 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])}"
@@ -1745,6 +1761,11 @@ class Pipeline:
                 lines.append("- 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
         if self.look_plan:
             lines.append("- 화면 구성(자동 · 하이브리드): " + self.look_plan.summary())
+        au = read_json(self.work / "audio.json", {})
+        if au.get("recipe_summary"):
+            vs = au.get("voice_stats", {})
+            lines.append(f"- 목소리(분석 → 최소 보정): SNR {vs.get('snr', 0):.0f}dB · 다이내믹 {vs.get('dynamics', 0):.0f}dB → "
+                         + au["recipe_summary"] + (f" · 게인 {au.get('gain_db', 0):+.1f}dB" if "gain_db" in au else ""))
         g = self.grade_info or {}
         if g:
             ch = g.get("choice", {})

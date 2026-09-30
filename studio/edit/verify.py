@@ -3,6 +3,8 @@
 
 첫 판단(원본 전사)이 놓친 것 — 단어 시간이 어긋났거나, 발화를 잘못 나눴거나, 앞뒤 문맥이 잘린 뒤에야
 드러나는 되풀이 — 을 '결과물 기준'으로 한 번 더 잡는다. 결과는 work/verify.json·편집 리포트에 남는다.
+2차는 **확실한 것만**(strict: 3어절·8글자 이상 같은 말, 또는 NG 말이 낀 것) — 잘라 붙인 뒤의 전사는 문맥이 끊겨 있어
+약한 증거로 더 자르면 대본 문장을 잃고 말이 이상하게 이어진다(채널 피드백).
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ class Issue:
 def find_issues(words: list[Word], vad: list[tuple[float, float]], *, max_silence: float,
                 duration: float) -> list[Issue]:
     """편집된 목소리의 단어·VAD → 남은 문제들(편집 시간)."""
-    _, removed = clean_words(words, pause=vad_pause(vad))
+    _, removed = clean_words(words, pause=vad_pause(vad), strict=True)
     issues = [Issue(r.start - 0.03, r.end + 0.05, r.reason, r.text) for r in removed]
     vad = sorted(vad)
     for (a, b), (c, d) in zip(vad, vad[1:]):

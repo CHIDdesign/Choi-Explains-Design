@@ -16,16 +16,21 @@ class Pace:
     inner_gap: float      # 발화 내부 머뭇거림이 이보다 길면 잘라낸다
     min_keep: float = 0.22
     max_silence: float = 0.6   # 남긴 구간 안의 무음(VAD)이 이보다 길면 줄인다(Whisper 단어가 쉼을 덮어도)
+    pause_after: float = 0.16  # 긴 무음을 줄일 때 앞말 뒤에 남기는 쉼
+    pause_before: float = 0.12 # 뒷말 앞에 남기는 쉼
 
 
 PACES: dict[str, Pace] = {
-    # 셜록현준처럼 생각하는 '호흡'이 살아있는 설명형
-    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.55, inner_gap=0.9, max_silence=0.6),
-    "normal": Pace("normal", pre_pad=0.08, post_pad=0.16, keep_gap=0.38, inner_gap=0.65, max_silence=0.45),
+    # 셜록현준처럼 생각하는 '호흡'이 살아있는 설명형. 문장 사이 0.8초·문장 안 1.0초까지의 쉼은 그대로 둔다 — 예전(0.55·0.6)엔
+    # 생각하는 쉼마다 점프컷이 생겨 말이 이상하게 이어졌다(채널 피드백). 줄일 때도 0.55초는 남긴다.
+    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.8, inner_gap=1.3, max_silence=1.0,
+                 pause_after=0.3, pause_before=0.25),
+    "normal": Pace("normal", pre_pad=0.08, post_pad=0.16, keep_gap=0.5, inner_gap=0.9, max_silence=0.6,
+                   pause_after=0.22, pause_before=0.16),
     "fast": Pace("fast", pre_pad=0.05, post_pad=0.10, keep_gap=0.22, inner_gap=0.4, max_silence=0.32),
     # 숏폼: 데드에어 제거
     "shorts": Pace("shorts", pre_pad=0.04, post_pad=0.08, keep_gap=0.14, inner_gap=0.28, min_keep=0.15,
-                   max_silence=0.24),
+                   max_silence=0.24, pause_after=0.1, pause_before=0.1),
 }
 
 
@@ -159,14 +164,42 @@ def build_keeps(
             merged.append(s)
     if exclude:
         from .verify import subtract
-        # 지운 되풀이·추임새는 양끝을 20ms 남겨 이웃 단어를 깎지 않게, 남기지 않는 발화는 이미 남길 단어를 뺀 구간이라 그대로
-        merged = subtract(merged, [Span(x.start + 0.02, x.end - 0.02) for x in removed if x.dur > 0.06] + dropped,
-                          min_keep=pace.min_keep)
+        # 지운 되풀이·추임새: Whisper 단어 시각(±0.2초) 대신 실제 쉼 속에서 자른다 — 지운 말의 꼬리가 새지 않고,
+        # 남기는 다음 말은 숨 한 번(0.06초) 뒤에 시작한다. 남기지 않는 발화는 이미 남길 단어를 뺀 구간이라 그대로
+        kept_starts = sorted(w.start for u in chosen for w in u.words)
+        kept_ends = sorted(w.end for u in chosen for w in u.words)
+        widened = [_widen_removed(x, vad, starts, kept_starts, kept_ends) for x in removed if x.dur > 0.06]
+        merged = subtract(merged, widened + dropped, min_keep=pace.min_keep)
     word_starts = sorted(w.start for u in utts if (u.kept or include_all) for w in u.words)
     merged = trim_dead_air(merged, vad, word_starts, max_silence=pace.max_silence,
-                           pad_after=min(0.16, pace.post_pad + 0.02), pad_before=min(0.12, pace.pre_pad + 0.04))
+                           pad_after=pace.pause_after, pad_before=pace.pause_before)
     merged = [s for s in merged if s.dur >= pace.min_keep]
     return quantize(merged, fps, media_duration)
+
+
+def _widen_removed(x: Span, vad: list[tuple[float, float]], starts: list[float], kept_starts: list[float],
+                   kept_ends: list[float]) -> Span:
+    """지운 구간(Whisper 단어 시각)을 앞뒤 실제 쉼까지 넓힌다.
+    끝: 지운 마지막 단어의 말소리(VAD)가 실제로 끝나는 곳까지(최대 +0.4초), 다음 남길 단어 0.06초 전까지.
+    시작: 지운 첫 단어의 말소리 시작까지(그 말소리 구간이 앞 남길 단어 뒤에서 시작했을 때만, 최대 −0.3초)."""
+    j = bisect.bisect_right(kept_starts, x.end - 0.02)
+    nxt = kept_starts[j] if j < len(kept_starts) else float("inf")
+    e = x.end
+    i = bisect.bisect_right(starts, x.end) - 1
+    if 0 <= i < len(vad) and vad[i][0] <= x.end < vad[i][1]:
+        e = min(vad[i][1], x.end + 0.4)
+    cap = nxt - 0.06
+    e = max(x.end - 0.02, min(e, cap)) if cap > x.start + 0.05 else x.end - 0.02
+    j = bisect.bisect_left(kept_ends, x.start + 0.02) - 1
+    prv = kept_ends[j] if j >= 0 else float("-inf")
+    floor = prv + 0.06
+    s = x.start + 0.02
+    i = bisect.bisect_right(starts, x.start) - 1
+    if 0 <= i < len(vad) and vad[i][0] < x.start < vad[i][1] and vad[i][0] > floor:
+        s = max(vad[i][0], x.start - 0.3)
+    if floor < e:
+        s = max(floor, s)
+    return Span(min(s, e), e)
 
 
 def trim_dead_air(spans: list[Span], vad: list[tuple[float, float]], word_starts: list[float], *,

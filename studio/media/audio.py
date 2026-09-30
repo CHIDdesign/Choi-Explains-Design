@@ -1,4 +1,5 @@
-"""음성 트랙 처리: 외부 마이크 싱크, 원본 A/V 시작 차이 보정, 보이스 정리(EQ/노이즈/컴프/디에서), 2-pass 라우드니스."""
+"""음성 트랙 처리: 외부 마이크 싱크, 원본 A/V 시작 차이 보정, 목소리 분석 → 최소 맞춤 보정(studio/media/voice.py),
+선형 라우드니스(측정 게인 + 리미터)."""
 from __future__ import annotations
 
 import json
@@ -10,34 +11,15 @@ import numpy as np
 
 from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress, run_process
 from .ffmpeg import FFmpeg, FFmpegError
+from .voice import VoiceRecipe, VoiceStats, analyze_voice, loudness_gain, plan_voice_recipe
 
-VOICE_CHAIN = (
-    "highpass=f=75,"
-    "afftdn=nr=10:nf=-40:tn=1,"            # 약한 광대역 노이즈 제거(과하면 목소리가 뭉개짐)
-    "equalizer=f=250:t=q:w=1.2:g=-2,"       # 먹먹함 정리
-    "equalizer=f=3500:t=q:w=1.5:g=1.5,"     # 명료도
-    "deesser=i=0.35,"
-    "acompressor=threshold=-20dB:ratio=3:attack=8:release=120:makeup=2"
-)
-
-
-def voice_chain(denoise_model: Optional[str | Path] = None) -> str:
-    """방송용 보이스 체인. RNNoise 모델이 있으면 신경망 잡음 제거(에어컨·컴퓨터 팬·방 울림에 강함).
-
-    하이패스 80Hz → 잡음 제거 → 박스감(200~250Hz) 정리 → 존재감(3~4kHz) → 공기감(10kHz 셸프)
-    → 디에서 → 컴프레서 3:1 → (라우드니스는 build_voice_track 에서 2-pass)
-    """
+def voice_chain(denoise_model: Optional[str | Path] = None, recipe: Optional[VoiceRecipe] = None) -> str:
+    """보이스 체인. recipe 가 없으면 '아무것도 안 하는' 기본 레시피(초저역 하이패스만)."""
+    esc = None
     if denoise_model:
         from ..edit.assemble import _escape_filter_path
-        dn = f"aresample=48000,arnndn=m={_escape_filter_path(denoise_model)}:mix=0.85,afftdn=nr=4:nf=-45:tn=1,"
-    else:
-        dn = "afftdn=nr=10:nf=-40:tn=1,"
-    return ("highpass=f=80:p=2," + dn +
-            "equalizer=f=230:t=q:w=1.1:g=-2.5,"
-            "equalizer=f=3400:t=q:w=1.3:g=2,"
-            "highshelf=f=9500:g=1.5,"
-            "deesser=i=0.4:m=0.5:f=0.5,"
-            "acompressor=threshold=-21dB:ratio=3:attack=6:release=90:makeup=2:knee=4")
+        esc = _escape_filter_path(denoise_model)
+    return (recipe or VoiceRecipe()).filter(esc)
 
 
 def estimate_offset(ref: np.ndarray, other: np.ndarray, rate: int, max_shift_s: float = 20.0) -> float:
@@ -114,13 +96,38 @@ def build_voice_track(
             pre = f"adelay={av_offset * 1000:.1f}:all=1,"
         else:
             pre = f"atrim=start={-av_offset:.4f},asetpts=PTS-STARTPTS,"
+    # 목소리 분석 → 이 목소리에 필요한 만큼만(레시피). 잴 때는 라우드니스와 무관하니 24kHz 모노로 읽는다
+    recipe: Optional[VoiceRecipe] = None
+    stats: Optional[VoiceStats] = None
+    if enhance:
+        log("목소리 분석 중(잡음·스펙트럼·치찰음·다이내믹)…")
+        try:
+            pcm = ff.read_pcm(external_audio or video, 24000)
+            stats = analyze_voice(pcm, 24000)
+            del pcm
+        except Exception as e:  # noqa: BLE001 - 분석 실패면 아무것도 안 하는 레시피
+            log(f"(목소리 분석 실패 → 보정 없이 진행: {e})")
+            stats = VoiceStats(ok=False)
+        recipe = plan_voice_recipe(stats)
+        if recipe.denoise != "none" and not denoise_model:
+            recipe.notes.append("RNNoise 모델 없음 → afftdn 으로 대신")
+        log(f"🎙 잰 값: 말소리 {stats.speech_db:.0f}dBFS · 잡음 {stats.noise_db:.0f}dBFS · SNR {stats.snr:.0f}dB · "
+            + " ".join(f"{k} {v:+.0f}" for k, v in stats.deviation.items()) + f" · 치찰음 {stats.sibilance:+.0f} · "
+            f"다이내믹 {stats.dynamics:.0f}dB")
+        log("🎙 이 목소리에 맞춘 양: " + recipe.summary())
+        info["voice_stats"] = stats.to_dict()
+        info["recipe"] = recipe.to_dict()
+        info["recipe_summary"] = recipe.summary()
     # 타임스탬프를 0부터로: 오디오가 늦게 시작한 파일은 첫 타임스탬프가 av_offset 이라, 그대로 두면 끝의 atrim(시각
     # 기준)이 영상보다 av_offset 만큼 짧게 자른다
-    chain = "asetpts=PTS-STARTPTS," + pre + (voice_chain(denoise_model) + "," if enhance else "")
-    info["denoise"] = "rnnoise" if (enhance and denoise_model) else ("afftdn" if enhance else "off")
+    body = voice_chain(denoise_model, recipe) if enhance else ""
+    chain = "asetpts=PTS-STARTPTS," + pre + (body + "," if body else "")
+    info["denoise"] = (recipe.denoise if recipe else "off") if enhance else "off"
+    if info["denoise"] != "none" and info["denoise"] != "off" and not denoise_model:
+        info["denoise"] += "(afftdn)"
     fit = f"apad,atrim=0:{duration:.3f}"
 
-    # 1-pass: 측정
+    # 1-pass: 측정(EBU R128 통합 라우드니스·트루 피크)
     measure_filter = f"{chain}{fit},loudnorm=I={target_lufs}:TP=-1.5:LRA=11:print_format=json"
     measured: dict = {}
     lines: list[str] = []
@@ -143,13 +150,18 @@ def build_voice_track(
             measured = {}
     progress(0.4)
 
+    # 2-pass: 선형 게인 + 룩어헤드 리미터. loudnorm 의 동적 모드(LRA·피크 조건이 안 맞으면 자동 전환)는 말소리를
+    # 눌러 먹먹하게 만든다 — 측정한 만큼만 키우고 튀는 피크만 리미터가 잡는다
+    gain, limited = loudness_gain(measured, target_lufs) if measured else (0.0, 0.0)
+    info["gain_db"] = gain
+    info["peak_limited_db"] = limited
     if measured:
-        ln = (f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:measured_I={measured['input_i']}:"
-              f"measured_TP={measured['input_tp']}:measured_LRA={measured['input_lra']}:"
-              f"measured_thresh={measured['input_thresh']}:offset={measured.get('target_offset', 0)}:linear=true")
+        log(f"라우드니스: {float(measured['input_i']):.1f} → {target_lufs:.0f} LUFS(게인 {gain:+.1f}dB"
+            + (f", 피크 리미팅 최대 {limited:.1f}dB" if limited > 0.3 else "") + ")")
+        ln = f"volume={gain:+.2f}dB,alimiter=limit=0.84:attack=5:release=80:level=false"
     else:
-        ln = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
-    final_filter = f"{chain}{fit},{ln},aresample=48000,alimiter=limit=0.93"
+        ln = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=18"
+    final_filter = f"{chain}{fit},{ln}"
     log("보이스 트랙 생성(2/2)…")
     ff.run(src_input + ["-map", map_audio, "-af", final_filter, "-ac", "2", "-ar", "48000",
                         "-c:a", "pcm_s16le", str(dst)],
