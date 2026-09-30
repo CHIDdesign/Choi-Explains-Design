@@ -131,13 +131,13 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             "pacing_notes": "차분하게"}
     if agent == "motion":
         spec = copy.deepcopy(EXAMPLES["proximity"])
-        card = CARD_EXAMPLES["question_first"]["html"]
+        card = CARD_EXAMPLES["slam_minimal"]["html"]   # 글자가 적어(35자) 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
                                             "title": "근접성", "spec_json": json.dumps(spec, ensure_ascii=False),
                                             "reason": "모이는 움직임이 곧 설명"}],
                 # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
                 "cards": [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen", "style": "editorial",
-                           "title": "질문이 먼저다", "html": card, "reason": "선언 한 방"}]}
+                           "title": "문제를 정의하라", "html": card, "reason": "한 문장 한 방"}]}
     if agent == "card_revise":
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
         return {"html": m.group(1) if m else "", "changes": "지적대로 수정"}
@@ -398,7 +398,8 @@ def main() -> int:
     # 🃏 자유 HTML 카드: 정리(스코프)·렌더 전 검사 통과·props 에 그대로
     assert "card" in tpl, tpl
     card = next(g for g in lp["graphics"] if g["template"] == "card")
-    assert card["data"]["card"]["html"].startswith('<div class="root">') and card["data"]["card"]["css"].count(f'.card[data-card-id="{card["id"]}"]') > 3, card["id"]
+    cid = card["data"]["card"]["id"]   # 카드 스코프 id(card{n}) — 그래픽 id(g{n}) 와 다르다
+    assert card["data"]["card"]["html"].startswith('<div class="root">') and card["data"]["card"]["css"].count(f'.card[data-card-id="{cid}"]') > 3, cid
     plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
     checks = plan["long"].get("card_checks") or {}
     assert checks and all(v["ok"] for v in checks.values()), checks

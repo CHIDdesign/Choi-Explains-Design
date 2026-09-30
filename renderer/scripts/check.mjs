@@ -19,6 +19,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
 const MIN_FONT_PX = 26;
+const CAPTION_ZONE_PX = 170; // 전체 화면·오버레이 카드 아래 자막 자리(LongCaptions paper 상자가 y≈920–1000 에 놓인다)
 const CONTRAST_BODY = 4.5;
 const CONTRAST_LARGE = 3.0;
 
@@ -179,6 +180,10 @@ const audit = async (opts) => {
     const rects = Array.from(el.getClientRects());
     const outside = rects.some((r) => r.width > 0 && (r.left < R.left - 2 || r.right > R.right + 2 || r.top < R.top - 2 || r.bottom > R.bottom + 2));
     if (outside) push('outside_canvas', 'text box leaves the canvas', sel);
+    // 자막 자리(전체 화면·오버레이 카드의 아래 170px)에는 글자를 두지 않는다 — 자막이 위에 얹힌다
+    if (opts.captionZone > 0 && rects.some((r) => r.width > 0 && r.bottom > R.bottom - opts.captionZone)) {
+      push('text_in_caption_zone', `text within bottom ${opts.captionZone}px (caption area)`, sel);
+    }
     if (cs.overflow !== 'visible' && (el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2)) {
       push('text_overflow', `content ${el.scrollWidth}×${el.scrollHeight} > box ${el.clientWidth}×${el.clientHeight}`, sel);
     }
@@ -244,7 +249,8 @@ const main = async () => {
         await page.setViewport({width: card.w, height: card.h, deviceScaleFactor: 1});
         await page.goto({url: pathToFileURL(file).href, timeout: 20000});
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
-          minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE});
+          minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE,
+          captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX});
       } catch (e) {
         res = {problems: [{code: 'runtime_error', detail: String(e && e.message ? e.message : e), selector: ''}], metrics: {}};
       } finally {

@@ -406,7 +406,8 @@ def reading_chars(g: dict[str, Any]) -> int:
     if g.get("template") == "motion" and isinstance(g.get("spec"), dict):
         parts += [str(e.get("text", "")) for e in g["spec"].get("elements", []) if isinstance(e, dict)]
     if g.get("template") == "card" and isinstance(g.get("card"), dict):
-        parts.append(card_text(g["card"]))
+        # 카드는 단계적으로 드러나고 라벨·메타 글자가 많다 — 읽기 시간은 카드 DSL 의 상한(60자)까지만 센다
+        parts.append(card_text(g["card"]).replace(" ", "")[:60])
     if g.get("template") in ("broll", "photo"):
         return 0
     return sum(len(p.replace(" ", "")) for p in parts)

@@ -47,8 +47,9 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 | `--font-mono` | 고정폭 | 시간·메타 |
 
 ### 타이포 크기(1920×1080 기준 · split 은 ×0.75)
-제목 96–132px · 본문 32–40px · 라벨/킥커 20–26px · 큰 숫자 160–240px(`--font-latin`) · 인용 32–40px(명조 기울임).
+제목 96–132px · 본문 32–40px · 라벨/킥커 26–30px · 큰 숫자 160–240px(`--font-latin`) · 인용 32–40px(명조 기울임).
 **최소 26px**. 한 줄 22자 이내, 본문 두 줄 이내. 여백은 캔버스의 6~8%(fullscreen 은 padding 100~140px).
+**아래 170px 은 자막 자리** — fullscreen·overlay 카드에서는 그 안에 글자를 두지 않는다(자막이 위에 얹힌다). 장식·점·룰은 괜찮다.
 
 ### `data-anim` 종류(닫힌 목록 — 이 밖의 값은 무시된다)
 | kind | 무엇 | 파라미터(`data-anim-…`) |
@@ -89,8 +90,8 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 한 문장 한 방은 minimal, 도식은 board.
 
 ### 렌더 전 검사(check) — 이 이름으로 수정 요청이 온다
-`font_family_not_bundled` · `text_overflow`(글이 상자·캔버스를 넘침) · `text_too_small`(26px 미만) · `low_contrast`(글자와 배경 대비 4.5:1 미만) ·
-`runtime_error` · `anim_unknown_kind` · `anim_starts_after_card_end`. 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
+`font_family_not_bundled` · `font_not_loaded` · `text_overflow`(글이 상자·캔버스를 넘침) · `outside_canvas` · `text_in_caption_zone`(아래 170px 안의 글자) ·
+`text_too_small`(26px 미만) · `low_contrast`(글자와 배경 대비 4.5:1 미만, 40px 이상은 3:1) · `runtime_error` · `anim_unknown_kind` · `anim_ends_too_late`. 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
 
 ### 내야 하는 것(`cards[]`)
 `start_seg`·`end_seg`·`start_word`(카드가 도착할 단어) · `layout` · `style` · `title`(로그·검수용 한 줄) · `html`(위 계약대로 카드 조각 전체) · `reason`.
