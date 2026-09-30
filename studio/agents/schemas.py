@@ -7,7 +7,7 @@ from ..director.schema import GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHORTS_PL
 INTENTS = ["hook", "context", "explain", "example", "name_concept", "story", "data", "compare", "transition",
            "return_to_life", "payoff"]
 VISUALS = ["none", "template", "motion", "stock_video", "stock_photo", "photo", "keyword"]
-# ✂️ 편집 감독이 표시하는 '강조 순간' — 편집 문법 엔진(studio/edit/grammar.py)이 펀치인·강조 자막·효과음으로 옮긴다
+# ✂️ 편집 감독이 표시하는 '강조 순간' — 편집 문법 엔진(studio/edit/grammar.py)이 강조 글라이드·콜아웃·강조 자막·효과음으로 옮긴다
 MOMENT_KINDS = ["punchline", "reveal", "shift", "conclusion", "question", "number", "joke"]
 BGM_MOODS = ["minimal", "calm", "ambient", "lofi", "piano", "inspiring", "upbeat"]
 LOOKS = ["warm_rich", "natural", "warm_film", "clean_bright", "cinematic"]
@@ -49,7 +49,7 @@ EDITOR = _obj({
     "pacing_notes": STR,
 })
 
-# 🎨 컬러리스트 — 비교 시트(원본 + 룩 4가지)를 보고 고른다
+# 🎨 컬러리스트 — 비교 시트(원본 + 룩 5가지, 모두 레퍼런스 매칭 포함)를 보고 고른다
 GRADE = _obj({
     "look": {"type": "string", "enum": LOOKS},
     "strength": NUM,      # 0~1

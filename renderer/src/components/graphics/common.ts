@@ -14,5 +14,5 @@ export type TemplateProps = {
   layout: Layout;
   brand: Brand;
   episode: Episode;
-  compact?: boolean; // 숏폼 상단 패널
+  compact?: boolean; // classic 숏폼의 창·패널(window 창 / full·framed 도식 패널)
 };

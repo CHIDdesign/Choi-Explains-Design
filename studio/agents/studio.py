@@ -300,7 +300,7 @@ class Studio:
         return res.get("picks", []) or []
 
     def grade(self, ctx: str, notes: str, sheet: tuple[str, bytes, str]) -> dict[str, Any]:
-        """🎨 컬러리스트: 원본 + 룩 4가지 비교 시트를 보고 룩·세기·미세 조정을 고른다."""
+        """🎨 컬러리스트: 원본 + 룩 5가지 비교 시트를 보고 룩·세기·미세 조정을 고른다."""
         instr = load_prompt("agents/colorist.md").replace("{{notes}}", notes)
         return self.call("colorist", ctx, instr, images=[sheet])
 

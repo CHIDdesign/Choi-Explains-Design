@@ -395,10 +395,11 @@ def main() -> int:
     for c in lp["captions"]:
         assert sum(1 for line in c["lines"] for w in line if w.get("em")) <= 1, c
     sp = json.loads((job / "render" / "props_short_1.json").read_text(encoding="utf-8"))
-    assert sp["layout"] == "window" and sp["camera"], sp["layout"]
+    assert sp["layout"] == "reel" and sp["camera"], sp["layout"]
     assert (job / "render" / "props_short_2.json").exists()
-    # 편집 문법 엔진: 점프컷 앵글·펀치인·콜아웃·챕터 전환
-    assert len(lp["camera"]) >= 3 and {c["zoom"] for c in lp["camera"]} >= {1.0, 1.12}, lp["camera"]
+    # 편집 문법 엔진: 부드러운 프레이밍(100↔106%)·글라이드 강조·콜아웃·챕터 전환
+    assert lp["camera"] and {c["zoom"] for c in lp["camera"]} <= {1.0, 1.06, 1.1}, lp["camera"]
+    assert all(p.get("style") == "glide" for p in lp["punches"]), lp["punches"]
     assert lp["punches"] and lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
     assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
     assert any(t["type"] in ("wipe", "leak") for t in lp["transitions"]), lp["transitions"]

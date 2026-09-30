@@ -9,7 +9,10 @@ import {AccentText, LabelTag, PAPER, PaperBg, RoughBorder, SourceCredit, TornFra
 import type {Box} from '../paper/Paper';
 import {DrawRule, MaskLine} from './Editorial';
 
-/** 엔드카드(리포트 마지막 페이지 "One last word."). 유튜브 최종 화면 요소 자리 2개 확보. */
+/**
+ * 예전 classic 엔드카드(리포트 마지막 페이지 "One last word."). 유튜브 최종 화면 요소 자리 2개 확보.
+ * 지금 LongForm 은 두 스킨 모두 아래 PaperEndCard(오늘의 정리)를 쓴다.
+ */
 export const EndCard: React.FC<{frame: number; theme: Theme; brand: Brand; episode: Episode; W: number; H: number}> = ({
   frame,
   theme,
@@ -58,7 +61,8 @@ export const EndCard: React.FC<{frame: number; theme: Theme; brand: Brand; episo
 };
 
 /**
- * 종이 스킨 엔드카드: 왼쪽에 오늘의 정리(챕터) + 인사, 오른쪽에 유튜브 최종 화면 요소 자리 2개(찢어진 액자).
+ * 엔드카드(두 스킨 공통): 왼쪽에 오늘의 정리(챕터) + 인사, 오른쪽에 유튜브 최종 화면 요소 자리 2개(찢어진 액자).
+ * classic 은 plain(단색 bg, 거친 테두리 없음), 종이 스킨은 구겨진 종이 texture + 거친 테두리.
  * 예전 엔드카드는 빈 칸 두 개뿐이라 15초가 비어 보였다.
  */
 export const PaperEndCard: React.FC<{frame: number; brand: Brand; episode: Episode; chapters: Chapter[];

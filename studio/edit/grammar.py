@@ -2,14 +2,20 @@
 
 입력: 편집 타임라인(컷), 시간이 정해진 그래픽, 챕터, AI 가 표시한 강조 순간(moments), 자막 큐.
 출력(렌더 props 에 그대로 들어감):
-  - camera      : 점프컷 프레이밍(와이드 ↔ 미디엄 교차, 긴 샷의 느린 푸시인, 챕터에서 와이드 리셋)
-  - punches     : 강조 순간 펀치인(하드컷/빠른 푸시) — 문장 끝에서 복귀
-  - transitions : 얼굴 ↔ 모션그래픽/B-roll/챕터 카드 사이 전환(휩·줌·블러·푸시·와이프·빛샘) — 밀도 제한
-  - sfx         : 전환 whoosh(피크 = 컷), 그래픽 등장 swoosh, 목록 click, 챕터 riser, 강조 pop/impact, 결론 ding
+  - camera      : 점프컷 프레이밍 — 와이드 1.00 ↔ 미디엄 1.06 을 NG 를 잘라낸 큰 점프·챕터 시작·전체화면 그래픽
+                  복귀에서만 바꾼다(평범한 컷은 그대로 — 참고 채널처럼 얼굴 줌 교차 없음). 샷 안은 느린 드리프트,
+                  얼굴만 max_shot 넘게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다. 종이 스킨은 액자 샷(framed)도.
+  - soft_cut    : 같은 프레이밍으로 이어지는 점프컷을 0.1초 섞는 소프트 컷(props.mark_soft_cuts)
+  - punches     : 강조 순간 글라이드(0.7초에 걸쳐 +4/6/9% 당기고 0.9초에 걸쳐 풀림) — 영상당 최대 8회·40초 간격
+  - transitions : 얼굴 ↔ 모션그래픽/B-roll/챕터 카드 사이 부드러운 전환(블러·푸시·와이프·빛샘만) — 밀도 제한
+  - sfx         : 전환(whoosh_soft·swipe·paper·reverse), 템플릿별 그래픽 등장음(SFX_FOR_TEMPLATE), 목록 click,
+                  챕터 riser, 타이틀 bell_soft, 강조 pop, 엔드카드 whoosh — 작고 부드럽게(impact·sub_drop·glitch 없음)
+  - callouts    : 화자 반대편 키워드 콜아웃(가운데 화자는 그동안 천천히 옆으로 옮겨 자리를 만든다)
   - impact_cues : 크게 가운데로 바뀌는 강조 자막 큐 번호
-  - bgm_swells  : 배경음악을 올릴 구간(인트로·챕터 카드·엔드카드)
+  - bgm_swells  : 배경음악을 올릴 구간(인트로·챕터 카드·엔드카드) · bgm_dips(핵심 문장 직전 비우기) · bgm_switch(곡 교체)
 
-수치는 prompts/playbook/ 의 리서치(셜록현준·지식 채널·리텐션 편집 가이드)에서 가져왔다. PARAMS 한 곳에서 조정한다.
+수치는 prompts/playbook/ 의 리서치(셜록현준·지식 채널·리텐션 편집 가이드)에서 가져와, 교육 영상에 맞게
+젠틀하게 낮췄다(2026-09-30 사용자 피드백). PARAMS 한 곳에서 조정한다.
 """
 from __future__ import annotations
 
@@ -25,23 +31,24 @@ PARAMS: dict[str, Any] = {
     # 카메라(점프컷 프레이밍)
     # 셜록현준 스토리보드 실측: 2~3 앵글을 5~8초마다 교차, 1080p 소스는 100/112/120%, 점프컷마다 12% 이상 차이
     # 2026-09-30 사용자 피드백: "너무 훅훅 튀어 정신없다, 교육 영상이니 젠틀하게" → 프레이밍 차이를 줄이고(112→106%),
-    # 5~8초마다 바꾸던 앵글 교차를 없앴다. 프레이밍은 NG 를 잘라낸 큰 점프·챕터·그래픽 복귀에서만 바꾸고,
-    # 그 사이는 아주 느린 드리프트(가감속). 같은 프레이밍의 점프컷은 0.1초 부드러운 섞기(soft_cut)로 가린다.
+    # 5~8초마다 바꾸던 앵글 교차를 없앴다. 프레이밍은 NG 를 잘라낸 큰 점프·챕터·그래픽 복귀에서만 바꾸고
+    # (참고 채널 Nick Saraev 롱폼도 고정 카메라·얼굴 줌 0회), 그 사이는 아주 느린 드리프트(가감속).
+    # 같은 프레이밍의 점프컷은 0.1초 부드러운 섞기(soft_cut)로 가린다.
     "wide": 1.0,
     "medium": 1.06,             # 두 번째 '카메라'(차이는 작게)
     "medium_x": 0.016,
-    "min_shot": 6.0,            # 이보다 짧게 프레이밍을 바꾸지 않는다(초)
-    "max_shot": 60.0,           # 문장 경계에서 억지로 바꾸지 않는다(사실상 끔)
+    "min_shot": 6.0,            # 긴 얼굴 구간을 문장 시작에서 나눌 때 앞뒤로 남길 최소 길이(초)
+    "max_shot": 60.0,           # 얼굴만 이보다 길게 이어질 때만 문장 시작에서 글라이드로 한 번 바꾼다
     "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
     "push_per_sec": 0.004,      # 느린 드리프트 0.4%/초 — 최대 5%
     "push_max": 0.05,
     "soft_cut": 0.1,            # 같은 프레이밍으로 이어지는 점프컷: 앞 장면 마지막 프레임을 0.1초 동안 섞어 튐을 줄임
     # 종이 스킨의 세 번째 '앵글': 화자를 찢어진 액자에 담아 종이 위에(사용자 레퍼런스 2). 와이드↔미디엄 사이사이,
-    # 8초 이상인 샷만, 0.6초에 걸쳐 천천히 들어가고 나온다.
+    # 8초 이상인 샷만, 0.6초에 걸쳐 천천히 들어가고 나온다. classic 스킨은 파이프라인이 framed_every=0 으로 끈다.
     "framed_every": 2,          # 앵글 전환 두 번에 한 번은 액자 샷
     "framed_min": 8.0,
     "framed_glide": 0.6,
-    # 강조: 하드컷 펀치인(+15~20%) 대신 0.7초에 걸쳐 천천히 당기는 글라이드(+4~9%), 영상당 8회
+    # 강조: 하드컷 펀치인(+15~20%) 대신 0.7초에 걸쳐 천천히 당기는 글라이드(+4~9%), 영상당 8회·40초 간격
     "punch": {1: 0.04, 2: 0.06, 3: 0.09},
     "punch_min_gap": 40.0,
     "punch_max": 4.5,           # 강조 유지 최대(초)
@@ -51,7 +58,7 @@ PARAMS: dict[str, Any] = {
     "tx_per_min": 1,            # ±30초 창 안의 최대 전환 수(챕터 포함)
     "tx_frames": {"whip": 8, "zoom": 10, "blur": 12, "push": 12, "flash": 9, "dip": 15, "wipe": 15, "leak": 24},
     # 효과음(피크 -1dBFS 정규화 후 게인, dB). 최종 마스터(-14 LUFS)에서 피크가 대략 게인+1dB:
-    # whoosh ≈ -20dBFS · pop ≈ -22 · impact ≈ -16 (리서치: whoosh -24 · pop -26 · impact -18, 숏폼은 목소리보다 10~18dB 아래)
+    # whoosh ≈ -24dBFS · pop ≈ -26 (리서치: whoosh -24 · pop -26 · impact -18, 숏폼은 목소리보다 10~18dB 아래)
     # 교육 영상이라 한 단계 낮고 부드럽게, 종류는 다양하게(종이·스와이프·팝·클릭·타자·작은 종·셔터)
     "sfx_gain": {"whoosh_fast": -25, "whoosh_soft": -25, "whoosh_deep": -25, "swoosh_short": -26, "pop": -27,
                  "click": -29, "riser": -28, "impact": -24, "sub_drop": -26, "ding": -28, "camera_shutter": -26,
@@ -192,7 +199,7 @@ def _carve_shot(shots: list[dict], a: float, b: float, new: dict, min_len: float
 
 
 def _merge_shots_near(shots: list[dict], times: list[float], win: float) -> list[dict]:
-    """times 앞뒤 win 초 안에서 시작하는 샷은 앞 샷에 합친다(펀치인과 앵글 전환이 연달아 튀지 않게)."""
+    """times 앞뒤 win 초 안에서 시작하는 샷은 앞 샷에 합친다(강조 글라이드와 프레이밍 전환이 연달아 겹치지 않게)."""
     out: list[dict] = []
     for sh in shots:
         if out and any(abs(sh["start"] - t) < win for t in times):
@@ -227,7 +234,10 @@ def list_reveal_times(g: dict, fps: float = FPS_BASE) -> list[float]:
 
 def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], covers: list[tuple],
                 sentence_starts: list[float], P: dict = PARAMS, seed: int = 1) -> list[dict]:
-    """점프컷 프레이밍. 컷(발화 사이를 잘라낸 곳)을 두 대의 카메라처럼 와이드/미디엄으로 교차해 숨긴다."""
+    """점프컷 프레이밍(교육 영상용 젠틀 편집). 컷 지점에서만 와이드(1.00)/미디엄(1.06)을 번갈아 바꾼다 —
+    챕터 시작·전체화면 그래픽 복귀·NG 를 잘라낸 큰 점프(≥big_jump)에서만(평범한 컷은 그대로).
+    그 사이 같은 프레이밍의 점프컷은 소프트 컷(props.mark_soft_cuts)이 가린다. 얼굴만 max_shot 넘게 이어지면
+    문장 시작에서 한 번 더 — 컷이 아니면 glide 로 천천히. framed_every > 0(종이 스킨)이면 전환 몇 번에 한 번은 액자 샷."""
     rnd = random.Random(seed)
     cuts = timemap.cut_points()
     big: set[float] = set()
@@ -243,7 +253,7 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
             continue
         since = c - bounds[-1]
         must = c in chapter_set or c in cover_ends or (c in big and since >= 1.2)
-        if must or since >= P["min_shot"]:
+        if must:                                    # 평범한 컷에서는 프레이밍을 바꾸지 않는다(교육 영상 — 얼굴 줌 교차 없음)
             bounds.append(c)
     # 얼굴만 너무 오래 이어지면 문장 경계에서 한 번 더 — 컷이 아닌 곳이면 컷 대신 천천히 옮겨 간다(glide)
     filled = [bounds[0]]
@@ -350,7 +360,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         e["dur"] = round(P["tx_frames"].get(e["type"], 14) / fps, 3)
     ed.transitions = [{k: v for k, v in e.items() if k in ("t", "type", "dur", "dir") and v is not None} for e in tx]
 
-    # ---- 펀치인 + 강조 자막 -------------------------------------------------
+    # ---- 강조 글라이드 + 강조 자막 ------------------------------------------
     punches: list[dict] = []
     for m in sorted(moments, key=lambda m: (-m.intensity, m.t)):
         if m.intensity < 2 and m.kind not in ("joke",):
@@ -374,7 +384,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     ed.punches = [{k: p[k] for k in ("t", "end", "amount", "style")} for p in punches]
 
     text_spans = [(a, b, None) for a, b in (text_graphic_spans or [])]
-    # 화자 영역이 바뀌는(패널·PiP·오버레이) 구간에는 콜아웃을 두지 않는다
+    # 화면 한쪽을 그래픽이 차지하는(패널·얼굴 옆 사진 액자·오버레이) 구간에는 콜아웃을 두지 않는다
     busy = text_spans + [(g["start"], g["end"], None) for g in graphics
                          if g.get("layout") in ("split", "pip", "overlay") or g.get("template") == "lower_third"]
     by_t = {round(m.t, 3): m for m in moments}
@@ -397,8 +407,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                             "side": "right" if fx < 0.5 else "left"})
         last_callout = p["t"]
         called.add(p["t"])
-    # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 옮겨 자리를 만든다(셜록현준식 리프레이밍).
-    # 이때는 리프레이밍 컷 자체가 펀치인 역할을 하므로 같은 순간의 펀치인은 뺀다(효과음은 유지).
+    # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 천천히(glide) 옮겨 자리를 만든다(셜록현준식 리프레이밍).
+    # 이때는 리프레이밍 자체가 강조 역할을 하므로 같은 순간의 강조 글라이드는 뺀다(효과음은 유지).
     reframed: set[float] = set()
     for c in ed.callouts:
         fx = _face_x(face or [], c["start"])
@@ -507,14 +517,15 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
         level ^= 1
         push = min(0.04, 0.008 * (b - a)) if b - a > 3.5 else 0.0
         ed.camera.append({"start": round(a, 3), "end": round(b, 3), "zoom": z, "zoomEnd": round(z * (1 + push), 4)})
-    # 2) 전환: 콜드 오픈 → 본론으로 되감는 이음새 하나만(블러 디졸브 9프레임 = '되감기' 신호). 나머지는 하드컷.
+    # 2) 전환: 콜드 오픈 → 본론으로 되감는 이음새 하나만(블러 디졸브 9프레임 = '되감기' 신호). 나머지는 컷
+    #    (프레이밍이 그대로 이어지는 컷은 소프트 컷).
     keeps = timemap.keeps
     for i in range(1, len(keeps)):
         if keeps[i].start < keeps[i - 1].start:
             t = timemap.edit_span_of(i).start
             ed.transitions.append({"t": round(t, 3), "type": "blur", "dur": 0.3})
             break
-    # 3) 펀치인: 강조 순간(최대 3개, 5초 간격)
+    # 3) 강조 글라이드: 강조 순간(최대 3개, 5초 간격)
     for m in sorted(moments, key=lambda m: -m.intensity):
         if len(ed.punches) >= 3:
             break

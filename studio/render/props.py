@@ -1,4 +1,8 @@
-"""편집 계획 → Remotion props(JSON). renderer/src/lib/types.ts 와 짝을 이룬다."""
+"""편집 계획 → Remotion props(JSON). renderer/src/lib/types.ts 와 짝을 이룬다.
+
+long_props/short_props 가 기본 props 를 만들고, 파이프라인이 그 위에 편집 문법 엔진 결과(apply_edit·mark_soft_cuts),
+숏폼 개념 텍스트(short_beats), 화면 글자와 같은 말인 자막 숨김(dedupe_captions)을 더한다.
+"""
 from __future__ import annotations
 
 import random
@@ -38,7 +42,9 @@ class Episode:
 # ---------------------------------------------------------------------------
 
 def camera_shots(timemap: TimeMap, total: float, chapter_starts: list[float], seed: int = 1) -> list[dict]:
-    """와이드(1.0)/미디엄(1.1) 2단 프레이밍 — 2캠 교차처럼.
+    """기본 카메라(편집 문법 엔진 없이 props 만 만들 때). 파이프라인은 apply_edit 가 grammar.camera_plan 결과로 덮어쓴다.
+
+    와이드(1.0)/미디엄(1.1) 2단 프레이밍 — 2캠 교차처럼.
 
     - 크게 잘라낸 곳(NG·리테이크 제거, 원본에서 1.5초 이상 건너뜀)은 점프컷이 티 나므로 항상 프레이밍 전환
     - 짧은 쉼 컷은 마지막 전환 후 12초 이상 지났을 때만 전환(셜록현준 리서치: 20~40초 간격, 논점 전환 시)
@@ -227,7 +233,7 @@ def long_props(
     bgm_src: Optional[str],
     sfx: dict[str, str],
     grain_frames: list[str],
-    skin: str = "paper",
+    skin: str = "classic",
     paper_texture: str = "",
     grain: float,
     caption_preset: str = "paper",
@@ -277,7 +283,9 @@ def long_props(
         "grainFrames": [f"fx/{f}" for f in grain_frames],
         "showChapterLabel": True,
         "peekEvery": 0,   # 렌더 중 진행 화면 미리보기 간격(프레임). 최종 렌더에서만 켠다
-        "skin": skin,     # paper = 사용자 레퍼런스(구겨진 종이·찢어진 액자·주황 강조), classic = 예전 에디토리얼
+        # classic(기본) = 에디토리얼 + 레퍼런스 일부(얼굴 위 사진 액자·개념 카드 글 위계·타이틀 구도·출처·오늘의 정리),
+        # paper = 레퍼런스 종이 콜라주 전체(구겨진 종이·거친 테두리·화자 액자 샷)
+        "skin": skin,
         "paperTexture": f"fx/{paper_texture}" if paper_texture else "",
     }
 
@@ -300,7 +308,7 @@ def short_props(
     bgm_src: Optional[str],
     sfx: dict[str, str],
     grain_frames: list[str],
-    skin: str = "paper",
+    skin: str = "classic",
     paper_texture: str = "",
     grain: float,
     layout: str = "full",
@@ -333,7 +341,7 @@ def short_props(
         span = timemap.edit_span_of(i)
         clips.append({"src": "media/proxy.mp4", "srcStart": round(k.start, 4), "start": round(span.start, 4),
                       "dur": round(k.dur, 4)})
-    # 페이오프 펀치인: 강조어가 있는 청크 중 전체의 60~90% 지점
+    # 페이오프 강조(글라이드): 강조어가 있는 청크 중 전체의 55~90% 지점
     pun = []
     for c in cues:
         if any(w.get("em") for line in c["lines"] for w in line) and 0.55 * total <= c["start"] <= 0.9 * total:
@@ -413,7 +421,7 @@ def mark_soft_cuts(clips: list[dict[str, Any]], camera: list[dict[str, Any]], tr
 
 
 def apply_edit(props: dict[str, Any], ed: Any) -> dict[str, Any]:
-    """studio/edit/grammar.py 의 EditDecisions → props(카메라·펀치인·전환·강조 자막·소프트 컷)."""
+    """studio/edit/grammar.py 의 EditDecisions → props(카메라·강조 글라이드·전환·콜아웃·강조 자막·소프트 컷)."""
     props["camera"] = ed.camera
     props["punches"] = ed.punches
     props["transitions"] = ed.transitions
@@ -441,7 +449,7 @@ def text_graphic_spans(graphics: list[dict[str, Any]]) -> list[tuple[float, floa
 
 
 # ---------------------------------------------------------------------------
-# 숏폼 하단 개념 텍스트(종이 스킨)
+# 숏폼 개념 텍스트(beats: 릴스식 위 카드 · 종이 스킨 하단)
 # ---------------------------------------------------------------------------
 
 def _cue_text(c: dict[str, Any]) -> str:
@@ -451,8 +459,8 @@ def _cue_text(c: dict[str, Any]) -> str:
 def short_beats(spec: dict[str, Any], utts: list[Utterance], timemap: TimeMap, cues: list[dict[str, Any]],
                 moments: list[Any], total: float, *, min_len: float = 2.2, max_len: float = 5.0,
                 every: float = 4.5) -> list[dict[str, Any]]:
-    """화면 아래 3~5초마다 바뀌는 개념 텍스트. AI 가 쓴 beats(발화 기준)를 편집 시간으로 옮기고,
-    모자라면 강조 순간(콜아웃)·강조어가 든 자막으로 채워 하단이 비지 않게 한다."""
+    """3~5초마다 바뀌는 개념 텍스트(릴스식은 위 카드, 종이 스킨 숏폼은 하단). AI 가 쓴 beats(발화 기준)를
+    편집 시간으로 옮기고, 모자라면 강조 순간(콜아웃)·강조어가 든 자막으로 채워 화면이 비지 않게 한다."""
     by_id = {u.id: u for u in utts}
     raw: list[dict[str, Any]] = []
     for b in spec.get("beats", []) or []:

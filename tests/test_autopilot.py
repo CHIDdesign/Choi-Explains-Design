@@ -91,7 +91,7 @@ def test_punch_callout_and_sfx_rules():
 
 
 def test_centered_speaker_is_reframed_for_callout():
-    """화자가 가운데면 콜아웃 동안 반대쪽으로 옮겨 자리를 만들고, 같은 순간의 펀치인은 뺀다."""
+    """화자가 가운데면 콜아웃 동안 반대쪽으로 천천히 옮겨 자리를 만들고, 같은 순간의 강조 글라이드는 뺀다."""
     tm = TimeMap([Span(0, 60)])
     moments = [Moment(t=20.0, end=23.0, kind="punchline", intensity=3, word="질문", callout="연필보다\n질문 먼저")]
     face = [{"t": float(t), "x": 0.5, "y": 0.4, "s": 0.3} for t in range(60)]

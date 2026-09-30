@@ -41,7 +41,7 @@ export const PhotoCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
       </div>
     );
   }
-  // split(패널) / 숏폼 상단 패널
+  // split(패널) / classic 숏폼 창·패널(compact)
   const frameH = box.h * (compact ? 0.9 : 0.74);
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',

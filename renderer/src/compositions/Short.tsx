@@ -84,6 +84,10 @@ const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof 
   );
 };
 
+/**
+ * 숏폼 구성: layout 'reel'(기본) = ReelShort(위 큰 카드 · 아래 얼굴 · 이음새 굵은 자막).
+ * 그 밖(window/full/framed)은 종이 스킨이면 PaperShort, classic 이면 아래 ClassicShort.
+ */
 export const Short: React.FC<ShortProps> = (props) => {
   if (props.layout === 'reel') return <ReelShort {...props} />;
   if (props.skin === 'paper') return <PaperShort {...props} />;
@@ -96,7 +100,7 @@ const ClassicShort: React.FC<ShortProps> = (props) => {
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
   const face = sampleFace(props.face, t);
-  // 숏폼 카메라: 컷마다 확대 단계가 바뀌는 점프컷 줌 + 강조 펀치인
+  // 숏폼 카메라: 컷 지점에서 1.00 ↔ 1.06 이 바뀌는 점프컷 프레이밍(샷 최소 3.5초) + 강조 글라이드
   const punch = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 

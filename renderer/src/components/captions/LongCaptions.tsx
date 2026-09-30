@@ -23,12 +23,13 @@ type Props = {
 
 /**
  * 롱폼 자막 프리셋
- *  editorial   : 배경 없이 흰 글자 + 부드러운 그림자, 줄 단위 마스크 슬라이드업(짧게). 기본값.
+ *  editorial   : 배경 없이 흰 글자 + 부드러운 그림자, 줄 단위 마스크 슬라이드업(짧게). 예전 기본값(알 수 없는 값도 이것).
  *  documentary : 왼쪽 정렬 + 강조색 세로 바. 넷플릭스 다큐 톤.
  *  glass       : 반투명 유리 알약(backdrop blur). 모던·애플 톤.
  *  boxed       : 줄마다 잉크 박스, 왼쪽 강조색 엣지. 뉴스·리포트 톤.
- *  paper       : 사용자 템플릿 — 흰 종이 박스 + 검은 글자, 핵심어 어간만 굵게. 한두 마디씩 빠르게 바뀐다.
+ *  paper       : 사용자 템플릿 — 흰 종이 박스 + 검은 글자, 핵심어 어간만 굵게. 한두 마디씩 빠르게 바뀐다. 기본값.
  * 공통: 강조어 1개(밑줄 스윕/형광 마커/숫자), 이어지는 큐는 애니메이션 없이 교체(과잉 모션 방지).
+ * hidden 큐(화면 그래픽·콜아웃이 같은 말을 이미 보여 줄 때)는 그리지 않는다(SRT 에는 남음).
  */
 export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, centerX, frameW = 1920, bottom = 70,
   plain = false}) => {
@@ -61,7 +62,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
   }
 
   if (cue.style === 'impact' && !plain) {
-    // 강조 자막: 크게, 가운데, 굵게 — 펀치인·효과음과 같은 순간에 '툭' 튀어나온다
+    // 강조 자막: 크게, 가운데, 굵게 — 강조 줌·효과음과 같은 순간에 '툭' 튀어나온다(paper 프리셋은 위에서 먼저 반환)
     const pop = tween(local, 0, 7, 'outBack');
     return (
       <div style={{position: 'absolute', left: cx - frameW / 2, width: frameW, bottom: bottom + 36, display: 'flex',
@@ -137,7 +138,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
     );
   }
 
-  // editorial (기본)
+  // editorial (그 밖의 값)
   return (
     <div style={{position: 'absolute', left: cx - frameW / 2, width: frameW, bottom, display: 'flex',
       flexDirection: 'column', alignItems: 'center', gap: 2, opacity: pOut,

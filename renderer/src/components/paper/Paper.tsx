@@ -6,6 +6,7 @@ import {FONT} from '../../design/tokens';
  * 종이 콜라주 스킨 — 사용자가 직접 편집한 레퍼런스(구겨진 짙은 종이 + 찢어진 흰 테두리 액자 + 회색 거친 테두리
  * + 흰 라벨 태그 + 주황 강조 헤드라인 + 우상단 출처)를 1920×1080 기준으로 옮긴 것.
  * 측정값: 종이 RGB(40,40,45) · 회색 테두리 #7F7F81 두께 약 38px · 액자 흰 테두리 약 12px · 강조 주황 #F85301.
+ * TornFrame·LabelTag·SourceCredit·AccentText 는 classic 스킨의 레퍼런스 부분(사진 액자·개념 카드·출처)에서도 쓴다.
  */
 export const PAPER = {
   bg: '#28282D',

@@ -3,8 +3,10 @@
 사용자가 주는 것은 세 가지뿐이고, 나머지는 전부 여기서 자동으로 정한다.
   목소리 다듬기 → 음성 인식 → 대본 정렬·가장 또렷한 테이크 → 얼굴 추적 → 자동 색보정
   → 🎬 AI 기획(감독 + 전문 팀: 구성·얼굴/그래픽 배분·강조 순간·모션그래픽·자료·자막·숏폼·제목)
-  → 편집본(컷 + 색) → 자료 사진·스톡·효과음·배경음악 → 🧐 아트 디렉터 검수
-  → 렌더(편집 문법 엔진: 점프컷 줌·펀치인·전환·강조 자막) → 음향 믹스·마스터링(-14 LUFS) → 마무리
+  → 편집본(컷 + 색) → 🔎 편집 검사(Whisper 로 다시 받아 적어 남은 되풀이·무음을 더 자름)
+  → 자료 사진·스톡(모션 장면 이미지 포함)·효과음·배경음악 → 🧐 아트 디렉터 검수
+  → 렌더(편집 문법 엔진: 점프컷 프레이밍·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막, 화면 스킨 classic/paper)
+  → 음향 믹스·마스터링(-14 LUFS) → 마무리(썸네일·자막·검토 시트·업로드 정보)
 
 각 단계 결과는 작업 폴더(work/)에 캐시되어, 재실행하면 바뀐 단계부터만 다시 한다.
 """
@@ -81,7 +83,7 @@ STAGES: list[tuple[str, str, float]] = [
     ("qa", "아트 디렉터 검수", 4),
     ("render", "렌더링", 30),
     ("master", "음향 믹스·마스터링", 5),
-    ("export", "마무리(썸네일·자막·업로드 정보)", 2),
+    ("export", "마무리(썸네일·자막·검토 시트·업로드 정보)", 2),
 ]
 STAGE_LABEL = {k: v for k, v, _ in STAGES}
 EXTRAS = "부가자료"
@@ -434,7 +436,8 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_grade(self) -> None:
-        """🎨 자동 색보정: 남길 구간의 프레임 분석 → 교정 + 룩(컬러리스트가 비교 시트에서 선택) → LUT."""
+        """🎨 자동 색보정: 남길 구간의 프레임 분석 → 교정 + 레퍼런스 색 매칭 + 룩(기본 웜 리치, 컬러리스트가 비교 시트에서
+        선택) → LUT."""
         assert self.info
         cube = self.media / "grade.cube"
         if self.spec.lut or not self.spec.auto_grade:
@@ -810,7 +813,8 @@ class Pipeline:
             gl[:] = keep
 
     def stage_stock(self) -> None:
-        """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등 + 키 없는 Openverse) → (Claude 비전으로) 선택 → 정리."""
+        """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등 + 키 없는 Openverse) → (Claude 비전으로) 선택 → 정리.
+        모션 장면의 'pixabay:…' 이미지 요소도 여기서 파일로 바꾼다(스톡이 꺼져 있으면 요소를 뺀다)."""
         lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
         imgs = sum(1 for gl in lists for g in gl if g["template"] == "motion" and isinstance(g.get("spec"), dict)
@@ -1098,7 +1102,8 @@ class Pipeline:
         return out
 
     def _final_long_props(self, graphics: list[TimedGraphic], chapters: list[dict]) -> tuple[dict, EditDecisions]:
-        """롱폼 props + 편집 문법 엔진 결과(카메라·펀치인·전환·강조 자막). 음향은 따로 믹스."""
+        """롱폼 props + 편집 문법 엔진 결과(카메라·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막) + 화면 그래픽과
+        같은 말인 자막 숨김. 음향은 따로 믹스."""
         self._prepare_render()
         lp = long_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), utts=self.utts,
                         timemap=self.timemap, graphics=graphics, chapters=chapters,
@@ -1150,7 +1155,7 @@ class Pipeline:
             self.masters.append({"name": "롱폼", "raw": raw, "voice": self.media / "long_voice.wav",
                                  "dst": self.out / f"1_롱폼_{self.slug}.mp4", "edit": ed, "total": lp["duration"],
                                  "moods": MOODS_LONG, "mood": self.plan_long.get("bgm_mood", ""), "short": False})
-            self.log(f"✂️ 롱폼 편집: 샷 {ed.stats['shots']} · 전환 {ed.stats['transitions']} · 펀치인 "
+            self.log(f"✂️ 롱폼 편집: 샷 {ed.stats['shots']} · 전환 {ed.stats['transitions']} · 강조 글라이드 "
                      f"{ed.stats['punches']} · 강조 자막 {ed.stats['impact_captions']} · 효과음 {ed.stats['sfx']}"
                      f" · 얼굴 화면 비율 {ed.stats['face_ratio'] * 100:.0f}%")
         self.short_props: list[dict] = []

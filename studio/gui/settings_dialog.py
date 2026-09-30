@@ -1,4 +1,4 @@
-"""환경 설정: AI 연결(Claude Code 구독 / API 키) · 스톡 · 브랜드 · 용어 사전 · 경로·렌더."""
+"""환경 설정: AI 연결(Claude Code 구독 / API 키) · 음성 인식·용어 사전 · 스톡 · 브랜드(화면 스타일·숏폼 구성) · 경로·렌더."""
 from __future__ import annotations
 
 import sys
@@ -143,7 +143,8 @@ class SettingsDialog(QDialog):
         fs.addRow("Coverr", self.coverr)
         fs.addRow("Pexels", self.pexels)
         fs.addRow("", hint("키를 넣은 곳을 모두 검색해 후보를 섞고, 🎞 자료 리서처가 썸네일을 보고 고릅니다. "
-                           "Pixabay 하나면 충분합니다(사진+영상, 한국어 검색). 출처는 화면 ▣ 와 설명란에 자동 표기."))
+                           "Pixabay 하나면 충분합니다(사진+영상+모션 그래픽용 벡터·일러스트, 한국어 검색). 키가 없어도 Openverse(CC 사진)는 "
+                           "검색합니다. 출처는 화면 ▣ 와 설명란에 자동 표기."))
         tabs.addTab(st, "스톡")
 
         # --- 브랜드

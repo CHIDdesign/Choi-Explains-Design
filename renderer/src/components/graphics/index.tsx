@@ -60,7 +60,11 @@ type Props = {
   faceX?: number;
 };
 
-/** 한 그래픽을 레이아웃(풀스크린/칠판 패널/오버레이)에 맞게 배치 */
+/**
+ * 한 그래픽을 스킨·레이아웃에 맞게 배치. paper 스킨은 PaperGraphic 이 전부 맡는다.
+ * classic: 레퍼런스 부분(referenceGraphic — 얼굴 위 사진 액자·개념 텍스트, 타이틀 구도)이 먼저,
+ * 나머지는 풀스크린 / 칠판 패널(개념 카드 글 위계·찢어진 사진 액자) / 오버레이.
+ */
 export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand, episode, W, H, panelSide, pageLabel,
   skin, paperTexture, chapterTag = '', faceX = 0.5}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
@@ -143,7 +147,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
     );
   }
 
-  // fullscreen (+ pip 사진)
+  // fullscreen (pip·overlay 의 사진·개념 카드는 위 referenceGraphic 이 먼저 처리)
   const clipIn = `inset(${(1 - pIn) * 100}% 0 0 0)`;
   const clipOut = `inset(0 0 ${(1 - pOut) * 100}% 0)`;
   const clip = frame < dur / 2 ? clipIn : clipOut;

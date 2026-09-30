@@ -4,9 +4,11 @@
 │ ① 주제          │ ② 원본 영상(끌어다 놓기·클릭·Ctrl+V) │ ③ 대본(붙여넣기·파일)          │
 │                          [ 영상 만들기 ▶ ]                                            │
 └──────────────────────────────────────────────────────────────────────────────────────┘
-→ 진행 화면(단계 체크리스트 · AI 팀 작업 기록 · 색보정 전후) → 결과 화면(롱폼 1 · 숏폼 2 · 업로드 정보)
+→ 진행 화면(남은 시간 · 단계 체크리스트 · AI 팀 작업 기록 · 실시간 미리보기)
+→ 결과 화면(롱폼 1 · 숏폼 2 · 썸네일 후보 · 색보정 전후 · 업로드 정보)
 
 편집 툴처럼 만질 것이 없다: 구성·컷·얼굴/그래픽 배분·색·자막·효과음·음악은 전부 자동.
+화면 스타일(classic/paper)·숏폼 구성(reel 등)만 ⚙ 고급 설정 → 브랜드 탭에서 고른다.
 """
 from __future__ import annotations
 
@@ -749,7 +751,7 @@ class MainWindow(QMainWindow):
         self.r_title.setText(f"완성! 「{title}」" if title else "완성!")
         took = f"걸린 시간 {fmt_ts(elapsed)} · " if elapsed else ""
         self.r_sub.setText(took + "색보정과 음향 마스터링(-14 LUFS)까지 적용했습니다. 올리기 전에 한 번 확인해 보세요. "
-                           f"썸네일·자막(.srt)·편집 리포트는 '{EXTRAS}' 폴더에 있습니다.")
+                           f"썸네일·자막(.srt)·검토 시트·편집 리포트는 '{EXTRAS}' 폴더에 있습니다.")
         cards = [("롱폼 16:9", res.get("long", ""), False)]
         cards += [(f"숏폼 {i} · 9:16", p, True) for i, p in enumerate(res.get("shorts", []) or [], 1)]
         for i, (t, p, vert) in enumerate(cards):

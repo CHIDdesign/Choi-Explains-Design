@@ -42,10 +42,15 @@ export type GraphicData = {
   kind?: 'video' | 'photo'; // broll
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
-  accent?: string; // 종이 스킨: 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)
+  accent?: string; // 개념 카드·사진 액자 글(두 스킨): 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)
 };
 
-// 화면 스킨: paper = 사용자 레퍼런스(구겨진 종이·찢어진 액자·주황 강조), classic = 이전 에디토리얼(칠판·잉크)
+// 화면 스킨(기본 classic):
+//  classic = 에디토리얼(칠판·잉크) + 레퍼런스 일부 — 얼굴 위 찢어진 사진 액자·검정 라벨·큰 개념 텍스트(화자는 전체 화면 그대로),
+//            칠판 split 패널 안 개념 카드 글 위계, 타이틀 = 글 왼쪽 + 화자 액자 오른쪽, 우상단 출처, 오늘의 정리 엔드카드,
+//            레퍼런스식 콜아웃
+//  paper   = 레퍼런스 종이 콜라주 전체 — 구겨진 짙은 종이·회색 거친 테두리·찢어진 액자·화자 액자 샷(CameraShot.framed),
+//            전면 개념 카드는 split 으로(props.paper_layouts)
 export type Skin = 'paper' | 'classic';
 
 // ---------------------------------------------------------------------------
@@ -127,7 +132,8 @@ export type EmType = 'keyword' | 'term' | 'number' | 'contrast';
 export type CaptionWord = {text: string; start: number; end: number; em?: boolean | EmType};
 export type LongCaptionPreset = 'paper' | 'editorial' | 'documentary' | 'glass' | 'boxed';
 export type ShortCaptionPreset = 'paper' | 'kinetic' | 'clean' | 'boxed' | 'bar';
-// style: 'impact' = 강조 순간(펀치인·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
+// style: 'impact' = 강조 순간(강조 줌·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
+//        (paper 자막 프리셋은 크기를 바꾸지 않는다)
 // hidden: 화면 그래픽(개념 카드·도식·콜아웃·숏폼 카드)이 같은 말을 이미 보여 줄 때 — 화면 자막만 끈다(SRT 에는 남음)
 export type CaptionCue = {start: number; end: number; lines: CaptionWord[][]; style?: 'impact'; hidden?: boolean};
 
@@ -140,15 +146,18 @@ export type Clip = {
 };
 
 export type FaceSample = {t: number; x: number; y: number; s: number};
-// 점프컷 프레이밍: 컷마다 와이드(1.0) ↔ 타이트(1.12~1.2) 교차, x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
+// 점프컷 프레이밍: 컷 지점에서 와이드(1.00) ↔ 미디엄(1.06)(콜아웃 자리 만들기는 1.10), zoom→zoomEnd 는 샷 안 느린 드리프트,
+// x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
 // glide: 이 샷이 시작할 때 앞 샷의 프레이밍에서 이 초만큼 천천히 옮겨 온다(없으면 컷)
 // framed: 종이 스킨에서 화자를 찢어진 액자에 담아 종이 위에(레퍼런스 2)
 export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number; glide?: number;
   framed?: boolean};
-// 펀치인: 강조 단어에서 카메라를 확 당김. style cut = 하드컷(한 프레임), ease = 5프레임 푸시
+// 강조 줌: 강조 순간 카메라를 당김. style glide = 0.7초에 걸쳐 당기고 0.9초에 걸쳐 풀림(편집 문법 엔진이 쓰는 것),
+// ease = 5프레임 푸시, cut = 하드컷(한 프레임) — ease·cut 은 렌더러에만 남아 있다
 export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'};
 
-// 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착
+// 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착.
+// 편집 문법 엔진은 blur·push·wipe·leak 만 만든다(whip·zoom·flash·dip 은 렌더러에만 남아 있다)
 export type TransitionType = 'whip' | 'zoom' | 'blur' | 'push' | 'flash' | 'dip' | 'wipe' | 'leak';
 export type Transition = {
   t: number;
@@ -160,7 +169,7 @@ export type Transition = {
 export type Keyframe = {t: number; v: number};
 export type Chapter = {start: number; title: string; number: string};
 
-// 키워드 콜아웃(셜록현준식): 화자 반대편 빈 공간에 2줄 굵은 글씨 + 작은 맥락 라벨. 자막과 별도 레이어.
+// 키워드 콜아웃: 화자 반대편, 얼굴을 피한 빈 공간에 2줄 굵은 흰 글씨 + 검정 맥락 라벨(레퍼런스식). 자막과 별도 레이어.
 export type Callout = {start: number; end: number; text: string; highlight: string; label: string;
   side: 'left' | 'right'};
 
@@ -212,7 +221,7 @@ export type LongFormProps = {
   paperTexture?: string; // public 기준 구겨진 종이 텍스처(없으면 단색)
 };
 
-// 숏폼 하단 개념 텍스트(3~5초마다 바뀜): 검정 라벨 + 큰 글씨(한 낱말 주황)
+// 숏폼 개념 텍스트(3~5초마다 바뀜): reel 은 위 카드(흰 개념 카드 + 형광펜), 종이 스킨 숏폼은 하단(검정 라벨 + 큰 글씨)
 export type ShortBeat = {start: number; end: number; text: string; label?: string; accent?: string};
 
 export type ShortProps = {

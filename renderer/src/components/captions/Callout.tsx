@@ -9,8 +9,9 @@ import {AccentText, LabelTag, PAPER} from '../paper/Paper';
 
 /**
  * 키워드 콜아웃 — 셜록현준 롱폼의 강조 방식(자막과 별도 레이어).
- * 화자 반대편 빈 공간(x 55~95%, y 30~55%)에 굵은 2줄, 핵심어 하나만 강조색, 위에 작은 맥락 라벨.
- * 등장은 스프링 팝(약 12f), 퇴장은 페이드(8f).
+ * 화자 반대편, 얼굴(머리 폭 + 여유)을 피한 빈 공간에 굵은 2줄, 핵심어 하나만 강조색, 위에 맥락 라벨. 자리가 없으면 띄우지 않는다.
+ * paper(롱폼은 두 스킨 모두 이것): 레퍼런스 3 — 검정 라벨 + 굵은 흰 글씨(그림자), 부드러운 스프링으로 떠오른다.
+ * 그 밖: 예전 스타일(강조색 라벨 + 스프링 팝). 퇴장은 페이드.
  */
 export const CalloutLayer: React.FC<{items: Callout[]; t: number; fps: number; W: number; H: number; theme: Theme;
   paper?: boolean; face?: FaceSample; zoom?: number}> = ({items, t, fps, W, H, theme, paper, face, zoom = 1}) => {

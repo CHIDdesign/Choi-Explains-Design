@@ -3,6 +3,8 @@
 기본 순서: Pixabay(영상·사진, 한국어 검색) → Pexels(키가 있으면) → Coverr(영상) → Unsplash(사진)
 → Openverse(사진, 키 없이 항상 동작).
 요청마다 제공처별 후보를 번갈아 섞어 최대 N개를 만들고, 🎞 자료 리서처가 썸네일 시트를 보고 고른다.
+검색 중 오류: 키 오류(StockError.fatal)만 그 제공처를 이번 작업에서 끄고, 연결 실패·일시 차단·한도는 잠시 쉬었다가
+계속 쓴다(3번 연속이면 끈다).
 """
 from __future__ import annotations
 

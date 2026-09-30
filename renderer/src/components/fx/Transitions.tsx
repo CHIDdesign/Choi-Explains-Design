@@ -17,6 +17,9 @@ import type {Transition} from '../../lib/types';
  *  dip   : 잉크색으로 잠깐 암전                         — 큰 챕터 경계
  *  wipe  : 브랜드 컬러 면이 화면을 쓸고 지나감          — 챕터 카드 진입
  *  leak  : 따뜻한 빛샘(라이트 리크)이 스쳐 지나감       — 인트로·감성 전환
+ *
+ * 교육 영상용 젠틀 편집: 편집 문법 엔진(studio/edit/grammar.py)은 blur·push·wipe·leak 만 만든다.
+ * whip·zoom·flash·dip 은 렌더러에만 남아 있다(예전 계획·수동 props 호환).
  */
 
 export type TxState = {

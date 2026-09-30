@@ -22,7 +22,10 @@ ensureFonts();
 
 type RegionSpan = {start: number; end: number; kind: 'split' | 'pip' | 'title'};
 
-/** 화자 영역이 바뀌는 구간(칠판 패널/PiP/타이틀). 거의 붙어 있는 같은 종류는 하나로 합쳐 들락날락하지 않게. */
+/**
+ * 화자 영역이 바뀌는 구간(split 패널 · 타이틀, pipOverlay=false 일 때만 pip). 거의 붙어 있는 같은 종류는 하나로 합쳐
+ * 들락날락하지 않게. 기본(pipOverlay=true)은 pip 에서도 화자가 화면 전체에 그대로 남는다.
+ */
 export const buildRegionSpans = (graphics: Graphic[], pipOverlay = true): RegionSpan[] => {
   const spans: RegionSpan[] = [];
   const sorted = [...graphics].sort((a, b) => a.start - b.start);
@@ -65,9 +68,10 @@ export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: numb
 export const cameraZoom = (shots: CameraShot[], t: number): number => cameraAt(shots, t).zoom;
 
 /**
- * 펀치인: 강조 순간 카메라를 한 단계 당긴다.
- *  cut  — 한 프레임에 확(2캠 편집 느낌, 문장 끝에서 하드컷으로 복귀)
- *  ease — 5프레임 동안 빠르게 당기고 끝에서 8프레임에 걸쳐 풀림(웃음·여운)
+ * 강조 줌: 강조 순간 카메라를 살짝 당긴다.
+ *  glide — 0.7초에 걸쳐 천천히 당기고 0.9초에 걸쳐 풀림. 편집 문법 엔진(롱폼·숏폼)이 쓰는 스타일
+ *  ease  — 5프레임 동안 빠르게 당기고 끝에서 8프레임에 걸쳐 풀림(렌더러에만 남음)
+ *  cut   — 한 프레임에 확, 문장 끝에서 하드컷으로 복귀(렌더러에만 남음)
  */
 export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
   let f = 1;
@@ -132,7 +136,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   let radius = 0;
   let border: string | undefined;
   let capCenter = W / 2;
-  // 종이 스킨: 화자를 찢어진 액자에 담는 정도(0~1) — 칠판 패널·타이틀 구간 또는 액자 샷(레퍼런스 1·2)
+  // 화자를 찢어진 액자에 담는 정도(0~1) — 타이틀 구간(두 스킨), 종이 스킨은 split 패널 구간·액자 샷도(레퍼런스 1·2)
   let paperP = 0;
   let paperBorder = 0;
   if (paper && cam.framed > 0) {

@@ -21,11 +21,13 @@ type Props = {
 };
 
 /**
- * 숏폼 자막 프리셋 (세이프존 x 65–940)
- *  kinetic : 말하는 순간 단어가 마스크 안에서 올라오며 쌓임(ease-out-expo 6f). 강조어는 형광 마커/숫자. 기본값.
+ * 숏폼 자막 프리셋 (세이프존 x 65–940) — reel 레이아웃은 ReelShort 의 자체 자막(아주 굵은 흰 글씨 + 검은 외곽선)을 쓴다
+ *  paper   : 사용자 템플릿 흰 종이 박스(롱폼과 같은 모양), 핵심어 어간만 굵게. 기본값.
+ *  bar     : 불투명 검정 박스 한 줄, 강조어 노랑(window 레이아웃)
+ *  kinetic : 말하는 순간 단어가 마스크 안에서 올라오며 쌓임(ease-out-expo 6f). 강조어는 형광 마커/숫자. 예전 기본값.
  *  clean   : 청크 전체가 보이고, 말한 단어만 100% · 아직 안 한 단어 42% (카라오케 톤, 모션 최소)
  *  boxed   : 둥근 잉크 박스 + 지금 말하는 단어 뒤로 강조색 알약이 이동
- * 원칙: 청크당 강조 1개, 과한 흔들림/바운스 금지, 퇴장은 진입의 75%.
+ * 원칙: 청크당 강조 1개, 과한 흔들림/바운스 금지, 퇴장은 진입의 75%. hidden 큐는 그리지 않는다.
  */
 export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, width}) => {
   const i = lastIndexAtOrBefore(cues, t, (c) => c.start);
@@ -113,7 +115,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
     );
   }
 
-  // kinetic (기본): 말하는 순간 단어가 올라와 쌓인다
+  // kinetic (그 밖의 값): 말하는 순간 단어가 올라와 쌓인다
   return (
     <div style={{position: 'absolute', left, width: w, top: y, display: 'flex', justifyContent: 'center',
       flexWrap: 'wrap', gap: `0 ${Math.round(size * 0.22)}px`, opacity: out,
