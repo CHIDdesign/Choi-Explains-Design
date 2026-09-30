@@ -144,7 +144,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     if agent == "captions":
         return {"emphasis": [{"seg": s_aff, "word": "어포던스라는", "type": "term"},
                              {"seg": s_q, "word": "세", "type": "number"}],
-                "preset_long": "documentary", "preset_short": "kinetic", "notes": "용어만 마커"}
+                "notes": "용어만 마커"}
     if agent == "shorts":
         seg = [i for i in ids if i >= s_skip][:6]
         seg2 = [i for i in ids if i < s_skip][:6]
@@ -181,7 +181,7 @@ def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
     for key, marker in (("director", "logline"), ("editor", "moments"), ("motion", "scenes"), ("stock", "requests"),
                         ("colorist", "strength"),
-                        ("stock_pick", "picks"), ("captions", "preset_long"), ("shorts", "shorts"),
+                        ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("motion_revise", "changes")):
         if marker in props:
             return key
@@ -380,7 +380,7 @@ def main() -> int:
     assert agents.count("art_director") == 2, agents  # 수정 후 재검수에서 통과
 
     lp = json.loads((job / "render" / "props_long.json").read_text(encoding="utf-8"))
-    assert lp["captionPreset"] == "documentary", lp["captionPreset"]
+    assert lp["captionPreset"] == "paper", lp["captionPreset"]        # 채널 템플릿 자막(흰 종이 상자)
     tpl = [g["template"] for g in lp["graphics"]]
     assert "motion" in tpl and "broll" in tpl, tpl
     motion = next(g for g in lp["graphics"] if g["template"] == "motion")

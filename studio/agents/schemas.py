@@ -92,8 +92,6 @@ STOCK_PICK = _obj({
 CAPTIONS = _obj({
     "emphasis": {"type": "array", "items": _obj({
         "seg": INT, "word": STR, "type": {"type": "string", "enum": ["keyword", "term", "number", "contrast"]}})},
-    "preset_long": {"type": "string", "enum": ["editorial", "documentary", "glass", "boxed"]},
-    "preset_short": {"type": "string", "enum": ["kinetic", "clean", "boxed"]},
     "notes": STR,
 })
 

@@ -10,8 +10,9 @@
   - number: 수치
   - contrast: "A가 아니라 B" 의 A
   - 문장 3~4개에 1개 정도. 한 발화에 2개 이상 두지 않는다.
-- `preset_long`: editorial | documentary | glass | boxed 중 이 영상에 맞는 것(기본 editorial).
-- `preset_short`: kinetic | clean | boxed(기본 kinetic).
 - `notes`: 한 줄.
+
+자막의 모양(흰 종이 상자 · 한두 마디 · 두 층 강조 자막)은 채널 템플릿으로 정해져 있다. 여기서 고르지 않는다 — 어느 낱말을
+강조할지만 정한다.
 
 {{user_direction}}

@@ -86,8 +86,7 @@ def test_merge_plan_builds_long_plan_with_motion_and_stock():
              "reason": ""}]},
         "stock": {"requests": [{"start_seg": 2, "end_seg": 2, "start_word": "", "kind": "video", "query_en": "hand sketch",
                                 "query_ko": "스케치", "layout": "fullscreen", "purpose": "p", "must_show": ""}]},
-        "captions": {"emphasis": [{"seg": 3, "word": "어포던스라는", "type": "term"}], "preset_long": "glass",
-                     "preset_short": "clean", "notes": ""},
+        "captions": {"emphasis": [{"seg": 3, "word": "어포던스라는", "type": "term"}], "notes": ""},
         "copy": {"titles": ["t"], "description": "d", "hashtags": [], "tags": [], "thumbnail_texts": ["x"],
                  "pinned_comment": "q"},
     }
@@ -96,11 +95,10 @@ def test_merge_plan_builds_long_plan_with_motion_and_stock():
     assert any("올바르지 않아" in m for m in logs)
     tpl = [g["template"] for g in raw_long["graphics"]]
     assert tpl == ["motion", "broll"], tpl
-    assert raw_long["captions"] == {"preset_long": "glass", "preset_short": "clean"}
+    assert raw_long["captions"] == {}                      # 자막 모양은 템플릿 고정, 디자이너는 강조어만
     assert raw_shorts == {"shorts": []}
     utts = _utts()
     plan = normalize_long(raw_long, utts, [])
-    assert plan["captions"]["preset_long"] == "glass"
     assert {"seg": 3, "word": "어포던스라는", "kind": "highlight", "type": "term"} in plan["emphasis"]
     assert plan["graphics"][0]["spec"]["elements"]
     assert plan["graphics"][1]["stock"]["query_en"] == "hand sketch"

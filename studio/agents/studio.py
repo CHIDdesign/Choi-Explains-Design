@@ -178,7 +178,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "youtube": {k: copy.get(k, [] if k not in ("description", "pinned_comment") else "")
                     for k in ("titles", "description", "hashtags", "tags", "thumbnail_texts", "pinned_comment")},
         "music": brief.get("music") or {},
-        "captions": {"preset_long": caps.get("preset_long", ""), "preset_short": caps.get("preset_short", "")},
+        "captions": {},   # 자막 모양은 채널 템플릿(흰 종이 상자 + 두 층 강조)로 고정 — 디자이너는 강조어만 정한다
         "studio": {
             "logline": brief.get("logline", ""), "audience": brief.get("audience", ""), "tone": brief.get("tone", ""),
             "beats": brief.get("beats", []), "notes_for_team": brief.get("notes_for_team", ""),
@@ -284,8 +284,7 @@ class Studio:
         if "stock" in r:
             parts.append(f"🎞 스톡 요청 {len(r['stock'].get('requests', []))}")
         if "captions" in r:
-            parts.append(f"🔤 강조 {len(r['captions'].get('emphasis', []))} · 프리셋 {r['captions'].get('preset_long')}"
-                         f"/{r['captions'].get('preset_short')}")
+            parts.append(f"🔤 강조 {len(r['captions'].get('emphasis', []))}")
         if "shorts" in r:
             parts.append(f"📱 숏폼 후보 {len(r['shorts'].get('shorts', []))}")
         if "copy" in r:
