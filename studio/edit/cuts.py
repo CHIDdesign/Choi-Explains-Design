@@ -43,6 +43,27 @@ def _snap_to_vad(t: float, regions: list[tuple[float, float]], starts: list[floa
     return best if abs(best - t) <= tol else t
 
 
+def _extend_end(t: float, regions: list[tuple[float, float]], starts: list[float], bounds: list[float],
+                limit: float = 0.8) -> float:
+    """t 가 말소리(VAD) 안이면 그 말소리 끝까지(최대 limit초, 다음 단어·지운 구간 시작 전까지) 늘린다."""
+    i = bisect.bisect_right(starts, t) - 1
+    if i < 0 or regions[i][1] <= t:
+        return t
+    nxt = bisect.bisect_right(bounds, t + 0.02)
+    cap = bounds[nxt] - 0.03 if nxt < len(bounds) else float("inf")
+    return max(t, min(regions[i][1], t + limit, cap))
+
+
+def _extend_start(t: float, regions: list[tuple[float, float]], starts: list[float], bounds: list[float],
+                  limit: float = 0.5) -> float:
+    i = bisect.bisect_right(starts, t) - 1
+    if i < 0 or not (regions[i][0] < t < regions[i][1]):
+        return t
+    prv = bisect.bisect_left(bounds, t - 0.02) - 1
+    floor = bounds[prv] + 0.03 if prv >= 0 else float("-inf")
+    return min(t, max(regions[i][0], t - limit, floor))
+
+
 def build_keeps(
     utts: list[Utterance],
     *,
@@ -52,10 +73,16 @@ def build_keeps(
     fps: float = 30.0,
     only_ids: set[int] | None = None,
     include_all: bool = False,
+    exclude: list[Span] | None = None,
 ) -> list[Span]:
-    """남길 발화들의 단어 시간으로 keep 구간을 만든다."""
+    """남길 발화들의 단어 시간으로 keep 구간을 만든다.
+    exclude: 지운 되풀이·추임새 구간 — 늘릴 때 넘어가지 않고, 마지막에 한 번 더 빼서 소리가 새지 않게."""
     vad = sorted(vad or [])
     starts = [r[0] for r in vad]
+    exclude = sorted(exclude or [], key=lambda x: x.start)
+    # 다른 단어(남기든 지우든)·지운 구간의 경계 — 말소리 끝까지 늘릴 때 넘지 않는 선
+    bounds_start = sorted([w.start for u in utts for w in u.words] + [x.start for x in exclude])
+    bounds_end = sorted([w.end for u in utts for w in u.words] + [x.end for x in exclude])
     raw: list[Span] = []
     for u in utts:
         if (not u.kept and not include_all) or (only_ids is not None and u.id not in only_ids) or not u.words:
@@ -74,6 +101,9 @@ def build_keeps(
     for s in raw:
         a = _snap_to_vad(s.start, vad, starts, is_start=True)
         b = _snap_to_vad(s.end, vad, starts, is_start=False)
+        # Whisper 는 쉼 앞 마지막 단어의 끝을 0.5초 넘게 일찍 찍기도 한다('안녕하세요' → '안녕하세') → 말소리 끝까지
+        b = _extend_end(b, vad, starts, bounds_start)
+        a = _extend_start(a, vad, starts, bounds_end)
         if b <= a:
             a, b = s.start, s.end
         spans.append(Span(max(0.0, a - pace.pre_pad), min(media_duration, b + pace.post_pad)))
@@ -85,6 +115,10 @@ def build_keeps(
             merged[-1] = Span(merged[-1].start, max(merged[-1].end, s.end))
         else:
             merged.append(s)
+    if exclude:
+        from .verify import subtract
+        merged = subtract(merged, [Span(x.start + 0.02, x.end - 0.02) for x in exclude if x.dur > 0.06],
+                          min_keep=pace.min_keep)
     word_starts = sorted(w.start for u in utts if (u.kept or include_all) for w in u.words)
     merged = trim_dead_air(merged, vad, word_starts, max_silence=pace.max_silence,
                            pad_after=min(0.16, pace.post_pad + 0.02), pad_before=min(0.12, pace.pre_pad + 0.04))
@@ -137,7 +171,7 @@ def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]
 
 
 def keeps_for_segments(utts: list[Utterance], ids: list[int], *, pace: Pace, vad, media_duration: float,
-                       fps: float) -> list[Span]:
+                       fps: float, exclude: list[Span] | None = None) -> list[Span]:
     """숏폼: 지정한 발화 순서대로(재배치 허용) keep 구간 생성. 연속 발화는 합친다."""
     by_id = {u.id: u for u in utts}
     groups: list[list[int]] = []
@@ -152,6 +186,6 @@ def keeps_for_segments(utts: list[Utterance], ids: list[int], *, pace: Pace, vad
     for g in groups:
         sub = [by_id[i] for i in g]
         spans = build_keeps(sub, pace=pace, vad=vad, media_duration=media_duration, fps=fps,
-                            include_all=True)
+                            include_all=True, exclude=exclude)
         out.extend(spans)
     return out

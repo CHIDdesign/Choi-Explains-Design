@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import numpy as np
+
 from . import diag
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
@@ -441,7 +443,9 @@ class Pipeline:
             times = [times[int(i * step)] for i in range(16)]
         if not times:
             times = [self.info.duration * (i + 0.5) / 8 for i in range(8)]
-        key = text_hash(file_fingerprint(self.spec.video), [round(t, 1) for t in times], self._use_api(), "grade-v1")
+        ref_lab = grade.reference_lab(USER_DIR / "reference_frames")
+        key = text_hash(file_fingerprint(self.spec.video), [round(t, 1) for t in times], self._use_api(),
+                        [round(v, 1) for v in ref_lab], "grade-v2")
         cached = read_json(self.work / "grade.json", {})
         if cached.get("key") == key and cube.exists():
             self.grade_info = cached
@@ -451,6 +455,8 @@ class Pipeline:
         faces = [min(self.face, key=lambda s: abs(s["t"] - t)) if self.face else None for t, _ in frames]
         stats = grade.analyze(frames, faces)
         corr = grade.correction_from_stats(stats)
+        # 교정 후 평균색 → 레퍼런스(사용자가 좋아하는 따뜻하고 풍부한 색) 쪽으로 옮길 기준
+        src_lab = grade.lab_stats(np.concatenate([grade.apply_correction(f, corr).reshape(-1, 3) for _, f in frames]))
         self._stage("grade", 0.4)
         # 비교용 3프레임: 얼굴이 크고 서로 떨어진 순간
         order = sorted(range(len(frames)), key=lambda i: -(faces[i] or {}).get("s", 0))
@@ -461,26 +467,30 @@ class Pipeline:
             if len(picks) == 3:
                 break
         picks = sorted(picks or [0])
-        choice = grade.GradeChoice()
+        choice = grade.GradeChoice(src_lab=src_lab, ref_lab=ref_lab)
         studio = self._ensure_studio()
         if studio is not None:
-            sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr)
+            sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab)
             (self.work / "grade_sheet.jpg").write_bytes(sheet)
             try:
                 notes = " · ".join(corr.notes) or "교정 필요 적음"
                 r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
-                choice = grade.GradeChoice(look=r.get("look", "natural"), strength=float(r.get("strength", 0.8) or 0.8),
+                choice = grade.GradeChoice(look=r.get("look", "warm_rich"), strength=float(r.get("strength", 0.8) or 0.8),
+                                           src_lab=src_lab, ref_lab=ref_lab,
                                            exposure=float(r.get("exposure", 0) or 0),
                                            warmth=float(r.get("warmth", 0) or 0),
                                            saturation=float(r.get("saturation", 1) or 1),
                                            reason=str(r.get("reason", "")), by="ai").clamp()
             except (DirectorError, ValueError, TypeError) as e:
-                self.log(f"🎨 컬러리스트 실패 → 내추럴: {e}")
+                self.log(f"🎨 컬러리스트 실패 → 웜 리치: {e}")
         grade.write_cube(cube, corr, choice)
         filters = grade.cleanup_filters(stats)
         grade.before_after(frames[picks[0]][1], corr, choice, self.extras / "색보정_전후.jpg")
         self.grade_info = {"key": key, **grade.plan_to_dict(stats, corr, choice, filters)}
         write_json(self.work / "grade.json", self.grade_info)
+        after = grade.lab_stats(np.concatenate([grade.grade(f, corr, choice).reshape(-1, 3) for _, f in frames[:6]]))
+        self.log(f"🎨 색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → {after[3]:.1f}"
+                 f" (레퍼런스 b {ref_lab[2]:+.1f} · C {ref_lab[3]:.1f})")
         self.log(f"🎨 색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
                  f"(세기 {choice.strength:.1f}{', AI 선택' if choice.by == 'ai' else ''})"
                  + (f" — {choice.reason}" if choice.reason else ""))
@@ -662,11 +672,18 @@ class Pipeline:
                         progress=lambda f: self._stage("proxy", 0.8 * f), cancel=self.cancel)
             write_json(self.media / "proxy.json", {"key": key, "height": height})
         self.base_keeps = build_keeps(self.utts, pace=self._pace(), vad=self.vad,
-                                      media_duration=self.info.duration, fps=self.fps)
+                                      media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
         ver = read_json(self.work / "verify.json", {})
         self.edit_drops = [Span(a, b) for a, b in ver.get("drops", [])] \
             if ver.get("base") == self._keeps_key(self.base_keeps) else []
         self._make_cuts()
+
+    def _removed_spans(self) -> list[Span]:
+        """단어 정리에서 지운 되풀이·추임새(원본 시간)."""
+        rem = getattr(self, "removed", None)
+        if rem is None:
+            rem = (read_json(self.work / "align.json", {}).get("report") or {}).get("words_removed", [])
+        return [Span(r["start"], r["end"]) for r in rem]
 
     def _keeps_key(self, keeps: list[Span]) -> str:
         return text_hash([(round(k.start, 3), round(k.end, 3)) for k in keeps], "verify-v1")
@@ -684,7 +701,7 @@ class Pipeline:
         self.short_maps: list[TimeMap] = []
         for i, s in enumerate(self.plan_shorts, 1):
             keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES["shorts"], vad=self.vad,
-                                       media_duration=self.info.duration, fps=self.fps)
+                                       media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
             if drops:
                 keeps = subtract(keeps, drops)
             keeps = self._limit_short(keeps)

@@ -144,7 +144,29 @@ def test_grade_correction_fixes_blue_cast_and_underexposure(tmp_path):
 def test_grade_choice_is_clamped():
     from studio.grade.auto import GradeChoice
     c = GradeChoice(look="rainbow", strength=3, exposure=1, warmth=-9, saturation=5).clamp()
-    assert (c.look, c.strength, c.exposure, c.warmth, c.saturation) == ("natural", 1.0, 0.15, -0.4, 1.15)
+    assert (c.look, c.strength, c.exposure, c.warmth, c.saturation) == ("warm_rich", 1.0, 0.15, -0.4, 1.15)
+
+
+def test_reference_match_makes_gray_footage_warm_and_rich_but_keeps_skin():
+    """업로드된 결과물은 회색(얼굴 화면 b +2.5, C 5.9) — 레퍼런스(b +14.5, C 16.9) 쪽으로 눈에 띄게, 피부는 덜."""
+    from studio.grade.auto import REFERENCE_LAB, Correction, GradeChoice, grade, lab_stats, skin_mask
+    rng = np.random.default_rng(1)
+    wall = np.clip(0.62 + rng.normal(0, 0.03, (40, 40, 3)), 0, 1) * np.array([1.0, 1.0, 1.02])
+    skin = np.tile(np.array([0.78, 0.60, 0.50]), (40, 40, 1))
+    img = np.concatenate([wall, skin], axis=1).astype(np.float32)
+    src = lab_stats(img)
+    out = grade(img, Correction(), GradeChoice(look="warm_rich", src_lab=src))
+    L0, a0, b0, C0 = src
+    L1, a1, b1, C1 = lab_stats(out)
+    assert b1 - b0 > 4 and C1 > C0 + 3                           # 확실히 따뜻하고 진하게
+    assert b1 < REFERENCE_LAB["b"] + 4
+    w0, w1 = lab_stats(img[:, :40]), lab_stats(out[:, :40])       # 회색 벽: 노랗게, 초록으로 가지 않게
+    assert w1[2] - w0[2] > 5 and w1[1] >= w0[1] - 0.6
+    sk0, sk1 = lab_stats(img[:, 40:]), lab_stats(out[:, 40:])
+    assert sk1[3] < sk0[3] * 1.45 and skin_mask(out[:, 40:]).mean() > 0.5   # 피부는 피부색 그대로
+    # 레퍼런스 매칭을 끄면 거의 그대로
+    plain = grade(img, Correction(), GradeChoice(look="natural", match=0.0, strength=0.0))
+    assert abs(lab_stats(plain)[2] - b0) < 1.0
 
 
 # ---------------------------------------------------------------------------

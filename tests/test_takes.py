@@ -105,3 +105,20 @@ def test_verify_maps_issues_back_to_source_and_subtracts():
     vad = [(0.0, 1.5), (4.0, 6.0)]
     kinds = [i.reason for i in find_issues(words, vad, max_silence=0.6, duration=6.0)]
     assert any(k.startswith("되풀이") for k in kinds) and "긴 무음" in kinds
+
+
+def test_keep_extends_early_whisper_word_end_to_real_speech_end():
+    """Whisper 가 '안녕하세요' 끝을 0.96초로(실제 1.50초) 찍어 '요' 가 잘리던 문제."""
+    from studio.edit.cuts import PACES, build_keeps
+    from studio.models import Span, Utterance
+    u = Utterance(id=0, start=0.44, end=0.96, text="안녕하세요.", asr_text="안녕하세요.",
+                  words=[Word("안녕하세요.", 0.44, 0.96, 0.9)])
+    nxt = Utterance(id=1, start=2.48, end=3.0, text="오늘은", asr_text="오늘은", words=[Word("오늘은", 2.48, 3.0, 0.9)])
+    nxt.status = "retake"
+    vad = [(0.58, 1.63), (2.5, 5.47)]
+    keeps = build_keeps([u, nxt], pace=PACES["normal"], vad=vad, media_duration=10, fps=30)
+    assert keeps[0].end >= 1.5
+    # 바로 뒤에 지운 구간이 붙어 있으면 그 전까지만
+    keeps2 = build_keeps([u], pace=PACES["normal"], vad=[(0.58, 3.0)], media_duration=10, fps=30,
+                         exclude=[Span(1.2, 2.9)])
+    assert keeps2[0].end <= 1.25          # 프레임 격자(1/30초) 반올림까지

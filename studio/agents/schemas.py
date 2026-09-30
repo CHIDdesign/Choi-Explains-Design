@@ -10,7 +10,7 @@ VISUALS = ["none", "template", "motion", "stock_video", "stock_photo", "photo", 
 # ✂️ 편집 감독이 표시하는 '강조 순간' — 편집 문법 엔진(studio/edit/grammar.py)이 펀치인·강조 자막·효과음으로 옮긴다
 MOMENT_KINDS = ["punchline", "reveal", "shift", "conclusion", "question", "number", "joke"]
 BGM_MOODS = ["minimal", "calm", "ambient", "lofi", "piano", "inspiring", "upbeat"]
-LOOKS = ["natural", "warm_film", "clean_bright", "cinematic"]
+LOOKS = ["warm_rich", "natural", "warm_film", "clean_bright", "cinematic"]
 
 # 🎬 총괄 감독 — 크리에이티브 브리프
 BRIEF = _obj({

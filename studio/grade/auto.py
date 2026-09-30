@@ -57,6 +57,9 @@ class Look:
 
 
 LOOKS: dict[str, Look] = {l.name: l for l in [
+    # 기본: 따뜻하고 풍부하게 — 사용자가 직접 편집한 장면(스탠드 조명의 따뜻한 방)에 맞춘 룩 + 레퍼런스 매칭
+    Look("warm_rich", "웜 리치", contrast=0.14, warmth=0.12, sat=1.0, vibrance=0.10,
+         shadows=(0.004, 0.0, -0.008), highlights=(0.012, 0.006, -0.010), rolloff=0.45),
     Look("natural", "내추럴", contrast=0.10, sat=1.04, vibrance=0.10, rolloff=0.3),
     Look("warm_film", "웜 필름", contrast=0.17, fade=0.025, warmth=0.35, sat=0.96, vibrance=0.08,
          shadows=(-0.004, 0.004, 0.012), highlights=(0.014, 0.006, -0.010), rolloff=0.5),
@@ -67,10 +70,19 @@ LOOKS: dict[str, Look] = {l.name: l for l in [
 ]}
 
 
+# 레퍼런스 색(CIELAB 평균): 사용자가 직접 편집한 장면(2026-09-30 제공, 따뜻한 스탠드 조명의 방)을 잰 값.
+# 업로드된 결과물의 얼굴 화면은 L 30.8 · a +2.0 · b +2.5 · C 5.9(회색) — 교정이 방의 따뜻함을 지우고 룩은 2%만 더했다.
+# user/reference_frames/ 에 좋아하는 장면(jpg/png)을 넣으면 그 평균을 대신 쓴다.
+REFERENCE_LAB = {"L": 41.8, "a": 4.7, "b": 14.5, "C": 16.9}
+
+
 @dataclass
 class GradeChoice:
-    look: str = "natural"
+    look: str = "warm_rich"
     strength: float = 1.0          # 룩 적용 정도(0~1)
+    match: float = 1.0             # 레퍼런스 색으로 옮기는 정도(0~1.2)
+    src_lab: tuple = ()            # 교정 후 원본 평균 (L, a, b, C) — 분석 때 채움
+    ref_lab: tuple = ()            # 레퍼런스 평균 (L, a, b, C) — 비면 REFERENCE_LAB
     exposure: float = 0.0          # 추가 미세 조정(-0.15~0.15)
     warmth: float = 0.0            # (-0.4~0.4)
     saturation: float = 1.0        # (0.85~1.15)
@@ -79,8 +91,9 @@ class GradeChoice:
 
     def clamp(self) -> "GradeChoice":
         c = replace(self)
-        c.look = c.look if c.look in LOOKS else "natural"
+        c.look = c.look if c.look in LOOKS else "warm_rich"
         c.strength = float(min(1.0, max(0.0, c.strength)))
+        c.match = float(min(1.2, max(0.0, c.match)))
         c.exposure = float(min(0.15, max(-0.15, c.exposure)))
         c.warmth = float(min(0.4, max(-0.4, c.warmth)))
         c.saturation = float(min(1.15, max(0.85, c.saturation)))
@@ -184,10 +197,79 @@ def apply_look(x: np.ndarray, look: Look, strength: float = 1.0, *, exposure: fl
     return np.clip(y, 0, 1)
 
 
+_WP = np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
+_M = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]], dtype=np.float32)
+_MI = np.linalg.inv(_M).astype(np.float32)
+
+
+def srgb_to_lab(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lin = np.where(x <= 0.04045, x / 12.92, ((np.clip(x, 0, 1) + 0.055) / 1.055) ** 2.4)
+    xyz = lin @ _M.T / _WP
+    f = np.where(xyz > 0.008856, np.cbrt(np.clip(xyz, 0, None)), 7.787 * xyz + 16 / 116)
+    return 116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])
+
+
+def lab_to_srgb(L: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    fy = (L + 16) / 116
+    f = np.stack([fy + a / 500, fy, fy - b / 200], -1)
+    xyz = np.where(f > 0.206893, f ** 3, (f - 16 / 116) / 7.787) * _WP
+    lin = np.clip(xyz @ _MI.T, 0, None)
+    return np.clip(np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * np.power(lin, 1 / 2.4) - 0.055), 0, 1)
+
+
+def lab_stats(x: np.ndarray) -> tuple[float, float, float, float]:
+    L, a, b = srgb_to_lab(x.reshape(-1, 3))
+    return float(L.mean()), float(a.mean()), float(b.mean()), float(np.hypot(a, b).mean())
+
+
+def reference_lab(folder: Optional[Path] = None) -> tuple[float, float, float, float]:
+    """user/reference_frames/ 의 이미지 평균(없으면 기본 레퍼런스)."""
+    if folder and folder.is_dir():
+        from PIL import Image
+        arrs = []
+        for f in sorted(folder.iterdir())[:24]:
+            if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                try:
+                    im = Image.open(f).convert("RGB")
+                    im.thumbnail((480, 480))
+                    arrs.append(np.asarray(im, dtype=np.float32).reshape(-1, 3) / 255.0)
+                except OSError:
+                    continue
+        if arrs:
+            return lab_stats(np.concatenate(arrs))
+    r = REFERENCE_LAB
+    return r["L"], r["a"], r["b"], r["C"]
+
+
+def ref_match(x: np.ndarray, src: tuple, ref: tuple, k: float) -> np.ndarray:
+    """원본 평균색(src) → 레퍼런스 평균색(ref) 쪽으로(CIELAB): 채도 이득 + 색 이동 + 중간톤 밝기.
+    피부는 채도 이득을 35%만, 색 이동을 55%만(얼굴이 주황색이 되지 않게). 중간톤에 가장 많이, 암부·하이라이트는 덜."""
+    if k <= 0 or not src:
+        return x
+    sL, sa, sb, sC = src
+    rL, ra, rb, rC = ref
+    L, a, b = srgb_to_lab(x)
+    skin = skin_mask(x)
+    g = 1 + k * 0.75 * (float(np.clip(rC / max(2.0, sC), 1.0, 2.6)) - 1)
+    gg = g * (1 - skin) + (1 + (g - 1) * 0.35) * skin
+    # 따뜻한 쪽으로만 옮긴다(평균이 피부에 끌려 벽이 초록·파랑으로 가지 않게)
+    da, db = max(-0.5, k * (ra - sa * g)), max(-0.5, k * (rb - sb * g))
+    w = np.clip(L / 100, 0, 1)
+    tone = 0.45 + 0.55 * (4 * w * (1 - w))
+    sh = 1 - 0.45 * skin
+    L2 = L + k * 0.6 * float(np.clip(rL - sL, -6, 10)) * tone
+    t = np.clip(L2 / 100, 0, 1)
+    L2 = 100 * (t + 0.18 * min(1.0, k) * (t * t * (3 - 2 * t) - t))    # 풍부함: 중간톤 대비 살짝
+    return lab_to_srgb(L2, a * gg + da * tone * sh, b * gg + db * tone * sh)
+
+
 def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
     ch = choice.clamp()
-    return apply_look(apply_correction(x, c), LOOKS[ch.look], ch.strength, exposure=ch.exposure,
-                      warmth=ch.warmth, saturation=ch.saturation)
+    y = apply_correction(x, c)
+    if ch.match > 0 and ch.src_lab:
+        y = ref_match(y, tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab(), ch.match)
+    return apply_look(y, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
+                      saturation=ch.saturation)
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +355,8 @@ def correction_from_stats(st: dict[str, Any]) -> Correction:
         weight = 0.4
     ref = np.array(ref) + 1e-6
     gains = ref.mean() / ref
+    if gains[0] < gains[2]:      # 장면이 따뜻함(주황 조명) → 식히는 교정은 조금만(따뜻한 룩을 지우지 않게)
+        weight *= 0.35
     gains = 1 + (gains - 1) * weight
     gains = np.clip(gains, 0.8, 1.25)
     # 피부 점검: 교정 후 피부가 초록/파랑 쪽(R/G < 1.05)이면 살짝 따뜻하게, 너무 붉으면(R/G > 1.55) 식힌다
@@ -377,8 +461,8 @@ def _to_img(x: np.ndarray):
     return Image.fromarray((np.clip(x, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB")
 
 
-def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360) -> bytes:
-    """행 = 프레임, 열 = 원본 + 룩 4가지. 🧐 아트 디렉터가 고를 비교 시트(JPEG)."""
+def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360, src_lab: tuple = ()) -> bytes:
+    """행 = 프레임, 열 = 원본 + 룩들(모두 레퍼런스 매칭 포함). 🎨 컬러리스트가 고를 비교 시트(JPEG)."""
     from PIL import Image, ImageDraw
     cols = [("0 원본", None)] + [(f"{i + 1} {l.label}", l.name) for i, l in enumerate(LOOKS.values())]
     ch = int(round(cell_w * frames[0].shape[0] / frames[0].shape[1]))
@@ -389,7 +473,7 @@ def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 3
     for j, (label, name) in enumerate(cols):
         d.text((pad + j * (cell_w + pad) + 4, 6), label, fill=(240, 240, 240), font=font)
         for i, f in enumerate(frames):
-            img = f if name is None else grade(f, c, GradeChoice(look=name))
+            img = f if name is None else grade(f, c, GradeChoice(look=name, src_lab=src_lab))
             tile = _to_img(img).resize((cell_w, ch))
             sheet.paste(tile, (pad + j * (cell_w + pad), head + i * (ch + pad)))
     buf = io.BytesIO()
