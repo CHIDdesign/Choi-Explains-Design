@@ -59,7 +59,10 @@ GRADE = _obj({
     "reason": STR,
 })
 
-# 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열)
+# 🃏 자유 HTML 카드의 스타일(prompts/card_dsl.md · studio/motion/card.py STYLES 와 같게)
+CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
+
+# 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
     "graphics": {"type": "array", "items": GRAPHIC},
     "scenes": {"type": "array", "items": _obj({
@@ -67,6 +70,14 @@ MOTION = _obj({
         "layout": {"type": "string", "enum": ["fullscreen", "split"]},
         "title": STR,
         "spec_json": STR,
+        "reason": STR,
+    })},
+    "cards": {"type": "array", "items": _obj({
+        "start_seg": INT, "end_seg": INT, "start_word": STR,
+        "layout": {"type": "string", "enum": ["fullscreen", "split", "overlay"]},
+        "style": {"type": "string", "enum": CARD_STYLES},
+        "title": STR,
+        "html": STR,
         "reason": STR,
     })},
 })
@@ -112,7 +123,7 @@ QA = _obj({
         "target": STR,  # 그래픽 id 또는 "captions"
         "severity": {"type": "string", "enum": ["high", "medium", "low"]},
         "problem": STR,
-        "action": {"type": "string", "enum": ["none", "shorten_text", "change_layout", "drop", "revise_scene"]},
+        "action": {"type": "string", "enum": ["none", "shorten_text", "change_layout", "drop", "revise_scene", "revise_card"]},
         "new_title": STR, "new_body": STR, "new_items": STR_LIST,
         "new_layout": {"type": "string", "enum": ["", *LAYOUTS]},
         "direction": STR,
@@ -122,8 +133,10 @@ QA = _obj({
 
 # 🎨 모션 디자이너(수정 라운드)
 MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
+# 🃏 카드 디자이너(수정 라운드) — html 은 고친 카드 조각 전체
+CARD_REVISE = _obj({"html": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE", "SHORTS",
-           "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
+__all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+           "CARD_REVISE", "CARD_STYLES", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]

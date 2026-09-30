@@ -17,6 +17,7 @@ export type TemplateName =
   | 'pyramid'
   | 'photo'
   | 'motion' // 모션 디자이너 에이전트가 설계한 장면(MotionSpec)
+  | 'card' // 자유 HTML 카드(HyperFrames 카드 규약 호환, components/card/HtmlCard.tsx)
   | 'broll' // 스톡 영상/사진(Pixabay·Unsplash·Coverr·Pexels)
   // 자동 템플릿(디렉터가 직접 고르지 않음)
   | 'title'
@@ -38,6 +39,7 @@ export type GraphicData = {
   credit?: string;
   number?: string; // 챕터 번호 등
   spec?: MotionSpec; // motion
+  card?: CardSpec; // card
   scene?: string; // motion: 코드 생성 장면 id(실험적)
   kind?: 'video' | 'photo'; // broll
   src?: string; // broll: public 기준 경로
@@ -119,6 +121,10 @@ export type MotionSpec = {
   label?: string; // 괄호 라벨(예: 게슈탈트 · 근접성)
   elements: MotionEl[];
 };
+
+// 자유 HTML 카드(studio/motion/card.py clean_card 가 정리한 것만 들어온다):
+// html = .card 안쪽 조각, css = `.card[data-card-id="id"]` 로 스코프된 규칙, w×h = 작성 캔버스(렌더러가 상자에 맞춰 축소)
+export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string};
 
 export type Graphic = {
   id: string;

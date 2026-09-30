@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
 from ..models import Tag, TimeMap, Utterance
+from ..motion.card import card_settle_time, card_text, clean_card
 from ..motion.spec import clean_spec
 from ..text.align import find_word, norm
 from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATES
@@ -170,6 +171,12 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         if not isinstance(spec, dict) or not clean_spec(spec, 12.0):
             return None
         out["spec"] = spec
+    if tn == "card":
+        # 🃏 자유 HTML 카드 — 재정규화 때도 다시 정리한다(스코프·금지 항목은 멱등)
+        card = clean_card(g.get("card"), layout=out["layout"])
+        if not card:
+            return None
+        out["card"] = card
     if tn == "broll":
         # 🎞 스톡 요청 — 단일 디렉터 모드에서는 image=영어 검색어, subtitle=video|photo, title=한국어 검색어
         st = g.get("stock") if isinstance(g.get("stock"), dict) else {}
@@ -398,6 +405,8 @@ def reading_chars(g: dict[str, Any]) -> int:
     parts += [str(x) for x in (g.get("items") or []) + (g.get("items_b") or [])]
     if g.get("template") == "motion" and isinstance(g.get("spec"), dict):
         parts += [str(e.get("text", "")) for e in g["spec"].get("elements", []) if isinstance(e, dict)]
+    if g.get("template") == "card" and isinstance(g.get("card"), dict):
+        parts.append(card_text(g["card"]))
     if g.get("template") in ("broll", "photo"):
         return 0
     return sum(len(p.replace(" ", "")) for p in parts)
@@ -452,6 +461,8 @@ def time_graphics(
         want = max(want, 1.2 + reading_chars(g) / 12.0)
         if g["template"] == "motion" and isinstance(g.get("spec"), dict):
             want = max(want, spec_settle_time(g["spec"]) + 1.2)
+        if g["template"] == "card" and isinstance(g.get("card"), dict):
+            want = max(want, card_settle_time(g["card"]) + 1.2)
         end = max(end, start + want)
         # 목표 길이에 맞게 다음 발화들까지 자연스럽게 연장
         if end - start < want and s_seg in order:
@@ -478,6 +489,10 @@ def time_graphics(
             if not spec:
                 continue
             data["spec"] = spec
+        if g["template"] == "card":
+            if not isinstance(g.get("card"), dict):
+                continue
+            data["card"] = g["card"]
         timed.append(TimedGraphic(f"{id_prefix}{i}", g["template"], g["layout"], start, end, data,
                                   t.priority + (3 if "태그" in (g.get("reason") or "") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))

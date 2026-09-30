@@ -1,6 +1,6 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Img, staticFile} from 'remotion';
-import {ensureFonts} from '../design/fonts';
+import {ensureFonts, useFontGuard} from '../design/fonts';
 import {FONT, makeTheme} from '../design/tokens';
 import {fitBlock} from '../lib/fit';
 import type {ThumbnailProps} from '../lib/types';
@@ -21,6 +21,7 @@ const Highlighted: React.FC<{line: string; highlight: string; color: string}> = 
 
 /** 썸네일 3종 — signal(리포트 표지색) / ink(어두운 사진 + 흰 글자) / photo(사진 + 글자 박스) */
 export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
+  useFontGuard();
   const {width: W, height: H, brand, image, text, highlight, variant, faceX} = props;
   const theme = useMemo(() => makeTheme(brand), [brand]);
   const raw = text.replace(/\\n/g, '\n');

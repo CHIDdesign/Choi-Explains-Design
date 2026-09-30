@@ -60,6 +60,7 @@ def record_call(entry: dict) -> None:
     with LOCK, CALL_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "motion_examples.json").read_text(encoding="utf-8"))
+CARD_EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +130,16 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             "pacing_notes": "차분하게"}
     if agent == "motion":
         spec = copy.deepcopy(EXAMPLES["proximity"])
+        card = CARD_EXAMPLES["question_first"]["html"]
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
                                             "title": "근접성", "spec_json": json.dumps(spec, ensure_ascii=False),
-                                            "reason": "모이는 움직임이 곧 설명"}]}
+                                            "reason": "모이는 움직임이 곧 설명"}],
+                # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
+                "cards": [{"start_seg": s_aff, "end_seg": s_aff, "start_word": "", "layout": "fullscreen", "style": "editorial",
+                           "title": "질문이 먼저다", "html": card, "reason": "선언 한 방"}]}
+    if agent == "card_revise":
+        m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
+        return {"html": m.group(1) if m else "", "changes": "지적대로 수정"}
     if agent == "stock":
         return {"requests": [
             {"start_seg": s_sketch, "end_seg": s_sketch, "start_word": "", "kind": "video", "query_en": "student sketching",
@@ -182,7 +190,8 @@ def agent_of(schema: dict) -> str:
     for key, marker in (("director", "logline"), ("editor", "moments"), ("motion", "scenes"), ("stock", "requests"),
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
-                        ("copy", "pinned_comment"), ("art_director", "verdict"), ("motion_revise", "changes")):
+                        ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
+                        ("motion_revise", "changes")):
         if marker in props:
             return key
     return "unknown"
@@ -385,6 +394,13 @@ def main() -> int:
     assert "motion" in tpl and "broll" in tpl, tpl
     motion = next(g for g in lp["graphics"] if g["template"] == "motion")
     assert motion["data"]["spec"]["elements"], motion
+    # 🃏 자유 HTML 카드: 정리(스코프)·렌더 전 검사 통과·props 에 그대로
+    assert "card" in tpl, tpl
+    card = next(g for g in lp["graphics"] if g["template"] == "card")
+    assert card["data"]["card"]["html"].startswith('<div class="root">') and card["data"]["card"]["css"].count(f'.card[data-card-id="{card["id"]}"]') > 3, card["id"]
+    plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
+    checks = plan["long"].get("card_checks") or {}
+    assert checks and all(v["ok"] for v in checks.values()), checks
     brolls = [g for g in lp["graphics"] if g["template"] == "broll"]
     for g in brolls:
         assert (job / "render" / "public_src" / g["data"]["src"]).exists(), g

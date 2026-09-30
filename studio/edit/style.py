@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 CONCEPT = {"keyword", "definition", "quote", "stat"}
-PAPER_LEAN = {"keyword": 2.0, "definition": 2.0, "quote": 2.0, "stat": 1.5, "photo": 1.5, "broll": 1.0}
+PAPER_LEAN = {"keyword": 2.0, "definition": 2.0, "quote": 2.0, "stat": 1.5, "photo": 1.5, "broll": 1.0, "card": 1.0}
 CLASSIC_LEAN = {"process": 2.0, "cycle": 2.0, "double_diamond": 2.0, "matrix": 2.0, "compare": 1.5, "timeline": 1.5,
                 "venn": 1.5, "pyramid": 1.5, "list": 1.0, "motion": 1.0}
 NARRATIVE = ("예를 들", "예컨대", "제가", "저는", "저도", "이야기", "경험", "사례", "사진", "보시면", "느낌", "생각해 보",

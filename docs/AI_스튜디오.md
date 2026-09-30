@@ -10,7 +10,7 @@ Choi Studio 는 Claude 한 번에게 "알아서 편집해"라고 맡기지 않�
 |---|---|---|---|
 | 🎬 총괄 감독 | 전사본 전체를 읽고 로그라인·챕터 구조·연출 비트(8~15초마다, 얼굴만 보이는 구간 최대 12초)·숏폼 아이디어·자막 톤을 정한다 | 크리에이티브 브리프 | high |
 | ✂️ 편집 감독 | 불필요한 발화를 추가로 자르고, 논점 전환과 결론을 강조 순간으로 표시(천천히 당기는 글라이드 + 콜아웃) | drop / punch | medium |
-| 🎨 모션 디자이너 | 템플릿 도식 배치 + 템플릿으로 안 되는 개념은 **모션 DSL 로 새 장면을 직접 설계** | graphics / scenes | high |
+| 🎨 모션 디자이너 | 템플릿 도식 배치 + 템플릿으로 안 되는 개념은 **모션 DSL 로 새 장면을 직접 설계** + 챕터의 핵심 개념 1~2곳은 **자유 HTML 카드**(HyperFrames 카드 규약: HTML + 스코프 CSS + `data-anim`) | graphics / scenes / cards | high |
 | 🎞 자료 리서처 | 구체적 장면·사물을 스톡 검색어로 만들어 Pixabay·Unsplash·Coverr·Pexels 를 한 번에 검색하고, **후보 썸네일을 직접 보고** 고른다 | 스톡 요청 → 선택 | medium / low |
 | 🔤 자막 디자이너 | 강조어를 유형별로(전문용어·핵심어·숫자·대비) 고른다. 자막 모양은 채널 템플릿(흰 종이 상자 · 두 층 강조)으로 고정 | emphasis | medium |
 | 📱 숏폼 PD | 후킹 리서치(14가지 훅)를 적용해 숏폼 구간·콜드 오픈·훅 타이틀 기획 | shorts | high |
@@ -66,6 +66,7 @@ Choi Studio 는 Claude 한 번에게 "알아서 편집해"라고 맡기지 않�
 - 팀이 정한 내용(제목·챕터·강조 순간·콜아웃·숏폼·음악 무드·색 룩)은 `부가자료/편집리포트.md` 와 `부가자료/plan.json` 에 남습니다.
 - 편집 기술(프레이밍·소프트 컷·강조 글라이드·콜아웃·전환·효과음·덕킹)은 에이전트가 아니라 **편집 문법 엔진**(`studio/edit/grammar.py`)이 `PARAMS` 수치대로 입힙니다. 에이전트는 '어디를 강조할지'만 정합니다.
 - 🎨 모션 디자이너는 장면 안에 `pixabay:<vector|illustration|photo>:<영어 검색어>` 이미지를 넣을 수 있고, 🎞 자료 리서처 단계가 실제 파일로 바꿉니다(못 구하면 그 요소만 빠짐).
+- 🃏 자유 HTML 카드는 기획 직후 **렌더 전 검사**(`renderer/scripts/check.mjs`, 렌더와 같은 Chrome)를 거칩니다: 글꼴 로드·글 넘침·캔버스 이탈·최소 글자 크기(26px)·WCAG 대비·런타임 오류. 걸리면 🃏 카드 디자이너(`card_revise`)가 검사 결과를 받아 한 번 고치고, 그래도 실패하면 키워드 카드로 대체합니다. 아트 디렉터도 `revise_card` 로 고칠 수 있습니다. 결과는 `plan.json` 의 `long.card_checks`.
 - 📱 숏폼 기획은 3~5초마다 바뀌는 하단/카드 개념 텍스트(`beats`)도 씁니다. 숏폼은 롱폼의 그 구간 그래픽을 물려받습니다.
 
 ## 에이전트별 모델·사고 강도 바꾸기(고급)
@@ -79,7 +80,7 @@ Choi Studio 는 Claude 한 번에게 "알아서 편집해"라고 맡기지 않�
 }
 ```
 
-키: `director`, `editor`, `motion`, `stock`, `stock_pick`, `captions`, `shorts`, `copy`, `art_director`, `motion_revise`.
+키: `director`, `editor`, `motion`, `stock`, `stock_pick`, `captions`, `shorts`, `copy`, `art_director`, `motion_revise`, `card_revise`, `colorist`.
 
 ## 결과물에서 확인할 것
 
@@ -99,5 +100,6 @@ Choi Studio 는 Claude 한 번에게 "알아서 편집해"라고 맡기지 않�
 | `prompts/system_studio.md` | 스튜디오 헌장(모든 에이전트 공통 원칙) |
 | `prompts/agents/*.md` | 역할별 지시문 |
 | `prompts/motion_dsl.md`, `prompts/examples/motion_examples.json` | 모션 DSL 문법과 검증된 예제 |
+| `prompts/card_dsl.md`, `prompts/examples/card_examples.json` | 자유 HTML 카드 계약(캔버스·토큰·`data-anim`·검사 항목)과 검사·렌더를 통과한 예시 5종 |
 | `prompts/skills/*.md` | 오픈소스 디자인 스킬에서 정리한 모션·자막·편집 원칙 |
 | `prompts/style_guide.md`, `prompts/hooks.md` | 채널 스타일(셜록현준·Musicbed 리포트)과 숏폼 후킹 |

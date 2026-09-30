@@ -59,6 +59,8 @@ export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName 
     case 'photo':
     case 'broll':
       return 'photo';
+    case 'card':
+      return 'paper'; // 카드가 자기 배경을 그린다 — 뒤에는 종이색
     default:
       return 'board';
   }
@@ -81,6 +83,7 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   pyramid: '위계',
   photo: '자료',
   motion: 'motion',
+  card: 'card',
   broll: 'footage',
   title: 'episode',
   lower_third: '',

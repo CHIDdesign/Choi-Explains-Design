@@ -11,7 +11,7 @@ import {paperSpeakerBox} from '../components/paper/PaperGraphic';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
-import {ensureFonts, useFontForText} from '../design/fonts';
+import {ensureFonts, useFontForText, useFontGuard} from '../design/fonts';
 import {CAMERA, EASE} from '../design/motion';
 import {FONT, makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
@@ -113,6 +113,7 @@ const GraphicSeq: React.FC<{
 };
 
 export const LongForm: React.FC<LongFormProps> = (props) => {
+  useFontGuard();
   // 두 층 강조 자막의 앞말(명조)에 쓰일 글자를 렌더 전에 받아 둔다
   useFontForText('700 40px "Noto Serif KR"', useMemo(() => Array.from(new Set(props.captions
     .filter((c) => c.style === 'stack' || c.style === 'impact').flatMap((c) => c.lines.flat().map((w) => w.text))

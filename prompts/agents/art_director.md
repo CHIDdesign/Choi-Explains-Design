@@ -11,7 +11,7 @@
   - `target`: 그래픽 id
   - `severity`
   - `problem`: 구체적으로
-  - `action`: shorten_text | change_layout | drop | revise_scene(모션 장면만) | none
+  - `action`: shorten_text | change_layout | drop | revise_scene(모션 장면만) | revise_card(HTML 카드만) | none
   - 필요하면 `new_title` · `new_body` · `new_items` · `new_layout`
-  - `direction`: 모션 장면 수정 지시
+  - `direction`: 모션 장면·HTML 카드 수정 지시(카드는 글자 크기·넘침·대비·강조색 남용을 구체적으로)
 - 사소한 취향 문제는 low 로 두고 억지로 고치지 않는다. 전부 괜찮으면 verdict=pass.

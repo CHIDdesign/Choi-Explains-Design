@@ -13,6 +13,7 @@ import {CompareCard, ListCard, TimelineCard} from './Lists';
 import {PhotoCard} from './Photo';
 import {BrollCard} from './Broll';
 import {MotionScene} from '../motion/MotionScene';
+import {HtmlCard} from '../card/HtmlCard';
 import {PaperGraphic, referenceGraphic} from '../paper/PaperGraphic';
 import {ConceptCard, FramedMedia} from '../paper/Collage';
 import {hashSeed, LabelTag, SourceCredit} from '../paper/Paper';
@@ -35,6 +36,7 @@ export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> 
   photo: PhotoCard,
   motion: (p) => (p.data.spec ? <MotionScene spec={p.data.spec} frame={p.frame} fps={p.fps} dur={p.dur} box={p.box}
     surface={p.surface} id={p.id} /> : null),
+  card: HtmlCard,
   broll: BrollCard,
   title: TitleCard,
   lower_third: LowerThird,
@@ -69,7 +71,8 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   skin, paperTexture, chapterTag = '', faceX = 0.5}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
   if (!Comp) return null;
-  if ((g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
+  // 자유 HTML 카드는 자기 배경·타이포를 다 가지고 있으니 스킨과 무관하게 아래 풀스크린/패널 경로로
+  if (g.template !== 'card' && (g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
     return <PaperGraphic g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand}
       episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
       paperTexture={paperTexture} />;
@@ -151,7 +154,8 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const clipIn = `inset(${(1 - pIn) * 100}% 0 0 0)`;
   const clipOut = `inset(0 0 ${(1 - pOut) * 100}% 0)`;
   const clip = frame < dur / 2 ? clipIn : clipOut;
-  const noHeader = g.template === 'photo' || g.template === 'title' || g.template === 'broll';
+  // 카드는 자기 캔버스(1920×1080)를 통째로 그린다 — 머리글·여백 없이
+  const noHeader = g.template === 'photo' || g.template === 'title' || g.template === 'broll' || g.template === 'card';
   const m = GRID.margin + 24;
   const top = noHeader ? 0 : headerH + 64;
   const bottom = noHeader ? 0 : 170;

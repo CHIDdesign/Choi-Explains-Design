@@ -1,0 +1,113 @@
+"""자유 HTML 카드(HyperFrames 카드 규약 호환) — 검증·정리·계획 반영."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from studio.agents import schemas as S
+from studio.agents.studio import merge_plan
+from studio.director.catalog import TEMPLATES
+from studio.director.plan import reading_chars
+from studio.motion.card import CANVAS, card_settle_time, card_text, clean_anim, clean_card, fragment
+from studio.render.props import _graphic_text
+
+ROOT = Path(__file__).resolve().parents[1]
+EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
+
+GOOD = '''<div class="card" data-card-id="c-x">
+<style>
+.card[data-card-id="c-x"] .root { width:100%; height:100%; background: var(--paper); font-family: var(--font-body); }
+.card[data-card-id="c-x"] .title { font: 800 120px/1.05 var(--font-head); color: var(--ink); }
+</style>
+<div class="root">
+  <h2 class="title" data-anim="kinetic-chars" data-anim-at="0.3" data-anim-duration="0.5" data-anim-stagger="0.04">질문이 먼저다</h2>
+  <p class="body" data-anim="fade-in" data-anim-at="1.0" data-anim-duration="0.4">좋은 디자인은 좋은 질문에서 시작한다</p>
+</div>
+</div>'''
+
+
+def test_examples_are_clean_and_render_ready():
+    for name, ex in EXAMPLES.items():
+        c = clean_card(ex["html"], layout=ex.get("layout", "fullscreen"))
+        assert c and not c.get("problems"), (name, c and c.get("problems"))
+        assert c["w"], c["h"] == CANVAS[ex.get("layout", "fullscreen")]
+        assert card_settle_time(c) > 0 and card_text(c)
+
+
+def test_clean_card_rescopes_css_and_strips_wrapper():
+    c = clean_card(GOOD, card_id="g7")
+    assert c["id"] == "g7"
+    assert 'data-card-id="c-x"' not in c["css"] and c["css"].count('.card[data-card-id="g7"]') == 2
+    assert c["html"].startswith('<div class="root">') and "<style" not in c["html"]
+    assert c["w"], c["h"] == (1920, 1080)
+    # 멱등: 정리된 카드를 다시 정리해도 같다(재실행 시 plan.json 재정규화)
+    again = clean_card(c, layout="fullscreen")
+    assert again["css"] == c["css"] and again["html"] == c["html"] and not again.get("problems")
+    # 조각으로 되돌리면 에이전트에게 보여 줄 수 있는 완전한 카드
+    assert fragment(c).startswith('<div class="card" data-card-id="g7">')
+
+
+def test_clean_card_removes_scripts_urls_events_and_bad_css():
+    hostile = ('<div class="root" onclick="x()"><script>alert(1)</script><iframe src="https://e"></iframe>'
+               '<img src="https://evil/x.png" onerror="alert(1)"><img src="images/ok.png">'
+               '<a href="https://x">링크</a><p style="position:fixed">글</p>'
+               '<p style="font: 700 40px Comic Sans, sans-serif">글꼴</p></div>'
+               '<style>@import url(x); .root{transition:all 1s; background:url(https://x/a.png); font-family: Inter}'
+               '@keyframes k{from{opacity:0}to{opacity:1}} .t{animation:k 1s; position:fixed; color: red}</style>')
+    c = clean_card(hostile, card_id="g1")
+    assert c is not None
+    html, css = c["html"], c["css"]
+    for bad in ("script", "iframe", "evil", "onerror", "onclick", "https://", "position:fixed", "Comic Sans"):
+        assert bad not in html, bad
+    assert 'src="images/ok.png"' in html and html.count("<img") == 1 and "링크" in html and "href" not in html
+    for bad in ("@import", "url(", "transition", "@keyframes", "animation", "fixed", "Inter"):
+        assert bad not in css, bad
+    assert "color: red" in css and 'font: 700 40px sans-serif' in html   # 번들에 없는 글꼴만 빠진다
+    assert set(c["problems"]) >= {"html_tag_removed:script", "html_tag_removed:iframe", "html_external_src_removed",
+                                  "html_attr_removed:onerror", "css_forbidden_removed", "font_family_not_bundled:Inter"}
+    assert clean_card(hostile, card_id="g1", strict=True) is None
+
+
+def test_clean_card_limits_and_rejects_empty():
+    assert clean_card("", card_id="a") is None
+    assert clean_card({"html": ""}) is None
+    assert clean_card("<script>1</script>", card_id="a") is None          # 요소가 하나도 안 남음
+    assert clean_card("<div>" * 200 + "x" + "</div>" * 200, card_id="a") is None   # 요소 상한
+    big = "<div class='root'>" + "<p>가</p>" * 3000 + "</div>"
+    assert clean_card(big, card_id="a") is None                          # HTML 상한
+
+
+def test_clean_anim_validates_kinds_and_ranges():
+    probs: list[str] = []
+    a = clean_anim({"data-anim": "slide-in", "data-anim-at": "99", "data-anim-duration": "0.01", "data-anim-from": "diag",
+                    "data-anim-distance": "-5", "data-anim-ease": "bounce", "data-anim-zzz": "1"}, probs)
+    assert a == {"data-anim": "slide-in", "data-anim-at": "60", "data-anim-duration": "0.05", "data-anim-distance": "0"}
+    assert "anim_unknown_param:zzz" in probs
+    assert clean_anim({"data-anim": "explode"}, probs) == {} and "anim_unknown_kind:explode" in probs
+    cu = clean_anim({"data-anim": "count-up", "data-anim-from": "0", "data-anim-to": "1250", "data-anim-format": ",d",
+                     "data-anim-suffix": "명"})
+    assert cu["data-anim-to"] == "1250" and cu["data-anim-format"] == ",d" and cu["data-anim-suffix"] == "명"
+    m = clean_anim({"data-anim": "morph-to", "data-anim-props": '{"x": 40, "backgroundImage": "url(x)"}'})
+    assert "data-anim-props" not in m   # url 이 든 props 는 버린다
+
+
+def test_settle_time_and_text():
+    c = clean_card(GOOD, card_id="g")
+    assert abs(card_settle_time(c) - 1.4) < 1e-6   # 늦게 끝나는 fade-in(1.0 + 0.4) 이 정착 시각
+    assert card_text(c) == "질문이 먼저다 좋은 디자인은 좋은 질문에서 시작한다"
+    g = {"template": "card", "card": c}
+    assert reading_chars(g) == len("질문이먼저다좋은디자인은좋은질문에서시작한다")
+    assert "질문이 먼저다" in _graphic_text({"template": "card", "data": {"card": c}})
+
+
+def test_merge_plan_turns_cards_into_card_graphics():
+    raw, _ = merge_plan({"motion": {"graphics": [], "scenes": [], "cards": [
+        {"start_seg": 3, "end_seg": 4, "start_word": "질문", "layout": "fullscreen", "style": "editorial",
+         "title": "질문이 먼저다", "html": GOOD, "reason": "선언"},
+        {"start_seg": 5, "end_seg": 5, "start_word": "", "layout": "split", "style": "swiss", "title": "빈 카드",
+         "html": "<script>x</script>", "reason": "깨진 카드"}]}})
+    cards = [g for g in raw["graphics"] if g["template"] == "card"]
+    assert len(cards) == 1 and cards[0]["card"]["style"] == "editorial" and cards[0]["start_word"] == "질문"
+    assert cards[0]["card"]["w"] == 1920 and raw["studio"]["cards"] == 1
+    assert "card" in TEMPLATES and TEMPLATES["card"].layouts == ("fullscreen", "split", "overlay")
+    assert "cards" in S.MOTION["properties"] and "html" in S.CARD_REVISE["properties"]

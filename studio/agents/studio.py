@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 from ..director.catalog import catalog_markdown
 from ..director.claude import ClaudeClient, DirectorError, extract_json
 from ..director.context import JobBrief, load_prompt, shorts_instruction
+from ..motion.card import STYLES, clean_card, fragment
 from ..motion.spec import clean_spec
 from ..util import CancelToken, LogFn, noop_log
 from . import schemas as S
@@ -45,6 +46,7 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick", S.STOCK_PICK, "low", 8000),
     Agent("art_director", "🧐 아트 디렉터", "art_director", S.QA, "high", 24000),
     Agent("motion_revise", "🎨 모션 디자이너(수정)", "motion_revise", S.MOTION_REVISE, "high", 24000),
+    Agent("card_revise", "🃏 카드 디자이너(수정)", "card_revise", S.CARD_REVISE, "high", 32000),
     Agent("colorist", "🎨 컬러리스트", "colorist", S.GRADE, "medium", 8000),
 ]}
 
@@ -60,6 +62,7 @@ def studio_system_prompt() -> str:
         "\n\n" + playbook_block(),
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),
         "\n\n" + load_prompt("motion_dsl.md") + motion_examples_block(),
+        "\n\n" + load_prompt("card_dsl.md") + card_examples_block(),
         "\n\n# 디자인 스킬 노트(오픈소스 스킬에서 정리)\n\n" + load_prompt("skills/motion_principles.md"),
         "\n\n" + load_prompt("skills/caption_design.md"),
         "\n\n" + load_prompt("skills/editing_principles.md"),
@@ -86,6 +89,23 @@ def motion_examples_block() -> str:
         return ""
     parts = [f"\n{name}:\n```json\n{json.dumps(spec, ensure_ascii=False)}\n```" for name, spec in examples.items()]
     return "\n" + "\n".join(parts) + "\n"
+
+
+def card_examples_block() -> str:
+    """렌더로 검증된 자유 HTML 카드 예제(prompts/examples/card_examples.json) — cards[].html 에 그대로 쓸 수 있는 조각."""
+    from ..paths import PROMPTS_DIR
+    path = PROMPTS_DIR / "examples" / "card_examples.json"
+    if not path.exists():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    parts = ["\n\n## 카드 예시(실제 렌더 검증됨 — 구조·크기·타이밍을 따르고 내용만 바꾼다)\n"]
+    for name, ex in data.items():
+        parts.append(f"\n### {name} — {ex.get('title', '')} ({ex.get('style', '')}, {ex.get('layout', 'fullscreen')})\n"
+                     f"```html\n{ex.get('html', '').strip()}\n```\n")
+    return "".join(parts)
 
 
 def direction_block(text: str) -> str:
@@ -144,6 +164,23 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
                            sc.get("end_seg", sc.get("start_seg", -1)), sc.get("start_word", ""),
                            title=sc.get("title", ""), reason="모션 디자이너: " + str(sc.get("reason", "")), spec=spec))
         n_scene += 1
+    n_card = 0
+    for cd in motion.get("cards", []) or []:
+        if not isinstance(cd, dict):
+            continue
+        layout = cd.get("layout") if cd.get("layout") in ("fullscreen", "split", "overlay") else "fullscreen"
+        card = clean_card(cd.get("html", ""), layout=layout, card_id=f"card{n_card + 1}")
+        if not card:
+            log(f"🃏 카드 '{cd.get('title', '')}' 의 HTML 이 올바르지 않아 제외")
+            continue
+        if not card.get("style") and cd.get("style") in STYLES:
+            card["style"] = cd["style"]
+        if card.get("problems"):
+            log(f"🃏 카드 '{cd.get('title', '')}' 정리: {', '.join(card['problems'][:4])}")
+        graphics.append(_g("card", layout, cd.get("start_seg", -1), cd.get("end_seg", cd.get("start_seg", -1)),
+                           cd.get("start_word", ""), title=cd.get("title", ""),
+                           reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card))
+        n_card += 1
     for r in stock.get("requests", []) or []:
         if not (r.get("query_en") or r.get("query_ko")):
             continue
@@ -183,7 +220,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "logline": brief.get("logline", ""), "audience": brief.get("audience", ""), "tone": brief.get("tone", ""),
             "beats": brief.get("beats", []), "notes_for_team": brief.get("notes_for_team", ""),
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
-            "motion_scenes": n_scene, "stock_requests": len(stock.get("requests", []) or []),
+            "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),
         },
     }
     return raw_long, shorts
@@ -230,7 +267,7 @@ class Studio:
             text = (shorts_instruction(brief) + f"\n\n## 총괄 감독의 숏폼 아이디어(참고)\n{ideas}\n"
                     + direction_block(self.direction))
         if key == "motion" and not self.use_motion:
-            text += "\n\n(이번 작업은 모션 DSL 장면을 만들지 않는다: scenes 는 빈 배열.)"
+            text += "\n\n(이번 작업은 모션 DSL 장면·HTML 카드를 만들지 않는다: scenes 와 cards 는 빈 배열.)"
         return text
 
     def plan(self, brief: JobBrief, ctx: str, *, shorts_count: int,
@@ -306,6 +343,23 @@ class Studio:
     def review(self, ctx: str, graphics_text: str, stills: list[tuple[str, bytes, str]]) -> dict[str, Any]:
         instr = load_prompt("agents/art_director.md").replace("{{graphics}}", graphics_text)
         return self.call("art_director", ctx, instr, images=stills)
+
+    def revise_card(self, ctx: str, card: dict[str, Any], dur: float, problem: str, direction: str,
+                    still: Optional[tuple[str, bytes, str]], *, layout: str = "fullscreen",
+                    checks: tuple[str, ...] = ()) -> Optional[dict[str, Any]]:
+        """🃏 카드 수정: 아트 디렉터 지적 또는 렌더 전 검사(check) 결과를 주고 고친 카드 조각을 받는다."""
+        instr = (load_prompt("agents/card_revise.md").replace("{{dur}}", f"{dur:.1f}")
+                 .replace("{{canvas}}", f"{card.get('w', 1920)}×{card.get('h', 1080)}")
+                 .replace("{{card}}", fragment(card))
+                 .replace("{{problem}}", problem or "(없음)").replace("{{direction}}", direction or "(없음)")
+                 .replace("{{checks}}", "\n".join(f"- {c}" for c in checks) or "- (없음)"))
+        res = self.call("card_revise", ctx, instr, images=[still] if still else None)
+        new = clean_card(res.get("html", ""), layout=layout, card_id=str(card.get("id") or ""))
+        if new:
+            if not new.get("style"):
+                new["style"] = card.get("style", "")
+            self.log(f"🃏 카드 수정: {res.get('changes', '')}")
+        return new
 
     def revise_scene(self, ctx: str, spec: dict[str, Any], dur: float, problem: str, direction: str,
                      still: Optional[tuple[str, bytes, str]]) -> Optional[dict[str, Any]]:

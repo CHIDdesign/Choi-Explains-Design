@@ -35,6 +35,8 @@ from .director.catalog import TEMPLATES
 from .director.claude import ClaudeClient, DirectorError
 from .director.claude_code import ClaudeCodeClient, find_claude, resolve_backend
 from .director.context import JobBrief, long_instruction, shared_context, shorts_instruction, system_prompt
+from .motion.card import card_settle_time, card_text
+from .motion.check import CheckError, check_cards, problem_lines
 from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, seg_edit_times, spec_settle_time,
                             time_graphics, word_edit_time)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
@@ -747,6 +749,7 @@ class Pipeline:
             raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
+        self._check_cards(tm0)
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
         self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count)
@@ -766,6 +769,68 @@ class Pipeline:
         self.log(f"🎬 제목 「{self.title}」 · 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])}"
                  f"(모션 장면 {n_motion} · 스톡 {n_broll}) · 강조 순간 {len(self.plan_long.get('moments', []))}"
                  f" · 숏폼 {len(self.plan_shorts)} · 추가 컷 {len(drop_ids)}")
+
+    def _check_cards(self, tm: TimeMap) -> None:
+        """🃏 자유 HTML 카드의 렌더 전 검사(renderer/scripts/check.mjs — 글꼴·넘침·크기·대비·런타임 오류).
+        실패하면 카드 디자이너가 한 번 고치고(검사 결과를 그대로 줌), 그래도 실패하면 키워드 카드로 대체한다.
+        결과는 plan.long.card_checks 에 남는다."""
+        cards = [g for g in self.plan_long.get("graphics", []) if g.get("template") == "card" and isinstance(g.get("card"), dict)]
+        if not cards:
+            self.plan_long.pop("card_checks", None)
+            return
+        seg_t = seg_edit_times(self.utts, tm)
+        t_card = TEMPLATES["card"]
+
+        def dur_of(g: dict) -> float:
+            # time_graphics 와 같은 셈: 발화 구간 + 0.45초, 적어도 정착 시각 + 1.2초(읽기), 최대 max_dur
+            a = seg_t.get(g["start_seg"])
+            b = seg_t.get(g.get("end_seg", g["start_seg"]), a)
+            d = (b[1] - a[0]) if a and b else 6.0
+            want = max(t_card.min_dur, d + 0.45, card_settle_time(g["card"]) + 1.2)
+            return min(t_card.max_dur, want)
+
+        rs = self.settings.render
+        node = find_node(self.settings.node_path)
+        out_dir = self.work / "cards"
+        self.log(f"🃏 카드 {len(cards)}개 렌더 전 검사(글꼴·넘침·크기·대비)")
+        results: dict[str, dict] = {}
+        studio = self._ensure_studio()
+        for rnd in range(2):
+            todo = [g for g in cards if not results.get(g["card"]["id"], {}).get("ok")]
+            if not todo:
+                break
+            try:
+                res = check_cards([dict(g["card"], layout=g["layout"]) for g in todo], node=node, out_dir=out_dir, fps=self.fps,
+                                  durations={g["card"]["id"]: dur_of(g) for g in todo},
+                                  browser_executable=rs.browser_executable, gl=rs.gl, log=self.log, cancel=self.cancel)
+            except CheckError as e:
+                self.log(f"🃏 카드 검사를 못 했습니다({str(e)[:200]}) — 검사 없이 진행")
+                return
+            results.update(res)
+            failed = [g for g in todo if not res.get(g["card"]["id"], {}).get("ok")]
+            if not failed or rnd == 1 or studio is None:
+                break
+            for g in failed:
+                lines = problem_lines(res[g["card"]["id"]])
+                try:
+                    new = studio.revise_card(self.ctx, g["card"], dur_of(g), "렌더 전 검사(check) 실패", "", None,
+                                             layout=g["layout"], checks=tuple(lines))
+                except DirectorError as e:
+                    self.log(f"🃏 카드 수정 실패: {e}")
+                    new = None
+                if new:
+                    g["card"] = new
+        for g in cards:
+            r = results.get(g["card"]["id"])
+            if r and r.get("ok"):
+                continue
+            title = (g.get("title") or card_text(g["card"])[:12]).strip()
+            self.log(f"🃏 카드 '{title}' 는 검사에 두 번 실패해 키워드 카드로 대체")
+            g["template"], g["layout"] = "keyword", "split"
+            g["title"] = title[:12] or "핵심"
+            g["subtitle"] = card_text(g["card"])[:40]
+            g.pop("card", None)
+        self.plan_long["card_checks"] = {cid: {"ok": r["ok"], "problems": r["problems"][:6]} for cid, r in results.items()}
 
     def _save_plan(self) -> None:
         prev = read_json(self.work / "plan.json", {})
@@ -1075,6 +1140,8 @@ class Pipeline:
         dur = g.end - g.start
         if g.template == "motion" and isinstance(g.data.get("spec"), dict):
             t = spec_settle_time(g.data["spec"]) + 0.3
+        elif g.template == "card" and isinstance(g.data.get("card"), dict):
+            t = card_settle_time(g.data["card"]) + 0.3
         elif g.template in ("list", "process", "cycle", "timeline", "pyramid", "compare", "matrix", "double_diamond"):
             t = dur * 0.75
         else:
@@ -1099,6 +1166,8 @@ class Pipeline:
                                               ", ".join(map(str, d.get("items") or []))] if x)
             if g.template == "motion":
                 content = (d.get("title") or "") + " (모션 장면)"
+            if g.template == "card" and isinstance(d.get("card"), dict):
+                content = f"{d.get('title') or ''} (HTML 카드 · {d['card'].get('style') or 'card'}): {card_text(d['card'])[:90]}"
             if g.template == "broll":
                 content = f"스톡 {d.get('kind', '')}: {d.get('title', '')}"
             spoken = " ".join(w["text"] for c in lp.get("captions", []) for line in c["lines"] for w in line
@@ -1142,6 +1211,18 @@ class Pipeline:
                     new = None
                 if new:
                     g["spec"] = new
+                    changed.append(g)
+            elif act == "revise_card" and g["template"] == "card":
+                tg = timed.get(str(iss["target"]))
+                dur = (tg.end - tg.start) if tg else 8.0
+                try:
+                    new = studio.revise_card(self.ctx, g.get("card") or {}, dur, iss.get("problem", ""),
+                                             iss.get("direction", ""), stills.get(str(iss["target"])), layout=g["layout"])
+                except DirectorError as e:
+                    self.log(f"🃏 카드 수정 실패: {e}")
+                    new = None
+                if new:
+                    g["card"] = new
                     changed.append(g)
         if drop:
             self.plan_long["graphics"] = [g for g in self.plan_long["graphics"] if not any(g is d for d in drop)]

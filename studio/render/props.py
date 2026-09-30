@@ -530,6 +530,10 @@ def _graphic_text(g: dict[str, Any]) -> str:
     if isinstance(spec, dict):
         parts += [str(e.get("text", "")) for e in spec.get("elements", []) or [] if isinstance(e, dict)]
         parts.append(str(spec.get("label", "")))
+    card = d.get("card")
+    if isinstance(card, dict):
+        from ..motion.card import card_text
+        parts.append(card_text(card))
     return " ".join(p for p in parts if p)
 
 

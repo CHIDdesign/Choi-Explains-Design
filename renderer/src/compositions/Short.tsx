@@ -7,7 +7,7 @@ import {TEMPLATE_COMPONENTS} from '../components/graphics';
 import {HookTitle, WindowTitle} from '../components/shorts/HookTitle';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
-import {ensureFonts} from '../design/fonts';
+import {ensureFonts, useFontGuard} from '../design/fonts';
 import {surface as mkSurface} from '../design/surfaces';
 import {FONT, makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
@@ -89,6 +89,7 @@ const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof 
  * 그 밖(window/full/framed)은 종이 스킨이면 PaperShort, classic 이면 아래 ClassicShort.
  */
 export const Short: React.FC<ShortProps> = (props) => {
+  useFontGuard();
   if (props.layout === 'reel') return <ReelShort {...props} />;
   if (props.skin === 'paper') return <PaperShort {...props} />;
   return <ClassicShort {...props} />;

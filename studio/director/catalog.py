@@ -86,6 +86,11 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "템플릿으로 표현되지 않는 개념을 움직임으로 보여줄 때(게슈탈트 근접성, 시선 흐름, 비례 변화, 전후 비교 모핑 등). 모션 디자이너 전용.",
              "spec_json=MotionSpec JSON(모션 DSL 참고)",
              ("fullscreen", "split"), 4.0, 12.0, 8),
+    Template("card", "자유 HTML 카드",
+             "챕터의 핵심 개념 1~2곳(전체 그래픽의 ⅓ 이하)을 템플릿보다 더 편집 디자인답게 보여줄 때 — 모션 디자이너가 `cards` 로만 낸다"
+             "(HyperFrames 카드 규약: HTML + 스코프 CSS + data-anim, 카드 DSL 참고). graphics 목록에는 쓰지 않는다.",
+             "html=카드 조각(<div class=\"card\" data-card-id=…><style>…</style>…), style=editorial|academic|whiteboard|swiss|minimal|board",
+             ("fullscreen", "split", "overlay"), 3.0, 12.0, 8),
     Template("broll", "스톡 B-roll",
              "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(무료 스톡: Pixabay·Unsplash·Coverr·Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
              "image=영어 검색어(구체적 명사·장면), title=한국어 검색어(화면 라벨로도 씀), subtitle=video|photo, body=이 장면의 목적",

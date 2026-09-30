@@ -53,7 +53,7 @@ def _schema_ok(schema: dict) -> None:
 def test_agent_schemas_valid_for_structured_outputs():
     for a in AGENTS.values():
         _schema_ok(a.schema)
-    assert S.QA["properties"]["issues"]["items"]["properties"]["action"]["enum"][-1] == "revise_scene"
+    assert S.QA["properties"]["issues"]["items"]["properties"]["action"]["enum"][-2:] == ["revise_scene", "revise_card"]
 
 
 def test_studio_system_prompt_includes_skills_and_dsl():
