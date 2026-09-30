@@ -67,10 +67,15 @@ def _ext(url: str) -> str:
     return "." + tail[-1].lower() if len(tail) == 2 and len(tail[-1]) <= 4 else ".mp3"
 
 
-def _download(url: str, dst: Path, timeout: float = 40.0) -> None:
-    """studio.net: requests → urllib(브라우저 헤더·Referer) → curl 순으로, 실패 이유는 net.ERRORS 에."""
+def _download(url: str, dst: Path, timeout: float = 25.0, rounds: int = 2) -> None:
+    """studio.net: requests → urllib(브라우저 헤더·Referer) → curl 순으로, 실패 이유는 net.ERRORS 에.
+    효과음·음악은 없어도 되는 것이라 두 바퀴까지만(스톡처럼 오래 기다리지 않는다)."""
     dst.unlink(missing_ok=True)
-    net.download(url, dst, timeout=timeout)
+    net.download(url, dst, timeout=timeout, rounds=rounds)
+
+
+RETRY_AFTER = 6 * 3600       # 받지 못한 주소는 6시간 동안 다시 시도하지 않는다(작업마다 오래 기다리지 않게)
+HOST_GIVE_UP = 2             # 이번 작업에서 연달아 두 번 실패한 호스트는 건너뛴다(아예 연결이 안 되면 바로)
 
 
 class SoundLibrary:
@@ -91,24 +96,39 @@ class SoundLibrary:
             return {"sfx": [], "bgm": [], "models": []}
 
     def ensure(self, *, download: bool = True, kinds: Optional[tuple[str, ...]] = None,
-               progress: Callable[[float], None] = lambda f: None) -> "SoundLibrary":
+               progress: Callable[[float], None] = lambda f: None, cancel=None) -> "SoundLibrary":
         """목록의 파일을 준비(없으면 내려받기) + 절차적 효과음 생성. 여러 번 불러도 빠르다.
 
         kinds: ("sfx", "bgm", "models") 중 일부만(예: 목소리 단계에서는 잡음 제거 모델만).
+        인터넷이 막힌 PC 에서 작업마다 수십 분씩 기다리지 않도록: 연달아 실패한 호스트는 이번 작업에서 건너뛰고,
+        받지 못한 주소는 6시간 동안 다시 시도하지 않는다(root/.failed.json). 취소하면 바로 멈춘다.
         """
+        import time as _time
         m = self.manifest()
+        fail_path = self.root / ".failed.json"
+        try:
+            failed_at: dict[str, float] = json.loads(fail_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            failed_at = {}
+        now = _time.time()
+        host_fail: dict[str, int] = {}
         want = set(kinds or ("sfx", "bgm", "models"))
         entries = [(k, e) for k in ("sfx", "bgm", "models") if k in want for e in m.get(k, [])]
         self.sfx, self.bgm, self.models = [], [], {}
         failed: list[str] = []
         got = 0
         for i, (kind, e) in enumerate(entries):
+            if cancel is not None:
+                cancel.check()
             sub = {"sfx": "sfx", "bgm": "bgm", "models": "models"}[kind]
             dst = self.root / sub / (e["id"] + _ext(e.get("url", "")))
             ok = dst.exists() and dst.stat().st_size > 0 and (not e.get("bytes") or dst.stat().st_size == e["bytes"])
             if not ok and download:
                 for url in [e.get("url", "")] + list(e.get("mirrors", []) or []):
                     if not url:
+                        continue
+                    host = net.host_of(url)
+                    if host_fail.get(host, 0) >= HOST_GIVE_UP or now - failed_at.get(url, 0) < RETRY_AFTER:
                         continue
                     try:
                         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -119,10 +139,15 @@ class SoundLibrary:
                             continue
                         ok = True
                         got += 1
+                        host_fail[host] = 0
+                        failed_at.pop(url, None)
                         break
                     except Exception as ex:  # noqa: BLE001 - 네트워크 오류는 대체 소리로(이유는 진단에)
                         dst.unlink(missing_ok=True)
-                        net._note(net.host_of(url), "download", f"{type(ex).__name__}: {ex}")
+                        net._note(host, "download", f"{type(ex).__name__}: {ex}")
+                        dead = "연결 실패" in str(ex)     # 모든 접속 방식이 연결조차 못 함(방화벽·오프라인)
+                        host_fail[host] = HOST_GIVE_UP if dead else host_fail.get(host, 0) + 1
+                        failed_at[url] = now
                 if not ok:
                     failed.append(f"{kind}:{e['id']}")
             if ok:
@@ -153,6 +178,13 @@ class SoundLibrary:
             for line in net.summary()[:8]:
                 self.log("   " + line)
         self.failed = failed
+        if download:
+            try:
+                fail_path.parent.mkdir(parents=True, exist_ok=True)
+                fail_path.write_text(json.dumps({u: t for u, t in failed_at.items() if now - t < RETRY_AFTER}),
+                                     encoding="utf-8")
+            except OSError:
+                pass
         return self
 
     # ------------------------------------------------------------------
@@ -188,8 +220,9 @@ class SoundLibrary:
         pool = [b for b in self.bgm if b.mood in family and b.id != first.id]
         random.Random(seed).shuffle(pool)
         out = [first] + pool
+        base = len(out)          # 모자라면 목록을 처음부터 되풀이(예전엔 늘 첫 곡만 반복)
         while len(out) < n and self.bgm:
-            out.append(out[len(out) % max(1, len(out))])
+            out.append(out[len(out) % base])
         return out[:max(1, n)]
 
     def rnnoise_model(self) -> Optional[Path]:

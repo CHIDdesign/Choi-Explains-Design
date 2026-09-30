@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .. import net
 from ..media.ffmpeg import FFmpeg
-from ..util import CancelToken, LogFn, noop_log, read_json, text_hash, write_json
+from ..util import Cancelled, CancelToken, LogFn, noop_log, read_json, text_hash, write_json
 from .base import StockCandidate, StockError
 from .providers import StockHub
 from .process import prepare_photo, prepare_video
@@ -126,6 +126,8 @@ class StockResearcher:
             except StockError as e:                    # 한 요청의 오류로 나머지 요청을 모두 버리지 않는다
                 self.log(f"🎞 {e}")
                 cands[k] = []
+            except Cancelled:
+                raise
             except Exception as e:  # noqa: BLE001 - 네트워크 오류는 그 요청만 건너뜀
                 self.log(f"🎞 검색 실패 '{reqs[k].get('query_en')}': {e}")
                 cands[k] = []
@@ -162,6 +164,8 @@ class StockResearcher:
                             self.log(f"🎞 R{r}: 맞는 소재 없음 → 제외 ({p.get('reason', '')})")
                 for k in live:
                     choice.setdefault(k, 0)
+            except Cancelled:
+                raise
             except Exception as e:  # noqa: BLE001 - 선택 실패 시 첫 후보
                 self.log(f"🎞 자동 선택 실패 → 첫 후보 사용: {e}")
                 choice = {k: 0 for k in live}
@@ -174,7 +178,9 @@ class StockResearcher:
             if k not in cands or not cands.get(k):
                 self.cache[k] = {"none": True, "why": "no_results"}      # 다음 실행에 다시 검색
                 continue
-            if idx < 0 or idx >= len(cands[k]):
+            if idx >= len(cands[k]):
+                idx = 0                                                  # 없는 번호를 골랐으면 첫 후보(영구 제외 아님)
+            if idx < 0:
                 self.cache[k] = {"none": True, "why": "rejected"}        # 에이전트가 뺀 것만 확정
                 continue
             # 고른 후보가 안 받아지면 다음 후보로
@@ -183,6 +189,8 @@ class StockResearcher:
                 try:
                     got = self._fetch(c)
                     break
+                except Cancelled:
+                    raise
                 except Exception as e:  # noqa: BLE001
                     self.log(f"🎞 다운로드 실패({c.provider} {c.id}): {e}")
             if got is None:
@@ -274,6 +282,8 @@ class StockResearcher:
                 self.credits.append({"query": query, "origin": c.provider, "credit": c.credit, "url": c.url,
                                      "author_url": c.author_url})
                 return res
+            except Cancelled:
+                raise
             except Exception as e:  # noqa: BLE001
                 self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
         self.log(f"🖼 '{query}'({kind}) 이미지 없음 → 그 요소만 뺌")

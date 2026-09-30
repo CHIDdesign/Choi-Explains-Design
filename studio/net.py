@@ -14,6 +14,7 @@ Windows PC 에서 스톡·효과음 다운로드가 조용히 실패하던 원�
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -76,10 +77,21 @@ def _referer(host: str) -> str:
     return next((v for k, v in REFERERS.items() if host == k or host.endswith("." + k)), "")
 
 
+_SECRET_RE = re.compile(r"((?:api[_-]?key|key|client_id|access_key|token|secret|signature|sig)=)[^&\s\"'<>]+", re.I)
+_BEARER_RE = re.compile(r"((?:Bearer|Client-ID)\s+)[A-Za-z0-9._~+/=-]{8,}", re.I)
+_AUTH_RE = re.compile(r"(Authorization:?\s+)(?!Bearer\b|Client-ID\b)[A-Za-z0-9._~+/=-]{8,}", re.I)
+
+
+def redact(text: str) -> str:
+    """오류 메시지·로그에서 키 값을 가린다 — requests 연결 오류 메시지에는 ?key=… 가 들어 있는 전체 URL 이 나온다."""
+    text = _SECRET_RE.sub(r"\1***", str(text))
+    return _AUTH_RE.sub(r"\1***", _BEARER_RE.sub(r"\1***", text))
+
+
 def _note(host: str, via: str, reason: str) -> None:
     with _lock:
         lst = ERRORS[host]
-        msg = f"{via}: {reason}"[:240]
+        msg = redact(f"{via}: {reason}")[:240]
         if msg not in lst:
             lst.append(msg)
             del lst[:-6]
@@ -205,7 +217,7 @@ def request(url: str, *, params: Optional[dict[str, Any]] = None, headers: Optio
         try:
             r = _IMPL[via](full, dict(headers or {}), timeout, tmp)
         except Exception as e:  # noqa: BLE001 - 인증서·연결·타임아웃 → 다음 방식
-            reason = f"{type(e).__name__}: {e}"
+            reason = redact(f"{type(e).__name__}: {e}")
             reasons.append(f"{via} {reason[:120]}")
             _note(host, via, reason)
             if tmp is not None:
@@ -241,14 +253,15 @@ def request(url: str, *, params: Optional[dict[str, Any]] = None, headers: Optio
 def get_json(url: str, **kw: Any) -> Any:
     r = request(url, **kw)
     if not r.ok:
-        raise NetError(f"{host_of(url)} HTTP {r.status}: {r.text[:160]}")
+        raise NetError(redact(f"{host_of(url)} HTTP {r.status}: {r.text[:160]}"))
     return r.json()
 
 
-def download(url: str, dst: Path, *, timeout: float = 180.0, headers: Optional[dict[str, str]] = None) -> Path:
+def download(url: str, dst: Path, *, timeout: float = 180.0, headers: Optional[dict[str, str]] = None,
+             rounds: int = len(ROUND_WAIT)) -> Path:
     if dst.exists() and dst.stat().st_size > 0:
         return dst
-    r = request(url, dst=dst, timeout=timeout, headers=headers)
+    r = request(url, dst=dst, timeout=timeout, headers=headers, rounds=rounds)
     if not r.ok or not dst.exists():
         raise NetError(f"{host_of(url)} 다운로드 실패 HTTP {r.status}")
     return dst

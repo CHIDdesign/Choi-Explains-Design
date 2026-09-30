@@ -21,9 +21,15 @@ def prepare_video(ff: FFmpeg, src: Path, dst: Path, *, need: float, fps: int = 3
         loop = ["-stream_loop", "-1"]
     vf = (f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
           f"crop={width}:{height},fps={fps},format=yuv420p")
+    # 임시 파일에 쓰고 다 되면 바꾼다 — 취소·실패로 끊긴 MP4(moov 없음)가 남으면 다음 실행이 그대로 쓰고 렌더가 깨진다
+    tmp = dst.with_name(dst.stem + ".part" + dst.suffix)
     args = loop + ["-ss", f"{start:.3f}", "-i", str(src), "-t", f"{need:.3f}", "-an", "-vf", vf] + \
-        ff.video_codec_args("final", gop=15) + ["-movflags", "+faststart", str(dst)]
-    ff.run(args, duration=need, log=log, cancel=cancel, what="스톡 영상 정리")
+        ff.video_codec_args("final", gop=15) + ["-movflags", "+faststart", str(tmp)]
+    try:
+        ff.run(args, duration=need, log=log, cancel=cancel, what="스톡 영상 정리")
+        tmp.replace(dst)
+    finally:
+        tmp.unlink(missing_ok=True)
     return dst
 
 
@@ -32,5 +38,7 @@ def prepare_photo(src: Path, dst: Path, max_w: int = 2400) -> Path:
     im = Image.open(src).convert("RGB")
     if im.width > max_w:
         im = im.resize((max_w, int(im.height * max_w / im.width)), Image.LANCZOS)
-    im.save(dst, quality=90)
+    tmp = dst.with_name(dst.stem + ".part" + dst.suffix)
+    im.save(tmp, quality=90, format="JPEG")
+    tmp.replace(dst)
     return dst

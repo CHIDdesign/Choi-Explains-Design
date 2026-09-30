@@ -91,7 +91,8 @@ class StockHub:
                 out.append(f"{p.name} 정상({len(hits)}건" + (f", 남은 호출 {p.remaining}" if p.remaining is not None else "")
                            + ")")
             except StockError as e:
-                self.disabled[p.name] = str(e)
+                if e.fatal:              # 키 오류만 끈다 — 연결 끊김·일시 차단 한 번으로 작업 내내 빼지 않게(_call 과 같은 기준)
+                    self.disabled[p.name] = str(e)
                 out.append(f"⚠ {p.name}: {e}")
             except Exception as e:  # noqa: BLE001
                 out.append(f"⚠ {p.name}: {type(e).__name__}: {str(e)[:120]}")

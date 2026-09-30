@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any
 
 from .paths import DEFAULT_PROJECTS_DIR, SETTINGS_FILE, ensure_user_dirs
@@ -89,11 +90,19 @@ class Settings:
                 s.render = _merge(RenderSettings(), raw["render"])
             else:
                 setattr(s, f.name, raw[f.name])
+        # 작업 폴더: 비어 있으면 기본(프로그램 폴더/projects). 프로그램 폴더를 옮기고 예전 폴더를 지웠으면(설치 안내대로
+        # D:\ChoiStudio 로 옮긴 경우) 예전 절대 경로 대신 기본으로 — 꽉 찬 C: 에 예전 경로를 다시 만들지 않게
+        pd = str(s.projects_dir or "")
+        if not pd or (Path(pd).name == DEFAULT_PROJECTS_DIR.name and not Path(pd).parent.exists()):
+            s.projects_dir = str(DEFAULT_PROJECTS_DIR)
         return s
 
     def save(self) -> None:
         ensure_user_dirs()
-        SETTINGS_FILE.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8")
+        d = asdict(self)
+        if Path(d.get("projects_dir") or "") == DEFAULT_PROJECTS_DIR:
+            d["projects_dir"] = ""          # 기본 폴더는 비워 저장 → 프로그램 폴더를 옮겨도 따라간다
+        SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

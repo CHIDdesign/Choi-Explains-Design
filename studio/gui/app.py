@@ -665,6 +665,7 @@ class MainWindow(QMainWindow):
     def _start(self, job_dir: Optional[Path] = None, spec: Optional[JobSpec] = None) -> None:
         if self.thread is not None:
             return
+        self._reset_cancel_button()       # 실패 뒤 '입력 화면으로' 로 바뀐 버튼을 다시 '취소' 로(최근 작업 이어서 만들기)
         spec = spec or self._spec()
         if not spec.video or not Path(spec.video).exists():
             QMessageBox.information(self, "원본 영상", "② 원본 영상을 선택해 주세요.")
@@ -710,6 +711,9 @@ class MainWindow(QMainWindow):
 
     def _thread_done(self) -> None:
         self.thread = None
+        if getattr(self, "_closing", False):      # 닫기를 눌러 멈추는 중이었다 → 작업 스레드가 끝났으니 이제 닫는다
+            QTimer.singleShot(0, self.close)
+            return
         self.tick.stop()
         self._update_ready()
 
@@ -791,10 +795,14 @@ class MainWindow(QMainWindow):
         self.cancel_btn.clicked.connect(self._back_to_input)
 
     def _back_to_input(self) -> None:
-        self.cancel_btn.setText("취소")
-        self.cancel_btn.clicked.disconnect()
-        self.cancel_btn.clicked.connect(self._cancel)
+        self._reset_cancel_button()
         self.pages.setCurrentIndex(0)
+
+    def _reset_cancel_button(self) -> None:
+        if self.cancel_btn.text() != "취소":
+            self.cancel_btn.setText("취소")
+            self.cancel_btn.clicked.disconnect()
+            self.cancel_btn.clicked.connect(self._cancel)
 
     def _cancel(self) -> None:
         if self.cancel and QMessageBox.question(self, "취소", "만들기를 멈출까요? 끝난 단계는 저장되어 다음에 이어서 합니다.") \
@@ -918,6 +926,13 @@ class MainWindow(QMainWindow):
                 return
             if self.cancel:
                 self.cancel.cancel()
+            # 작업 스레드가 도는 채로 창을 없애면 'QThread: Destroyed while thread is still running' 으로 프로그램이
+            # 죽는다 — 멈출 때까지 기다렸다가(_thread_done) 닫는다
+            self._closing = True
+            self._save_inputs()
+            self.setWindowTitle(self.windowTitle().split(" — ")[0] + " — 멈추는 중…")
+            e.ignore()
+            return
         self._save_inputs()
         wait_bg()
         super().closeEvent(e)

@@ -265,9 +265,13 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
         x = bank.get(c.path)
         if x is None or not len(x):
             continue
-        if c.fade_out and len(x) > int(c.fade_out * SR):
+        pk = max(0, int(round(c.peak * SR)))
+        if c.fade_out and len(x) > pk + int(c.fade_out * SR):
+            # 긴 꼬리만 자른다: 정점(컷에 맞출 지점)까지는 그대로, 정점 뒤 fade_out 초에 걸쳐 사라지게.
+            # (예전엔 앞 fade_out 초만 남기고 그것마저 0 으로 줄여, 라이저가 컷 1초 전에 끝나 버렸다)
             m = int(c.fade_out * SR)
-            x = x[:m] * np.linspace(1, 0, m, dtype=np.float32)[:, None] ** 2
+            x = x[:pk + m].copy()
+            x[pk:] *= np.linspace(1, 0, m, dtype=np.float32)[:, None] ** 2
         g = 10 ** (c.gain_db / 20)
         start = int(round((c.t - c.peak) * SR))
         if start < 0:

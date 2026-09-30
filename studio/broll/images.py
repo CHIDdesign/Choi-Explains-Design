@@ -105,6 +105,10 @@ class Wikimedia:
             "iiprop": "url|size|mime|extmetadata", "iiurlwidth": "1920",
             "iiextmetadatafilter": "LicenseShortName|UsageTerms|AttributionRequired|Artist|Credit|ObjectName|Restrictions",
         })
+        if isinstance(data, dict) and data.get("error"):
+            # maxlag 등 서버 오류는 HTTP 200 + {"error": …} 로 온다 — '결과 없음'으로 캐시하면 그 사진이 계속 빠진다
+            self.log(f"Wikimedia 오류({(data['error'] or {}).get('code', '?')}) — '{query}' 는 이번엔 건너뜀")
+            return []
         pages = (data.get("query") or {}).get("pages") or []
         pages.sort(key=lambda p: p.get("index", 99))
         out = []

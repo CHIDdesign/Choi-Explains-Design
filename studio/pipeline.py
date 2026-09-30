@@ -53,6 +53,7 @@ from .media.mix import BgmPlan, SfxCue, mix, mux_final
 from .media.sources import (Piece, Quality, SourceMap, analyze_sources, angle_cut_times, angle_summary, choose_angles,
                             clips_for, face_track, master_audio_args, visual_scorer)
 from .models import Span, Tag, TimeMap, Utterance, Word
+from .net import redact
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
 from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, long_props, mark_soft_cuts,
@@ -239,6 +240,7 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def _log(self, msg: str) -> None:
+        msg = redact(msg)          # 키 값은 창에도 log.txt(진단 자료)에도 남기지 않는다
         self._user_log(msg)
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
@@ -249,7 +251,7 @@ class Pipeline:
     def _log_file_only(self, msg: str) -> None:
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(msg.rstrip() + "\n")
+                f.write(redact(msg).rstrip() + "\n")
         except OSError:
             pass
 
@@ -403,7 +405,7 @@ class Pipeline:
     def _sound_lib(self, *, full: bool = True) -> SoundLibrary:
         if self.sounds is None or (full and not getattr(self.sounds, "_full", False)):
             lib = SoundLibrary(log=self.log)
-            lib.ensure(download=bool(getattr(self.settings, "download_sounds", True)),
+            lib.ensure(download=bool(getattr(self.settings, "download_sounds", True)), cancel=self.cancel,
                        kinds=None if full else ("models",))
             lib._full = full  # type: ignore[attr-defined]
             self.sounds = lib
@@ -594,7 +596,7 @@ class Pipeline:
             choice = grade.GradeChoice(src_lab=src_lab, ref_lab=ref_lab)
             studio = self._ensure_studio()
             if studio is not None:
-                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab)
+                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab)
                 (self.work / "grade_sheet.jpg").write_bytes(sheet)
                 try:
                     notes = " · ".join(corr.notes) or "교정 필요 적음"

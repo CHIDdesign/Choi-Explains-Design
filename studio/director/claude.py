@@ -111,6 +111,10 @@ class ClaudeClient:
                 last_err = e
                 self.log(f"{label}: {e} → 다른 방식으로 재시도")
                 continue
+            except self.anthropic.APIError as e:
+                # 키 오류·요청 한도(429)·과부하(529)·모델 없음(404)·연결 실패 — SDK 가 이미 재시도했다. 작업 전체를 멈추지
+                # 않고 부르는 쪽(규칙 기반 기획·기본 룩·다른 전문가 결과 유지)으로 넘긴다
+                raise DirectorError(f"{label} 호출 실패: {type(e).__name__}: {getattr(e, 'message', e)}") from e
         raise DirectorError(f"{label} 호출 실패: {last_err}")
 
     # ------------------------------------------------------------------

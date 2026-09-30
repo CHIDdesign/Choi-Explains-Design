@@ -210,14 +210,21 @@ class ClaudeCodeClient:
             for ln in proc.stderr:
                 err.append(ln)
 
+        def pump_in() -> None:
+            # 입력(이미지가 들어가면 수 MB)도 별도 스레드로 — claude 가 읽기 전에 멈추면 여기서 막혀
+            # 아래의 시간 제한·취소가 듣지 않던 것
+            try:
+                assert proc.stdin
+                proc.stdin.write(stdin_line + "\n")
+                proc.stdin.close()
+            except (OSError, ValueError):
+                pass
+
+        if cancel is not None:
+            cancel.register(proc)          # 취소하면 CancelToken 이 프로세스를 바로 끝낸다
         threading.Thread(target=pump_out, daemon=True).start()
         threading.Thread(target=pump_err, daemon=True).start()
-        try:
-            assert proc.stdin
-            proc.stdin.write(stdin_line + "\n")
-            proc.stdin.close()
-        except OSError:
-            pass
+        threading.Thread(target=pump_in, daemon=True).start()
         result: Optional[dict] = None
         last_log = time.time()
         while True:
@@ -244,6 +251,8 @@ class ClaudeCodeClient:
                 last_log = time.time()
                 self.log(f"{label}: 작업 중… ({int(time.time() - t0)}초, Claude Code)")
         proc.wait(timeout=30)
+        if cancel is not None:
+            cancel.unregister(proc)
         stderr = "".join(err)
         if result is None:
             unknown = _parse_unknown_option(stderr)

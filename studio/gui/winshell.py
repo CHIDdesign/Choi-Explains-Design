@@ -45,6 +45,9 @@ def enable_elevated_drop(widget, on_files: Callable[[list[str]], None]) -> bool:
 
         shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
         shell32.DragQueryFileW.restype = wintypes.UINT
+        # 64비트 핸들 — argtypes 가 없으면 ctypes 가 32비트 long 으로 넘기다 4GB 위 주소에서 ArgumentError
+        shell32.DragFinish.argtypes = [wintypes.HANDLE]
+        shell32.DragFinish.restype = None
 
         class _Filter(QAbstractNativeEventFilter):
             def nativeEventFilter(self, event_type, message):  # noqa: N802
@@ -54,14 +57,19 @@ def enable_elevated_drop(widget, on_files: Callable[[list[str]], None]) -> bool:
                 if msg.message != WM_DROPFILES:
                     return False, 0
                 hdrop = msg.wParam
-                n = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
                 paths = []
-                for i in range(n):
-                    size = shell32.DragQueryFileW(hdrop, i, None, 0) + 1
-                    buf = ctypes.create_unicode_buffer(size)
-                    shell32.DragQueryFileW(hdrop, i, buf, size)
-                    paths.append(buf.value)
-                shell32.DragFinish(hdrop)
+                try:
+                    n = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                    for i in range(n):
+                        size = shell32.DragQueryFileW(hdrop, i, None, 0) + 1
+                        buf = ctypes.create_unicode_buffer(size)
+                        shell32.DragQueryFileW(hdrop, i, buf, size)
+                        paths.append(buf.value)
+                finally:
+                    try:
+                        shell32.DragFinish(hdrop)
+                    except Exception:  # noqa: BLE001 - 핸들 정리 실패로 받은 경로를 잃지 않게
+                        pass
                 if paths:
                     on_files(paths)
                 return True, 0

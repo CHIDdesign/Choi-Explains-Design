@@ -284,15 +284,22 @@ def sample_frames(ff: FFmpeg, video: str | Path, times: list[float], info: Media
     dw, dh = info.display_size
     height = int(round(width * dh / max(1, dw) / 2) * 2)
     vf = (hdr_to_sdr_filter() + "," if info.is_hdr else "") + f"scale={width}:{height}:flags=area"
-    out = []
-    for t in times:
+    def grab(t: float) -> Optional[tuple[float, np.ndarray]]:
         args = [ff.ffmpeg, "-v", "error", "-nostdin", "-ss", f"{max(0.0, t):.3f}", "-i", str(video), "-frames:v", "1",
                 "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-        r = subprocess.run(args, capture_output=True, **_popen_kwargs())
+        try:
+            r = subprocess.run(args, capture_output=True, timeout=120, **_popen_kwargs())
+        except subprocess.TimeoutExpired:
+            return None
         if r.returncode != 0 or len(r.stdout) < width * height * 3:
-            continue
+            return None
         arr = np.frombuffer(r.stdout[: width * height * 3], np.uint8).reshape(height, width, 3)
-        out.append((t, arr.astype(np.float32) / 255.0))
+        return t, arr.astype(np.float32) / 255.0
+
+    # 시각마다 ffmpeg 하나 — 4K HEVC·HDR 은 한 장에 몇 초씩 걸려 4개씩 동시에(순서는 그대로)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        out = [r for r in ex.map(grab, times) if r is not None]
     if not out:
         raise FFmpegError("색 분석용 프레임을 읽지 못했습니다.")
     return out
@@ -463,8 +470,10 @@ def _to_img(x: np.ndarray):
     return Image.fromarray((np.clip(x, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB")
 
 
-def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360, src_lab: tuple = ()) -> bytes:
-    """행 = 프레임, 열 = 원본 + 룩들(모두 레퍼런스 매칭 포함). 🎨 컬러리스트가 고를 비교 시트(JPEG)."""
+def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360, src_lab: tuple = (),
+                     ref_lab: tuple = ()) -> bytes:
+    """행 = 프레임, 열 = 원본 + 룩들(모두 레퍼런스 매칭 포함). 🎨 컬러리스트가 고를 비교 시트(JPEG).
+    ref_lab 은 LUT 에 쓰는 것과 같은 레퍼런스(user/reference_frames) — 다르면 시트에서 고른 룩과 실제 결과가 달라진다."""
     from PIL import Image, ImageDraw
     cols = [("0 원본", None)] + [(f"{i + 1} {l.label}", l.name) for i, l in enumerate(LOOKS.values())]
     ch = int(round(cell_w * frames[0].shape[0] / frames[0].shape[1]))
@@ -475,7 +484,7 @@ def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 3
     for j, (label, name) in enumerate(cols):
         d.text((pad + j * (cell_w + pad) + 4, 6), label, fill=(240, 240, 240), font=font)
         for i, f in enumerate(frames):
-            img = f if name is None else grade(f, c, GradeChoice(look=name, src_lab=src_lab))
+            img = f if name is None else grade(f, c, GradeChoice(look=name, src_lab=src_lab, ref_lab=ref_lab))
             tile = _to_img(img).resize((cell_w, ch))
             sheet.paste(tile, (pad + j * (cell_w + pad), head + i * (ch + pad)))
     buf = io.BytesIO()
