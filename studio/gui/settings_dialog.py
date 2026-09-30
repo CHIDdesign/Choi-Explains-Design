@@ -164,6 +164,17 @@ class SettingsDialog(QDialog):
         f2.addRow("화자 소개", self.b_ptitle)
         f2.addRow("연도", self.b_year)
         f2.addRow("강조색", self.b_accent)
+        self.skin = QComboBox()
+        self.skin.addItem("기본 디자인 + 내 템플릿 일부(사진 액자·개념 카드·출처)", "classic")
+        self.skin.addItem("종이 콜라주 전체(구겨진 종이·거친 테두리·액자 샷)", "paper")
+        self.skin.setCurrentIndex(max(0, self.skin.findData(s.skin)))
+        f2.addRow("화면 스타일", self.skin)
+        self.short_layout = QComboBox()
+        self.short_layout.addItem("릴스식(위 큰 카드 · 아래 얼굴 · 굵은 자막)", "reel")
+        self.short_layout.addItem("레터박스(위 제목 · 가운데 창)", "window")
+        self.short_layout.addItem("얼굴 전체 + 위 도식 패널", "full")
+        self.short_layout.setCurrentIndex(max(0, self.short_layout.findData(s.shorts_layout)))
+        f2.addRow("숏폼 구성", self.short_layout)
         tabs.addTab(br, "브랜드")
 
         # --- 경로·렌더
@@ -257,6 +268,8 @@ class SettingsDialog(QDialog):
         s.brand.presenter_title = self.b_ptitle.text().strip()
         s.brand.year = self.b_year.text().strip()
         s.brand.accent = self.b_accent.text().strip()
+        s.skin = self.skin.currentData() or "classic"
+        s.shorts_layout = self.short_layout.currentData() or "reel"
         gloss = {}
         for line in self.glossary.toPlainText().splitlines():
             if "=" in line:

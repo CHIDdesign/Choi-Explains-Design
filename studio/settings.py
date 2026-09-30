@@ -54,6 +54,9 @@ class Settings:
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
     download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
+    # 화면 스타일: classic = 기존 디자인 + 내 템플릿의 일부(사진 액자·개념 카드·출처·자막) | paper = 종이 콜라주 전체
+    skin: str = "classic"
+    shorts_layout: str = "reel"      # reel = 참고 릴스식(위 카드 · 아래 얼굴) | window | full | framed
     # 🎬 AI 스튜디오(멀티 에이전트)
     studio_workers: int = 4           # 동시에 일하는 전문 에이전트 수
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}

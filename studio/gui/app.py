@@ -583,7 +583,8 @@ class MainWindow(QMainWindow):
 
     def _spec(self) -> JobSpec:
         return JobSpec(video=self.video.path, topic=self.topic.toPlainText().strip(),
-                       script=self.script.toPlainText())
+                       script=self.script.toPlainText(), skin=getattr(self.settings, "skin", "classic"),
+                       shorts_layout=getattr(self.settings, "shorts_layout", "reel"))
 
     def _save_inputs(self) -> None:
         ensure_user_dirs()

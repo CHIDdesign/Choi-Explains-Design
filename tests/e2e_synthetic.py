@@ -149,9 +149,13 @@ def main() -> int:
     assert "업로드정보.txt" in files
     assert any(f.endswith(".srt") for f in extras) and any(f.endswith("_premiere.xml") for f in extras)
     assert any(f.startswith("썸네일") for f in extras) and "색보정_전후.jpg" in extras
+    assert any(f.startswith("검토시트_롱폼") for f in extras) and any(f.startswith("검토시트_숏폼1") for f in extras)
+    # 리테이크·NG 는 단어 단위 정리(takes.py)가 발화를 만들기 전에 지운다
     align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
-    statuses = [u["status"] for u in align["utterances"]]
-    assert "retake" in statuses and "meta" in statuses, statuses
+    removed = " ".join(r["text"] for r in align["report"]["words_removed"])
+    assert "다이어몬드라는" in removed and "다시 할게요" in removed, removed
+    kept_text = " ".join(u["text"] for u in align["utterances"] if u["status"] == "keep")
+    assert "좋은 질문에는 세 가지 조건이 있습니다" in kept_text, kept_text   # 완성된 문장은 남긴다
     # 실시간 미리보기: 색보정 전후 → 렌더 중 프레임(롱폼·숏폼) → 썸네일
     caps = [c for _, c in previews]
     print(f"미리보기 {len(previews)}장:", caps[:3], "…", caps[-4:])

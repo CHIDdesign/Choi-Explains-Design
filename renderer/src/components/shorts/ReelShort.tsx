@@ -157,6 +157,13 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
   );
 };
 
+/** 제목 형광펜: 지정한 강조어가 있으면 그 낱말만, 없으면 마지막 줄의 마지막 어절만 */
+const titleAccent = (props: ShortProps, line: string, i: number, n: number): string | null | undefined => {
+  const h = props.hookHighlight;
+  if (h && props.hookTitle.includes(h)) return line.includes(h) ? h : null;
+  return i === n - 1 ? undefined : null;
+};
+
 /** 한두 마디씩, 아주 굵은 흰 글씨 + 검은 외곽선·그림자(참고 릴스 자막) */
 const SeamCaption: React.FC<{cues: CaptionCue[]; t: number; fps: number; y: number; accent: string}> = ({cues, t, fps,
   y, accent}) => {
@@ -215,8 +222,8 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
             letterSpacing: '-0.04em', color: INK, whiteSpace: 'nowrap',
             translate: `0 ${interpolate(tween(frame, 2 + i * 3, 12), [0, 1], [24, 0])}px`,
             opacity: tween(frame, 2 + i * 3, 10)}}>
-            <Highlighted text={l} accent={props.hookHighlight && l.includes(props.hookHighlight) ? props.hookHighlight
-              : i === lines.length - 1 ? undefined : null} p={tween(frame, 10 + i * 4, 14)} color={marker} />
+            <Highlighted text={l} accent={titleAccent(props, l, i, lines.length)} p={tween(frame, 10 + i * 4, 14)}
+              color={marker} />
           </div>
         ))}
       </div>
@@ -232,12 +239,13 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
   const marker = rgba(theme.accent, 0.3);
   const face = sampleFace(props.face, t);
   const zoom = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
-  const heroEnd = 2.2;
+  // 사진·스톡이 있으면 첫 2.2초는 부채꼴 카드 + 큰 제목, 없으면 첫 프레임부터 위 카드 + 얼굴
+  const heroEnd = props.graphics.some((g) => mediaOf(g)) ? 2.2 : 0;
   const total = durationInFrames / fps;
   const slides = useMemo(() => buildSlides(props.graphics, props.beats ?? [], total, heroEnd),
     [props.graphics, props.beats, total]);
   // 첫 장면 → 본 구성: 0.6초에 걸쳐 흰 화면이 걷히고 얼굴이 아래에서 올라온다
-  const k = tween(frame, toFrame(heroEnd, fps), 18, 'inOutCubic');
+  const k = heroEnd > 0 ? tween(frame, toFrame(heroEnd, fps), 18, 'inOutCubic') : 1;
   const faceRegion: Rect = {...FACE, y: SEAM + (1 - k) * 260};
   const box = videoBoxFor(faceRegion, face, zoom, 'center', 0.40);
   const si = lastIndexAtOrBefore(slides, t, (s) => s.start);
@@ -266,7 +274,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
       <div style={{opacity: k}}>
         <TalkingHead clips={props.clips} fps={fps} region={faceRegion} box={box} />
       </div>
-      {frame < toFrame(heroEnd, fps) + 18 ? <Hero props={props} frame={frame} fps={fps} out={1 - k} marker={marker} />
+      {heroEnd > 0 && frame < toFrame(heroEnd, fps) + 18 ? <Hero props={props} frame={frame} fps={fps} out={1 - k} marker={marker} />
         : null}
       <SeamCaption cues={props.captions} t={t} fps={fps} y={k > 0.5 ? SEAM + 70 : 1740} accent={theme.accent} />
       {props.progressBar ? (
