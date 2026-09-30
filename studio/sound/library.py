@@ -10,11 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from .. import net
 from ..paths import ROOT
 from ..util import LogFn, noop_log
 from . import synth
@@ -68,17 +68,9 @@ def _ext(url: str) -> str:
 
 
 def _download(url: str, dst: Path, timeout: float = 40.0) -> None:
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/126.0 Safari/537.36", "Accept": "*/*", "Referer": "https://pixabay.com/"})
-    tmp = dst.with_suffix(dst.suffix + ".part")
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(tmp, "wb") as f:
-        while True:
-            b = r.read(1 << 16)
-            if not b:
-                break
-            f.write(b)
-    tmp.replace(dst)
+    """studio.net: requests → urllib(브라우저 헤더·Referer) → curl 순으로, 실패 이유는 net.ERRORS 에."""
+    dst.unlink(missing_ok=True)
+    net.download(url, dst, timeout=timeout)
 
 
 class SoundLibrary:
@@ -89,6 +81,7 @@ class SoundLibrary:
         self.sfx: list[Sound] = []
         self.bgm: list[Sound] = []
         self.models: dict[str, Path] = {}
+        self.failed: list[str] = []
 
     # ------------------------------------------------------------------
     def manifest(self) -> dict:
@@ -107,7 +100,7 @@ class SoundLibrary:
         want = set(kinds or ("sfx", "bgm", "models"))
         entries = [(k, e) for k in ("sfx", "bgm", "models") if k in want for e in m.get(k, [])]
         self.sfx, self.bgm, self.models = [], [], {}
-        failed = 0
+        failed: list[str] = []
         got = 0
         for i, (kind, e) in enumerate(entries):
             sub = {"sfx": "sfx", "bgm": "bgm", "models": "models"}[kind]
@@ -127,10 +120,11 @@ class SoundLibrary:
                         ok = True
                         got += 1
                         break
-                    except Exception:  # noqa: BLE001 - 네트워크 오류는 대체 소리로
+                    except Exception as ex:  # noqa: BLE001 - 네트워크 오류는 대체 소리로(이유는 진단에)
                         dst.unlink(missing_ok=True)
+                        net._note(net.host_of(url), "download", f"{type(ex).__name__}: {ex}")
                 if not ok:
-                    failed += 1
+                    failed.append(f"{kind}:{e['id']}")
             if ok:
                 if kind == "sfx":
                     self.sfx.append(Sound(e["id"], e.get("category", ""), dst, float(e.get("peak_s") or 0.0),
@@ -153,7 +147,12 @@ class SoundLibrary:
         if got:
             self.log(f"🔊 효과음·음악 {got}개 새로 받음")
         if failed:
-            self.log(f"🔊 {failed}개는 받지 못해 기본 효과음으로 대체")
+            n_bgm = sum(1 for f in failed if f.startswith("bgm:"))
+            self.log(f"⚠ 효과음·음악 {len(failed)}개를 받지 못했습니다(배경음악 {n_bgm}곡 포함) — "
+                     f"받은 것: 효과음 {sum(1 for s in self.sfx if s.source != 'synth')}개 · 배경음악 {len(self.bgm)}곡")
+            for line in net.summary()[:8]:
+                self.log("   " + line)
+        self.failed = failed
         return self
 
     # ------------------------------------------------------------------

@@ -32,5 +32,9 @@ set "HF_HOME=%~dp0models\hf"
 if not exist "%~dp0tools\tmp" mkdir "%~dp0tools\tmp"
 set "TEMP=%~dp0tools\tmp"
 set "TMP=%~dp0tools\tmp"
+fc /b "requirements.txt" ".venv\.req_stamp" >nul 2>&1
+if errorlevel 1 (
+  ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt && copy /y "requirements.txt" ".venv\.req_stamp" >nul
+)
 ".venv\Scripts\python.exe" -m studio
 pause

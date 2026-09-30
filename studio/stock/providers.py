@@ -6,11 +6,33 @@
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Optional
 
 from ..util import LogFn, noop_log
 from .base import StockCandidate, StockError, StockProvider
+
+
+STOP = {"a", "an", "the", "of", "on", "in", "with", "and", "for", "to", "at", "by", "from", "into", "over",
+        "under", "while", "is", "are", "its", "their", "his", "her", "very", "some"}
+MIN_HITS = 3
+
+
+def query_variants(q: str) -> list[str]:
+    """스톡 검색은 단어를 모두 포함해야 걸린다(AND). 긴 묘사형 검색어는 결과가 0~1개라서 점점 줄여 본다.
+    예: 'designer sketching wireframes on paper notebook'(1건) → 'designer sketching wireframes'(123건)."""
+    q = re.sub(r"\s+", " ", (q or "").strip())
+    if not q:
+        return []
+    core = [w for w in re.split(r"[\s,/]+", q) if w and w.lower() not in STOP]
+    out = [q, " ".join(core), " ".join(core[:3]), " ".join(core[:2]), " ".join(core[-2:]), core[0] if core else ""]
+    seen: list[str] = []
+    for v in out:
+        v = v.strip()
+        if v and v.lower() not in [x.lower() for x in seen]:
+            seen.append(v)
+    return seen
 
 
 def interleave(groups: list[list[StockCandidate]], n: int) -> list[StockCandidate]:
@@ -34,6 +56,7 @@ class StockHub:
         self.providers = providers
         self.log = log
         self.disabled: dict[str, str] = {}
+        self.last_trace: list[str] = []
 
     @property
     def names(self) -> list[str]:
@@ -53,6 +76,23 @@ class StockHub:
             provs.append(Openverse(log=log, cache_dir=cache_dir))
         return cls(provs, log=log)
 
+    def check(self) -> str:
+        """키가 있는 제공처를 한 번씩 불러 본다(키 오류·차단을 작업 초반에 드러냄). 결과 요약 문자열."""
+        out = []
+        for p in self.providers:
+            if p.name == "Openverse":
+                continue
+            try:
+                hits = p.search_photos("office", per_page=3)
+                out.append(f"{p.name} 정상({len(hits)}건" + (f", 남은 호출 {p.remaining}" if p.remaining is not None else "")
+                           + ")")
+            except StockError as e:
+                self.disabled[p.name] = str(e)
+                out.append(f"⚠ {p.name}: {e}")
+            except Exception as e:  # noqa: BLE001
+                out.append(f"⚠ {p.name}: {type(e).__name__}: {str(e)[:120]}")
+        return " · ".join(out) or "키가 있는 제공처 없음(Openverse 만)"
+
     def _call(self, p: StockProvider, method: str, query: str, **kw: Any) -> list[StockCandidate]:
         if p.name in self.disabled or not query:
             return []
@@ -66,19 +106,30 @@ class StockHub:
         return []
 
     def search(self, st: dict[str, Any], n: int = 6) -> list[StockCandidate]:
-        """영상 요청은 영상 제공처 → 부족하면 사진으로 넓힌다. 영어 검색어 우선, 부족하면 한국어."""
+        """영상 요청은 영상 제공처 → 부족하면 사진으로 넓힌다. 영어 검색어를 점점 줄여 가며, 그래도 없으면 한국어.
+        self.last_trace 에 무엇을 몇 건 찾았는지 남긴다(진단용)."""
         qe, qk = st.get("query_en", ""), st.get("query_ko", "")
         out: list[StockCandidate] = []
+        trace: list[str] = []
         kinds = ["video", "photo"] if st.get("kind", "video") == "video" else ["photo"]
         for kind in kinds:
             method = "search_videos" if kind == "video" else "search_photos"
             provs = [p for p in self.providers if (p.videos if kind == "video" else p.photos)]
-            groups = [self._call(p, method, qe, per_page=n) for p in provs]
-            if sum(len(g) for g in groups) < 2 and qk:
-                groups += [self._call(p, method, qk, per_page=n, locale="ko-KR") for p in provs if p.korean]
-            out = interleave([out] + groups, n)
-            if len(out) >= 2:
+            for q in query_variants(qe):
+                groups = [self._call(p, method, q, per_page=n) for p in provs]
+                trace.append(f"{kind} '{q}': " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(provs, groups)))
+                out = interleave([out] + groups, n)
+                if len(out) >= MIN_HITS:
+                    break
+            if len(out) < MIN_HITS and qk:
+                ko = [p for p in provs if p.korean]
+                groups = [self._call(p, method, qk, per_page=n, locale="ko-KR") for p in ko]
+                if ko:
+                    trace.append(f"{kind} '{qk}'(ko): " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(ko, groups)))
+                out = interleave([out] + groups, n)
+            if len(out) >= MIN_HITS:
                 break
+        self.last_trace = trace
         return out[:n]
 
     def download(self, c: StockCandidate, dst: Path) -> Path:

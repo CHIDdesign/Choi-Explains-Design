@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .. import net
 from ..util import LogFn, noop_log
 
 
@@ -54,7 +55,7 @@ class StockError(RuntimeError):
 
 
 class StockProvider:
-    """제공처 공통: requests 세션, 작업 폴더 캐시, 429 재시도, 남은 호출 수."""
+    """제공처 공통: 작업 폴더 캐시, 429 재시도, 남은 호출 수. 통신은 studio.net(여러 방식 + 실패 이유 기록)."""
 
     name = "stock"
     videos = False
@@ -64,8 +65,7 @@ class StockProvider:
 
     def __init__(self, *, log: LogFn = noop_log, cache_dir: Optional[Path] = None, session=None):
         import requests
-        self.session = session or requests.Session()
-        self.session.headers.setdefault("User-Agent", "ChoiStudio/1.0 (design education video editor)")
+        self.session = session or requests.Session()   # 다운로드 집계(Unsplash·Coverr)용
         self.log = log
         self.cache_dir = cache_dir
         self.remaining: Optional[int] = None
@@ -85,19 +85,25 @@ class StockProvider:
         if cache and cache.exists():
             return json.loads(cache.read_text(encoding="utf-8"))
         for attempt in range(3):
-            r = self.session.get(url, params=params, headers=headers or {}, timeout=25)
+            try:
+                r = net.request(url, params=params, headers=headers or {}, timeout=25)
+            except net.NetError as e:
+                raise StockError(f"{self.name} 에 연결하지 못했습니다 — {e}") from e
             rem = r.headers.get(self.remaining_header) or r.headers.get("X-RateLimit-Remaining")
             if rem is not None and str(rem).isdigit():
                 self.remaining = int(rem)
-            if r.status_code == 429:
+            if r.status == 429:
                 reset = r.headers.get("X-RateLimit-Reset")
                 wait = min(60, int(reset) + 1) if reset and reset.isdigit() else min(30, 5 * (attempt + 1))
                 self.log(f"{self.name} 한도 초과 → {wait}s 대기")
                 time.sleep(wait)
                 continue
-            if r.status_code in (400, 401, 403) and ("key" in r.text.lower() or r.status_code != 400):
-                raise StockError(f"{self.name} API 키가 올바르지 않거나 권한이 없습니다({r.status_code}).")
-            r.raise_for_status()
+            if r.status in (400, 401) and ("key" in r.text.lower() or r.status == 401):
+                raise StockError(f"{self.name} API 키가 올바르지 않습니다({r.status}: {r.text[:80]}).")
+            if r.status == 403:
+                raise StockError(f"{self.name} 가 요청을 막았습니다(HTTP 403, 모든 접속 방식 실패).")
+            if not r.ok:
+                raise RuntimeError(f"{self.name} HTTP {r.status}: {r.text[:120]}")
             data = r.json()
             if cache:
                 cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -117,14 +123,7 @@ class StockProvider:
     def download(self, c: StockCandidate, dst: Path) -> Path:
         if dst.exists() and dst.stat().st_size > 0:
             return dst
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dst.with_suffix(dst.suffix + ".part")
-        with self.session.get(c.download, timeout=180, stream=True) as r:
-            r.raise_for_status()
-            with tmp.open("wb") as f:
-                for chunk in r.iter_content(1 << 20):
-                    f.write(chunk)
-        tmp.replace(dst)
+        net.download(c.download, dst, timeout=180)
         try:
             self.register_download(c)
         except Exception as e:  # noqa: BLE001 - 집계 실패는 작업을 막지 않는다

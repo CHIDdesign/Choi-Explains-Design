@@ -16,7 +16,7 @@ from typing import Optional
 
 from rapidfuzz import fuzz
 
-from .. import __version__
+from .. import __version__, net
 from ..text.align import norm
 from ..util import LogFn, noop_log
 
@@ -83,11 +83,13 @@ class Wikimedia:
             time.sleep(wait)
         self._last = time.time()
         params = {"format": "json", "formatversion": "2", "maxlag": "5", **params}
-        r = self.session.get(API, params=params, timeout=20)
-        if r.status_code == 429:
+        hdr = {"User-Agent": self.session.headers["User-Agent"]}   # 위키미디어 정책: 연락처가 든 UA
+        r = net.request(API, params=params, headers=hdr, timeout=20)
+        if r.status == 429:
             time.sleep(float(r.headers.get("Retry-After", "5")))
-            r = self.session.get(API, params=params, timeout=20)
-        r.raise_for_status()
+            r = net.request(API, params=params, headers=hdr, timeout=20)
+        if not r.ok:
+            raise RuntimeError(f"Wikimedia HTTP {r.status}")
         return r.json()
 
     def search(self, query: str, limit: int = 8) -> list[dict]:
@@ -143,10 +145,8 @@ class Wikimedia:
             dst = dst_dir / name
             try:
                 if not dst.exists():
-                    resp = self.session.get(r["url"], timeout=40)
-                    resp.raise_for_status()
-                    dst_dir.mkdir(parents=True, exist_ok=True)
-                    dst.write_bytes(resp.content)
+                    net.download(r["url"], dst, timeout=40,
+                                 headers={"User-Agent": self.session.headers["User-Agent"]})
             except Exception as e:  # noqa: BLE001
                 self.log(f"이미지 다운로드 실패: {e}")
                 continue

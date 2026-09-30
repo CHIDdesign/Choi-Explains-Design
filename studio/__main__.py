@@ -83,6 +83,8 @@ def cli(argv: list[str]) -> int:
 
 
 def main() -> int:
+    from .net import use_os_certificates
+    use_os_certificates()   # 백신·회사망 HTTPS 검사 환경에서도 Windows 인증서 저장소로 접속
     if len(sys.argv) > 1:
         return cli(sys.argv[1:])
     from .gui.app import run_gui

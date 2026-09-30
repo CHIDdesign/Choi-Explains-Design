@@ -55,7 +55,7 @@ class Pixabay(StockProvider):
 
     def search_photos(self, query: str, *, per_page: int = 6, locale: str = "") -> list[StockCandidate]:
         params = self._params(query, per_page, locale)
-        params.update(image_type="photo", orientation="horizontal", min_width=1600)
+        params.update(image_type="photo", orientation="horizontal", min_width=1280)
         data = self._get_json(API + "/", params)
         out = []
         for h in data.get("hits", []) or []:

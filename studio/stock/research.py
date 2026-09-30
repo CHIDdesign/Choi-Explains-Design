@@ -5,6 +5,8 @@
 - 제공처별 후보를 번갈아 섞는다. 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
   그 B-roll 은 쓰지 않는다(틀린 B-roll 보다 없는 게 낫다).
 - 결과는 work/stock.json 에 캐시 → 재실행 때 검색·선택·다운로드를 반복하지 않는다.
+  단, 캐시에 남기는 '없음'은 에이전트가 직접 뺀 것뿐이다. 검색 0건·네트워크·다운로드 실패는 다음 실행에 다시 시도한다
+  (예전에는 한 번 실패하면 영원히 '없음'으로 남았다).
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import io
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .. import net
 from ..media.ffmpeg import FFmpeg
 from ..util import CancelToken, LogFn, noop_log, read_json, text_hash, write_json
 from .base import StockCandidate, StockError
@@ -69,19 +72,18 @@ class StockResearcher:
         self.cache_file = work / "stock.json"
         self.cache: dict[str, Any] = read_json(self.cache_file, {})
         self.credits: list[dict[str, Any]] = []
+        self.stats: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     def search(self, st: dict[str, Any]) -> list[StockCandidate]:
         return self.hub.search(st, self.per_request)
 
     def _thumb(self, c: StockCandidate) -> Optional[bytes]:
-        import requests
         if not c.thumb:
             return None
         try:
-            r = requests.get(c.thumb, timeout=20)
-            r.raise_for_status()
-            return r.content
+            r = net.request(c.thumb, timeout=20)
+            return r.content if r.ok else None
         except Exception:  # noqa: BLE001
             return None
 
@@ -99,6 +101,8 @@ class StockResearcher:
         todo = [k for k in reqs if not self._cached_ok(k)]
         # 1) 검색
         cands: dict[str, list[StockCandidate]] = {}
+        self.stats = {"requests": len(reqs), "cached": len(reqs) - len(todo), "found": 0, "rejected": 0,
+                      "no_results": 0, "download_failed": 0, "used": 0}
         for i, k in enumerate(todo):
             if self.cancel:
                 self.cancel.check()
@@ -110,6 +114,13 @@ class StockResearcher:
             except Exception as e:  # noqa: BLE001 - 네트워크 오류는 그 요청만 건너뜀
                 self.log(f"🎞 검색 실패 '{reqs[k].get('query_en')}': {e}")
                 cands[k] = []
+            trace = getattr(self.hub, "last_trace", [])
+            if cands.get(k):
+                self.stats["found"] += 1
+                self.log(f"🎞 '{reqs[k].get('query_en')}' 후보 {len(cands[k])}개 ({trace[-1] if trace else ''})")
+            else:
+                self.stats["no_results"] += 1
+                self.log(f"🎞 '{reqs[k].get('query_en')}' 후보 없음 — " + " | ".join(trace[:6]))
             progress(0.3 * (i + 1) / max(1, len(todo)))
         # 2) 선택(Claude 비전) — 후보가 있는 요청만 시트로
         live = [k for k in todo if cands.get(k)]
@@ -132,6 +143,7 @@ class StockResearcher:
                     if 1 <= r <= len(live):
                         choice[live[r - 1]] = c - 1 if c >= 1 else -1
                         if c < 1:
+                            self.stats["rejected"] += 1
                             self.log(f"🎞 R{r}: 맞는 소재 없음 → 제외 ({p.get('reason', '')})")
                 for k in live:
                     choice.setdefault(k, 0)
@@ -144,15 +156,23 @@ class StockResearcher:
             if self.cancel:
                 self.cancel.check()
             idx = choice.get(k, -1)
-            if k not in cands or idx < 0 or idx >= len(cands.get(k, [])):
-                self.cache[k] = {"none": True}
+            if k not in cands or not cands.get(k):
+                self.cache[k] = {"none": True, "why": "no_results"}      # 다음 실행에 다시 검색
                 continue
-            c = cands[k][idx]
-            try:
-                self.cache[k] = self._fetch(c)
-            except Exception as e:  # noqa: BLE001
-                self.log(f"🎞 다운로드 실패({c.url}): {e}")
-                self.cache[k] = {"none": True}
+            if idx < 0 or idx >= len(cands[k]):
+                self.cache[k] = {"none": True, "why": "rejected"}        # 에이전트가 뺀 것만 확정
+                continue
+            # 고른 후보가 안 받아지면 다음 후보로
+            got = None
+            for c in [cands[k][idx]] + [x for j, x in enumerate(cands[k]) if j != idx][:2]:
+                try:
+                    got = self._fetch(c)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"🎞 다운로드 실패({c.provider} {c.id}): {e}")
+            if got is None:
+                self.stats["download_failed"] += 1
+            self.cache[k] = got or {"none": True, "why": "download_failed"}
             progress(0.5 + 0.5 * (i + 1) / max(1, len(todo)))
         write_json(self.cache_file, self.cache)
         # 4) 그래픽에 반영
@@ -172,6 +192,7 @@ class StockResearcher:
                 keep.append(g)
                 if res["src"] not in used:
                     used.add(res["src"])
+                    self.stats["used"] += 1
                     self.credits.append({"query": g["stock"].get("query_en"), "origin": res.get("provider", "stock"),
                                          "credit": res["credit"], "url": res["url"], "author_url": res.get("author_url", "")})
             gl[:] = keep
@@ -182,7 +203,7 @@ class StockResearcher:
         if not res:
             return False
         if res.get("none"):
-            return True
+            return res.get("why") == "rejected"
         return (self.public / res.get("src", "__")).exists()
 
     def _fetch(self, c: StockCandidate) -> dict[str, Any]:

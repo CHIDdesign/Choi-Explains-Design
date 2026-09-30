@@ -111,6 +111,7 @@ if not exist ".venv\Scripts\python.exe" (
 call ".venv\Scripts\activate.bat"
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt || goto :fail
+copy /y "requirements.txt" ".venv\.req_stamp" >nul
 echo [설치] GPU 음성인식용 CUDA 라이브러리 cuBLAS / cuDNN ^(약 1.5GB^)...
 python -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" || goto :fail
 

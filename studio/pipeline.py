@@ -15,10 +15,12 @@ import datetime as dt
 import json
 import shutil
 import time
+import traceback
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import diag
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
 from .broll.images import Wikimedia, list_local_images, resolve_image
@@ -169,7 +171,9 @@ class Pipeline:
         self.extras = self.out / EXTRAS
         for d in (self.work, self.media, self.public, self.out, self.extras):
             d.mkdir(parents=True, exist_ok=True)
-        self.log = log
+        self._user_log = log
+        self.log_file = self.work / "log.txt"
+        self.log = self._log   # 창·콘솔 + work/log.txt(진단 자료에 들어감)
         self._progress = progress or (lambda *_: None)
         self.cancel = cancel or CancelToken()
         self.eta = eta or Eta(USER_DIR / "eta_history.json")
@@ -200,6 +204,21 @@ class Pipeline:
         self._render_prep: Optional[list[tuple[Path, str]]] = None
 
     # ------------------------------------------------------------------
+    def _log(self, msg: str) -> None:
+        self._user_log(msg)
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        except OSError:
+            pass
+
+    def _log_file_only(self, msg: str) -> None:
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(msg.rstrip() + "\n")
+        except OSError:
+            pass
+
     def _stage(self, key: str, frac: float) -> None:
         self.eta.update(key, frac)
         overall = self.eta.fraction()
@@ -262,22 +281,34 @@ class Pipeline:
                       ("sound", self.stage_sound), ("qa", self.stage_qa), ("render", self.stage_render),
                       ("master", self.stage_master), ("export", self.stage_export)]
         self.eta.begin()
-        for key, fn in steps:
-            self.cancel.check()
-            self.log(f"━━ {STAGE_LABEL[key]}")
-            self.eta.start(key)
-            self._stage(key, 0.0)
-            fn()
-            self._stage(key, 1.0)
-            self.eta.finish(key)
-            if key == "probe":
-                self._eta_plan([k for k, _ in steps])
-            elif key == "proxy":
-                self._eta_refine()
-            elif key == "grade":
-                self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
+        self.log(f"══ 작업 시작 {time.strftime('%Y-%m-%d %H:%M')} · 원본 {Path(self.spec.video).name}")
+        try:
+            for key, fn in steps:
+                self.cancel.check()
+                self.log(f"━━ {STAGE_LABEL[key]}")
+                self.eta.start(key)
+                t_stage = time.time()
+                self._stage(key, 0.0)
+                fn()
+                self._stage(key, 1.0)
+                self.eta.finish(key)
+                self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
+                if key == "probe":
+                    self._eta_plan([k for k, _ in steps])
+                elif key == "proxy":
+                    self._eta_refine()
+                elif key == "grade":
+                    self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
+        except Exception as e:
+            tb = traceback.format_exc()
+            self._log_file_only(tb)
+            z = diag.write(self, error=f"{e}\n{tb}")
+            if z:
+                self.log(f"진단 자료: {z} — 문제를 알릴 때 이 파일을 보내 주세요.")
+            raise
         mins = (time.time() - t0) / 60
         self.log(f"완료 ({mins:.1f}분) → {self.out}")
+        diag.write(self)
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}
         write_json(self.work / "result.json", res)
         return res
@@ -681,7 +712,9 @@ class Pipeline:
         """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등 + 키 없는 Openverse) → (Claude 비전으로) 선택 → 정리."""
         lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
+        self.stock_stats = {"requests": n}
         if not n:
+            self.log("🎞 기획에 스톡 B-roll 요청이 없습니다(자료 리서처가 요청을 만들지 않음).")
             return
         if not self._stock_enabled():
             self.log(f"🎞 스톡 B-roll {n}건 건너뜀(꺼짐)")
@@ -689,11 +722,13 @@ class Pipeline:
                 gl[:] = [g for g in gl if g["template"] != "broll" or g.get("src")]
             return
         hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
+        self.log("🎞 검색처: " + (", ".join(hub.names) or "없음") + " · " + hub.check())
         studio = self._ensure_studio()
         pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
         res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
                               cancel=self.cancel)
         res.run(lists, progress=self._sp("stock"))
+        self.stock_stats = res.stats
         self.broll_log += res.credits
         left = hub.remaining()
         if left:

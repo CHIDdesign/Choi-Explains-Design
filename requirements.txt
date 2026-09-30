@@ -1,6 +1,7 @@
 # Core
 numpy>=1.26
 requests>=2.31
+truststore>=0.9      # OS 인증서 저장소 사용(백신 HTTPS 검사 환경)
 rapidfuzz>=3.6
 anthropic>=0.70
 PySide6>=6.7

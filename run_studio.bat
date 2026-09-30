@@ -32,4 +32,10 @@ set "HF_HOME=%~dp0models\hf"
 if not exist "%~dp0tools\tmp" mkdir "%~dp0tools\tmp"
 set "TEMP=%~dp0tools\tmp"
 set "TMP=%~dp0tools\tmp"
+rem 새 버전으로 파일을 덮어쓴 뒤 필요한 파이썬 패키지가 늘었으면 자동 설치(setup 을 다시 돌리지 않아도 됨)
+fc /b "requirements.txt" ".venv\.req_stamp" >nul 2>&1
+if errorlevel 1 (
+  echo 새 버전에 필요한 파이썬 패키지를 확인합니다...
+  ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt && copy /y "requirements.txt" ".venv\.req_stamp" >nul
+)
 start "" ".venv\Scripts\pythonw.exe" -m studio
