@@ -39,6 +39,7 @@ from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
 from .edit.grammar import PARAMS, EditDecisions, Moment, build_long_edit, build_short_edit
+from .edit.style import LookPlan, apply_looks, choose_looks
 from .edit.verify import find_issues, subtract, to_source
 from .eta import Eta, features
 from .export.premiere import export_xml
@@ -118,9 +119,9 @@ class JobSpec:
     studio_mode: bool = True
     fetch_stock: bool = True
     verify_edit: bool = True       # 편집 후 목소리를 다시 인식해 남은 되풀이·무음을 한 번 더 자른다
-    # 화면 스킨: classic = 기존 디자인 + 사용자 레퍼런스의 일부(사진 액자·개념 카드 글 위계·출처·타이틀 구도·자막),
-    #            paper = 레퍼런스 종이 콜라주 전체(구겨진 종이·거친 테두리·액자 샷)
-    skin: str = "classic"
+    # 화면 구성: auto = 대본·전사·기획을 보고 챕터·그래픽마다 기본 디자인과 사용자 템플릿(종이 콜라주)을 섞는 하이브리드
+    #           (studio/edit/style.py). classic·paper 는 한쪽만 쓰는 개발·시험용
+    skin: str = "auto"
     motion_scenes: bool = True
     qa_rounds: int = 1
     direction: str = ""
@@ -210,6 +211,7 @@ class Pipeline:
         self.broll_log: list[dict] = []
         self.qa_log: list[dict] = []
         self.grade_info: dict = {}
+        self.look_plan: Optional[LookPlan] = None
         self.sounds: Optional[SoundLibrary] = None
         self.masters: list[dict] = []
         self.results: dict[str, Any] = {}
@@ -1046,7 +1048,7 @@ class Pipeline:
             return self._render_prep
         copy_fonts(self.public / "fonts")
         self._grain = make_grain(self.public / "fx") if self.spec.grain else []
-        self._paper = make_paper(self.public / "fx") if self.spec.skin == "paper" else ""
+        self._paper = make_paper(self.public / "fx") if self.spec.skin != "classic" else ""
         links: list[tuple[Path, str]] = [(self.media / "proxy.mp4", "media/proxy.mp4")]
         self._render_prep = links
         return links
@@ -1101,6 +1103,10 @@ class Pipeline:
                               callout=m.get("callout", ""), label=m.get("label", "")))
         return out
 
+    @property
+    def _hybrid(self) -> bool:
+        return self.spec.skin in ("auto", "hybrid")
+
     def _final_long_props(self, graphics: list[TimedGraphic], chapters: list[dict]) -> tuple[dict, EditDecisions]:
         """롱폼 props + 편집 문법 엔진 결과(카메라·소프트 컷·강조 글라이드·전환·콜아웃·강조 자막) + 화면 그래픽과
         같은 말인 자막 숨김. 음향은 따로 믹스."""
@@ -1109,16 +1115,28 @@ class Pipeline:
                         timemap=self.timemap, graphics=graphics, chapters=chapters,
                         emphasis=self.plan_long.get("emphasis", []), face_src=self.face,
                         voice_src="media/long_voice.wav", bgm_src=None, sfx={}, grain_frames=self._grain,
-                        skin=self.spec.skin, paper_texture=self._paper,
+                        skin="classic" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
                         endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
         seg_t = seg_edit_times(self.utts, self.timemap)
+        looks = None
+        if self._hybrid:
+            by_id = {u.id: u for u in self.utts}
+
+            def text_between(a: float, b: float) -> str:
+                return " ".join(by_id[i].text for i, (s0, _) in seg_t.items() if a <= s0 < b and i in by_id)
+
+            looks = choose_looks(lp["graphics"], lp["chapters"], self.timemap.duration, text_between)
+            apply_looks(lp, looks)
+            self.look_plan = looks
+            self.log("🎨 화면 구성(자동 · 하이브리드): " + looks.summary())
         ed = build_long_edit(timemap=self.timemap, total=lp["duration"], speech_total=self.timemap.duration,
                              graphics=lp["graphics"], chapters=lp["chapters"], moments=self._moments(self.timemap),
                              cues=lp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
                              text_graphic_spans=text_graphic_spans(lp["graphics"]), endcard=self.spec.endcard,
                              face=lp.get("face"),
-                             P=PARAMS if self.spec.skin == "paper" else {**PARAMS, "framed_every": 0})
+                             P=PARAMS if (self.spec.skin == "paper" or looks) else {**PARAMS, "framed_every": 0},
+                             framed_ranges=looks.paper_ranges() if looks else None)
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
         stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
@@ -1169,7 +1187,7 @@ class Pipeline:
             sp = short_props(fps=self.fps, brand=self.settings.brand, episode=self._episode(), spec=s, utts=self.utts,
                              timemap=tm, graphics=sg, face_src=self.face, voice_src=f"media/short_{i}_voice.wav",
                              bgm_src=None, sfx={}, grain_frames=self._grain, grain=0.04 if self._grain else 0.0,
-                             skin=self.spec.skin, paper_texture=self._paper,
+                             skin="hybrid" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                              layout=self.spec.shorts_layout, progress_bar=self.spec.progress_bar,
                              series_label=series, caption_preset=self._caption_presets()[1],
                              extra_emphasis=self.plan_long.get("emphasis", []), speech_onsets=self._edit_onsets(tm))
@@ -1383,6 +1401,8 @@ class Pipeline:
     def _craft_report(self) -> str:
         """리포트 뒤에 붙일 '어떻게 편집했나' 요약(색·소리·편집 기술)."""
         lines = ["", "## 🎛 자동 후반 작업", ""]
+        if self.look_plan:
+            lines.append("- 화면 구성(자동 · 하이브리드): " + self.look_plan.summary())
         g = self.grade_info or {}
         if g:
             ch = g.get("choice", {})

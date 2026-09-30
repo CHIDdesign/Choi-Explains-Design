@@ -379,3 +379,26 @@ def test_stack_captions_are_rare_and_skip_busy_or_hidden():
             cue(60, "그래픽 위", "위"), cue(80, "결론은 질문", "질문", style="impact"), cue(85, "바로 다음", "다음")]
     n = mark_stack_cues(cues, min_gap=18.0, avoid=[(59.5, 62.0)])
     assert [c.get("style") for c in cues] == ["stack", None, "stack", None, None, None, "impact", None] and n == 2
+
+
+def test_hybrid_looks_follow_content_and_always_mix():
+    from studio.edit.style import apply_looks, choose_looks
+    g = lambda i, tpl, a, layout="split": {"id": i, "template": tpl, "layout": layout, "start": a, "end": a + 4,
+                                           "data": {}}
+    graphics = [g("t", "title", 0.2, "fullscreen"), g("k", "keyword", 10), g("q", "quote", 20, "fullscreen"),
+                g("p", "photo", 30, "pip"), g("pr", "process", 70, "fullscreen"), g("m", "matrix", 85, "fullscreen"),
+                g("d", "definition", 95, "fullscreen")]
+    chapters = [{"start": 0.0, "title": "들어가며", "number": "01"}, {"start": 60.0, "title": "구조", "number": "02"}]
+    texts = {0.0: "제가 처음 디자인을 배울 때 경험을 예를 들어 이야기해 볼게요", 60.0: "세 단계 구조를 비교해 보면"}
+    plan = choose_looks(graphics, chapters, 120.0, lambda a, b: " ".join(v for k, v in texts.items() if a <= k < b))
+    assert [c["look"] for c in plan.chapters] == ["paper", "classic"]
+    assert plan.graphic_skins["pr"] == "classic" and plan.graphic_skins["m"] == "classic"
+    assert plan.graphic_skins["d"] == "paper" and plan.graphic_skins["k"] == "paper"   # 개념 카드는 어디서든 템플릿
+    assert plan.paper_ranges() == [(0.0, 60.0)]
+    props = {"graphics": [dict(x) for x in graphics], "chapters": [dict(c) for c in chapters]}
+    apply_looks(props, plan)
+    assert props["skin"] == "hybrid" and [c["look"] for c in props["chapters"]] == ["paper", "classic"]
+    assert next(x for x in props["graphics"] if x["id"] == "d")["layout"] == "split"          # 종이 개념 카드 → 화자 액자
+    # 모두 한쪽이면 하나는 반대로(섞기)
+    same = choose_looks([g("a", "process", 5), g("b", "cycle", 65)], chapters, 120.0, lambda a, b: "")
+    assert {c["look"] for c in same.chapters} == {"paper", "classic"}

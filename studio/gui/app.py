@@ -8,7 +8,7 @@
 → 결과 화면(롱폼 1 · 숏폼 2 · 썸네일 후보 · 색보정 전후 · 업로드 정보)
 
 편집 툴처럼 만질 것이 없다: 구성·컷·얼굴/그래픽 배분·색·자막·효과음·음악은 전부 자동.
-화면 스타일(classic/paper)·숏폼 구성(reel 등)만 ⚙ 고급 설정 → 브랜드 탭에서 고른다.
+화면 구성(기본 디자인 × 내 템플릿 하이브리드)과 숏폼 구성은 영상·대본을 보고 자동으로 정한다(고르는 설정 없음).
 """
 from __future__ import annotations
 
@@ -585,8 +585,7 @@ class MainWindow(QMainWindow):
 
     def _spec(self) -> JobSpec:
         return JobSpec(video=self.video.path, topic=self.topic.toPlainText().strip(),
-                       script=self.script.toPlainText(), skin=getattr(self.settings, "skin", "classic"),
-                       shorts_layout=getattr(self.settings, "shorts_layout", "reel"))
+                       script=self.script.toPlainText())
 
     def _save_inputs(self) -> None:
         ensure_user_dirs()

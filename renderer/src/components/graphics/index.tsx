@@ -69,7 +69,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   skin, paperTexture, chapterTag = '', faceX = 0.5}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
   if (!Comp) return null;
-  if (skin === 'paper') {
+  if ((g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
     return <PaperGraphic g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand}
       episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
       paperTexture={paperTexture} />;

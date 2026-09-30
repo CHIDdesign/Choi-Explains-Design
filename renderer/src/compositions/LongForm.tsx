@@ -16,17 +16,17 @@ import {CAMERA, EASE} from '../design/motion';
 import {FONT, makeTheme} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
-import type {CameraShot, Graphic, LongFormProps, Punch} from '../lib/types';
+import type {CameraShot, Graphic, Look, LongFormProps, Punch} from '../lib/types';
 
 ensureFonts();
 
-type RegionSpan = {start: number; end: number; kind: 'split' | 'pip' | 'title'};
+type RegionSpan = {start: number; end: number; kind: 'split' | 'pip' | 'title'; look: Look};
 
 /**
  * 화자 영역이 바뀌는 구간(split 패널 · 타이틀, pipOverlay=false 일 때만 pip). 거의 붙어 있는 같은 종류는 하나로 합쳐
  * 들락날락하지 않게. 기본(pipOverlay=true)은 pip 에서도 화자가 화면 전체에 그대로 남는다.
  */
-export const buildRegionSpans = (graphics: Graphic[], pipOverlay = true): RegionSpan[] => {
+export const buildRegionSpans = (graphics: Graphic[], pipOverlay = true, fallback: Look = 'classic'): RegionSpan[] => {
   const spans: RegionSpan[] = [];
   const sorted = [...graphics].sort((a, b) => a.start - b.start);
   for (const g of sorted) {
@@ -34,11 +34,12 @@ export const buildRegionSpans = (graphics: Graphic[], pipOverlay = true): Region
     const kind = g.template === 'title' ? 'title' : g.layout === 'split' ? 'split'
       : g.layout === 'pip' && !pipOverlay ? 'pip' : null;
     if (!kind) continue;
+    const look = g.skin ?? fallback;
     const last = spans[spans.length - 1];
-    if (last && last.kind === kind && g.start - last.end < 1.0) {
+    if (last && last.kind === kind && last.look === look && g.start - last.end < 1.0) {
       last.end = Math.max(last.end, g.end);
     } else {
-      spans.push({start: g.start, end: g.end, kind});
+      spans.push({start: g.start, end: g.end, kind, look});
     }
   }
   return spans;
@@ -120,11 +121,13 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const {fps, width: W, height: H} = useVideoConfig();
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
-  const paper = props.skin === 'paper';
-  const spans = useMemo(() => buildRegionSpans(props.graphics), [props.graphics]);
-  const isUnder = (g: Graphic) => !paper && g.template === 'title';
-  const under = useMemo(() => props.graphics.filter(isUnder), [props.graphics, paper]);
-  const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)), [props.graphics, paper]);
+  // 하이브리드: 그래픽·챕터마다 모양(look)이 정해져 온다. 없으면 props.skin 하나로
+  const fallback: Look = props.skin === 'paper' ? 'paper' : 'classic';
+  const lookOf = (g: Graphic): Look => g.skin ?? fallback;
+  const spans = useMemo(() => buildRegionSpans(props.graphics, true, fallback), [props.graphics, fallback]);
+  const isUnder = (g: Graphic) => lookOf(g) !== 'paper' && g.template === 'title';
+  const under = useMemo(() => props.graphics.filter(isUnder), [props.graphics, fallback]);
+  const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)), [props.graphics, fallback]);
 
   // ---- 카메라 ----
   const face = sampleFace(props.face, t);
@@ -143,27 +146,31 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   // 화자를 찢어진 액자에 담는 정도(0~1) — 타이틀 구간(두 스킨), 종이 스킨은 split 패널 구간·액자 샷도(레퍼런스 1·2)
   let paperP = 0;
   let paperBorder = 0;
-  if (paper && cam.framed > 0) {
+  let paperFill = false; // 화자 액자 뒤를 구겨진 종이로 채울지(종이 모양 구간·액자 샷)
+  if (cam.framed > 0 && props.skin !== 'classic') {   // 액자 샷은 종이 챕터에서만 만들어진다
     const target = PAPER.framed;
     region = lerpRect(full, target, cam.framed);
     box = lerpBox(box, videoBoxFor(target, face, zoom, 'anchor'), cam.framed);
     paperP = cam.framed;
+    paperFill = true;
   }
   const si = lastIndexAtOrBefore(spans, t, (s) => s.start);
   const span = si >= 0 && t < spans[si].end + 0.5 ? spans[si] : null;
   if (span) {
     // 종이 스킨은 천천히(0.7초) 액자로 들어가고 0.5초에 걸쳐 돌아온다
-    const p = paper
+    const paperSpan = span.look === 'paper';
+    const p = paperSpan
       ? Math.min(enter(frame, toFrame(span.start, fps), 21, EASE.inOutCubic), exit(frame, toFrame(span.end, fps), 15))
       : Math.min(enter(frame, toFrame(span.start, fps), 16), exit(frame, toFrame(span.end, fps), 12));
     // 타이틀은 두 스킨 모두 '글 왼쪽 + 화자 액자 오른쪽'(레퍼런스 1) — 예전엔 가운데 작은 화자 창이 제목 글자를 가렸다
-    if (p > 0 && (span.kind === 'title' || (paper && span.kind === 'split'))) {
+    if (p > 0 && (span.kind === 'title' || (paperSpan && span.kind === 'split'))) {
       const target = paperSpeakerBox(props.panelSide, W);
       const tBox = videoBoxFor(target, face, 1.02 * punchFactor(props.punches, t, fps), 'center', 0.42);
       region = lerpRect(region, target, p);
       box = lerpBox(box, tBox, p);
       paperP = Math.max(paperP, p);
-      paperBorder = paper ? p : 0;
+      paperBorder = paperSpan ? p : 0;
+      paperFill = paperSpan;
     } else if (p > 0) {
       let target: Rect;
       let tBox;
@@ -190,6 +197,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   // ---- 챕터 ----
   const ci = lastIndexAtOrBefore(props.chapters, t, (c) => c.start);
   const chapter = ci >= 0 ? props.chapters[ci] : null;
+  const chapterLook: Look = chapter?.look ?? fallback;
   const pageFor = (g: Graphic) => {
     const k = lastIndexAtOrBefore(props.chapters, g.start, (c) => c.start);
     return k >= 0 ? `ch ${props.chapters[k].number}` : '';
@@ -226,8 +234,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         {under.map(seq)}
         {paperP > 0 && frame < endStart ? (
           <>
-            {paper ? <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} /> : null}
-            {paper ? <RoughBorder opacity={paperBorder} /> : null}
+            {paperFill ? <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} /> : null}
+            {paperBorder > 0 ? <RoughBorder opacity={paperBorder} /> : null}
             <TornFrame b={region} opacity={Math.min(1, paperP * 2)} seed={7} />
             {cam.framed > 0.5 && chapter && !span ? (
               <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw opacity={cam.framed} />
@@ -239,12 +247,12 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
             shadow={radius > 0} />
         ) : null}
         {region === full ? <Vignette strength={0.22} /> : null}
-        {paper && props.showChapterLabel && chapter && paperP === 0 && !span
+        {chapterLook === 'paper' && props.showChapterLabel && chapter && paperP === 0 && !span
           && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3) ? (
           <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw
             opacity={enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9} />
         ) : null}
-        {!paper && props.showChapterLabel && chapter && !fullscreenActive && !span
+        {chapterLook !== 'paper' && props.showChapterLabel && chapter && !fullscreenActive && !span
           && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3 && g.layout !== 'split') ? (
           <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
             color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
@@ -288,6 +296,6 @@ const EndCardSeq: React.FC<{theme: ReturnType<typeof makeTheme>; props: LongForm
   const {width, height} = useVideoConfig();
   // 두 스킨 모두 '오늘의 정리 + 다음 영상 자리'(예전 엔드카드는 빈 칸 두 개뿐이라 비어 보였다)
   return <PaperEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters}
-    texture={props.skin === 'paper' ? props.paperTexture : undefined} plain={props.skin !== 'paper'}
-    bg={props.skin === 'paper' ? undefined : theme.ink} W={width} H={height} />;
+    texture={props.skin !== 'classic' ? props.paperTexture : undefined} plain={props.skin === 'classic'}
+    bg={props.skin === 'classic' ? theme.ink : undefined} W={width} H={height} />;
 };

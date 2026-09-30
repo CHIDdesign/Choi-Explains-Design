@@ -233,7 +233,8 @@ def list_reveal_times(g: dict, fps: float = FPS_BASE) -> list[float]:
 # ---------------------------------------------------------------------------
 
 def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], covers: list[tuple],
-                sentence_starts: list[float], P: dict = PARAMS, seed: int = 1) -> list[dict]:
+                sentence_starts: list[float], P: dict = PARAMS, seed: int = 1,
+                framed_ranges: Optional[list[tuple[float, float]]] = None) -> list[dict]:
     """점프컷 프레이밍(교육 영상용 젠틀 편집). 컷 지점에서만 와이드(1.00)/미디엄(1.06)을 번갈아 바꾼다 —
     챕터 시작·전체화면 그래픽 복귀·NG 를 잘라낸 큰 점프(≥big_jump)에서만(평범한 컷은 그대로).
     그 사이 같은 프레이밍의 점프컷은 소프트 컷(props.mark_soft_cuts)이 가린다. 얼굴만 max_shot 넘게 이어지면
@@ -296,7 +297,9 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
         else:
             switches += 1
             every = int(P.get("framed_every", 0) or 0)
-            level = "framed" if every and switches % every == 0 and b - a >= P.get("framed_min", 8.0) else "medium"
+            framed_ok = framed_ranges is None or any(x <= a < y for x, y in framed_ranges)   # 하이브리드: 종이 챕터만
+            level = "framed" if every and framed_ok and switches % every == 0 and b - a >= P.get("framed_min", 8.0) \
+                else "medium"
         zoom = P["wide"] if level == "framed" else P[level]
         x = 0.0
         if level == "medium":
@@ -323,12 +326,13 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
 def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, graphics: list[dict],
                     chapters: list[dict], moments: list[Moment], cues: list[dict], sentence_starts: list[float],
                     text_graphic_spans: Optional[list[tuple[float, float]]] = None, endcard: bool = True,
-                    face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1) -> EditDecisions:
+                    face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1,
+                    framed_ranges: Optional[list[tuple[float, float]]] = None) -> EditDecisions:
     ed = EditDecisions(soft_cut=P["soft_cut"])
     covers = _covers(graphics, speech_total)
     chapter_starts = [c["start"] for c in chapters if c["start"] > 0.5]
     ed.camera = camera_plan(timemap, speech_total, chapter_starts=chapter_starts, covers=covers,
-                            sentence_starts=sentence_starts, P=P, seed=seed)
+                            sentence_starts=sentence_starts, P=P, seed=seed, framed_ranges=framed_ranges)
 
     # ---- 전환 -------------------------------------------------------------
     tx: list[dict] = []

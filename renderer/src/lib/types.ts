@@ -51,7 +51,9 @@ export type GraphicData = {
 //            레퍼런스식 콜아웃
 //  paper   = 레퍼런스 종이 콜라주 전체 — 구겨진 짙은 종이·회색 거친 테두리·찢어진 액자·화자 액자 샷(CameraShot.framed),
 //            전면 개념 카드는 split 으로(props.paper_layouts)
-export type Skin = 'paper' | 'classic';
+export type Skin = 'paper' | 'classic' | 'hybrid';
+// 그래픽·챕터 하나의 모양(하이브리드에서 파이썬 studio/edit/style.py 가 정한다)
+export type Look = 'paper' | 'classic';
 
 // ---------------------------------------------------------------------------
 // MotionSpec — 모션 디자이너 에이전트가 JSON 으로 쓰는 장면 기술(코드 실행 없이 안전하게 렌더)
@@ -125,6 +127,7 @@ export type Graphic = {
   start: number; // 편집 시간(초)
   end: number;
   data: GraphicData;
+  skin?: Look; // 하이브리드: 이 그래픽을 종이 콜라주로 그릴지 기본 디자인으로 그릴지(없으면 props.skin)
 };
 
 // 강조 종류: keyword(핵심어 밑줄 스윕) · term(전문용어 형광 마커) · number(숫자 Anton) · contrast(대비어)
@@ -169,7 +172,7 @@ export type Transition = {
   color?: string; // wipe/dip 색(없으면 테마)
 };
 export type Keyframe = {t: number; v: number};
-export type Chapter = {start: number; title: string; number: string};
+export type Chapter = {start: number; title: string; number: string; look?: Look};
 
 // 키워드 콜아웃: 화자 반대편, 얼굴을 피한 빈 공간에 2줄 굵은 흰 글씨 + 검정 맥락 라벨(레퍼런스식). 자막과 별도 레이어.
 export type Callout = {start: number; end: number; text: string; highlight: string; label: string;

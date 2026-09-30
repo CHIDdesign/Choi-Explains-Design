@@ -12,7 +12,7 @@ import {LivePeek} from '../fx/LivePeek';
 import {StackCaption, stackParts, warmOf} from '../captions/Stack';
 import {TEMPLATE_COMPONENTS} from '../graphics';
 import {conceptText} from '../paper/Collage';
-import {hashSeed, pickAccent, seeded} from '../paper/Paper';
+import {AccentText, hashSeed, LabelTag, PAPER, PaperBg, pickAccent, seeded} from '../paper/Paper';
 import {TalkingHead, videoBoxFor} from '../TalkingHead';
 import type {Rect} from '../TalkingHead';
 
@@ -81,7 +81,8 @@ const MediaFill: React.FC<{src: string; video: boolean; f: number; dur: number}>
 
 /** 위 카드 한 장의 내용 */
 const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps;
-  theme: ReturnType<typeof makeTheme>; marker: string; alt?: boolean}> = ({s, f, fps, props, theme, marker, alt}) => {
+  theme: ReturnType<typeof makeTheme>; marker: string; variant?: number}> = ({s, f, fps, props, theme, marker,
+  variant = 0}) => {
   const dur = Math.max(1, (s.end - s.start) * fps);
   const g = s.g;
   const src = mediaOf(g);
@@ -140,7 +141,30 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
   }
   const lines = wrap(head, 110, CARD.w - 120, 3).slice(0, 3);
   const size = Math.min(118, ...lines.map((l) => fitSize(l, CARD.w - 120, 118, 60, -0.045)));
-  if (alt) {
+  if (variant === 2) {
+    // 사용자 템플릿 카드: 구겨진 짙은 종이 + 흰 라벨 태그 + 흰 헤드라인(한 낱말만 주황) + 회색 주석
+    const ps = Math.min(116, ...lines.map((l) => fitSize(l, CARD.w - 140, 116, 56, -0.035)));
+    return (
+      <div style={{position: 'absolute', inset: 0}}>
+        <PaperBg src={props.paperTexture} />
+        <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+          justifyContent: 'center', padding: '0 70px'}}>
+          {label ? <div style={{opacity: tween(f, 2, 10), marginBottom: 22}}><LabelTag text={label} size={34} /></div> : null}
+          {lines.map((l, i) => (
+            <div key={i} style={{fontFamily: FONT.display, fontWeight: 500, fontSize: ps, lineHeight: 1.16,
+              letterSpacing: '-0.04em', whiteSpace: 'nowrap', opacity: tween(f, 3 + i * 3, 12),
+              translate: `0 ${interpolate(tween(f, 3 + i * 3, 14), [0, 1], [16, 0])}px`}}>
+              <AccentText text={l} accent={i === lines.length - 1 ? accent : null} />
+            </div>
+          ))}
+          {body ? <div style={{marginTop: 20, fontFamily: FONT.sans, fontSize: 36, lineHeight: 1.45, color: PAPER.body,
+            opacity: tween(f, 10, 12)}}>{wrap(body, 36, CARD.w - 140, 2).map((l, i) => <div key={i}>{l}</div>)}</div>
+            : null}
+        </div>
+      </div>
+    );
+  }
+  if (variant === 1) {
     // 번갈아 쓰는 에디토리얼 카드(참고 채널의 명조 헤드라인): 기울인 명조 라벨 → 큰 명조 헤드라인(한 낱말만 따뜻한 강조색)
     const serifSize = Math.min(112, ...lines.map((l) => fitSize(l, CARD.w - 140, 112, 56, -0.02)));
     const a = pickAccent(lines[lines.length - 1] ?? '', accent);
@@ -331,7 +355,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
             translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 40, 0])}px`,
             filter: !leaving && isMedia && p < 1 ? `blur(${interpolate(p, [0, 1], [10, 0])}px)` : undefined}}>
             <CardContent s={s} f={f} fps={fps} props={props} theme={theme} marker={marker}
-              alt={!s.g && s.kind === 'beat' ? i % 2 === 1 : !!s.g && !isMedia && CONCEPT.has(s.g.template) && i % 2 === 1} />
+              variant={(!s.g && s.kind === 'beat') || (!!s.g && !isMedia && CONCEPT.has(s.g.template)) ? i % 3 : 0} />
           </div>
         );
       })}
