@@ -51,7 +51,12 @@ class StockCandidate:
 
 
 class StockError(RuntimeError):
-    """키가 없거나 틀림, 한도 초과 등 — 그 제공처를 이번 작업에서 끈다."""
+    """제공처 오류. fatal=True(키 없음·틀림)면 그 제공처를 이번 작업에서 끄고,
+    fatal=False(연결 실패·일시 차단·한도)면 잠시 쉬었다가 다음 검색에서 다시 쓴다."""
+
+    def __init__(self, msg: str, *, fatal: bool = True):
+        super().__init__(msg)
+        self.fatal = fatal
 
 
 class StockProvider:
@@ -88,7 +93,7 @@ class StockProvider:
             try:
                 r = net.request(url, params=params, headers=headers or {}, timeout=25)
             except net.NetError as e:
-                raise StockError(f"{self.name} 에 연결하지 못했습니다 — {e}") from e
+                raise StockError(f"{self.name} 에 연결하지 못했습니다 — {e}", fatal=False) from e
             rem = r.headers.get(self.remaining_header) or r.headers.get("X-RateLimit-Remaining")
             if rem is not None and str(rem).isdigit():
                 self.remaining = int(rem)
@@ -101,14 +106,14 @@ class StockProvider:
             if r.status in (400, 401) and ("key" in r.text.lower() or r.status == 401):
                 raise StockError(f"{self.name} API 키가 올바르지 않습니다({r.status}: {r.text[:80]}).")
             if r.status == 403:
-                raise StockError(f"{self.name} 가 요청을 막았습니다(HTTP 403, 모든 접속 방식 실패).")
+                raise StockError(f"{self.name} 가 요청을 막았습니다(HTTP 403, 모든 접속 방식 실패).", fatal=False)
             if not r.ok:
                 raise RuntimeError(f"{self.name} HTTP {r.status}: {r.text[:120]}")
             data = r.json()
             if cache:
                 cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             return data
-        raise StockError(f"{self.name} 요청이 계속 한도에 걸렸습니다.")
+        raise StockError(f"{self.name} 요청이 계속 한도에 걸렸습니다.", fatal=False)
 
     # ------------------------------------------------------------------
     def search_videos(self, query: str, *, per_page: int = 6, locale: str = "") -> list[StockCandidate]:

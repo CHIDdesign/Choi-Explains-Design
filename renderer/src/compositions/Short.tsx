@@ -15,6 +15,8 @@ import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/
 import type {Graphic, ShortProps} from '../lib/types';
 import {cameraAt, punchFactor} from './LongForm';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
+import {PaperShort} from '../components/paper/PaperShort';
+import {ReelShort} from '../components/shorts/ReelShort';
 
 ensureFonts();
 
@@ -83,6 +85,12 @@ const PanelGraphic: React.FC<{g: Graphic; dur: number; theme: ReturnType<typeof 
 };
 
 export const Short: React.FC<ShortProps> = (props) => {
+  if (props.layout === 'reel') return <ReelShort {...props} />;
+  if (props.skin === 'paper') return <PaperShort {...props} />;
+  return <ClassicShort {...props} />;
+};
+
+const ClassicShort: React.FC<ShortProps> = (props) => {
   const frame = useCurrentFrame();
   const {fps, width: W, height: H, durationInFrames} = useVideoConfig();
   const t = frame / fps;

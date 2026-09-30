@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -56,6 +57,7 @@ class StockHub:
         self.providers = providers
         self.log = log
         self.disabled: dict[str, str] = {}
+        self.strikes: dict[str, int] = {}
         self.last_trace: list[str] = []
 
     @property
@@ -97,10 +99,20 @@ class StockHub:
         if p.name in self.disabled or not query:
             return []
         try:
-            return getattr(p, method)(query, **kw)
+            out = getattr(p, method)(query, **kw)
+            self.strikes[p.name] = 0
+            return out
         except StockError as e:
-            self.disabled[p.name] = str(e)
-            self.log(f"🎞 {p.name}: {e} → 이번 작업에서 제외")
+            # 예전엔 한 번 막히면(한도·일시 차단) 작업 끝까지 그 제공처를 껐다 → 뒤 요청이 전부 '후보 없음'.
+            # 키 오류만 끄고, 일시 오류는 잠깐 쉬었다가 계속(3번 연속이면 끔).
+            n = self.strikes.get(p.name, 0) + 1
+            self.strikes[p.name] = n
+            if e.fatal or n >= 3:
+                self.disabled[p.name] = str(e)
+                self.log(f"🎞 {p.name}: {e} → 이번 작업에서 제외")
+            else:
+                self.log(f"🎞 {p.name}: {e} → {4 * n}초 쉬고 계속")
+                time.sleep(4 * n)
         except Exception as e:  # noqa: BLE001 - 네트워크 오류는 그 검색만 건너뜀
             self.log(f"🎞 {p.name} 검색 실패 '{query}': {e}")
         return []

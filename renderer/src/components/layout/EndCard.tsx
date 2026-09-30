@@ -62,7 +62,8 @@ export const EndCard: React.FC<{frame: number; theme: Theme; brand: Brand; episo
  * 예전 엔드카드는 빈 칸 두 개뿐이라 15초가 비어 보였다.
  */
 export const PaperEndCard: React.FC<{frame: number; brand: Brand; episode: Episode; chapters: Chapter[];
-  texture?: string; W: number; H: number}> = ({frame, brand, episode, chapters, texture, W}) => {
+  texture?: string; plain?: boolean; bg?: string; W: number; H: number}> = ({frame, brand, episode, chapters, texture,
+  plain, bg, W}) => {
   const rows = chapters.slice(0, 6);
   const slot = (b: Box, label: string, delay: number) => {
     const p = tween(frame, delay, DUR.slow, 'outCubic');
@@ -79,8 +80,8 @@ export const PaperEndCard: React.FC<{frame: number; brand: Brand; episode: Episo
   };
   return (
     <AbsoluteFill style={{opacity: tween(frame, 0, DUR.slow)}}>
-      <PaperBg src={texture} />
-      <RoughBorder seed={4} />
+      <PaperBg src={texture} style={bg ? {background: bg} : undefined} />
+      {plain ? null : <RoughBorder seed={4} />}
       <SourceCredit text={brand.name} raw />
       <div style={{position: 'absolute', left: 156, top: 200, width: 820}}>
         <div style={{opacity: tween(frame, 4, DUR.normal)}}><LabelTag text="오늘의 정리" /></div>

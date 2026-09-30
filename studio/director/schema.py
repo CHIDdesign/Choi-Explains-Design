@@ -88,6 +88,8 @@ SHORT = _obj({
     "segments": INT_LIST,
     "graphics": {"type": "array", "items": GRAPHIC},
     "emphasis": {"type": "array", "items": _obj({"seg": INT, "word": STR})},
+    # 하단 개념 텍스트(3~5초마다 바뀜): 그 발화가 나올 때 화면 아래에 '검정 라벨 + 큰 글씨'로
+    "beats": {"type": "array", "items": _obj({"seg": INT, "label": STR, "text": STR, "accent": STR})},
     "cta": STR,
     "loop_line": STR,
     "caption": STR,

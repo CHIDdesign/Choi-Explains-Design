@@ -52,42 +52,8 @@ export const PaperGraphic: React.FC<Props> = ({g, Comp, frame, dur, fps, theme, 
     return <Comp {...common} frame={frame} dur={dur} box={{w: W, h: H}} />;
   }
 
-  // ---- 얼굴 위에 띄우기(레퍼런스 3): 사진은 찢어진 액자 + 검정 라벨 + 큰 개념 텍스트, 글은 개념 텍스트만 ----
-  if (g.layout === 'pip' || g.layout === 'overlay') {
-    const {b, right, textX, textW} = pipBoxes(faceX, W);
-    if (media) {
-      return (
-        <>
-          <FramedMedia src={media} kind={mediaKind} b={b} frame={frame} dur={dur} seed={seed} />
-          <DisplayText label={g.data.body || ''} text={g.data.title || ''} accent={g.data.accent} frame={frame}
-            dur={dur} x={textX} y={b.y + b.h + 20} w={textW} align={right ? 'right' : 'left'} size={76} delay={6} />
-          {g.data.credit ? <SourceCredit text={g.data.credit} opacity={tween(frame, 8, 12)} top={34}
-            right={right ? 60 : W - 60 - b.w} /> : null}
-        </>
-      );
-    }
-    if (CONCEPT.has(g.template)) {
-      const {head, body} = conceptText(g.template, g.data);
-      return (
-        <DisplayText label={body || label} text={head} accent={g.data.accent} frame={frame} dur={dur} x={textX}
-          y={H * 0.26} w={textW} align={right ? 'right' : 'left'} size={g.template === 'stat' ? 150 : 96} />
-      );
-    }
-  }
-
-  // ---- 타이틀: 화자는 액자에(LongForm), 왼쪽에 에피소드 개념 카드 ----
-  if (g.template === 'title') {
-    const box = textBoxFor(panelSide);
-    const tag = [episode.number ? `EP. ${episode.number}` : '', episode.series].filter(Boolean).join(' · ');
-    return (
-      <>
-        <ConceptCard template="keyword" frame={frame} dur={dur} box={box} label={tag || brand.name}
-          data={{...g.data, title: g.data.title || episode.title, body: episode.subtitle || g.data.subtitle || '',
-            source: [brand.presenter, brand.presenterTitle].filter(Boolean).join(' · ')}} />
-        <SourceCredit text={brand.name} raw opacity={tween(frame, 8, 12) * tweenOut(frame, dur, 9)} />
-      </>
-    );
-  }
+  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode});
+  if (ref) return ref;
 
   // ---- 화자 액자 + 글(레퍼런스 1) ----
   if (g.layout === 'split') {
@@ -192,4 +158,55 @@ export const PaperGraphic: React.FC<Props> = ({g, Comp, frame, dur, fps, theme, 
         <Comp {...common} frame={frame} dur={dur} box={{w: inner.w, h: inner.h}} />
       </div>
     </>);
+};
+
+export type RefArgs = {g: Graphic; frame: number; dur: number; W: number; H: number; panelSide: 'left' | 'right';
+  chapterTag: string; faceX: number; brand: Brand; episode: Episode};
+
+/**
+ * 사용자 레퍼런스에서 가져온 부분 — 기본(classic) 스타일에도 그대로 쓰인다.
+ *  · 얼굴 위 사진·스톡: 찢어진 흰 액자 + 검정 라벨 + 큰 개념 텍스트(레퍼런스 3), 화자는 그대로
+ *  · 얼굴 위 키워드·숫자: 개념 텍스트(레퍼런스 3)
+ *  · 타이틀: 왼쪽 개념 카드(라벨 태그 → 주황 한 낱말 헤드라인 → 부제 → 회색 주석) + 오른쪽 화자 액자(레퍼런스 1)
+ */
+export const referenceGraphic = ({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode}: RefArgs
+): React.ReactElement | null => {
+  const seed = hashSeed(g.id);
+  const media = g.template === 'photo' ? g.data.image : g.template === 'broll' ? g.data.src : undefined;
+  const mediaKind = g.template === 'broll' ? g.data.kind : 'photo';
+  const label = chapterTag || TEMPLATE_LABEL[g.template];
+  if (g.layout === 'pip' || g.layout === 'overlay') {
+    const {b, right, textX, textW} = pipBoxes(faceX, W);
+    if (media) {
+      return (
+        <>
+          <FramedMedia src={media} kind={mediaKind} b={b} frame={frame} dur={dur} seed={seed} />
+          <DisplayText label={g.data.body || ''} text={g.data.title || ''} accent={g.data.accent} frame={frame}
+            dur={dur} x={textX} y={b.y + b.h + 20} w={textW} align={right ? 'right' : 'left'} size={76} delay={6} />
+          {g.data.credit ? <SourceCredit text={g.data.credit} opacity={tween(frame, 8, 12)} top={34}
+            right={right ? 60 : W - 60 - b.w} /> : null}
+        </>
+      );
+    }
+    if (CONCEPT.has(g.template)) {
+      const {head, body} = conceptText(g.template, g.data);
+      return (
+        <DisplayText label={body || label} text={head} accent={g.data.accent} frame={frame} dur={dur} x={textX}
+          y={H * 0.26} w={textW} align={right ? 'right' : 'left'} size={g.template === 'stat' ? 150 : 96} />
+      );
+    }
+  }
+  if (g.template === 'title') {
+    const box = textBoxFor(panelSide);
+    const tag = [episode.number ? `EP. ${episode.number}` : '', episode.series].filter(Boolean).join(' · ');
+    return (
+      <>
+        <ConceptCard template="keyword" frame={frame} dur={dur} box={box} label={tag || brand.name}
+          data={{...g.data, title: g.data.title || episode.title, body: episode.subtitle || g.data.subtitle || '',
+            source: [brand.presenter, brand.presenterTitle].filter(Boolean).join(' · ')}} />
+        <SourceCredit text={brand.name} raw opacity={tween(frame, 8, 12) * tweenOut(frame, dur, 9)} />
+      </>
+    );
+  }
+  return null;
 };

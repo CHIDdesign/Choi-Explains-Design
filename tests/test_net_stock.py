@@ -154,3 +154,59 @@ def test_diagnostics_zip_hides_keys(tmp_path):
     md = (p.work / "진단.md").read_text(encoding="utf-8")
     assert "pixabay_api_key: 있음" in md and "SECRET-KEY-123" not in md
     assert all(b"SECRET-KEY-123" not in zipfile.ZipFile(z).read(n) for n in names)
+
+
+class _FlakyProvider:
+    """처음엔 일시 차단(403), 그다음엔 정상 — 예전엔 한 번 막히면 작업 끝까지 제외됐다."""
+    name = "Pixabay"
+    videos = photos = True
+    korean = False
+
+    def __init__(self, fatal=False):
+        self.n = 0
+        self.fatal = fatal
+
+    def search_photos(self, q, per_page=6, locale=""):
+        from studio.stock.base import StockError
+        self.n += 1
+        if self.n == 1:
+            raise StockError("막힘", fatal=self.fatal)
+        return [StockCandidate(kind="photo", id=self.n, url="u", thumb="", download="d", width=1, height=1,
+                               provider=self.name)]
+
+    def search_images(self, q, image_type="vector", per_page=6):
+        return [StockCandidate(kind="photo", id=99, url="https://pixabay.com/x", thumb="", download="d", width=64,
+                               height=32, author="kim", provider=self.name)]
+
+    def download(self, c, dst):
+        from PIL import Image
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGBA", (64, 32), (255, 0, 0, 0)).save(dst, "PNG")
+        return dst
+
+
+def test_transient_block_does_not_disable_provider_for_the_whole_job(monkeypatch):
+    import studio.stock.providers as P
+    monkeypatch.setattr(P.time, "sleep", lambda s: None)
+    prov = _FlakyProvider()
+    hub = StockHub([prov])
+    assert hub._call(prov, "search_photos", "chair") == []          # 일시 차단 → 이 검색만 건너뜀
+    assert "Pixabay" not in hub.disabled
+    assert len(hub._call(prov, "search_photos", "chair")) == 1     # 다음 검색은 된다
+    bad = _FlakyProvider(fatal=True)
+    hub2 = StockHub([bad])
+    hub2._call(bad, "search_photos", "chair")
+    assert "Pixabay" in hub2.disabled                               # 키 오류만 끈다
+
+
+def test_motion_scene_pixabay_images_are_downloaded_and_rewritten(tmp_path):
+    prov = _FlakyProvider()
+    hub = StockHub([prov])
+    res = StockResearcher(hub, ff=None, work=tmp_path / "work", public=tmp_path / "public")
+    spec = {"elements": [{"type": "image", "src": "pixabay:vector:light bulb", "w": 30, "h": 30, "frame": "cutout"},
+                         {"type": "text", "text": "아이디어"}]}
+    lists = [[{"template": "motion", "spec": spec}, {"template": "keyword", "title": "x"}]]
+    assert res.resolve_images(lists) == 1
+    el = spec["elements"][0]
+    assert el["src"].startswith("broll/img_") and el["src"].endswith(".png")      # 투명 PNG 는 PNG 로
+    assert (tmp_path / "public" / el["src"]).exists() and res.credits[0]["origin"] == "Pixabay"

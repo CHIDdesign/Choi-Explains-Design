@@ -27,7 +27,10 @@
 - `dots`: {count, cols, gap, r, highlight:[인덱스], groups:[4,4,4], groupAt:초, groupGap}. groupAt 에 점들이 무리로 다시 모인다(게슈탈트 근접성).
 - `counter`: {from, to, prefix, suffix, decimals, size}. Anton 숫자가 카운트업.
 - `bar`: {w, h, value(0~1), label}. 가로 막대가 차오른다.
-- `image`: {src: "images/…"(자료 사진으로 확보된 파일만), w, h, radius}
+- `image`: {src, w, h, radius, frame}
+  - src: `"pixabay:vector:<영어 검색어>"`(투명 배경 오브젝트·아이콘) · `"pixabay:illustration:<검색어>"` · `"pixabay:photo:<검색어>"`
+    → 앱이 Pixabay 에서 받아 파일로 바꾼다(못 구하면 그 요소만 빠진다). 이미 확보된 파일은 "images/…".
+  - frame: `"torn"` = 찢어진 흰 액자(사진, 채널의 종이 콜라주 스타일) · `"cutout"` = 오려 붙인 듯 그림자만(투명 PNG) · `"none"`.
 
 설계 규칙:
 1. 한 장면 = 한 가지 생각. 요소 3~10개, 텍스트는 짧게(제목 14자 이내).

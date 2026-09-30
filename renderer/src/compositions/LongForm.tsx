@@ -5,7 +5,7 @@ import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
 import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
 import {LivePeek} from '../components/fx/LivePeek';
-import {EndCard, PaperEndCard} from '../components/layout/EndCard';
+import {PaperEndCard} from '../components/layout/EndCard';
 import {PAPER, PaperBg, RoughBorder, SourceCredit, TornFrame} from '../components/paper/Paper';
 import {paperSpeakerBox} from '../components/paper/PaperGraphic';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
@@ -23,13 +23,13 @@ ensureFonts();
 type RegionSpan = {start: number; end: number; kind: 'split' | 'pip' | 'title'};
 
 /** 화자 영역이 바뀌는 구간(칠판 패널/PiP/타이틀). 거의 붙어 있는 같은 종류는 하나로 합쳐 들락날락하지 않게. */
-export const buildRegionSpans = (graphics: Graphic[], paper = false): RegionSpan[] => {
+export const buildRegionSpans = (graphics: Graphic[], pipOverlay = true): RegionSpan[] => {
   const spans: RegionSpan[] = [];
   const sorted = [...graphics].sort((a, b) => a.start - b.start);
   for (const g of sorted) {
-    // 종이 스킨의 pip 는 화자를 그대로 두고 사진 액자만 띄운다(레퍼런스 3)
+    // pip 는 화자를 그대로 두고 사진 액자만 띄운다(사용자 레퍼런스 3) — 예전엔 화자가 구석 작은 창으로 줄었다
     const kind = g.template === 'title' ? 'title' : g.layout === 'split' ? 'split'
-      : g.layout === 'pip' && !paper ? 'pip' : null;
+      : g.layout === 'pip' && !pipOverlay ? 'pip' : null;
     if (!kind) continue;
     const last = spans[spans.length - 1];
     if (last && last.kind === kind && g.start - last.end < 1.0) {
@@ -113,8 +113,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
   const paper = props.skin === 'paper';
-  const spans = useMemo(() => buildRegionSpans(props.graphics, paper), [props.graphics, paper]);
-  const isUnder = (g: Graphic) => !paper && (g.template === 'title' || g.layout === 'pip');
+  const spans = useMemo(() => buildRegionSpans(props.graphics), [props.graphics]);
+  const isUnder = (g: Graphic) => !paper && g.template === 'title';
   const under = useMemo(() => props.graphics.filter(isUnder), [props.graphics, paper]);
   const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)), [props.graphics, paper]);
 
@@ -148,13 +148,14 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     const p = paper
       ? Math.min(enter(frame, toFrame(span.start, fps), 21, EASE.inOutCubic), exit(frame, toFrame(span.end, fps), 15))
       : Math.min(enter(frame, toFrame(span.start, fps), 16), exit(frame, toFrame(span.end, fps), 12));
-    if (p > 0 && paper && (span.kind === 'split' || span.kind === 'title')) {
+    // 타이틀은 두 스킨 모두 '글 왼쪽 + 화자 액자 오른쪽'(레퍼런스 1) — 예전엔 가운데 작은 화자 창이 제목 글자를 가렸다
+    if (p > 0 && (span.kind === 'title' || (paper && span.kind === 'split'))) {
       const target = paperSpeakerBox(props.panelSide, W);
       const tBox = videoBoxFor(target, face, 1.02 * punchFactor(props.punches, t, fps), 'center', 0.42);
       region = lerpRect(region, target, p);
       box = lerpBox(box, tBox, p);
       paperP = Math.max(paperP, p);
-      paperBorder = p;
+      paperBorder = paper ? p : 0;
     } else if (p > 0) {
       let target: Rect;
       let tBox;
@@ -215,10 +216,10 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     <AbsoluteFill style={{background: theme.ink}}>
       <TransitionStage tx={tx}>
         {under.map(seq)}
-        {paper && paperP > 0 && frame < endStart ? (
+        {paperP > 0 && frame < endStart ? (
           <>
-            <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} />
-            <RoughBorder opacity={paperBorder} />
+            {paper ? <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} /> : null}
+            {paper ? <RoughBorder opacity={paperBorder} /> : null}
             <TornFrame b={region} opacity={Math.min(1, paperP * 2)} seed={7} />
             {cam.framed > 0.5 && chapter && !span ? (
               <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw opacity={cam.framed} />
@@ -235,7 +236,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
           <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw
             opacity={enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9} />
         ) : null}
-        {!paper && props.showChapterLabel && chapter && !fullscreenActive && !span ? (
+        {!paper && props.showChapterLabel && chapter && !fullscreenActive && !span
+          && !props.graphics.some((g) => t >= g.start - 0.3 && t < g.end + 0.3 && g.layout !== 'split') ? (
           <div style={{position: 'absolute', left: 72, top: 56, fontFamily: FONT.sans, fontSize: 21, fontWeight: 600,
             color: 'rgba(255,255,255,0.88)', textShadow: '0 1px 8px rgba(0,0,0,0.55)', letterSpacing: '0.01em',
             opacity: enter(frame, toFrame(chapter.start + 3.2, fps), 14) * 0.9}}>
@@ -243,7 +245,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
           </div>
         ) : null}
         {over.map(seq)}
-        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} paper={paper}
+        <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} paper
           face={face} zoom={zoom} />
       </TransitionStage>
       {props.captionPreset === 'editorial' || props.captionPreset === 'documentary' ? <CaptionScrim /> : null}
@@ -276,9 +278,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
 const EndCardSeq: React.FC<{theme: ReturnType<typeof makeTheme>; props: LongFormProps}> = ({theme, props}) => {
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
-  if (props.skin === 'paper') {
-    return <PaperEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters}
-      texture={props.paperTexture} W={width} H={height} />;
-  }
-  return <EndCard frame={frame} theme={theme} brand={props.brand} episode={props.episode} W={width} H={height} />;
+  // 두 스킨 모두 '오늘의 정리 + 다음 영상 자리'(예전 엔드카드는 빈 칸 두 개뿐이라 비어 보였다)
+  return <PaperEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters}
+    texture={props.skin === 'paper' ? props.paperTexture : undefined} plain={props.skin !== 'paper'}
+    bg={props.skin === 'paper' ? undefined : theme.ink} W={width} H={height} />;
 };

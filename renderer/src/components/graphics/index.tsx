@@ -13,7 +13,9 @@ import {CompareCard, ListCard, TimelineCard} from './Lists';
 import {PhotoCard} from './Photo';
 import {BrollCard} from './Broll';
 import {MotionScene} from '../motion/MotionScene';
-import {PaperGraphic} from '../paper/PaperGraphic';
+import {PaperGraphic, referenceGraphic} from '../paper/PaperGraphic';
+import {ConceptCard, FramedMedia} from '../paper/Collage';
+import {hashSeed, LabelTag, SourceCredit} from '../paper/Paper';
 
 export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> = {
   chapter: ChapterCard,
@@ -68,6 +70,14 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
       episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
       paperTexture={paperTexture} />;
   }
+  // 기본 스타일 위에 사용자 레퍼런스에서 가져온 부분: 얼굴 위 사진 액자·개념 텍스트, 타이틀 구도(글 왼쪽 + 화자 액자)
+  const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode});
+  if (ref) {
+    return g.template === 'title' ? <AbsoluteFill style={{background: theme.ink}}>{ref}</AbsoluteFill> : ref;
+  }
+  const concept = ['keyword', 'definition', 'quote', 'stat'].includes(g.template);
+  const media = g.template === 'photo' ? g.data.image : g.template === 'broll' ? g.data.src : undefined;
+  const credit = g.data.credit || (g.template === 'quote' ? '' : g.data.source) || '';
   const specBg = g.template === 'motion' ? g.data.spec?.bg : undefined;
   const sName = specBg && specBg !== 'transparent' ? specBg : surfaceFor(g.template, g.layout);
   const s = mkSurface(theme, sName);
@@ -100,8 +110,21 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
         <div style={{position: 'absolute', left: pad, top: 70, width: pw - pad * 2, height: 1, background: s.rule,
           opacity: enter(frame, 6, 12)}} />
         <div style={{position: 'absolute', left: pad, top: 118, width: pw - pad * 2, height: H - 118 - 170}}>
-          <Comp {...common} frame={frame} dur={dur} box={{w: pw - pad * 2, h: H - 118 - 170}} />
+          {concept ? (
+            // 레퍼런스의 글 위계: 라벨 태그 → 한 낱말만 강조색인 헤드라인 → 본문 → 회색 주석
+            <ConceptCard template={g.template} data={g.data} label={chapterTag} frame={frame} dur={dur}
+              box={{x: 0, y: 40, w: pw - pad * 2, h: H - 118 - 170 - 40}} />
+          ) : media ? (
+            <>
+              {g.data.title ? <div style={{opacity: enter(frame, 2, 12)}}><LabelTag text={g.data.title} /></div> : null}
+              <FramedMedia src={media} kind={g.template === 'broll' ? g.data.kind : 'photo'} frame={frame} dur={dur}
+                seed={hashSeed(g.id)} b={{x: 0, y: 96, w: pw - pad * 2, h: Math.round((pw - pad * 2) * 0.58)}} />
+            </>
+          ) : (
+            <Comp {...common} frame={frame} dur={dur} box={{w: pw - pad * 2, h: H - 118 - 170}} />
+          )}
         </div>
+        {credit ? <SourceCredit text={credit} top={H - 150} right={pad} opacity={enter(frame, 8, 12)} /> : null}
       </div>
     );
   }
@@ -140,6 +163,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
         translate: `0 ${interpolate(pIn, [0, 1], [24, 0])}px`}}>
         <Comp {...common} frame={frame} dur={dur} box={{w: innerW, h: innerH}} />
       </div>
+      {credit && !noHeader ? <SourceCredit text={credit} top={62} right={48} opacity={enter(frame, 8, 12)} /> : null}
     </AbsoluteFill>
   );
 };

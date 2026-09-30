@@ -19,6 +19,11 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - `studio/gui/` — 오토파일럿 창: `app.py`(① 주제 ② 원본 영상 ③ 대본 → 진행 화면(남은 시간·실시간 미리보기) → 결과 화면), `winshell.py`(관리자 창에서 탐색기 끌어다 놓기: WM_DROPFILES 허용), `poster.py`, `icon.py`, `theme.py`, `settings_dialog.py`(고급 설정).
 - `studio/director/claude_code.py` — 기본 AI 연결: 로컬 Claude Code `claude -p`(stream-json 입력·--json-schema·--system-prompt-file·--tools "", ANTHROPIC_API_KEY 제거). `claude.py` 는 API 키 방식. 둘은 같은 `structured()` 인터페이스.
 - `renderer/src/components/graphics/` — 템플릿. 새 템플릿은 types.ts TemplateName + graphics/index.tsx + director/catalog.py 세 곳에 추가.
+- `renderer/src/components/paper/` — **종이 콜라주 스킨**(기본, props `skin: 'paper'`): 사용자가 직접 편집한 레퍼런스 3장을 측정해 옮김.
+  `Paper.tsx`(구겨진 종이 배경·찢어진 흰 액자·회색 거친 테두리·라벨 태그·주황 강조·출처), `Collage.tsx`(개념 카드·개념 텍스트·액자 사진),
+  `PaperGraphic.tsx`(템플릿 배치), `PaperShort.tsx`(세로 전용 숏폼: 훅 제목·액자 창·하단 개념 텍스트 `beats`). 종이 텍스처는
+  `studio/render/assets.py make_paper`(절차적 생성). `skin: 'classic'` 은 예전 칠판·잉크 스타일.
+- `studio/review.py` — 완성 영상 검토 시트(2.5초마다 한 장, 시간·자막) → `부가자료/검토시트_*.jpg`.
 
 ## 규칙
 - 모션은 `renderer/src/design/motion.ts` 토큰(EASE·DUR·STAGGER·SPRING)만 쓴다. 자막 프리셋은 `components/captions/`.
@@ -29,6 +34,7 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - Windows 가 1차 타깃: 경로는 pathlib, 서브프로세스는 `util.run_process`(콘솔 창 숨김), 긴 filter 는 `FFmpeg.filter_script_args`(FFmpeg 7+ `-/filter_complex`).
 - `.bat` 은 모두 첫머리에서 **관리자 권한으로 자동 재실행**(fltmc 확인 → `Start-Process -Verb RunAs`). 새 .bat 을 만들면 같은 블록을 넣는다. 관리자 창에는 OLE 드래그 앤 드롭이 안 들어오므로 GUI 는 클릭·Ctrl+V·WM_DROPFILES 로 받는다.
 - 진행 화면 미리보기는 `Pipeline(preview=…)` 로 보낸다. 렌더 중 프레임은 props `peekEvery` → `components/fx/LivePeek.tsx`(`Artifact.Thumbnail`) → `render.mjs` onArtifact → `peek` 이벤트(`run_render(on_peek=…)`). 결과 영상에는 영향 없음.
+- 편집은 젠틀하게(교육 영상): 하드컷 줌·휩·플래시 금지, 강조는 `glide`, 같은 프레이밍 점프컷은 `Clip.soft`(0.1초 섞기), 앵글 전환은 `CameraShot.glide`.
 - 렌더는 **무음**(`RenderItem.muted`), 음향은 `stage_master` 에서 믹스. 영상 길이를 바꾸는 전환(xfade·TransitionSeries) 금지 — 전환은 컷 지점 중심 오버레이(`components/fx/Transitions.tsx`).
 - 제3자 효과음·음악 파일은 저장소에 넣지 않는다(`assets/sound/` 는 gitignore, 목록만 `assets/sound_manifest.json`).
 

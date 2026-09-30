@@ -175,6 +175,7 @@ def _make_short(ids: list[int], by_id: dict[int, Utterance], hint: str, max_sec:
         "segments": ids,
         "graphics": [],
         "emphasis": [{"seg": i, "word": w} for i in ids[:1] for w in kw[:2]],
+        "beats": [],
         "cta": "전체 이야기는 채널의 롱폼 영상에서",
         "loop_line": "",
         "caption": first_text,

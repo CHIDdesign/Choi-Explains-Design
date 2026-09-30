@@ -75,6 +75,24 @@ class Pixabay(StockProvider):
         return out
 
 
+    def search_images(self, query: str, *, image_type: str = "vector", per_page: int = 6) -> list[StockCandidate]:
+        """그래픽 소재: vector(대개 투명 PNG 오브젝트) · illustration · photo. 모션 장면 안 이미지 요소용."""
+        params = self._params(query, per_page, "")
+        params.update(image_type=image_type if image_type in ("vector", "illustration", "photo") else "vector")
+        data = self._get_json(API + "/", params)
+        out = []
+        for h in data.get("hits", []) or []:
+            dl = h.get("largeImageURL") or h.get("webformatURL") or ""
+            if not dl:
+                continue
+            out.append(StockCandidate(
+                kind="photo", id=h["id"], url=h.get("pageURL", ""), thumb=h.get("previewURL", ""), download=dl,
+                width=int(h.get("webformatWidth") or 0), height=int(h.get("webformatHeight") or 0),
+                author=h.get("user", ""), author_url=f"https://pixabay.com/users/{h.get('user', '')}-{h.get('user_id', '')}/",
+                alt=h.get("tags", ""), provider=self.name))
+        return out
+
+
 def pick_rendition(videos: dict[str, Any]) -> Optional[dict[str, Any]]:
     """large(보통 1920×1080) → medium(1280×720) 순. 짧은 변 720 미만은 쓰지 않는다."""
     for tier in ("large", "medium"):

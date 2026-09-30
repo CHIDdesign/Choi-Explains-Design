@@ -6,6 +6,7 @@ import {FONT} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {MotionColor, MotionEl, MotionKey, MotionSpec} from '../../lib/types';
 import {ChalkFilter, ParenLabel} from '../layout/Editorial';
+import {hashSeed, TornFrame} from '../paper/Paper';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -333,11 +334,28 @@ const BarEl: React.FC<{el: Extract<MotionEl, {type: 'bar'}>; c: Ctx}> = ({el, c}
 
 const ImageEl: React.FC<{el: Extract<MotionEl, {type: 'image'}>; c: Ctx}> = ({el, c}) => {
   const st = elementState({...el, enter: el.enter ?? 'scale'}, c);
-  if (!st.visible || !el.src) return null;
+  // 'pixabay:' 는 스톡 단계에서 파일로 바뀌어야 한다(못 구했으면 그리지 않음)
+  if (!st.visible || !el.src || el.src.startsWith('pixabay:')) return null;
+  const w = (el.w / 100) * c.W;
+  const h = (el.h / 100) * c.H;
+  const cutout = el.frame === 'cutout' || (!el.frame && el.src.endsWith('.png'));
+  if (el.frame === 'torn') {
+    // 종이 콜라주: 찢어진 흰 테두리 액자(레퍼런스 3)
+    return (
+      <Wrap st={st} anchor={el.anchor}>
+        <div style={{position: 'relative', width: w, height: h}}>
+          <TornFrame b={{x: 0, y: 0, w, h}} seed={hashSeed(el.src)}>
+            <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}} />
+          </TornFrame>
+        </div>
+      </Wrap>
+    );
+  }
   return (
     <Wrap st={st} anchor={el.anchor}>
-      <Img src={staticFile(el.src)} style={{width: (el.w / 100) * c.W, height: (el.h / 100) * c.H, objectFit: 'cover',
-        borderRadius: el.radius ?? 0, display: 'block'}} />
+      <Img src={staticFile(el.src)} style={{width: w, height: h, objectFit: cutout ? 'contain' : 'cover',
+        borderRadius: el.radius ?? 0, display: 'block',
+        filter: cutout ? 'drop-shadow(0 10px 18px rgba(0,0,0,0.45))' : undefined}} />
     </Wrap>
   );
 };

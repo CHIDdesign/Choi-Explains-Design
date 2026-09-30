@@ -321,3 +321,34 @@ def test_camera_plan_uses_framed_shots_gently():
     for i, s in enumerate(shots):
         if s.get("framed") or (i and shots[i - 1].get("framed")):
             assert s["glide"] == PARAMS["framed_glide"]          # 액자 들어가고 나올 때 천천히
+
+
+def test_short_beats_fill_the_bottom_every_few_seconds():
+    from studio.edit.grammar import Moment
+    from studio.models import Utterance, Word
+    from studio.render.props import short_beats
+    words = [Word(f"w{i}", i * 1.0, i * 1.0 + 0.8, 0.9) for i in range(30)]
+    utts = [Utterance(id=k, start=k * 6.0, end=k * 6.0 + 5.8, text="", asr_text="", words=words[k * 6:(k + 1) * 6])
+            for k in range(5)]
+    tm = TimeMap([Span(0, 30)])
+    spec = {"beats": [{"seg": 0, "label": "오늘의 질문", "text": "좋은 디자인의 시작", "accent": "시작"},
+                      {"seg": 3, "label": "핵심", "text": "질문이 먼저다", "accent": "없는말"}]}
+    cues = [{"start": 12.0, "end": 13.5, "lines": [[{"text": "해결책부터", "start": 12, "end": 13, "em": True},
+                                                  {"text": "그리지", "start": 13, "end": 13.5}]]}]
+    beats = short_beats(spec, utts, tm, cues, [Moment(t=6.2, end=8.0, callout="넓게\n펼치기", label="방법")], 30.0)
+    assert [b["text"] for b in beats] == ["좋은 디자인의 시작", "넓게", "해결책부터 그리지", "질문이 먼저다"]
+    assert beats[0]["start"] == 0.25 and beats[-1]["accent"] == ""          # 텍스트에 없는 강조어는 버림
+    for a, b in zip(beats, beats[1:]):
+        assert a["end"] <= b["start"] and 2.2 <= a["end"] - a["start"] <= 5.0
+
+
+def test_shorts_inherit_long_graphics_in_their_segments():
+    from types import SimpleNamespace
+    from studio.pipeline import Pipeline
+    long_g = [{"template": "chapter", "start_seg": 3}, {"template": "list", "start_seg": 3},
+              {"template": "broll", "start_seg": 4, "src": "broll/a.mp4"}, {"template": "broll", "start_seg": 4},
+              {"template": "motion", "start_seg": 9}, {"template": "keyword", "start_seg": 5}]
+    fake = SimpleNamespace(plan_long={"graphics": long_g})
+    s = {"segments": [3, 4, 5], "graphics": [{"template": "keyword", "start_seg": 5}]}
+    got = Pipeline._short_graphics(fake, s)
+    assert [(g["template"], g["start_seg"]) for g in got] == [("keyword", 5), ("list", 3), ("broll", 4)]

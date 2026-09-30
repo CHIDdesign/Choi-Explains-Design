@@ -27,7 +27,7 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "title=챕터 제목(대상·사례 명사구, 12자 이내), subtitle=한 줄 부제(선택)",
              ("fullscreen",), 2.2, 3.0, 9),
     Template("keyword", "키워드 슬램",
-             "핵심 비유·개념어를 이름 붙이는 순간(예: '여백은 숨 쉴 공간'). 영상 전체의 앵커로 아껴 쓴다.",
+             "핵심 비유·개념어를 이름 붙이는 순간(예: '여백은 숨 쉴 공간'). 개념이 새로 나올 때마다(얼굴 옆 개념 텍스트로도 쓴다).",
              "title=핵심어/비유(12자 이내), subtitle=작은 보조문(선택)",
              ("split", "overlay", "fullscreen"), 2.0, 4.0, 6),
     Template("definition", "용어 정의",
@@ -79,9 +79,9 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "title=제목, items=아래→위 순서 3~5개, highlight=강조 인덱스 또는 -1",
              ("fullscreen", "split"), 4.0, 12.0, 6),
     Template("photo", "자료 사진",
-             "고유명사(제품·건축·디자이너·브랜드·작품)가 처음 나오면 1초 안에 실제 사진. 첫 등장은 풀스크린 3~6초.",
+             "고유명사(제품·건축·디자이너·브랜드·작품)가 처음 나오면 1초 안에 실제 사진. 기본은 pip(얼굴 옆 찢어진 액자 + 개념 텍스트), 첫 등장은 풀스크린 3~6초도 가능.",
              "image=로컬 이미지 파일명 또는 영어 검색어(예: 'Braun SK 4 radio'), title=대상 이름, body=짧은 캡션(연도·디자이너 등, 선택)",
-             ("fullscreen", "split", "pip"), 3.0, 7.0, 5),
+             ("fullscreen", "split", "pip"), 3.0, 7.0, 6),
     Template("motion", "모션 장면(직접 설계)",
              "템플릿으로 표현되지 않는 개념을 움직임으로 보여줄 때(게슈탈트 근접성, 시선 흐름, 비례 변화, 전후 비교 모핑 등). 모션 디자이너 전용.",
              "spec_json=MotionSpec JSON(모션 DSL 참고)",
@@ -89,7 +89,7 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
     Template("broll", "스톡 B-roll",
              "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(무료 스톡: Pixabay·Unsplash·Coverr·Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
              "image=영어 검색어(구체적 명사·장면), title=한국어 검색어(화면 라벨로도 씀), subtitle=video|photo, body=이 장면의 목적",
-             ("fullscreen", "split", "pip"), 2.5, 7.0, 5),
+             ("fullscreen", "split", "pip"), 2.5, 7.0, 6),
 ]}
 
 TEMPLATE_NAMES = tuple(TEMPLATES.keys())

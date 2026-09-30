@@ -99,7 +99,9 @@ export type MotionDots = MotionElBase & {type: 'dots'; count: number; cols: numb
 export type MotionCounter = MotionElBase & {type: 'counter'; from: number; to: number; decimals?: number; prefix?: string;
   suffix?: string; size: number};
 export type MotionBar = MotionElBase & {type: 'bar'; w: number; h: number; value: number; label?: string};
-export type MotionImage = MotionElBase & {type: 'image'; src: string; w: number; h: number; radius?: number};
+// frame: torn = 찢어진 흰 액자(사진), cutout = 오려 붙인 듯 그림자만(투명 PNG 오브젝트), none = 그대로
+export type MotionImage = MotionElBase & {type: 'image'; src: string; w: number; h: number; radius?: number;
+  frame?: 'torn' | 'cutout' | 'none'};
 
 export type MotionEl = MotionText | MotionRect | MotionCircle | MotionLine | MotionPath | MotionDots | MotionCounter |
   MotionBar | MotionImage;
@@ -209,6 +211,9 @@ export type LongFormProps = {
   paperTexture?: string; // public 기준 구겨진 종이 텍스처(없으면 단색)
 };
 
+// 숏폼 하단 개념 텍스트(3~5초마다 바뀜): 검정 라벨 + 큰 글씨(한 낱말 주황)
+export type ShortBeat = {start: number; end: number; text: string; label?: string; accent?: string};
+
 export type ShortProps = {
   fps: number;
   width: number;
@@ -231,13 +236,15 @@ export type ShortProps = {
   hookHighlight: string;
   seriesLabel: string;
   // window = 셜록현준식 레터박스(상단 2줄 제목 · 가운데 1080×1030 창 · 창 안 하단 자막 · 로고)
-  layout: 'full' | 'framed' | 'window';
+  // reel = 참고 릴스식(위 큰 카드 · 아래 얼굴 · 이음새 굵은 자막) — 기본
+  layout: 'full' | 'framed' | 'window' | 'reel';
   progressBar: boolean;
   grain: number;
   grainFrames: string[];
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
   skin?: Skin;
   paperTexture?: string;
+  beats?: ShortBeat[];
 };
 
 export type ThumbnailProps = {

@@ -36,7 +36,7 @@ from .director.plan import (TimedGraphic, normalize_long, normalize_shorts, seg_
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
-from .edit.grammar import EditDecisions, Moment, build_long_edit, build_short_edit
+from .edit.grammar import PARAMS, EditDecisions, Moment, build_long_edit, build_short_edit
 from .edit.verify import find_issues, subtract, to_source
 from .eta import Eta, features
 from .export.premiere import export_xml
@@ -48,13 +48,13 @@ from .media.mix import BgmPlan, SfxCue, mix, mux_final
 from .models import Span, Tag, TimeMap, Utterance, Word
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
-from .render.props import (Episode, apply_edit, long_props, mark_soft_cuts, short_props, strip_audio,
-                           text_graphic_spans)
+from .render.props import (Episode, apply_edit, long_props, mark_soft_cuts, short_beats, short_props,
+                           strip_audio, text_graphic_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
-from .stock.research import StockResearcher
+from .stock.research import StockResearcher, strip_stock_images
 from .text.align import ScriptAligner, build_utterances
 from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
@@ -116,7 +116,9 @@ class JobSpec:
     studio_mode: bool = True
     fetch_stock: bool = True
     verify_edit: bool = True       # 편집 후 목소리를 다시 인식해 남은 되풀이·무음을 한 번 더 자른다
-    skin: str = "paper"            # 화면 스킨: paper(사용자 레퍼런스 종이 콜라주) | classic
+    # 화면 스킨: classic = 기존 디자인 + 사용자 레퍼런스의 일부(사진 액자·개념 카드 글 위계·출처·타이틀 구도·자막),
+    #            paper = 레퍼런스 종이 콜라주 전체(구겨진 종이·거친 테두리·액자 샷)
+    skin: str = "classic"
     motion_scenes: bool = True
     qa_rounds: int = 1
     direction: str = ""
@@ -125,7 +127,7 @@ class JobSpec:
     music: bool = True
     auto_grade: bool = True
     enhance_voice: bool = True
-    shorts_layout: str = "window"       # 셜록현준식 레터박스(제목 · 창 · 자막 · 로고)
+    shorts_layout: str = "reel"         # 참고 릴스식(위 큰 카드 · 아래 얼굴 · 이음새 굵은 자막) | window | full | framed
     progress_bar: bool = False
     endcard: bool = True
     reuse_plan: bool = True
@@ -793,6 +795,13 @@ class Pipeline:
                 n += 1
                 self._stage("broll", n / total)
                 if res is None:
+                    # 위키미디어·내 폴더에 없으면 버리지 않고 스톡 사진(Pixabay 등) 요청으로 넘긴다 — 다음 단계가 찾는다
+                    if q and self._stock_enabled():
+                        g = copy.deepcopy(g)
+                        g["template"] = "broll"
+                        g["stock"] = {"kind": "photo", "query_en": q, "query_ko": g.get("title", ""),
+                                      "purpose": g.get("body", ""), "must_show": ""}
+                        keep.append(g)
                     continue
                 g = copy.deepcopy(g)
                 g["image"] = f"images/{res.path.name}"
@@ -804,14 +813,18 @@ class Pipeline:
         """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등 + 키 없는 Openverse) → (Claude 비전으로) 선택 → 정리."""
         lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
-        self.stock_stats = {"requests": n}
-        if not n:
-            self.log("🎞 기획에 스톡 B-roll 요청이 없습니다(자료 리서처가 요청을 만들지 않음).")
+        imgs = sum(1 for gl in lists for g in gl if g["template"] == "motion" and isinstance(g.get("spec"), dict)
+                   for e in g["spec"].get("elements", []) or []
+                   if isinstance(e, dict) and str(e.get("src", "")).startswith("pixabay:"))
+        self.stock_stats = {"requests": n, "image_requests": imgs}
+        if not n and not imgs:
+            self.log("🎞 기획에 스톡 B-roll·그래픽 이미지 요청이 없습니다(자료 리서처가 요청을 만들지 않음).")
             return
         if not self._stock_enabled():
-            self.log(f"🎞 스톡 B-roll {n}건 건너뜀(꺼짐)")
+            self.log(f"🎞 스톡 B-roll {n}건 · 그래픽 이미지 {imgs}건 건너뜀(꺼짐)")
             for gl in lists:
                 gl[:] = [g for g in gl if g["template"] != "broll" or g.get("src")]
+            strip_stock_images(lists)
             return
         hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
         self.log("🎞 검색처: " + (", ".join(hub.names) or "없음") + " · " + hub.check())
@@ -819,7 +832,9 @@ class Pipeline:
         pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
         res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
                               cancel=self.cancel)
-        res.run(lists, progress=self._sp("stock"))
+        if n:
+            res.run(lists, progress=self._sp("stock"))
+        res.resolve_images(lists)
         self.stock_stats = res.stats
         self.broll_log += res.credits
         left = hub.remaining()
@@ -1047,6 +1062,23 @@ class Pipeline:
                     out.append(tm.edit_span_of(i).start + (a - k.start))
         return sorted(set(round(x, 3) for x in out))
 
+    def _short_graphics(self, s: dict[str, Any]) -> list[dict[str, Any]]:
+        """숏폼 그래픽 = 숏폼 기획의 그래픽 + 이 구간에 있던 롱폼 그래픽(도식·사진·스톡·모션). 예전엔 숏폼 기획의 0~3개뿐이라
+        같은 도식이 13초씩 떠 있거나 아무것도 없었다."""
+        segs = set(s["segments"])
+        out = [dict(g) for g in s.get("graphics", [])]
+        have = {(g.get("template"), g.get("start_seg")) for g in out}
+        for g in self.plan_long.get("graphics", []) or []:
+            if g.get("template") in ("chapter", "title", "lower_third") or g.get("start_seg") not in segs:
+                continue
+            if g.get("template") == "broll" and not g.get("src"):
+                continue
+            k = (g.get("template"), g.get("start_seg"))
+            if k not in have:
+                have.add(k)
+                out.append(copy.deepcopy(g))
+        return out
+
     def _moments(self, tm: TimeMap, segs: Optional[set[int]] = None) -> list[Moment]:
         by_id = {u.id: u for u in self.utts}
         out = []
@@ -1080,7 +1112,8 @@ class Pipeline:
                              graphics=lp["graphics"], chapters=lp["chapters"], moments=self._moments(self.timemap),
                              cues=lp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
                              text_graphic_spans=text_graphic_spans(lp["graphics"]), endcard=self.spec.endcard,
-                             face=lp.get("face"))
+                             face=lp.get("face"),
+                             P=PARAMS if self.spec.skin == "paper" else {**PARAMS, "framed_every": 0})
         apply_edit(lp, ed)
         strip_audio(lp)
         return lp, ed
@@ -1119,7 +1152,8 @@ class Pipeline:
                      f" · 얼굴 화면 비율 {ed.stats['face_ratio'] * 100:.0f}%")
         self.short_props: list[dict] = []
         for i, (s, tm) in enumerate(zip(self.plan_shorts, getattr(self, "short_maps", [])), 1):
-            sg = time_graphics(s["graphics"], self.utts, tm, total=tm.duration, min_start=3.0, id_prefix=f"s{i}g")
+            sg = time_graphics(self._short_graphics(s), self.utts, tm, total=tm.duration, min_start=3.0,
+                               id_prefix=f"s{i}g")
             for g in sg:
                 g.layout = "split"
             series = f"{self.spec.series} #{self.spec.episode}" if self.spec.episode else self.spec.series
@@ -1136,6 +1170,9 @@ class Pipeline:
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
             mark_soft_cuts(sp["clips"], ed.camera, ed.transitions, ed.soft_cut)
+            if self.spec.skin == "paper":
+                sp["beats"] = short_beats(s, self.utts, tm, sp["captions"], self._moments(tm, set(s["segments"])),
+                                          sp["duration"])
             strip_audio(sp)
             sp["peekEvery"] = peek_every
             self.short_props.append(sp)
@@ -1279,6 +1316,7 @@ class Pipeline:
             write_text(self.extras / "롱폼_자막.srt", cues_to_srt(self.long_props["captions"]))
         for i, sp in enumerate(self.short_props, 1):
             write_text(self.extras / f"숏폼{i}_자막.srt", cues_to_srt(sp["captions"]))
+        self._review_sheets()
         text = youtube_text(self.plan_long, chapters, self.plan_shorts, credits)
         if music:
             text += "\n## 배경음악\n" + "\n".join(f"- {m}" for m in music) + "\n"
@@ -1309,6 +1347,25 @@ class Pipeline:
         shutil.copyfile(self.work / "plan.json", self.extras / "plan.json")
         self.results["extras"] = str(self.extras)
         self.results["upload_info"] = str(self.out / "업로드정보.txt")
+
+    def _review_sheets(self) -> None:
+        """부가자료/검토시트_*.jpg — 완성 영상을 2.5초마다 한 장씩(시간·자막 포함). 실패해도 작업은 계속."""
+        from .review import review_sheets
+        jobs = []
+        if self.long_props and self.masters and not self.masters[0]["short"]:
+            jobs.append((self.masters[0]["dst"], self.long_props["captions"], "검토시트_롱폼", "롱폼"))
+        shorts = [m for m in self.masters if m["short"]]
+        for i, (m, sp) in enumerate(zip(shorts, self.short_props), 1):
+            jobs.append((m["dst"], sp["captions"], f"검토시트_숏폼{i}", f"숏폼 {i}"))
+        n = 0
+        for video, cues, name, title in jobs:
+            try:
+                if Path(video).exists():
+                    n += len(review_sheets(self.ff, Path(video), cues, self.extras / name, title=title))
+            except Exception as e:  # noqa: BLE001 - 검토용 부가자료
+                self.log(f"검토 시트 생략({title}): {e}")
+        if n:
+            self.log(f"🗂 검토 시트 {n}장 → 부가자료/검토시트_*.jpg (2.5초마다 한 장, 시간·자막 포함)")
 
     def _craft_report(self) -> str:
         """리포트 뒤에 붙일 '어떻게 편집했나' 요약(색·소리·편집 기술)."""

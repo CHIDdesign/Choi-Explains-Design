@@ -336,6 +336,10 @@ def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int) 
             "segments": segs,
             "graphics": graphics,
             "emphasis": [e for e in s.get("emphasis", []) or [] if isinstance(e, dict) and e.get("seg") in segs],
+            "beats": [{"seg": b["seg"], "label": str(b.get("label", "")).strip()[:14],
+                       "text": str(b.get("text", "")).strip()[:24], "accent": str(b.get("accent", "")).strip()}
+                      for b in s.get("beats", []) or []
+                      if isinstance(b, dict) and b.get("seg") in segs and str(b.get("text", "")).strip()],
             "cta": str(s.get("cta", "")).strip(),
             "loop_line": str(s.get("loop_line", "")).strip(),
             "caption": str(s.get("caption", "")).strip(),

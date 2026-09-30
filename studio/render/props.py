@@ -323,7 +323,9 @@ def short_props(
     segs = set(spec["segments"])
     em = [e for e in extra_emphasis or [] if e.get("seg") in segs and e.get("kind") == "highlight"] + em
     em_keys = emphasis_keys(em, utts, timemap)
-    cues = build_phrase_cues(groups, emphasis=em_keys, max_chars=12, max_dur=2.0)
+    # 릴스식은 한두 마디씩 아주 크게(참고 릴스: 5~8자), 그 밖은 12자
+    cues = build_phrase_cues(groups, emphasis=em_keys, max_chars=8 if layout == "reel" else 12,
+                             max_dur=1.6 if layout == "reel" else 2.0)
     snap_cues_to_speech(cues, speech_onsets or [])
     total = timemap.duration
     clips = []
@@ -436,3 +438,57 @@ def text_graphic_spans(graphics: list[dict[str, Any]]) -> list[tuple[float, floa
     """화면에 글자 그래픽이 떠 있는 구간(LongForm.tsx textGraphicActive 와 같은 기준)."""
     return [(g["start"], g["end"]) for g in graphics
             if g["template"] not in ("lower_third", "broll", "photo", "title")]
+
+
+# ---------------------------------------------------------------------------
+# 숏폼 하단 개념 텍스트(종이 스킨)
+# ---------------------------------------------------------------------------
+
+def _cue_text(c: dict[str, Any]) -> str:
+    return " ".join(w["text"] for line in c["lines"] for w in line).strip(" .,!?…")
+
+
+def short_beats(spec: dict[str, Any], utts: list[Utterance], timemap: TimeMap, cues: list[dict[str, Any]],
+                moments: list[Any], total: float, *, min_len: float = 2.2, max_len: float = 5.0,
+                every: float = 4.5) -> list[dict[str, Any]]:
+    """화면 아래 3~5초마다 바뀌는 개념 텍스트. AI 가 쓴 beats(발화 기준)를 편집 시간으로 옮기고,
+    모자라면 강조 순간(콜아웃)·강조어가 든 자막으로 채워 하단이 비지 않게 한다."""
+    by_id = {u.id: u for u in utts}
+    raw: list[dict[str, Any]] = []
+    for b in spec.get("beats", []) or []:
+        u = by_id.get(b.get("seg"))
+        if not u or not u.words:
+            continue
+        t = timemap.src_to_edit(u.words[0].start, snap=True)
+        if t is not None and t < total - 1.0:
+            raw.append({"start": t, "text": b["text"], "label": b.get("label", ""), "accent": b.get("accent", ""),
+                        "prio": 3})
+    for m in moments:
+        text = (getattr(m, "callout", "") or "").replace("\\n", "\n").split("\n")[0].strip()
+        if text:
+            raw.append({"start": m.t, "text": text[:16], "label": getattr(m, "label", "") or "핵심",
+                        "accent": getattr(m, "word", "") or "", "prio": 2})
+    for c in cues:
+        ems = [w for line in c["lines"] for w in line if w.get("em")]
+        if ems:
+            text = _cue_text(c)
+            if 3 <= len(text) <= 16:
+                raw.append({"start": c["start"], "text": text, "label": "포인트",
+                            "accent": ems[0]["text"].strip(" .,!?…"), "prio": 1})
+    raw.sort(key=lambda b: (b["start"], -b["prio"]))
+    out: list[dict[str, Any]] = []
+    for b in raw:
+        if b["start"] < 0.25:
+            b["start"] = 0.25
+        if out and b["start"] - out[-1]["start"] < every * (0.55 if b["prio"] >= 3 else 1.0):
+            if b["prio"] > out[-1]["prio"] and b["start"] - out[-1]["start"] < 1.0:
+                out[-1] = b                                  # 거의 같은 자리면 더 중요한 쪽
+            continue
+        out.append(b)
+    for i, b in enumerate(out):
+        nxt = out[i + 1]["start"] - 0.2 if i + 1 < len(out) else total - 0.3
+        b["end"] = round(min(b["start"] + max_len, nxt), 3)
+        b["start"] = round(b["start"], 3)
+        if b["accent"] and b["accent"] not in b["text"]:
+            b["accent"] = ""
+    return [{k: b[k] for k in ("start", "end", "text", "label", "accent")} for b in out if b["end"] - b["start"] >= min_len]

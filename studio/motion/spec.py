@@ -132,11 +132,15 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
         if el.get("label"):
             out["label"] = str(el["label"])[:24]
     elif t == "image":
-        src = str(el.get("src", ""))
-        if not src.startswith("images/") and not src.startswith("broll/"):
+        src = str(el.get("src", "")).strip()
+        # 'pixabay:<vector|illustration|photo>:<영어 검색어>' 는 스톡 단계가 실제 파일(broll/img_…)로 바꾼다
+        if not src.startswith(("images/", "broll/", "pixabay:")):
             return None
-        out.update(src=src, w=_num(el.get("w"), 2, 100, 30), h=_num(el.get("h"), 2, 100, 30),
+        out.update(src=src[:120], w=_num(el.get("w"), 2, 100, 30), h=_num(el.get("h"), 2, 100, 30),
                    radius=_num(el.get("radius"), 0, 100, 0))
+        fr = str(el.get("frame", "")).strip()
+        if fr in ("torn", "cutout", "none"):
+            out["frame"] = fr
     return out
 
 
