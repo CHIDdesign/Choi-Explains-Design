@@ -112,7 +112,7 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
         j_start = attempt_start(j)
         kj = pos[j]
         best = None
-        for ki in range(kj - 1, max(-1, kj - MAX_BACK_WORDS) - 1, -1):
+        for ki in range(kj - 1, max(0, kj - MAX_BACK_WORDS) - 1, -1):   # 0 에서 멈춤(−1 이면 마지막 단어로 넘어감)
             i = live[ki]
             if drop[i] or words[j].start - words[i].start > MAX_BACK_SEC:
                 break

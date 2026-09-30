@@ -1429,7 +1429,7 @@ class Pipeline:
                                   fade_out=1.2 if m["short"] else 3.0,
                                   playlist=[(str(t.path), t.lufs) for t in songs], switch_at=ed.bgm_switch)
             mix_wav = self.work / f"mix_{k}.wav"
-            rep = mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
+            mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
                       cancel=self.cancel)
             mux_final(self.ff, m["raw"], mix_wav, m["dst"], log=self.log, cancel=self.cancel)
             m["bgm_title"] = (" / ".join(dict.fromkeys(t.credit for t in songs)) if track else

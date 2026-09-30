@@ -12,7 +12,7 @@ from typing import Any, Optional
 from ..director.plan import TimedGraphic, word_edit_time
 from ..models import TimeMap, Utterance
 from ..settings import Brand
-from ..text.align import norm
+from ..text.align import find_word, norm
 from ..text.captions import build_phrase_cues, snap_cues_to_speech
 from ..vision.face import remap_track
 
@@ -112,16 +112,14 @@ def emphasis_keys(emphasis: list[dict], utts: list[Utterance], timemap: TimeMap)
         w = norm(e.get("word", ""))
         if not u or not w:
             continue
-        for word in u.words:
-            wn = norm(word.text)
-            if wn and (w in wn or wn in w):
-                t = timemap.src_to_edit(word.start, snap=False)
-                if t is not None:
-                    key = (round(t, 3), word.text.strip().rstrip(".,").replace(" ", ""))
-                    typ = e.get("type") or True
-                    if keys.get(key) in (None, True):
-                        keys[key] = typ
-                break
+        word = find_word(u.words, w)
+        if word is not None:
+            t = timemap.src_to_edit(word.start, snap=False)
+            if t is not None:
+                key = (round(t, 3), word.text.strip().rstrip(".,").replace(" ", ""))
+                typ = e.get("type") or True
+                if keys.get(key) in (None, True):
+                    keys[key] = typ
     return keys
 
 

@@ -21,15 +21,38 @@ from ..models import Tag, Utterance, Word
 from .script import ParsedScript
 
 NORM_RE = re.compile(r"[0-9A-Za-z가-힣ㄱ-ㆎ]")
+# NG/메타 발화 판정. 부분 문자열로 찾으면 '엔지니어', 'Kerning', '처음부터 완벽할 순 없어요'처럼 내용까지 지워서:
+#  - META_PATTERNS: 어디에 있어도 메타(‘다시 할게요’ 류)
+#  - META_TOKENS: 낱말 하나로 따로 말했을 때만(‘NG’, ‘엔지’)
+#  - META_WEAK: ‘다시’와 함께이거나 아주 짧은 발화(8자 이하)일 때만(‘잠깐만요’, ‘틀렸다’)
 META_PATTERNS = [
-    "다시할게", "다시하겠", "다시갈게", "다시갈께", "다시할께", "다시찍", "처음부터", "잠깐만", "잠시만",
-    "엔지", "ng", "컷컷", "틀렸", "아다시", "다시다시", "한번더할게", "죄송합니다다시", "어디까지했",
+    "다시할게", "다시하겠", "다시갈게", "다시갈께", "다시할께", "다시찍", "컷컷", "아다시", "다시다시",
+    "한번더할게", "죄송합니다다시", "어디까지했",
 ]
+META_TOKENS = {"ng", "엔지", "엔쥐", "컷"}
+META_WEAK = ["처음부터", "잠깐만", "잠시만", "틀렸"]
 FILLER_ONLY = {"음", "어", "아", "그", "음음", "어어", "에", "으음", "흠", "네", "자"}
 
 
 def norm(text: str) -> str:
     return "".join(NORM_RE.findall(text)).lower()
+
+
+def find_word(words: list[Word], target: str) -> Optional[Word]:
+    """발화 안에서 강조어가 가리키는 단어. 정확히 같음 → 단어가 강조어로 시작(‘이론은’) → 강조어가 단어로 시작
+    (두 글자 이상) → 포함(두 글자 이상) 순서 — ‘이 이론은’에서 ‘이론’이 한 글자 ‘이’에 붙던 것."""
+    n = norm(target)
+    if not n:
+        return None
+    toks = [(w, norm(w.text)) for w in words]
+    for test in (lambda wn: wn == n,
+                 lambda wn: wn.startswith(n),
+                 lambda wn: len(wn) >= 2 and n.startswith(wn),
+                 lambda wn: len(wn) >= 2 and (n in wn or wn in n)):
+        for w, wn in toks:
+            if wn and test(wn):
+                return w
+    return None
 
 
 def norm_with_map(text: str) -> tuple[str, list[int]]:
@@ -133,34 +156,45 @@ class ScriptAligner:
 
     # --------------------------------------------------------------
     def _match_all(self, utts: list[Utterance]) -> None:
+        """발화 → 대본 구간. 커서(지금까지 읽은 곳) 앞쪽 창과 뒤쪽 창을 따로 찾아, 점수가 비슷하면 커서에 가까운
+        쪽을 고른다 — 대본에 같은 문장이 두 번 있으면(처음과 끝에 같은 말) 뒤의 것을 앞 문장의 다시 말하기로
+        오인해 첫 문장을 지우던 문제. 다시 말한 테이크는 방금 지나온 바로 뒤쪽 구간이 가장 가깝다."""
         cursor = 0
         n = len(self.snorm)
         for u in utts:
             un = norm(u.asr_text)
             if len(un) < 4:
                 continue
-            best = None
-            for back, fwd in ((700, 1600), (n, n)):
-                lo = max(0, cursor - back)
-                hi = min(n, cursor + fwd + len(un))
-                window = self.snorm[lo:hi]
-                if not window:
-                    continue
-                al = fuzz.partial_ratio_alignment(un, window) if len(un) <= len(window) else None
-                if al is None:
-                    continue
-                cand = (al.score, lo + al.dest_start, lo + al.dest_end)
-                if best is None or cand[0] > best[0]:
-                    best = cand
-                if best[0] >= self.match_threshold + 10:
-                    break
-            if best and best[0] >= self.match_threshold:
+            cands: list[tuple[float, int, int]] = []
+            for lo, hi in ((max(0, cursor - 20), min(n, cursor + 1600 + len(un))),     # 앞으로 읽을 곳
+                           (max(0, cursor - 700), min(n, cursor + len(un)))):           # 방금 지나온 곳(다시 말하기)
+                cand = self._align(un, lo, hi)
+                if cand:
+                    cands.append(cand)
+            if not cands or max(c[0] for c in cands) < self.match_threshold + 10:
+                cand = self._align(un, 0, n)                                            # 대본 전체
+                if cand:
+                    cands.append(cand)
+            if not cands:
+                continue
+            top = max(c[0] for c in cands)
+            best = min((c for c in cands if c[0] >= top - 2.0), key=lambda c: (abs(c[1] - cursor), -c[0]))
+            if best[0] >= self.match_threshold:
                 score, a, b = best
                 a, b = self._refine_span(un, a, b)
                 u.score = float(score)
                 # 정규화 인덱스 → clean 문자 인덱스
                 u.script_span = (self.smap[a], self.smap[max(a, b - 1)] + 1)
                 cursor = max(cursor, b) if score >= 80 else cursor
+
+    def _align(self, un: str, lo: int, hi: int) -> Optional[tuple[float, int, int]]:
+        window = self.snorm[lo:hi]
+        if not window or len(un) > len(window):
+            return None
+        al = fuzz.partial_ratio_alignment(un, window)
+        if al is None:
+            return None
+        return (al.score, lo + al.dest_start, lo + al.dest_end)
 
     def _refine_span(self, un: str, a: int, b: int) -> tuple[int, int]:
         """partial_ratio 가 준 구간(길이 = 발화 길이)을 앞뒤로 조금 넓혀 실제 일치 경계에 맞춘다."""
@@ -187,7 +221,9 @@ class ScriptAligner:
                 u.status = "meta"
                 u.note = "추임새"
                 continue
-            if len(un) <= 18 and any(p in un for p in META_PATTERNS):
+            toks = {norm(w) for w in u.asr_text.split()}
+            if len(un) <= 18 and (any(p in un for p in META_PATTERNS) or toks & META_TOKENS
+                                  or (any(p in un for p in META_WEAK) and ("다시" in un or len(un) <= 8))):
                 u.status = "meta"
                 u.note = "NG/메타 발화"
 

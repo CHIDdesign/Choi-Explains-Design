@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from ..models import Tag, TimeMap, Utterance
 from ..motion.spec import clean_spec
-from ..text.align import norm
+from ..text.align import find_word, norm
 from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATES
 from .schema import HOOK_TYPES
 
@@ -389,14 +389,8 @@ def seg_edit_times(utts: list[Utterance], timemap: TimeMap) -> dict[int, tuple[f
 def word_edit_time(u: Utterance, word: str, timemap: TimeMap) -> Optional[float]:
     if not word:
         return None
-    n = norm(word)
-    if not n:
-        return None
-    for w in u.words:
-        wn = norm(w.text)
-        if wn and (n in wn or wn in n):
-            return timemap.src_to_edit(w.start, snap=True)
-    return None
+    w = find_word(u.words, word)
+    return timemap.src_to_edit(w.start, snap=True) if w else None
 
 
 def reading_chars(g: dict[str, Any]) -> int:
@@ -487,10 +481,10 @@ def time_graphics(
         timed.append(TimedGraphic(f"{id_prefix}{i}", g["template"], g["layout"], start, end, data,
                                   t.priority + (3 if "태그" in (g.get("reason") or "") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))
-    return resolve_overlaps(timed + list(reserved or []))
+    return resolve_overlaps(timed + list(reserved or []), total=total)
 
 
-def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2) -> list[TimedGraphic]:
+def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optional[float] = None) -> list[TimedGraphic]:
     items = sorted(items, key=lambda g: (g.start, -g.priority))
     out: list[TimedGraphic] = []
     for g in items:
@@ -509,8 +503,10 @@ def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2) -> list[TimedG
         else:
             g.start = last.end + gap
             if g.end - g.start < min_g * 0.8 and (g.priority >= 8 or g.source == "tag"):
-                # 대본 태그 등 중요한 그래픽은 뒤로 밀어서라도 최소 길이를 확보
+                # 대본 태그 등 중요한 그래픽은 뒤로 밀어서라도 최소 길이를 확보 — 말이 끝난 뒤(엔드카드)로는 넘기지 않는다
                 g.end = g.start + min_g
+                if total is not None:
+                    g.end = min(g.end, total - 0.3)
             if g.end - g.start >= min_g * 0.8:
                 out.append(g)
     return out

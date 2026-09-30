@@ -152,17 +152,37 @@ class TimeMap:
         return Span(a, b)
 
     def map_words(self, words: list["Word"]) -> list["Word"]:
-        """단어들을 편집 시간으로 옮긴다. 재배치/중복된 keep 도 순서대로 처리."""
-        out: list[Word] = []
-        for i, k in enumerate(self.keeps):
+        """단어들을 편집 시간으로 옮긴다. 재배치/중복된 keep 도 순서대로 처리.
+        가운데가 어느 keep 에도 없는 단어(Whisper 가 쉼까지 늘려 찍은 단어의 쉼을 잘라낸 경우)는 가장 많이 겹친
+        keep 에 붙인다 — 소리는 들리는데 자막에서 빠지던 것."""
+        out: list[tuple[int, Word]] = []
+        mapped: set[int] = set()
+
+        def put(i: int, k: "Span", w: "Word", wi: int) -> None:
             base = self._edit_starts[i]
-            for w in words:
+            s = base + max(0.0, w.start - k.start)
+            e = base + min(k.dur, w.end - k.start)
+            out.append((i, Word(w.text, s, max(e, s + 0.02), w.prob)))
+            mapped.add(wi)
+
+        for i, k in enumerate(self.keeps):
+            for wi, w in enumerate(words):
                 mid = (w.start + w.end) / 2
                 if k.start <= mid <= k.end:
-                    s = base + max(0.0, w.start - k.start)
-                    e = base + min(k.dur, w.end - k.start)
-                    out.append(Word(w.text, s, max(e, s + 0.02), w.prob))
-        return out
+                    put(i, k, w, wi)
+        for wi, w in enumerate(words):
+            if wi in mapped:
+                continue
+            best, ov = -1, 0.05
+            for i, k in enumerate(self.keeps):
+                o = min(k.end, w.end) - max(k.start, w.start)
+                if o > ov:
+                    best, ov = i, o
+            if best >= 0:
+                put(best, self.keeps[best], w, wi)
+        # keep 순서(편집 순서) → 그 안에서 시각 순
+        out.sort(key=lambda p: (p[0], p[1].start))
+        return [w for _, w in out]
 
     def to_list(self) -> list[dict[str, float]]:
         return [k.to_dict() for k in self.keeps]

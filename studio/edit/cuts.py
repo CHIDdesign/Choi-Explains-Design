@@ -31,10 +31,15 @@ PACES: dict[str, Pace] = {
 
 def _snap_to_vad(t: float, regions: list[tuple[float, float]], starts: list[float], *, is_start: bool,
                  tol: float = 0.25) -> float:
-    """Whisper 단어 경계(±0.2s 오차)를 VAD 경계로 보정."""
+    """Whisper 단어 경계(±0.2s 오차)를 VAD 경계로 보정.
+    t 가 말소리 구간 안이면 그 구간의 경계로만 맞춘다 — 끝을 앞 구간의 끝으로 되돌리면 마지막 단어가 잘리고
+    (Whisper 는 쉼 앞 단어 끝을 일찍 찍는다), 시작을 다음 구간 시작으로 밀면 첫 단어가 잘린다."""
     if not regions:
         return t
     i = bisect.bisect_right(starts, t) - 1
+    if 0 <= i < len(regions) and regions[i][0] <= t < regions[i][1]:
+        c = regions[i][0] if is_start else regions[i][1]
+        return c if abs(c - t) <= tol else t
     cands = []
     for k in (i - 1, i, i + 1):
         if 0 <= k < len(regions):
@@ -64,6 +69,35 @@ def _extend_start(t: float, regions: list[tuple[float, float]], starts: list[flo
     return min(t, max(regions[i][0], t - limit, floor))
 
 
+def _dropped_spans(ctx: list[Utterance], chosen_ids: set[int], chosen: list[Utterance]) -> list[Span]:
+    """남기지 않는 발화의 구간 — 남기는 단어와 겹치는 부분은 뺀다(Whisper 단어 시각이 이웃과 살짝 겹쳐도 남길 말을
+    깎지 않게)."""
+    kept = sorted((w.start, w.end) for u in chosen for w in u.words)
+    ks = [a for a, _ in kept]
+    out: list[Span] = []
+    for u in ctx:
+        if id(u) in chosen_ids or not u.words:
+            continue
+        a, b = u.words[0].start, u.words[-1].end
+        pieces = [Span(a, b)]
+        j = max(0, bisect.bisect_left(ks, a) - 1)
+        while j < len(kept) and kept[j][0] < b:
+            ws, we = kept[j]
+            nxt = []
+            for p in pieces:
+                if we <= p.start or ws >= p.end:
+                    nxt.append(p)
+                    continue
+                if ws > p.start:
+                    nxt.append(Span(p.start, ws))
+                if we < p.end:
+                    nxt.append(Span(we, p.end))
+            pieces = nxt
+            j += 1
+        out.extend(p for p in pieces if p.dur > 0.05)
+    return out
+
+
 def build_keeps(
     utts: list[Utterance],
     *,
@@ -74,15 +108,23 @@ def build_keeps(
     only_ids: set[int] | None = None,
     include_all: bool = False,
     exclude: list[Span] | None = None,
+    context: list[Utterance] | None = None,
 ) -> list[Span]:
     """남길 발화들의 단어 시간으로 keep 구간을 만든다.
-    exclude: 지운 되풀이·추임새 구간 — 늘릴 때 넘어가지 않고, 마지막에 한 번 더 빼서 소리가 새지 않게."""
+    exclude: 지운 되풀이·추임새 구간 — 늘릴 때 넘어가지 않고, 마지막에 한 번 더 빼서 소리가 새지 않게.
+    context: 전체 발화(없으면 utts). 남기지 않는 발화(다시 말한 테이크·NG·숏폼에 넣지 않은 이웃 문장)는 경계로도 쓰고
+    exclude 에도 넣는다 — 패딩·짧은 틈 합치기로 되살아나거나(“다시.”가 남음), 숏폼이 옆 문장 첫 단어까지 늘어나지 않게."""
     vad = sorted(vad or [])
     starts = [r[0] for r in vad]
-    exclude = sorted(exclude or [], key=lambda x: x.start)
+    ctx = context if context is not None else utts
+    chosen = [u for u in utts if (u.kept or include_all) and (only_ids is None or u.id in only_ids) and u.words]
+    chosen_ids = {id(u) for u in chosen}
+    dropped = _dropped_spans(ctx, chosen_ids, chosen)
+    removed = list(exclude or [])
+    exclude = sorted(removed + dropped, key=lambda x: x.start)
     # 다른 단어(남기든 지우든)·지운 구간의 경계 — 말소리 끝까지 늘릴 때 넘지 않는 선
-    bounds_start = sorted([w.start for u in utts for w in u.words] + [x.start for x in exclude])
-    bounds_end = sorted([w.end for u in utts for w in u.words] + [x.end for x in exclude])
+    bounds_start = sorted([w.start for u in ctx for w in u.words] + [x.start for x in exclude])
+    bounds_end = sorted([w.end for u in ctx for w in u.words] + [x.end for x in exclude])
     raw: list[Span] = []
     for u in utts:
         if (not u.kept and not include_all) or (only_ids is not None and u.id not in only_ids) or not u.words:
@@ -117,7 +159,8 @@ def build_keeps(
             merged.append(s)
     if exclude:
         from .verify import subtract
-        merged = subtract(merged, [Span(x.start + 0.02, x.end - 0.02) for x in exclude if x.dur > 0.06],
+        # 지운 되풀이·추임새는 양끝을 20ms 남겨 이웃 단어를 깎지 않게, 남기지 않는 발화는 이미 남길 단어를 뺀 구간이라 그대로
+        merged = subtract(merged, [Span(x.start + 0.02, x.end - 0.02) for x in removed if x.dur > 0.06] + dropped,
                           min_keep=pace.min_keep)
     word_starts = sorted(w.start for u in utts if (u.kept or include_all) for w in u.words)
     merged = trim_dead_air(merged, vad, word_starts, max_silence=pace.max_silence,
@@ -185,7 +228,8 @@ def keeps_for_segments(utts: list[Utterance], ids: list[int], *, pace: Pace, vad
     out: list[Span] = []
     for g in groups:
         sub = [by_id[i] for i in g]
+        # 이웃 문장(숏폼에 넣지 않은 발화)까지 알려 줘야 말소리 끝까지 늘릴 때 그 문장으로 넘어가지 않는다
         spans = build_keeps(sub, pace=pace, vad=vad, media_duration=media_duration, fps=fps,
-                            include_all=True, exclude=exclude)
+                            include_all=True, exclude=exclude, context=utts)
         out.extend(spans)
     return out

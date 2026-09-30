@@ -246,6 +246,8 @@ def build_phrase_cues(
             if re.search(r"[.?!,]$", raw) or (now >= 7 and ends_phrase):
                 flush()
         flush()
+    # 편집 시각 순으로(숏폼 재배치·겹친 단어가 있어도 끝 시각 계산이 음수가 되지 않게)
+    cues.sort(key=lambda c: c["start"])
     # 한 글자·두 글자만 남은 조각은 앞 청크에 붙인다(너무 길어지지 않으면)
     merged: list[dict] = []
     for c in cues:
