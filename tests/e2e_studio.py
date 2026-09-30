@@ -398,7 +398,9 @@ def main() -> int:
     assert sp["layout"] == "reel" and sp["camera"], sp["layout"]
     assert (job / "render" / "props_short_2.json").exists()
     # 편집 문법 엔진: 부드러운 프레이밍(100↔106%)·글라이드 강조·콜아웃·챕터 전환
-    assert lp["camera"] and {c["zoom"] for c in lp["camera"]} <= {1.0, 1.06, 1.1}, lp["camera"]
+    # 젠틀 편집: 프레이밍은 100↔106%(콜아웃 110%)에 느린 푸시(최대 +5%)뿐. 콜아웃 뒤 조각은 원래 푸시가 닿았을 값(예 1.05)에서
+    # 이어지므로 정확한 집합이 아니라 범위로 본다
+    assert lp["camera"] and all(1.0 <= c["zoom"] <= 1.12 and c["zoomEnd"] <= 1.17 for c in lp["camera"]), lp["camera"]
     assert all(p.get("style") == "glide" for p in lp["punches"]), lp["punches"]
     assert lp["punches"] and lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
     assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
