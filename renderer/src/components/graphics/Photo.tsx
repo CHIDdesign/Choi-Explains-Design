@@ -4,9 +4,11 @@ import {enter, exit} from '../../lib/anim';
 import {FONT} from '../../design/tokens';
 import {Credit, MaskLine} from '../layout/Editorial';
 import type {TemplateProps} from './common';
+import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
 
-/** 자료 사진 — 풀스크린은 아주 느린 푸시인(최대 105%), 패널은 액자형 */
-export const PhotoCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, layout, compact}) => {
+/** 자료 사진 — 풀스크린은 아주 느린 푸시인(최대 105%) + 필름 룩 + 우하단 출처, 접힌 키워드가 있으면 keyword_at 부터
+ *  어두워지며 키워드 슬램(레퍼런스: 같은 사진이 이어진 채 큰 키워드). 패널은 액자형 */
+export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, surface, box, layout, compact, theme}) => {
   if (!data.image) return null;
   const src = staticFile(data.image);
   const push = interpolate(frame, [0, dur], [1.0, 1.05]);
@@ -33,11 +35,12 @@ export const PhotoCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
             ) : null}
           </div>
         ) : null}
-        {data.credit ? (
-          <div style={{position: 'absolute', right: 72, top: 64, opacity: enter(frame, 10, 12)}}>
-            <Credit text={data.credit} color="rgba(255,255,255,0.85)" size={16} />
-          </div>
+        <FilmLook frame={frame} id={id} strength={0.9} />
+        {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
+          <KeywordSlam keyword={data.keyword} sub={data.keyword_sub} f={frame - (data.keyword_at ?? 0) * fps} W={box.w}
+            theme={theme} />
         ) : null}
+        <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} />
       </div>
     );
   }

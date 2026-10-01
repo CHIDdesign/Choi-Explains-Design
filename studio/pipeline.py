@@ -62,7 +62,8 @@ from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
 from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
-                           short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps)
+                           short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
+                           fold_keywords_into_media)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -1491,10 +1492,15 @@ class Pipeline:
                         skin="classic" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
                         endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
+        # 자료 사진 바로 뒤(또는 안)의 키워드는 사진 위 키워드 슬램으로(사진이 어두워지며 큰 키워드)
+        folded = fold_keywords_into_media(lp["graphics"])
+        if folded:
+            self.log(f"📸 자료 사진 위 키워드 슬램 {folded}개(사진이 이어진 채 어두워지며 키워드)")
         # 얼굴을 가리지 않게: 얼굴 옆 사진 액자·개념 텍스트는 빈 쪽으로, 자리가 없으면 화자 패널로
         ps = face_safe_layouts(lp["graphics"], lp["face"])
         if ps["placed"] or ps["to_split"]:
-            self.log(f"🙂 얼굴 옆 배치: 액자 {ps['placed']}개(줄임 {ps['shrunk']}) · 자리가 없어 패널로 {ps['to_split']}개")
+            self.log(f"🙂 얼굴 옆 배치: 액자·메모 {ps['placed']}개(줄임 {ps['shrunk']}, 위 소제목 바 {ps.get('top', 0)})"
+                     f" · 자리가 없어 패널로 {ps['to_split']}개")
         seg_t = seg_edit_times(self.utts, self.timemap)
         punch_spans = self._punch_spans(seg_t)
         moments = self._moments(self.timemap)

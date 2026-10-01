@@ -503,7 +503,7 @@ def test_face_safe_pip_placement_picks_free_side_or_falls_back_to_split():
     assert gs[0]["layout"] == "split" and "pip" not in gs[0]      # 양쪽 다 좁아져 패널로
     # 얼굴 트랙이 없으면 손대지 않는다(렌더러가 faceX 로)
     gs = [g("p", "photo", 8)]
-    assert face_safe_layouts(gs, []) == {"placed": 0, "shrunk": 0, "to_split": 0} and "pip" not in gs[0]
+    assert face_safe_layouts(gs, []) == {"placed": 0, "shrunk": 0, "to_split": 0, "top": 0} and "pip" not in gs[0]
 
 
 # ---------------------------------------------------------------------------
@@ -554,8 +554,8 @@ def test_chapter_recaps_skips_short_chapters_and_busy_endings():
     chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 30.0, "title": "B", "number": "02"}]
     gs = [_g("k1", "keyword", 2, 5, "overlay", title="하나"), _g("k2", "keyword", 8, 11, "overlay", title="둘"),
           _g("k3", "keyword", 40, 43, "overlay", title="셋"), _g("k4", "keyword", 50, 53, "overlay", title="넷"),
-          _g("m1", "motion", 62, 79.8, "fullscreen", title="장면")]
-    assert chapter_recaps(gs, chapters, 80.0) == []           # 30초 챕터 + 끝이 전체화면으로 꽉 찬 챕터
+          _g("m1", "motion", 58, 79.8, "fullscreen", title="장면")]
+    assert chapter_recaps(gs, chapters, 80.0) == []           # 30초 챕터 + 끝 20초가 전체화면으로 꽉 찬 챕터
 
 
 def test_chapter_maps_fill_chapter_cards_with_table_of_contents():
@@ -577,3 +577,36 @@ def test_recap_point_texts():
     assert recap_point(_g("a", "motion", 0, 1, spec={"label": "게슈탈트 · 근접성", "elements": []})) == "게슈탈트 · 근접성"
     long = recap_point(_g("a", "keyword", 0, 1, title="아주 아주 아주 아주 아주 아주 아주 긴 제목입니다 정말로"))
     assert long.endswith("…") and len(long) <= 26
+
+
+def test_fold_keywords_into_media_makes_keyword_slam_on_the_photo():
+    from studio.render.props import fold_keywords_into_media
+    gs = [_g("p", "photo", 10, 16, "fullscreen", image="a.jpg", title="바우하우스"),
+          _g("k", "keyword", 16.3, 19.5, "overlay", title="형태는 기능을 따른다", subtitle="장식 → 기능"),
+          _g("b", "broll", 30, 35, "fullscreen", src="x.mp4"),
+          _g("k2", "keyword", 32, 34.5, "overlay", title="대량 생산"),
+          _g("k3", "keyword", 50, 53, "overlay", title="따로 뜨는 키워드")]
+    assert fold_keywords_into_media(gs) == 2
+    ids = [g["id"] for g in gs]
+    assert ids == ["p", "b", "k3"]
+    p = gs[0]
+    assert p["data"]["keyword"] == "형태는 기능을 따른다" and p["data"]["keyword_sub"] == "장식 → 기능"
+    assert p["data"]["keyword_at"] == 6.0 and p["end"] == 19.5          # 사진이 키워드 끝까지 이어진다
+    b = gs[1]
+    assert b["data"]["keyword"] == "대량 생산" and b["data"]["keyword_at"] == 2.0 and b["end"] == 35
+
+
+def test_face_safe_puts_short_keywords_in_top_section_bar_when_head_is_low():
+    from studio.render.props import face_safe_layouts
+
+    def tr(y, s):
+        return [{"t": t, "x": 0.5, "y": y, "s": s} for t in range(0, 40)]
+    gs = [_g("k", "keyword", 5, 9, "overlay", title="공원 속에 도로를 숨긴 방법"),
+          _g("k2", "keyword", 12, 16, "overlay", title="발산", subtitle="넓게 펼친다"),       # 보조문 있음 → 옆 메모
+          _g("k3", "keyword", 20, 24, "overlay", title="이 제목은 열여섯 자를 훌쩍 넘는 긴 키워드입니다")]
+    st = face_safe_layouts(gs, tr(0.48, 0.26))                 # 머리 위 ≈ 252px 비어 있음
+    assert gs[0]["pip"] == {"side": "top", "w": 1240, "h": 120} and st["top"] == 1
+    assert gs[1]["pip"]["side"] in ("left", "right") and gs[2]["pip"]["side"] in ("left", "right")
+    gs = [_g("k", "keyword", 5, 9, "overlay", title="공원 속에 도로를 숨긴 방법")]
+    st = face_safe_layouts(gs, tr(0.36, 0.3))                  # 머리가 위에 붙어 있음 → 옆 메모
+    assert gs[0]["pip"]["side"] in ("left", "right") and st["top"] == 0

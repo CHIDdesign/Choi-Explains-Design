@@ -1,20 +1,22 @@
 import React from 'react';
 import {Img, interpolate, OffthreadVideo, staticFile} from 'remotion';
 import {EASE, LONG, tween, tweenOut} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {FONT, NOTE} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {fitBlock, fitSize, wrap} from '../../lib/fit';
 import type {Graphic, GraphicData, TemplateName} from '../../lib/types';
 import {Credit} from '../layout/Editorial';
 import {pipBoxes} from '../paper/Collage';
+import {hashSeed} from '../paper/Paper';
 import type {Box} from '../paper/Paper';
-import {Annotated, LabelChip, RiseLine, Rule, slideIn, slideOut} from './Stage';
+import {Badge, PaperNote, ReverseLine} from './Note';
+import {Annotated, RiseLine, Rule} from './Stage';
 
 /**
- * 얼굴 옆 플레이트(롱폼 무대, classic 챕터) — 화자 반대편 상단 기준선에 놓이는 가로 판.
- *  ConceptPlate : 유리 플레이트(어두운 스크림 + 블러 + 얇은 선 + 왼쪽 강조 바) 안에 칩 → 괘선 → 헤드라인(강조 낱말 밑줄 스윕)
- *                 → 본문 → 각주. 숫자는 Anton 카운트업, 인용은 명조 + 큰 따옴표, 정의는 용어 + 영문 + 괘선 + 풀이
- *  MediaPlate   : 둥근 사진·스톡(아주 느린 푸시) + 아래 캡션 줄(이름 · 설명 · ▣ 출처)
+ * 얼굴 옆 종이 메모(롱폼 무대 재질 v2, classic 챕터) — 화자 반대편 상단 기준선에 놓이는 위가 찢긴 크림 메모.
+ *  ConceptPlate : 배지 → (키워드) 보조문 + 핵심 줄 **반전 상자** / (정의) 용어 + 영문 + 괘선 + 풀이 / (숫자) Anton 카운트업
+ *                 / (인용) 명조 + 큰 따옴표
+ *  MediaPlate   : 종이 위에 붙인 사진·스톡(아주 느린 푸시) + 아래 캡션 줄(이름 · 설명 · ▣ 출처)
  * 같은 내용을 보드 판(split) 안에서는 mode="board" 로 크게 그린다(BoardPanel).
  */
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
@@ -22,6 +24,7 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 export const CONCEPT_TEMPLATES: ReadonlySet<string> = new Set(['keyword', 'definition', 'quote', 'stat']);
 
 const ROLE: Record<string, string> = {keyword: '키워드', definition: '정의', quote: '인용', stat: '숫자'};
+const REVERSE_MAX = 14; // 이보다 짧은 키워드는 반전 상자 한 줄로
 
 /** "85%" → {n: 85, prefix: '', suffix: '%', decimals: 0} — 카운트업할 수 있는 숫자면 값을 돌려준다 */
 export const parseNumber = (s: string): {n: number; prefix: string; suffix: string; decimals: number; grouped: boolean}
@@ -50,20 +53,21 @@ type ContentProps = {
   theme: Theme;
   w: number; // 안쪽 폭
   h: number; // 안쪽 높이
-  s: number; // 배율(플레이트 700 기준 1, 보드 1.45 안팎)
+  s: number; // 배율(메모 700 기준 1, 보드 1.3 안팎)
   mode: 'plate' | 'board';
-  label?: string; // 칩에 쓸 역할 라벨(없으면 템플릿 역할)
+  label?: string; // 배지에 쓸 역할 라벨(없으면 템플릿 역할)
 };
 
-/** 개념 내용(키워드·정의·숫자·인용) — 플레이트와 보드가 같이 쓴다 */
+/** 개념 내용(키워드·정의·숫자·인용) — 메모와 보드가 같이 쓴다. 색은 종이 위 잉크, 강조는 시그널 한 곳 */
 export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, dur, theme, w, h, s, mode, label}) => {
-  const fg = '#FFFFFF';
-  const dim = 'rgba(255,255,255,0.72)';
-  const note = 'rgba(255,255,255,0.5)';
-  const rule = 'rgba(255,255,255,0.18)';
-  // 칩 = 이 조각의 역할 라벨(모션 디자이너가 body 에 쓴 "이유·예시·결론…"), 없으면 템플릿 역할. 키워드의 subtitle 은 본문 줄
+  const fg = NOTE.ink;
+  const dim = NOTE.inkSoft;
+  const note = NOTE.note;
+  const rule = NOTE.rule;
+  const accent = theme.accent;
+  // 배지 = 이 조각의 역할 라벨(모션 디자이너가 body 에 쓴 "이유·예시·결론…"), 없으면 템플릿 역할. 키워드의 subtitle 은 보조문 줄
   const chip = label || (template === 'keyword' ? data.body || ROLE.keyword : ROLE[template]);
-  const chipSize = Math.round((mode === 'board' ? 22 : 19) * s);
+  const chipSize = Math.round((mode === 'board' ? 22 : 20) * s);
   const headMax = (mode === 'board' ? 92 : 60) * s;
   const headMin = 30 * s;
   const bodySize = Math.round((mode === 'board' ? 34 : 26) * s);
@@ -74,7 +78,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
     justifyContent: 'center', opacity: out};
   const header = (
     <div style={{display: 'flex', alignItems: 'center', gap: 12 * s, opacity: tween(frame, 2, 10)}}>
-      <LabelChip text={chip} theme={theme} size={chipSize} />
+      <Badge text={chip} size={chipSize} />
     </div>
   );
   const ruleEl = <div style={{marginTop: gapS}}><Rule frame={frame} delay={4} color={rule} /></div>;
@@ -96,7 +100,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
       <div style={col}>
         {header}
         <div style={{display: 'flex', alignItems: 'center', gap: 28 * s, marginTop: gapS}}>
-          <div style={{fontFamily: FONT.latin, fontSize: numSize, lineHeight: 1, color: theme.accentLight,
+          <div style={{fontFamily: FONT.latin, fontSize: numSize, lineHeight: 1, color: accent,
             letterSpacing: '0.005em', fontVariantNumeric: 'tabular-nums', scale: `${land}`, transformOrigin: '0% 60%',
             opacity: tween(frame, 3, 8), whiteSpace: 'nowrap'}}>{shown}</div>
           <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -124,7 +128,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
         {header}
         <div style={{position: 'relative', marginTop: gapS * 1.4, paddingLeft: qSize * 1.1}}>
           <div style={{position: 'absolute', left: -qSize * 0.08, top: -qSize * 0.42, fontFamily: FONT.latin,
-            fontSize: qSize * 2.6, lineHeight: 1, color: theme.accentLight, opacity: 0.9 * tween(frame, 4, 10)}}>“</div>
+            fontSize: qSize * 2.6, lineHeight: 1, color: accent, opacity: 0.9 * tween(frame, 4, 10)}}>“</div>
           {lines.map((l, i) => (
             <RiseLine key={i} frame={frame} delay={6 + i * 3}>
               <div style={{fontFamily: FONT.serif, fontWeight: 500, fontSize: qSize, lineHeight: 1.5, color: fg,
@@ -135,7 +139,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
         {who ? (
           <div style={{display: 'flex', alignItems: 'center', gap: 14 * s, marginTop: gapS * 1.3,
             opacity: tween(frame, 12 + lines.length * 3, 10)}}>
-            <Rule frame={frame} delay={12 + lines.length * 3} color={theme.accentLight} thick={2} width={40 * s} />
+            <Rule frame={frame} delay={12 + lines.length * 3} color={accent} thick={2} width={40 * s} />
             <div style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: noteSize * 1.1, color: dim,
               whiteSpace: 'nowrap'}}>{who}</div>
           </div>
@@ -144,7 +148,29 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
     );
   }
 
-  // keyword · definition
+  if (template === 'keyword' && (data.title || '').length <= REVERSE_MAX && !data.accent) {
+    // 레퍼런스의 '강조 박스 문구': 보조문은 그대로, 핵심 줄만 시그널 반전 상자
+    const title = data.title || '';
+    const sub = data.subtitle || '';
+    const size = Math.min(headMax * 0.86, fitSize(title, w * 0.96, headMax * 0.86, headMin, -0.035));
+    return (
+      <div style={col}>
+        {header}
+        {sub ? (
+          <RiseLine frame={frame} delay={5}>
+            <div style={{marginTop: gapS * 1.1, fontFamily: FONT.sans, fontWeight: 600, fontSize: bodySize, lineHeight: 1.4,
+              color: dim, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{sub}</div>
+          </RiseLine>
+        ) : null}
+        <div style={{marginTop: sub ? gapS * 0.6 : gapS * 1.2}}>
+          <ReverseLine text={title} size={size} bg={accent} p={tween(frame, sub ? 9 : 6, 9, 'outQuint')} />
+        </div>
+        {foot(data.source || '', 16)}
+      </div>
+    );
+  }
+
+  // keyword(긴 제목·강조어 지정) · definition
   const head = data.title || '';
   const hb = fitBlock(head, w, h * (template === 'definition' ? 0.34 : 0.5), headMax, headMin, 1.16, 2, -0.035);
   const eng = template === 'definition' ? data.subtitle || '' : '';
@@ -157,13 +183,13 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
       <div style={{marginTop: gapS * 1.2, display: 'flex', flexDirection: 'column'}}>
         {hb.lines.map((l, i) => (
           <RiseLine key={i} frame={frame} delay={6 + i * 3}>
-            <div style={{fontFamily: FONT.display, fontWeight: 800, fontSize: hb.size, lineHeight: 1.16,
+            <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: hb.size, lineHeight: 1.16,
               letterSpacing: '-0.035em', whiteSpace: 'nowrap'}}>
               <Annotated text={l} accent={i === nHead - 1 ? data.accent : null}
-                p={tween(frame, 14 + i * 3, LONG.underline, 'outQuint')} color={fg} accentColor={theme.accentLight} />
+                p={tween(frame, 14 + i * 3, LONG.underline, 'outQuint')} color={fg} accentColor={accent} />
               {eng && i === nHead - 1 ? (
                 <span style={{fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 500, fontSize: hb.size * 0.42,
-                  color: theme.accentLight, marginLeft: hb.size * 0.3, letterSpacing: '0', verticalAlign: 'baseline',
+                  color: accent, marginLeft: hb.size * 0.3, letterSpacing: '0', verticalAlign: 'baseline',
                   opacity: tween(frame, 10, 10)}}>{eng}</span>
               ) : null}
             </div>
@@ -181,14 +207,15 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
           ))}
         </div>
       ) : null}
-      {foot(template === 'definition' ? data.source || '' : data.source || '', 18 + nHead * 3)}
+      {foot(data.source || '', 18 + nHead * 3)}
     </div>
   );
 };
 
-/** 사진·스톡 내용: 둥근 미디어(아주 느린 푸시) + 캡션 줄 */
+/** 사진·스톡 내용: 종이 위에 붙인 미디어(아주 느린 푸시) + 캡션 줄(잉크) */
 export const MediaContent: React.FC<{data: GraphicData; template: TemplateName; frame: number; dur: number; w: number;
-  h: number; s: number; radius?: number}> = ({data, template, frame, dur, w, h, s, radius}) => {
+  h: number; s: number; radius?: number; onPaper?: boolean}> = ({data, template, frame, dur, w, h, s, radius,
+  onPaper = true}) => {
   const src = template === 'broll' ? data.src : data.image;
   if (!src) return null;
   const isVideo = template === 'broll' && (data.kind === 'video' || /\.(mp4|webm|mov)$/i.test(src));
@@ -200,10 +227,13 @@ export const MediaContent: React.FC<{data: GraphicData; template: TemplateName; 
   const mediaH = h - capH;
   const p = tween(frame, 0, 12, 'outQuint');
   const st: React.CSSProperties = {position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover'};
+  const fg = onPaper ? NOTE.ink : '#fff';
+  const dim = onPaper ? NOTE.inkSoft : 'rgba(255,255,255,0.66)';
+  const credit = onPaper ? NOTE.note : 'rgba(255,255,255,0.55)';
   return (
     <div style={{position: 'absolute', inset: 0, opacity: tweenOut(frame, dur, LONG.out)}}>
       <div style={{position: 'absolute', left: 0, top: 0, width: w, height: mediaH, overflow: 'hidden',
-        borderRadius: radius ?? Math.round(14 * s), background: '#0B0B0B',
+        borderRadius: radius ?? Math.round(4 * s), background: '#0B0B0B', boxShadow: onPaper ? '0 6px 16px rgba(0,0,0,0.22)' : undefined,
         scale: `${interpolate(p, [0, 1], [1.03, 1])}`, transformOrigin: '50% 50%'}}>
         <div style={{position: 'absolute', inset: 0, scale: `${scale}`, translate: `${tx}% 0`}}>
           {isVideo ? <OffthreadVideo src={staticFile(src)} muted style={st} /> : <Img src={staticFile(src)} style={st} />}
@@ -214,66 +244,54 @@ export const MediaContent: React.FC<{data: GraphicData; template: TemplateName; 
           alignItems: 'center', justifyContent: 'space-between', gap: 16 * s}}>
           <RiseLine frame={frame} delay={8}>
             <div style={{display: 'flex', alignItems: 'baseline', gap: 12 * s, whiteSpace: 'nowrap'}}>
-              {data.title ? <span style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: Math.round(26 * s),
-                color: '#fff', letterSpacing: '-0.02em'}}>{data.title}</span> : null}
+              {data.title ? <span style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: Math.round(26 * s),
+                color: fg, letterSpacing: '-0.02em'}}>{data.title}</span> : null}
               {data.body ? <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: Math.round(20 * s),
-                color: 'rgba(255,255,255,0.66)'}}>{data.body}</span> : null}
+                color: dim}}>{data.body}</span> : null}
             </div>
           </RiseLine>
           {data.credit ? <div style={{opacity: tween(frame, 12, 10), flexShrink: 0}}>
-            <Credit text={data.credit} color="rgba(255,255,255,0.55)" size={Math.round(15 * s)} /></div> : null}
+            <Credit text={data.credit} color={credit} size={Math.round(15 * s)} /></div> : null}
         </div>
       ) : null}
     </div>
   );
 };
 
-/** 플레이트 자리·크기: 파이프라인이 얼굴 트랙으로 정한 빈 쪽(g.pip), 없으면 faceX 반대편 */
+/** 메모 자리·크기: 파이프라인이 얼굴 트랙으로 정한 빈 쪽(g.pip), 없으면 faceX 반대편 */
 export const plateBox = (g: Graphic, faceX: number, W: number): {b: Box; right: boolean; s: number} => {
   const {b, right} = pipBoxes(faceX, W, g.pip);
   const media = g.template === 'photo' || g.template === 'broll';
-  const h = Math.round(b.w * (media ? 0.74 : g.template === 'quote' ? 0.66 : 0.58));
+  const h = Math.round(b.w * (media ? 0.78 : g.template === 'quote' ? 0.64 : 0.56));
   return {b: {...b, h}, right, s: b.w / 700};
 };
 
 type PlateProps = {g: Graphic; frame: number; dur: number; W: number; theme: Theme; faceX: number; label?: string};
 
-/** 유리 플레이트(개념) */
+/** 종이 메모(개념) */
 export const ConceptPlate: React.FC<PlateProps> = ({g, frame, dur, W, theme, faceX, label}) => {
   const {b, right, s} = plateBox(g, faceX, W);
   const from = right ? 'right' : 'left';
   const pad = Math.round(36 * s);
   return (
-    <div style={{position: 'absolute', left: b.x, top: b.y, width: b.w, height: b.h, ...slideIn(frame, LONG.plateIn, from),
-      ...slideOut(frame, dur, from)}}>
-      <div style={{position: 'absolute', inset: 0, borderRadius: Math.round(20 * s), background: 'rgba(17,17,20,0.74)',
-        backdropFilter: 'blur(20px) saturate(130%)', WebkitBackdropFilter: 'blur(20px) saturate(130%)',
-        border: '1px solid rgba(255,255,255,0.14)', boxShadow: '0 18px 50px rgba(0,0,0,0.35)', overflow: 'hidden'}}>
-        <div style={{position: 'absolute', left: 0, top: pad, bottom: pad, width: 4, borderRadius: 2,
-          background: theme.accent, transformOrigin: 'top', scale: `1 ${tween(frame, 2, 12, 'outQuint')}`}} />
-      </div>
-      <div style={{position: 'absolute', left: pad + 6, top: pad, width: b.w - pad * 2 - 6, height: b.h - pad * 2}}>
-        <ConceptContent template={g.template} data={g.data} frame={frame} dur={dur} theme={theme} w={b.w - pad * 2 - 6}
-          h={b.h - pad * 2} s={s} mode="plate" label={label} />
-      </div>
-    </div>
+    <PaperNote x={b.x} y={b.y} w={b.w} h={b.h} frame={frame} dur={dur} from={from} theme={theme} seed={hashSeed(g.id)}
+      pad={pad} id={g.id}>
+      <ConceptContent template={g.template} data={g.data} frame={frame} dur={dur} theme={theme} w={b.w - pad * 2}
+        h={b.h - pad * 2 - 6} s={s} mode="plate" label={label} />
+    </PaperNote>
   );
 };
 
-/** 사진·스톡 플레이트 */
-export const MediaPlate: React.FC<PlateProps> = ({g, frame, dur, W, faceX}) => {
+/** 종이 위에 붙인 사진·스톡 */
+export const MediaPlate: React.FC<PlateProps> = ({g, frame, dur, W, theme, faceX}) => {
   const {b, right, s} = plateBox(g, faceX, W);
   const from = right ? 'right' : 'left';
-  const pad = Math.round(14 * s);
+  const pad = Math.round(22 * s);
   return (
-    <div style={{position: 'absolute', left: b.x, top: b.y, width: b.w, height: b.h, ...slideIn(frame, LONG.plateIn, from),
-      ...slideOut(frame, dur, from)}}>
-      <div style={{position: 'absolute', inset: 0, borderRadius: Math.round(20 * s), background: 'rgba(17,17,20,0.78)',
-        backdropFilter: 'blur(20px) saturate(130%)', WebkitBackdropFilter: 'blur(20px) saturate(130%)',
-        border: '1px solid rgba(255,255,255,0.14)', boxShadow: '0 18px 50px rgba(0,0,0,0.35)'}} />
-      <div style={{position: 'absolute', left: pad, top: pad, width: b.w - pad * 2, height: b.h - pad * 2}}>
-        <MediaContent data={g.data} template={g.template} frame={frame} dur={dur} w={b.w - pad * 2} h={b.h - pad * 2} s={s} />
-      </div>
-    </div>
+    <PaperNote x={b.x} y={b.y} w={b.w} h={b.h} frame={frame} dur={dur} from={from} theme={theme} seed={hashSeed(g.id)}
+      pad={pad} id={g.id}>
+      <MediaContent data={g.data} template={g.template} frame={frame} dur={dur} w={b.w - pad * 2} h={b.h - pad * 2 - 6}
+        s={s} />
+    </PaperNote>
   );
 };

@@ -42,6 +42,17 @@ export const makeTheme = (brand: Brand) => ({
 
 export type Theme = ReturnType<typeof makeTheme>;
 
+// 롱폼 무대 재질 v2 — 종이 메모 룩(docs/롱폼_무대_디자인.md 5장): 크림 종이 · 웜 잉크 · 시그널(테마 accent) 세 색뿐
+export const NOTE = {
+  paper: '#F5F2EA',
+  paperDeep: '#E9E4D8',
+  ink: '#26211E',
+  inkSoft: 'rgba(38,33,30,0.72)',
+  note: 'rgba(38,33,30,0.5)',
+  rule: 'rgba(38,33,30,0.16)',
+  dots: 'rgba(38,33,30,0.13)',
+} as const;
+
 export const FONT = {
   sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
   display: '"Pretendard", "Malgun Gothic", sans-serif',

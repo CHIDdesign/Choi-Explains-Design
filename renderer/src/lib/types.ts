@@ -46,6 +46,11 @@ export type GraphicData = {
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
   accent?: string; // 개념 카드·사진 액자 글(두 스킨): 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)
+  // 전면 사진·스톡 위 키워드 슬램(studio/render/props.py fold_keywords_into_media): keyword_at 초부터 사진이 어두워지며
+  // 큰 키워드 + 아랫줄(keyword_sub, 예: "수렵·채집 → 농경")
+  keyword?: string;
+  keyword_sub?: string;
+  keyword_at?: number;
 };
 
 // 화면 스킨(기본 classic):
@@ -127,8 +132,9 @@ export type MotionSpec = {
 // html = .card 안쪽 조각, css = `.card[data-card-id="id"]` 로 스코프된 규칙, w×h = 작성 캔버스(렌더러가 상자에 맞춰 축소)
 export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string};
 
-// 얼굴 옆 액자·개념 텍스트의 자리(studio/render/props.py face_safe_layouts): 얼굴 트랙으로 고른 빈 쪽 + 여유에 맞춘 크기
-export type PipPlacement = {side: 'left' | 'right'; w: number; h: number};
+// 얼굴 옆 액자·개념 텍스트의 자리(studio/render/props.py face_safe_layouts): 얼굴 트랙으로 고른 빈 쪽 + 여유에 맞춘 크기.
+// side 'top' = 짧은 키워드를 화면 위 소제목 바(종이 띠 + '!' 배지)로 — 머리 위가 비어 있을 때만
+export type PipPlacement = {side: 'left' | 'right' | 'top'; w: number; h: number};
 
 export type Graphic = {
   id: string;

@@ -15,9 +15,10 @@ import {BrollCard} from './Broll';
 import {MotionScene} from '../motion/MotionScene';
 import {HtmlCard} from '../card/HtmlCard';
 import {PaperGraphic, referenceGraphic} from '../paper/PaperGraphic';
-import {SourceCredit} from '../paper/Paper';
 import {BoardPanel, RecapBoard} from '../longform/Board';
 import {CONCEPT_TEMPLATES, ConceptPlate, MediaPlate} from '../longform/Plates';
+import {SectionBar} from '../longform/Note';
+import {hashSeed, SourceCredit} from '../paper/Paper';
 
 export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> = {
   chapter: ChapterCard,
@@ -100,8 +101,13 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
     return <Comp {...common} frame={frame} dur={dur} box={{w: W, h: H}} />;
   }
 
-  // 얼굴 반대편 플레이트(롱폼 무대): 개념은 유리 플레이트, 사진·스톡은 미디어 플레이트 — 화자는 그대로
+  // 얼굴 반대편 종이 메모(롱폼 무대 재질 v2): 개념은 메모, 사진·스톡은 종이 위 사진 — 화자는 그대로.
+  // 짧은 키워드는 화면 위 소제목 바(파이프라인이 머리 위가 비었을 때 pip.side='top' 으로)
   if (g.layout === 'pip' || g.layout === 'overlay') {
+    if (g.pip?.side === 'top' && g.template === 'keyword') {
+      return <SectionBar text={g.data.title || ''} frame={frame} dur={dur} W={W} theme={theme} seed={hashSeed(g.id)}
+        maxW={g.pip.w} />;
+    }
     if (media) return <MediaPlate g={g} frame={frame} dur={dur} W={W} theme={theme} faceX={faceX} />;
     if (concept) return <ConceptPlate g={g} frame={frame} dur={dur} W={W} theme={theme} faceX={faceX} />;
   }

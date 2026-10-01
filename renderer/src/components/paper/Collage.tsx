@@ -131,7 +131,7 @@ export const FramedMedia: React.FC<{src: string; kind?: 'video' | 'photo'; b: Bo
 export const pipBoxes = (faceX: number, W = 1920, pip?: PipPlacement) => {
   const w = pip?.w ?? 700;
   const h = pip?.h ?? 520;
-  const right = pip ? pip.side === 'right' : faceX < 0.5;
+  const right = pip ? pip.side !== 'left' : faceX < 0.5;
   const b: Box = right ? {x: W - 60 - w, y: 84, w, h} : {x: 60, y: 84, w, h};
   const textW = Math.max(420, Math.min(760, w + 60));
   return {b, right, textX: right ? W - 60 - textW : 60, textW};

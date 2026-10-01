@@ -1,7 +1,7 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {DUR, EASE, exitFrames, tween, tweenOut} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {FONT, NOTE} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import type {CaptionCue, LongCaptionPreset} from '../../lib/types';
@@ -65,7 +65,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
 
   if (preset === 'paper') {
     return <PaperCaption cue={cue} local={local} remain={remain} joinPrev={joinPrev} joinNext={joinNext}
-      left={cx - frameW / 2} width={frameW} bottom={bottom} plain={plain} />;
+      left={cx - frameW / 2} width={frameW} bottom={bottom} plain={plain} accent={theme.accent} />;
   }
 
   if (cue.style === 'impact' && !plain) {
@@ -174,17 +174,20 @@ export const CaptionScrim: React.FC<{height?: number; strength?: number}> = ({he
     background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,${strength * 0.55}) 55%, rgba(0,0,0,${strength}) 100%)`}} />
 );
 
-/** 흰 종이 박스 자막(사용자 템플릿). 짧은 청크가 빠르게 바뀌므로 움직임은 2프레임 페이드뿐. */
+/** 종이 상자 자막(운영자 템플릿 → 재질 v2: 크림 상자 + 시그널 아래 테두리, 잉크 글씨, 핵심어 어간은 시그널 굵게).
+ *  짧은 청크가 빠르게 바뀌므로 움직임은 2프레임 페이드뿐. */
 export const PaperCaption: React.FC<{cue: CaptionCue; local: number; remain: number; joinPrev: boolean;
-  joinNext: boolean; left: number; width: number; bottom: number; plain?: boolean; size?: number}> = (
-  {cue, local, remain, joinPrev, joinNext, left, width, bottom, plain = false, size = 46}) => {
+  joinNext: boolean; left: number; width: number; bottom: number; plain?: boolean; size?: number; accent?: string}> = (
+  {cue, local, remain, joinPrev, joinNext, left, width, bottom, plain = false, size = 46, accent = '#F93107'}) => {
   const op = Math.min(joinPrev ? 1 : interpolate(local, [0, 2], [0, 1], clamp),
     joinNext ? 1 : interpolate(remain, [0, 2], [0, 1], clamp));
+  const edge = Math.max(4, Math.round(size * 0.11));
   return (
-    <div style={{position: 'absolute', left, width, bottom, display: 'flex', justifyContent: 'center', opacity: op}}>
-      <div style={{background: '#fbfaf5', border: '2px solid #1a1a1a', padding: `${size * 0.12}px ${size * 0.46}px ${size * 0.17}px`,
-        fontFamily: FONT.sans, fontWeight: 500, fontSize: size, lineHeight: 1.3, letterSpacing: '-0.01em',
-        color: '#171717', whiteSpace: 'nowrap', boxShadow: '0 4px 16px rgba(0,0,0,0.28)'}}>
+    <div style={{position: 'absolute', left, width, bottom: bottom + edge, display: 'flex', justifyContent: 'center',
+      opacity: op}}>
+      <div style={{background: NOTE.paper, padding: `${size * 0.12}px ${size * 0.5}px ${size * 0.16}px`, borderRadius: 4,
+        fontFamily: FONT.sans, fontWeight: 600, fontSize: size, lineHeight: 1.3, letterSpacing: '-0.012em',
+        color: NOTE.ink, whiteSpace: 'nowrap', boxShadow: `0 ${edge}px 0 ${accent}, 0 ${edge + 6}px 18px rgba(0,0,0,0.28)`}}>
         {cue.lines.map((line, li) => (
           <div key={li}>
             {line.map((w, wi) => {
@@ -192,7 +195,7 @@ export const PaperCaption: React.FC<{cue: CaptionCue; local: number; remain: num
               return (
                 <React.Fragment key={wi}>
                   {wi > 0 ? ' ' : ''}
-                  {w.em && !plain ? <><span style={{fontWeight: 900}}>{stem}</span>{tail}</> : w.text}
+                  {w.em && !plain ? <><span style={{fontWeight: 900, color: accent}}>{stem}</span>{tail}</> : w.text}
                 </React.Fragment>
               );
             })}

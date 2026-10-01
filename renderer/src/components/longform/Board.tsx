@@ -3,25 +3,26 @@ import {interpolate} from 'remotion';
 import {LONG, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
-import {FONT} from '../../design/tokens';
+import {FONT, NOTE} from '../../design/tokens';
 import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
 import {Credit} from '../layout/Editorial';
+import {Badge, Halftone, PaperFiber} from './Note';
 import {CONCEPT_TEMPLATES, ConceptContent, MediaContent} from './Plates';
-import {boardCard, DotGrid, LabelChip, RiseLine, Rule, slideIn, slideOut, STAGE} from './Stage';
+import {boardCard, DotGrid, RiseLine, Rule, slideIn, slideOut, STAGE} from './Stage';
 
 /**
- * 보드 판(롱폼 무대의 split, classic 챕터) — 화자 판 옆 작업대 열에 놓이는 잉크 판.
- * 희미한 점 격자 + 머리줄(챕터 칩 · 템플릿 라벨) + 괘선 + 내용 + 바닥줄(브랜드 · 출처).
- * 바깥 가장자리에서 안으로 쓸어 들어온다(18f). 개념·사진은 플레이트와 같은 내용 부품을 크게, 도식·목록·모션은 템플릿 그대로.
+ * 보드 판(롱폼 무대의 split, classic 챕터) — 화자 판 옆 작업대 열에 놓이는 **크림 종이 판**(재질 v2).
+ * 하프톤 점 + 머리줄(챕터 배지 · 템플릿 라벨) + 괘선 + 내용 + 바닥줄(브랜드 · 출처), 왼쪽 시그널 바.
+ * 바깥 가장자리에서 안으로 쓸어 들어온다(18f). 개념·사진은 메모와 같은 내용 부품을 크게, 도식·목록·모션은 템플릿(종이 표면) 그대로.
  */
 export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; frame: number; dur: number; fps: number;
   theme: Theme; brand: Brand; episode: Episode; W: number; H: number; panelSide: 'left' | 'right'; chapterTag: string}>
   = ({g, Comp, frame, dur, fps, theme, brand, episode, W, H, panelSide, chapterTag}) => {
   const card = boardCard(panelSide, W, H);
   const from = panelSide === 'right' ? 'right' : 'left';
-  const s = mkSurface(theme, 'board');
+  const s = {...mkSurface(theme, 'paper'), bg: NOTE.paper, fg: NOTE.ink, dim: NOTE.inkSoft, rule: NOTE.rule};
   const pad = STAGE.pad;
   const headH = 34;
   const footH = 30;
@@ -38,15 +39,17 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
     <div style={{position: 'absolute', left: card.x, top: card.y, width: card.w, height: card.h,
       ...slideIn(frame, LONG.boardIn, from, 48), ...slideOut(frame, dur, from)}}>
       <div style={{position: 'absolute', inset: 0, borderRadius: STAGE.radius, overflow: 'hidden', background: s.bg,
-        border: '1px solid rgba(255,255,255,0.09)', boxShadow: '0 24px 70px rgba(0,0,0,0.42)'}}>
-        <DotGrid opacity={tween(frame, 6, 16)} />
-        <div style={{position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, background: theme.accent,
-          transformOrigin: 'top', scale: `1 ${tween(frame, 4, 16, 'outQuint')}`, opacity: 0.95}} />
+        boxShadow: '0 24px 70px rgba(0,0,0,0.38)'}}>
+        <Halftone opacity={0.5} />
+        <PaperFiber id={`board-${g.id}`} opacity={0.12} />
+        <DotGrid opacity={tween(frame, 6, 16) * 0.9} color={NOTE.dots} />
+        <div style={{position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, background: theme.accent,
+          transformOrigin: 'top', scale: `1 ${tween(frame, 4, 16, 'outQuint')}`}} />
       </div>
-      {/* 머리줄: 챕터 칩 · 템플릿 라벨 */}
+      {/* 머리줄: 챕터 배지 · 템플릿 라벨 */}
       <div style={{position: 'absolute', left: innerX, right: pad, top: pad, height: headH, display: 'flex',
         alignItems: 'center', justifyContent: 'space-between', opacity: tween(frame, 4, 10)}}>
-        <LabelChip text={chapterTag || brand.name} theme={theme} size={20} dim />
+        <Badge text={chapterTag || brand.name} size={20} />
         <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 18, color: s.dim, letterSpacing: '0.02em'}}>
           ( {TEMPLATE_LABEL[g.template] || g.template} )
         </span>
@@ -61,7 +64,7 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
             h={innerH} s={scale} mode="board" />
         ) : media ? (
           <MediaContent data={g.data} template={g.template} frame={frame} dur={dur} w={innerW} h={innerH} s={scale}
-            radius={14} />
+            radius={6} />
         ) : (
           <div style={{position: 'absolute', inset: 0, opacity: tween(frame, 8, 12),
             translate: `0 ${interpolate(tween(frame, 8, 14, 'outQuint'), [0, 1], [14, 0])}px`}}>
@@ -97,7 +100,7 @@ export const RecapBoard: React.FC<TemplateProps> = ({data, frame, dur, surface, 
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',
       opacity: out}}>
-      <div style={{opacity: tween(frame, 2, 10)}}><LabelChip text={label} theme={theme} size={22} /></div>
+      <div style={{opacity: tween(frame, 2, 10)}}><Badge text={label} size={22} accent={theme.accent} /></div>
       <div style={{marginTop: 18, display: 'flex', flexDirection: 'column'}}>
         {hb.lines.map((l, i) => (
           <RiseLine key={i} frame={frame} delay={5 + i * 3}>

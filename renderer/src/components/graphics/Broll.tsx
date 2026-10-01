@@ -4,6 +4,7 @@ import {EASE, tween} from '../../design/motion';
 import {FONT} from '../../design/tokens';
 import {Credit, MaskLine} from '../layout/Editorial';
 import type {TemplateProps} from './common';
+import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -11,7 +12,7 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
  * 스톡 B-roll(Pixabay·Unsplash·Coverr·Pexels 영상/사진) — "Keep it stupid cinematic": 꽉 찬 화면, 아주 느린 푸시인, 작은 ▣ 크레딧.
  * 사진은 켄번즈(방향 지정), 영상은 1.00→1.04 푸시인. 패널 레이아웃에서는 액자형.
  */
-export const BrollCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, layout, compact}) => {
+export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, surface, box, layout, compact, theme}) => {
   if (!data.src) return null;
   const src = staticFile(data.src);
   const pIn = tween(frame, 0, 10, 'outQuint');
@@ -36,11 +37,12 @@ export const BrollCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
             </MaskLine>
           </div>
         ) : null}
-        {data.credit ? (
-          <div style={{position: 'absolute', right: 72, top: 64, opacity: tween(frame, 12, 12)}}>
-            <Credit text={data.credit} color="rgba(255,255,255,0.8)" size={15} />
-          </div>
+        <FilmLook frame={frame} id={id} strength={data.kind === 'video' ? 0.6 : 0.9} />
+        {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
+          <KeywordSlam keyword={data.keyword} sub={data.keyword_sub} f={frame - (data.keyword_at ?? 0) * fps} W={box.w}
+            theme={theme} />
         ) : null}
+        <CornerCredit text={data.credit || ''} opacity={tween(frame, 12, 12)} />
       </div>
     );
   }

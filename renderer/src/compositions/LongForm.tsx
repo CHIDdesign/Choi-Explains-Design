@@ -213,6 +213,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   // 챕터 카드·타이틀 ±0.3초(전환이 걸리는 동안)에도 스트립을 숨긴다
   const coverActive = props.graphics.some((g) => (g.template === 'chapter' || g.template === 'title')
     && t >= g.start - 0.3 && t < g.end + 0.3);
+  // 화면 위 소제목 바가 떠 있는 동안도(같은 자리) 스트립을 숨긴다
+  const topBarActive = props.graphics.some((g) => g.pip?.side === 'top' && t >= g.start - 0.2 && t < g.end + 0.2);
   // 화면에 글자 그래픽이 떠 있으면 자막 강조는 끈다(강조색은 화면당 한 곳)
   const textGraphicActive = props.graphics.some((g) => t >= g.start && t < g.end
     && !['lower_third', 'broll', 'photo', 'title'].includes(g.template));
@@ -258,7 +260,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         ) : null}
         {region === full ? <Vignette strength={0.22} /> : null}
         {props.showChapterLabel && chapter && ci >= 0 && !fullscreenActive && !span && paperP === 0
-          && frame < endStart && !coverActive ? (
+          && frame < endStart && !coverActive && !topBarActive ? (
           // 컨텍스트 스트립(롱폼 무대): 지금 챕터 번호·제목 + 챕터 눈금 — 전체화면·보드·타이틀·챕터 카드 동안은 숨김
           <ContextStrip chapters={props.chapters} index={ci} t={t} total={props.duration} theme={theme}
             opacity={stripOpacity(frame, toFrame(chapter.start + 3.2, fps))} />

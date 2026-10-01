@@ -587,10 +587,45 @@ def chapter_maps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]]) -
     return n
 
 
+# ---------------------------------------------------------------------------
+# 📸 자료 사진 위 키워드 슬램(레퍼런스: 같은 사진이 이어진 채 어두워지며 큰 키워드 + 'A → B')
+# ---------------------------------------------------------------------------
+def fold_keywords_into_media(gdicts: list[dict[str, Any]], *, gap: float = 0.6) -> int:
+    """전면 사진·스톡 **안에서 시작하거나 바로 뒤에 붙는** 키워드 그래픽을 그 사진에 접는다: 사진은 이어지고
+    `keyword_at` 초부터 어두워지며 큰 키워드(`keyword`)와 아랫줄(`keyword_sub`: subtitle/body)이 뜬다.
+    따로 뜨던 키워드 그래픽은 지운다. 돌려주는 값: 접은 개수."""
+    media = [g for g in gdicts if g.get("layout") == "fullscreen" and g.get("template") in ("photo", "broll")]
+    folded = 0
+    for k in [g for g in gdicts if g.get("template") == "keyword"]:
+        title = str((k.get("data") or {}).get("title") or "").strip()
+        if not title:
+            continue
+        for m in media:
+            if m.get("data", {}).get("keyword"):
+                continue
+            inside = m["start"] <= k["start"] < m["end"] - 1.2
+            after = 0 <= k["start"] - m["end"] <= gap
+            if not (inside or after):
+                continue
+            d = m.setdefault("data", {})
+            d["keyword"] = title
+            d["keyword_sub"] = str(k["data"].get("subtitle") or k["data"].get("body") or "")
+            d["keyword_at"] = round((k["start"] if inside else m["end"]) - m["start"], 3)
+            if after or k["end"] > m["end"]:
+                m["end"] = round(max(m["end"], k["end"]), 3)
+            gdicts.remove(k)
+            folded += 1
+            break
+    return folded
+
+
 PIP_W, PIP_H = 700, 520       # renderer Collage.pipBoxes 기본 액자 크기
 PIP_MIN_W = 420               # 이보다 작아지면 액자 대신 화자 패널(split)로
 PIP_MARGIN = 60
 PIP_TEMPLATES = ("photo", "broll", "keyword", "definition", "quote", "stat")
+TOPBAR_MAX_CHARS = 16          # 이보다 짧은 키워드(보조문 없음)는 화면 위 소제목 바
+TOPBAR_CLEAR = 230             # 머리 위가 이만큼(px) 비어 있어야 소제목 바
+TOPBAR_W, TOPBAR_H = 1240, 120
 
 
 def _head_half_width(s: float, H: int) -> float:
@@ -605,7 +640,7 @@ def face_safe_layouts(gdicts: list[dict[str, Any]], face: list[dict[str, Any]], 
     · 어느 쪽도 420px 이 안 되면(클로즈업·화면 가운데) 액자 대신 화자 패널(split)로 바꾼다 — 얼굴 위에 얹지 않는다
     결과는 g["pip"] = {side, w, h}(렌더러 pipBoxes 가 그대로 쓴다). 얼굴 트랙이 없으면 예전대로(렌더러가 faceX 로)."""
     import bisect
-    stats = {"placed": 0, "shrunk": 0, "to_split": 0}
+    stats = {"placed": 0, "shrunk": 0, "to_split": 0, "top": 0}
     if not face:
         return stats
     ts = [f["t"] for f in face]
@@ -617,6 +652,16 @@ def face_safe_layouts(gdicts: list[dict[str, Any]], face: list[dict[str, Any]], 
         sub = face[i0:i1] or [min(face, key=lambda f: abs(f["t"] - g["start"]))]
         left_edge = min(f["x"] * W - _head_half_width(f["s"], H) for f in sub)
         right_edge = max(f["x"] * W + _head_half_width(f["s"], H) for f in sub)
+        # 짧은 키워드(보조문 없음)는 화면 위 **소제목 바**(레퍼런스: 종이 띠 + '!' 배지) — 머리 위가 비어 있을 때만
+        d = g.get("data") or {}
+        if g.get("template") == "keyword" and len(str(d.get("title") or "")) <= TOPBAR_MAX_CHARS \
+                and not d.get("subtitle") and not d.get("body"):
+            head_top = min(f["y"] * H - f["s"] * H * 0.95 for f in sub)
+            if head_top >= TOPBAR_CLEAR:
+                g["pip"] = {"side": "top", "w": TOPBAR_W, "h": TOPBAR_H}
+                stats["placed"] += 1
+                stats["top"] = stats.get("top", 0) + 1
+                continue
         free_left = left_edge - PIP_MARGIN
         free_right = W - right_edge - PIP_MARGIN
         side = "left" if free_left >= free_right else "right"
@@ -743,7 +788,8 @@ def short_beats(spec: dict[str, Any], utts: list[Utterance], timemap: TimeMap, c
 
 def _graphic_text(g: dict[str, Any]) -> str:
     d = g.get("data", g)
-    parts = [str(d.get(k) or "") for k in ("title", "subtitle", "body", "title_b", "author", "number")]
+    parts = [str(d.get(k) or "") for k in ("title", "subtitle", "body", "title_b", "author", "number", "keyword",
+                                           "keyword_sub")]
     parts += [str(x) for k in ("items", "items_b") for x in (d.get(k) or [])]
     spec = d.get("spec")
     if isinstance(spec, dict):
