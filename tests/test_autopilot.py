@@ -537,6 +537,18 @@ def test_chapter_recaps_collects_points_and_sits_in_free_window_at_chapter_end()
     # 첫 챕터(60초)는 개념이 하나뿐이라 정리하지 않는다
 
 
+def test_chapter_recaps_never_covers_emphasis_moments_or_punch_spans():
+    """편집 감독의 강조 순간·펀치 구간은 얼굴로 힘을 주는 자리 — 정리 보드가 덮지 않고, 그 앞의 빈 창으로 가거나 건너뛴다."""
+    from studio.render.props import chapter_recaps
+    chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 10.0, "title": "B", "number": "02"}]
+    mk = lambda: [_g("k1", "keyword", 20, 24, "overlay", title="하나"), _g("k2", "keyword", 40, 44, "overlay", title="둘")]
+    gs = mk()
+    added = chapter_recaps(gs, chapters, 80.0, avoid=[(72.0, 79.0)])          # 끝 7초가 펀치 구간 → 그 앞 창으로
+    assert added and added[0]["end"] <= 72.0 and added[0]["start"] >= 44.3
+    gs = mk()
+    assert chapter_recaps(gs, chapters, 80.0, avoid=[(60.0, 79.6)]) == []    # 끝 20초가 통째로 강조 → 건너뛴다
+
+
 def test_chapter_recaps_skips_short_chapters_and_busy_endings():
     from studio.render.props import chapter_recaps
     chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 30.0, "title": "B", "number": "02"}]

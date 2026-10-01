@@ -1495,13 +1495,17 @@ class Pipeline:
         ps = face_safe_layouts(lp["graphics"], lp["face"])
         if ps["placed"] or ps["to_split"]:
             self.log(f"🙂 얼굴 옆 배치: 액자 {ps['placed']}개(줄임 {ps['shrunk']}) · 자리가 없어 패널로 {ps['to_split']}개")
-        # 롱폼 무대 편집법: 챕터 카드에 목차, 챕터 끝에 그 챕터의 핵심 개념을 모은 정리 보드(7초)
+        seg_t = seg_edit_times(self.utts, self.timemap)
+        punch_spans = self._punch_spans(seg_t)
+        moments = self._moments(self.timemap)
+        # 롱폼 무대 편집법: 챕터 카드에 목차, 챕터 끝에 그 챕터의 핵심 개념을 모은 정리 보드(7초) — 편집 감독이 얼굴로 힘을
+        # 주는 강조 순간·펀치 구간은 덮지 않는다
         chapter_maps(lp["graphics"], lp["chapters"])
-        recaps = chapter_recaps(lp["graphics"], lp["chapters"], self.timemap.duration)
+        recaps = chapter_recaps(lp["graphics"], lp["chapters"], self.timemap.duration,
+                                avoid=punch_spans + [(m.t - 0.5, m.end + 0.5) for m in moments if m.intensity >= 2])
         if recaps:
             self.log("📋 챕터 정리 보드 " + " · ".join(
                 f"{fmt_ts(g['start'])}–{fmt_ts(g['end'])} {len(g['data']['items'])}개" for g in recaps))
-        seg_t = seg_edit_times(self.utts, self.timemap)
         looks = None
         if self._hybrid:
             by_id = {u.id: u for u in self.utts}
@@ -1513,12 +1517,11 @@ class Pipeline:
             apply_looks(lp, looks)
             self.look_plan = looks
             self.log("🎨 화면 구성(자동 · 하이브리드): " + looks.summary())
-        punch_spans = self._punch_spans(seg_t)
         if punch_spans:
             self.log("⚡ 펀치 구간(하드 펀치인·단어 슬램·휩·임팩트 허용): "
                      + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in punch_spans))
         ed = build_long_edit(timemap=self.timemap, total=lp["duration"], speech_total=self.timemap.duration,
-                             graphics=lp["graphics"], chapters=lp["chapters"], moments=self._moments(self.timemap),
+                             graphics=lp["graphics"], chapters=lp["chapters"], moments=moments,
                              cues=lp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
                              text_graphic_spans=text_graphic_spans(lp["graphics"]), endcard=self.spec.endcard,
                              face=lp.get("face"),

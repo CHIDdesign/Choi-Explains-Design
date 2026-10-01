@@ -434,6 +434,11 @@ def main() -> int:
     # ⚡ 펀치 구간(s_pencil) 안의 강조는 하드 펀치인(cut, +10% 이상), 그 밖은 글라이드뿐
     assert all(p.get("style") in ("glide", "cut") for p in lp["punches"]), lp["punches"]
     hl_dur = next(t["t"] for t in lp["transitions"] if t["type"] == "leak" and t["t"] > 2.0)   # 🎬 하이라이트 → 본편
+    # 📋 챕터 정리 보드(있으면)는 펀치 구간·강조 순간을 덮지 않는다 — 이 대본은 2챕터 끝이 펀치 구간이라 건너뛸 수 있다
+    for g in lp["graphics"]:
+        if g["template"] == "recap":
+            assert g["layout"] == "split" and 2 <= len(g["data"]["items"]) <= 4, g
+            assert not any(p["style"] == "cut" and g["start"] < p["end"] and g["end"] > p["t"] for p in lp["punches"]), g
     hot = [p for p in lp["punches"] if p["style"] == "cut" and p["t"] >= hl_dur]
     assert len(hot) == 1 and hot[0]["amount"] >= 0.1 and hot[0]["end"] - hot[0]["t"] <= 2.3, lp["punches"]
     assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")

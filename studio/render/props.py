@@ -481,7 +481,7 @@ RECAP_SOURCES = ("keyword", "definition", "stat", "list", "compare", "quote", "p
                  "matrix", "timeline", "venn", "pyramid", "motion", "card")
 RECAP_MIN_CHAPTER = 45.0      # 이보다 짧은 챕터는 정리하지 않는다
 RECAP_DUR = (7.0, 5.0)        # 먼저 7초, 안 되면 5초
-RECAP_SEARCH = 12.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다
+RECAP_SEARCH = 20.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다(그래픽이 8~15초마다 있어 12초로는 자주 못 찾았다)
 
 
 def _shorten(text: str, n: int = 26) -> str:
@@ -517,15 +517,18 @@ def recap_point(g: dict[str, Any]) -> str:
     return _shorten(title)
 
 
-def chapter_recaps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]], speech_total: float) -> list[dict]:
+def chapter_recaps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]], speech_total: float,
+                   avoid: Optional[list[tuple[float, float]]] = None) -> list[dict]:
     """챕터 끝 **정리 보드**(템플릿 recap, split): 그 챕터에서 나온 키워드·정의·숫자·목록·비교·도식 제목을 시간순으로 2~4개
     모아, 챕터 끝 7초(안 되면 5초)에 다른 그래픽과 겹치지 않는 가장 늦은 창에 둔다. 45초 넘는 챕터만.
-    gdicts 에 바로 추가하고(시간순 유지) 추가한 것을 돌려준다. AI 가 만드는 목록과 다른, 앱의 롱폼 편집법."""
+    avoid: 편집 감독의 강조 순간·⚡ 펀치 구간(편집 시각) — 얼굴로 힘을 주는 자리라 보드로 덮지 않는다(자리가 없으면 정리를
+    건너뛴다). gdicts 에 바로 추가하고(시간순 유지) 추가한 것을 돌려준다. AI 가 만드는 목록과 다른, 앱의 롱폼 편집법."""
     if not chapters:
         return []
     starts = sorted(float(c["start"]) for c in chapters)
     bounds = starts + [float(speech_total)]
     busy = [(g["start"] - 0.5, g["end"] + 0.3) for g in gdicts if g.get("template") != "lower_third"]
+    busy += [(float(a), float(b)) for a, b in (avoid or []) if b > a]
     added: list[dict] = []
     for ci, c in enumerate(sorted(chapters, key=lambda c: float(c["start"]))):
         a, b = bounds[ci], bounds[ci + 1]
