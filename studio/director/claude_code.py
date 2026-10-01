@@ -222,8 +222,9 @@ class ClaudeCodeClient:
 
         if cancel is not None:
             cancel.register(proc)          # 취소하면 CancelToken 이 프로세스를 바로 끝낸다
-        threading.Thread(target=pump_out, daemon=True).start()
-        threading.Thread(target=pump_err, daemon=True).start()
+        readers = [threading.Thread(target=pump_out, daemon=True), threading.Thread(target=pump_err, daemon=True)]
+        for th in readers:
+            th.start()
         threading.Thread(target=pump_in, daemon=True).start()
         result: Optional[dict] = None
         last_log = time.time()
@@ -251,6 +252,9 @@ class ClaudeCodeClient:
                 last_log = time.time()
                 self.log(f"{label}: 작업 중… ({int(time.time() - t0)}초, Claude Code)")
         proc.wait(timeout=30)
+        # stderr 를 끝까지 읽은 뒤에 판단한다 — 읽기 스레드가 늦으면(바쁜 PC) '모르는 옵션'을 못 보고 옛 CLI 에서 그냥 실패했다
+        for th in readers:
+            th.join(timeout=5)
         if cancel is not None:
             cancel.unregister(proc)
         stderr = "".join(err)

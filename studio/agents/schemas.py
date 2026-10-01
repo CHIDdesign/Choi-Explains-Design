@@ -216,3 +216,29 @@ CUT_REVIEW = _obj({
     "removals": {"type": "array", "items": _obj({"id": INT, "keep_removed": BOOL, "reason": STR})},
     "notes": STR,
 })
+
+
+# 🧐 타임라인 검수(게이트 E) — 정지 화면이 아니라 타임라인을 본다(docs/upgrade/05b_편집_검수_루브릭.md)
+RUBRIC = ["follow", "argument", "rhythm", "evidence", "hierarchy", "distinct"]
+TL_KINDS = ["duplicate_take", "dead_air", "slide_chain", "hold_broken", "late_step", "no_tails", "no_evidence",
+            "wrong_image", "label_leak", "template_repeat", "surface_mix", "flat_hierarchy", "other"]
+TL_ACTIONS = ["none", "escalate_edit", "drop", "move", "merge_into_sequence", "extend_hold", "swap_to_image",
+              "request_owner"]
+TIMELINE_QA = _obj({
+    "thesis_read": STR,                                   # 화면 글자만 읽고 쓴 논지 한 문장(소리 끄고 읽기)
+    "scores": {"type": "array", "items": _obj({
+        "criterion": {"type": "string", "enum": RUBRIC},
+        "evidence": STR_LIST,                             # 근거 2~3개("09:00 검은 화면에 '효율' 한 단어 — 2.5초")
+        "score": INT,                                     # 0~5
+    })},
+    "findings": {"type": "array", "items": _obj({
+        "start": STR, "end": STR,                         # "mm:ss"
+        "kind": {"type": "string", "enum": TL_KINDS},
+        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+        "target": STR,
+        "action": {"type": "string", "enum": TL_ACTIONS},
+        "blocking": BOOL,
+        "direction": STR,
+    })},
+    "summary": STR,
+})

@@ -616,6 +616,66 @@ def scrub_labels(graphics: list[dict]) -> tuple[int, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
+# 게이트 E — 완성본(타임라인 검수, docs/upgrade/05b). 가중 평균·판정은 코드가 한다
+# ---------------------------------------------------------------------------
+
+RUBRIC_WEIGHT = {"follow": 30, "argument": 20, "rhythm": 15, "evidence": 15, "hierarchy": 10, "distinct": 10}
+PASS_SCORE = 3.8
+TL_KIND_TO_GATE = {"duplicate_take": ["A1_length", "A3_duplicates", "A5_greetings"],
+                   "dead_air": ["A6_distribution", "A7_face_run"], "slide_chain": ["A12_chain"],
+                   "hold_broken": ["A14_hold_guard"], "late_step": ["A15_step_sync"],
+                   "no_tails": ["A11_fast_runs", "A16_hold_presence"], "no_evidence": [], "wrong_image": [],
+                   "label_leak": ["B3_query_label", "B4_direction", "B5_internal"], "template_repeat": [],
+                   "surface_mix": [], "flat_hierarchy": [], "other": []}
+
+
+def gate_e(tl: dict) -> GateResult:
+    """타임라인 검수 결과 → 게이트 E. 기준별 점수(0~5)의 가중 평균 ≥ 3.8 이고 2점 이하 기준이 없으면 pass.
+    high·blocking 발견이 하나라도 있으면 needs_review(결과 폴더·창에 '검토 필요'). 빠진 기준은 '채점 실패'로 두고 평균에서 뺀다."""
+    scores = {}
+    for sc in tl.get("scores", []) or []:
+        c = sc.get("criterion")
+        if c in RUBRIC_WEIGHT:
+            try:
+                scores[c] = max(0, min(5, int(sc.get("score", 0))))
+            except (TypeError, ValueError):
+                continue
+    total_w = sum(RUBRIC_WEIGHT[c] for c in scores)
+    avg = sum(RUBRIC_WEIGHT[c] * v for c, v in scores.items()) / total_w if total_w else 0.0
+    findings = [f for f in tl.get("findings", []) or [] if isinstance(f, dict)]
+    blocking_f = [f for f in findings if f.get("severity") == "high" and f.get("blocking")]
+    low = [c for c, v in scores.items() if v <= 2]
+    verdict = "needs_review" if blocking_f else ("pass" if scores and avg >= PASS_SCORE and not low else "revise")
+    m = {"weighted": round(avg, 2), "scores": scores, "missing": [c for c in RUBRIC_WEIGHT if c not in scores],
+         "verdict": verdict, "thesis_read": str(tl.get("thesis_read", ""))[:120],
+         "findings": [{k: f.get(k) for k in ("start", "end", "kind", "severity", "action", "blocking", "direction")}
+                      for f in findings[:12]]}
+    if verdict == "pass":
+        return _ok("E_timeline", "warn", m, f"타임라인 검수 통과(가중 {avg:.2f})")
+    if verdict == "needs_review":
+        f = blocking_f[0]
+        return _bad("E_timeline", "warn", m, f"검토 필요 — {f.get('start', '')}~{f.get('end', '')} {f.get('kind')}: "
+                    f"{str(f.get('direction', ''))[:60]}")
+    worst = sorted(scores.items(), key=lambda kv: kv[1])[:2]
+    return _bad("E_timeline", "warn", m, f"타임라인 검수 {avg:.2f}점(통과 {PASS_SCORE}) — 약한 기준: "
+                + ", ".join(f"{c} {v}" for c, v in worst))
+
+
+def gate_feedback(results: list[GateResult], tl: dict) -> list[dict]:
+    """게이트는 통과했는데 검수가 잡은 것 — 임계값을 고칠 신호(work/gate_feedback.json 에 쌓는다)."""
+    by = {r.id: r for r in results}
+    out = []
+    for f in tl.get("findings", []) or []:
+        for gid in TL_KIND_TO_GATE.get(f.get("kind", ""), []):
+            r = by.get(gid)
+            if r is not None and r.ok and not r.skipped:
+                out.append({"gate": gid, "measured": r.measured, "finding": {k: f.get(k) for k in
+                                                                              ("start", "end", "kind", "severity",
+                                                                               "direction")}})
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 결과 정리
 # ---------------------------------------------------------------------------
 
@@ -678,6 +738,17 @@ def report_section(results: list[GateResult]) -> str:
         state = ("건너뜀" if r.skipped else "통과(수리함)" if r.repaired else "통과") if r.ok else \
             ("멈춤" if r.level == "block" else "경고")
         lines.append(f"| {r.id} | {state} | {r.message.replace('|', '/')} |")
+    e = next((r for r in results if r.id == "E_timeline"), None)
+    if e is not None and e.measured.get("scores"):
+        m = e.measured
+        lines += ["", f"### 🧐 타임라인 검수 — 가중 {m.get('weighted')} · {m.get('verdict')}", ""]
+        if m.get("thesis_read"):
+            lines.append(f"처음 보는 눈이 읽은 논지: {m['thesis_read']}")
+            lines.append("")
+        lines.append(" · ".join(f"{c} {v}" for c, v in m["scores"].items()))
+        for f in m.get("findings", []):
+            lines.append(f"- {f.get('start', '')}~{f.get('end', '')} [{f.get('severity')}] {f.get('kind')} → "
+                         f"{f.get('action')}: {str(f.get('direction', '')).replace('|', '/')}")
     return "\n".join(lines) + "\n\n"
 
 

@@ -359,6 +359,7 @@ class Pipeline:
                     "director": "director@ai" if ai else "director@rule",
                     "align": "align@ai" if (ai and self.spec.studio_mode) else "align",
                     "qa": "qa@ai" if ai else "qa@rule",
+                    "export": "export@ai" if (ai and self.spec.studio_mode) else "export",
                     "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
         self.eta.plan(keys, variants, self._eta_features(), steps=steps)
 
@@ -3014,6 +3015,7 @@ class Pipeline:
         for i, sp in enumerate(self.short_props, 1):
             write_text(self.extras / f"숏폼{i}_자막.srt", cues_to_srt(sp["captions"]))
         self._review_sheets()
+        self._timeline_review()
         text = youtube_text(self.plan_long, chapters, self.plan_shorts, credits)
         if music:
             text += "\n## 배경음악\n" + "\n".join(f"- {m}" for m in music) + "\n"
@@ -3064,6 +3066,68 @@ class Pipeline:
         shutil.copyfile(self.work / "plan.json", self.extras / "plan.json")
         self.results["extras"] = str(self.extras)
         self.results["upload_info"] = str(self.out / "업로드정보.txt")
+
+    def _timeline_review(self) -> None:
+        """🧐 게이트 E — 완성본을 처음 보는 눈으로: 검토 시트(2.5초 간격) 전부 + 자막 + 이벤트 목록 + 감독의 계획 + 게이트 결과를
+        타임라인 검수 에이전트가 루브릭(R1~R6)으로 채점한다(docs/upgrade/05b). 가중 평균·판정은 코드. high·blocking 발견이 있으면
+        결과에 '검토 필요'(output/⚠검토필요.md · 창 · 리포트 첫 절). 실패해도 결과물은 그대로(게이트 수치만으로 판정)."""
+        from .export.events import event_list
+        if not (self.long_props and self.masters and self._use_api() and self.spec.studio_mode):
+            return
+        sheets = sorted(self.extras.glob("검토시트_롱폼*.jpg"))[:20]
+        if not sheets:
+            return
+        hd = self.hl_duration
+        main = next((m for m in self.masters if not m["short"]), None)
+        ed = main["edit"] if main else None
+        seg_t = seg_edit_times([u for u in self.utts if u.kept], self.timemap)
+        peak = self.plan_long.get("peak_seg", -1)
+        events = event_list(self.long_props, holds=[(a + hd, b + hd) for a, b in self._hold_spans()],
+                            sequences={q["id"]: q["type"] for q in self.plan_long.get("sequences", []) or []},
+                            sfx=ed.sfx if ed else [], peak_t=(seg_t[peak][0] + hd) if peak in seg_t else None)
+        key = text_hash(events + "".join(str(p.stat().st_size) for p in sheets))
+        cache = read_json(self.work / "timeline_qa.json", {})
+        if cache.get("key") == key and cache.get("result"):
+            tl = cache["result"]
+            self._log_file_only("   (타임라인 검수: 이전 결과 사용)")
+        else:
+            studio = self._ensure_studio()
+            if studio is None:
+                return
+            brief = self.plan_long.get("studio") or {}
+            plan_text = "\n".join([f"논지: {brief.get('thesis', '')}",
+                                    f"훅의 질문: {self.plan_long.get('central_question', '')}",
+                                    "챕터: " + " / ".join(f"{c['title']} — {c.get('claim', '')}"
+                                                          for c in self.plan_long.get("chapters", []))])
+            gate_text = "\n".join(f"- {r.id}: {'통과' if r.ok else r.level} — {r.message}" for r in self.gate_results)
+            imgs = [(p.stem, p.read_bytes(), "image/jpeg") for p in sheets]
+            srt_p = self.extras / "롱폼_자막.srt"
+            try:
+                tl = studio.review_timeline(self.ctx, events, srt_p.read_text(encoding="utf-8") if srt_p.exists() else "",
+                                            plan_text, gate_text, imgs)
+            except DirectorError as e:
+                self.log(f"🧐 타임라인 검수 실패 → 게이트 수치만으로 판정: {e}")
+                return
+            write_json(self.work / "timeline_qa.json", {"key": key, "result": tl, "events": events})
+        r = gate.gate_e(tl)
+        self.gate_results = gate.merge(self.gate_results, [r])
+        gate.write(self.work / "gate.json", self.gate_results, forced=self.force_render)
+        fb = gate.gate_feedback(self.gate_results, tl)
+        if fb:
+            old = read_json(self.work / "gate_feedback.json", [])
+            write_json(self.work / "gate_feedback.json", (old if isinstance(old, list) else []) + fb)
+        verdict = r.measured.get("verdict")
+        self.results["timeline_review"] = {"verdict": verdict, "weighted": r.measured.get("weighted")}
+        self.log(f"🧐 타임라인 검수: {r.message}")
+        flag = self.out / "⚠검토필요.md"
+        if verdict == "needs_review":
+            self.results["needs_review"] = True
+            lines = [f"# 검토 필요 — {self.title}", "", r.message, "", "## 발견", ""]
+            lines += [f"- {f.get('start', '')}~{f.get('end', '')} [{f.get('severity')}] {f.get('kind')}: {f.get('direction', '')}"
+                      for f in r.measured.get("findings", [])]
+            write_text(flag, "\n".join(lines) + "\n")
+        elif flag.exists():
+            flag.unlink()
 
     def _review_sheets(self) -> None:
         """부가자료/검토시트_*.jpg — 완성 영상을 2.5초마다 한 장씩(시간·자막 포함). 실패해도 작업은 계속."""

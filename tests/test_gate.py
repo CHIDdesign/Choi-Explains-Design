@@ -8,6 +8,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from studio import gate  # noqa: E402
@@ -381,3 +383,68 @@ def test_rhythm_gates_pass_with_sequences_and_holds():
     assert gate.a16_hold_presence(gs, [{"start": 0.0}, {"start": 230.0}], total).ok
     # 대본 태그 그래픽은 홀드 안이어도 명령(홀드가 그 앞까지 줄어든다)
     assert gate.a14_hold_guard([_seq("t", 110.0, 115.0, source="tag")], [(100.0, 125.0)]).ok
+
+
+# ---------------------------------------------------------------------------
+# 게이트 E — 타임라인 검수(docs/upgrade/05b)
+# ---------------------------------------------------------------------------
+
+def _tl(scores, findings=()):
+    return {"thesis_read": "논지", "summary": "",
+            "scores": [{"criterion": c, "evidence": ["00:01 x"], "score": v} for c, v in scores.items()],
+            "findings": list(findings)}
+
+
+def test_blocking_finding_marks_needs_review():
+    """10/1 납품본: 가중 1.30 + duplicate_take(high, blocking) → 검토 필요."""
+    tl = _tl({"follow": 1, "argument": 2, "rhythm": 1, "evidence": 1, "hierarchy": 2, "distinct": 1},
+             [{"start": "00:12", "end": "06:48", "kind": "duplicate_take", "severity": "high", "target": "",
+               "action": "escalate_edit", "blocking": True, "direction": "1차 테이크가 통째로 남음"}])
+    r = gate.gate_e(tl)
+    assert not r.ok and r.measured["verdict"] == "needs_review" and r.measured["weighted"] == pytest.approx(1.3)
+    assert "검토 필요" in r.message
+    md = gate.report_section([r])                                    # 리포트 첫 절에 기준별 점수·발견
+    assert "타임라인 검수" in md and "follow 1" in md and "duplicate_take → escalate_edit" in md
+    good = gate.gate_e(_tl({c: 4 for c in gate.RUBRIC_WEIGHT}))
+    assert good.ok and good.measured["verdict"] == "pass"
+    meh = gate.gate_e(_tl({**{c: 4 for c in gate.RUBRIC_WEIGHT}, "evidence": 2}))
+    assert not meh.ok and meh.measured["verdict"] == "revise" and "evidence 2" in meh.message
+    part = gate.gate_e(_tl({"follow": 5, "argument": 5}))            # 빠진 기준은 '채점 실패'(0점 아님)
+    assert part.measured["missing"] and part.measured["weighted"] == 5.0
+
+
+def test_timeline_findings_map_to_gate_ids_and_feedback():
+    """게이트는 통과했는데 검수가 잡은 것 → gate_feedback(임계값을 고칠 신호)."""
+    kinds = {"duplicate_take": "A1_length", "slide_chain": "A12_chain", "hold_broken": "A14_hold_guard",
+             "late_step": "A15_step_sync", "label_leak": "B3_query_label"}
+    for k, gid in kinds.items():
+        assert gid in gate.TL_KIND_TO_GATE[k]
+    from studio.agents import schemas as S
+    assert set(gate.TL_KIND_TO_GATE) == set(S.TL_KINDS) and set(gate.RUBRIC_WEIGHT) == set(S.RUBRIC)
+    passed = [gate.a12_chain([]), gate.b5_internal_names([])]
+    tl = _tl({c: 3 for c in gate.RUBRIC_WEIGHT}, [{"start": "08:13", "end": "09:14", "kind": "slide_chain",
+                                                    "severity": "medium", "direction": "보드 10개가 쉬지 않음"}])
+    fb = gate.gate_feedback(passed, tl)
+    assert [f["gate"] for f in fb] == ["A12_chain"] and fb[0]["finding"]["kind"] == "slide_chain"
+
+
+def test_event_list_has_holds_sequences_and_text():
+    from studio.export.events import event_list
+    props = {"duration": 120.0, "chapters": [{"start": 0.0, "number": "01", "title": "들어가며"}],
+             "graphics": [{"id": "g1", "template": "photo", "layout": "fullscreen", "start": 10.0, "end": 11.8,
+                           "data": {"title": "스케치", "seq_id": "q1"}},
+                          {"id": "g2", "template": "photo", "layout": "fullscreen", "start": 11.8, "end": 13.6,
+                           "data": {"title": "장표", "seq_id": "q1"}},
+                          {"id": "g3", "template": "process", "layout": "split", "start": 20.0, "end": 30.0,
+                           "data": {"title": "더블 다이아몬드", "items": ["발견", "정의"],
+                                    "stepAt": [{"t": 0.5, "index": 0}, {"t": 4.0, "index": 1}]}}],
+             "callouts": [{"start": 40.0, "end": 43.0, "text": "연필보다\n질문 먼저"}],
+             "transitions": [{"t": 50.0, "type": "wipe"}]}
+    ev = event_list(props, holds=[(60.0, 75.0)], sequences={"q1": "evidence_stack"},
+                    sfx=[{"t": 10.0, "category": "paper"}], peak_t=80.0)
+    assert ev.startswith("# 길이 02:00") and "시퀀스 1" in ev and "홀드 1" in ev
+    assert "SEQ  q1 evidence_stack 샷 2" in ev and '"스케치"' in ev and "└ photo" in ev
+    assert "단계 2(낱말에서)" in ev and "HOLD 15.0s" in ev and "CALL \"연필보다 질문 먼저\"" in ev
+    assert "TX   wipe" in ev and "SFX  paper" in ev and "PEAK" in ev
+    lines = ev.splitlines()[1:]
+    assert lines == sorted(lines, key=lambda x: x[:5])          # 시간순

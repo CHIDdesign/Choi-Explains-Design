@@ -864,9 +864,13 @@ class MainWindow(QMainWindow):
             if it.widget():
                 it.widget().deleteLater()
         title = res.get("title") or ""
-        self.r_title.setText(f"완성! 「{title}」" if title else "완성!")
+        review = bool(res.get("needs_review"))
+        self.r_title.setText((f"⚠ 검토 필요 「{title}」" if title else "⚠ 검토 필요") if review
+                             else (f"완성! 「{title}」" if title else "완성!"))
         took = f"걸린 시간 {fmt_ts(elapsed)} · " if elapsed else ""
-        self.r_sub.setText(took + "색보정과 음향 마스터링(-14 LUFS)까지 적용했습니다. 올리기 전에 한 번 확인해 보세요. "
+        warn = ("타임라인 검수가 고쳐야 할 곳을 찾았습니다 — 올리기 전에 output 폴더의 '⚠검토필요.md' 와 편집 리포트 첫 절을 "
+                "확인하세요. ") if review else ""
+        self.r_sub.setText(took + warn + "색보정과 음향 마스터링(-14 LUFS)까지 적용했습니다. 올리기 전에 한 번 확인해 보세요. "
                            f"썸네일·자막(.srt)·검토 시트·편집 리포트는 '{EXTRAS}' 폴더에 있습니다.")
         cards = [("롱폼 16:9", res.get("long", ""), False)]
         cards += [(f"숏폼 {i} · 9:16", p, True) for i, p in enumerate(res.get("shorts", []) or [], 1)]

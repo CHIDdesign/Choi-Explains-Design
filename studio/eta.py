@@ -42,10 +42,12 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "render": lambda f: 60 + 67 * f["frames_k"] + (15 if f["thumbs"] else 0),   # 약 15fps(첫 작업은 넉넉히)
     "master": lambda f: 20 + 8 * f["out_s"] / 60,
     "export": lambda f: 30,
+    "export@ai": lambda f: 100,          # + 🧐 타임라인 검수(게이트 E: 검토 시트 전부를 보는 AI 호출)
 }
 # 같은 종류(느리면 같이 느린) 단계 묶음
 GROUPS = {"audio": "sound", "master": "sound", "face": "video", "grade": "video", "proxy": "video",
-          "render": "video", "director": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net"}
+          "render": "video", "director": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net",
+          "export": "ai"}
 GROUP_MIN, GROUP_MAX = 0.75, 2.0   # 같은 묶음 조정 범위(줄일 때는 조금만 — 보수적으로)
 GROUP_EVIDENCE = 60.0  # 같은 묶음에서 이만큼(예상 초) 끝나야 조정
 LEARN_KEEP = 5         # 단계마다 남길 기록 수

@@ -205,6 +205,15 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                                 "action": "revise_scene", "new_title": "", "new_body": "", "new_items": [],
                                 "new_layout": "", "direction": "라벨 크게"}]}
         return {"verdict": "pass", "summary": "좋음", "issues": []}
+    if agent == "timeline_review":
+        # 🧐 게이트 E: 검토 시트 전부를 받는다 — 이벤트 목록에 홀드가 있어야 한다
+        assert n_images >= 1 and "HOLD" in instruction, (n_images, instruction[:300])
+        return {"thesis_read": "좋은 디자인은 질문에서 시작한다",
+                "scores": [{"criterion": c, "evidence": ["00:05 화면 예시"], "score": 4}
+                           for c in ("follow", "argument", "rhythm", "evidence", "hierarchy", "distinct")],
+                "findings": [{"start": "00:20", "end": "00:24", "kind": "no_evidence", "severity": "low", "target": "",
+                              "action": "request_owner", "blocking": False, "direction": "스케치 실물 사진을 주세요"}],
+                "summary": "대체로 좋음"}
     if agent == "motion_revise":
         spec = json.loads(re.search(r"현재 spec_json:\n(\{.*\})\n", instruction, re.S).group(1))
         for el in spec["elements"]:
@@ -221,7 +230,7 @@ def agent_of(schema: dict) -> str:
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
-                        ("motion_revise", "changes")):
+                        ("motion_revise", "changes"), ("timeline_review", "thesis_read")):
         if marker in props:
             return key
     return "unknown"
@@ -469,6 +478,9 @@ def main() -> int:
     gate_json = json.loads((job / "work" / "gate.json").read_text(encoding="utf-8"))
     by_gate = {r["id"]: r for r in gate_json["results"]}
     assert gate_json["ok"] and by_gate["A14_hold_guard"]["ok"] and by_gate["B5_internal"]["ok"], gate_json
+    # 🧐 게이트 E(타임라인 검수): 통과(가중 4.0) — 검토 필요 딱지 없음
+    assert by_gate["E_timeline"]["ok"] and by_gate["E_timeline"]["measured"]["weighted"] == 4.0, by_gate.get("E_timeline")
+    assert not (out / "⚠검토필요.md").exists()
     covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
     assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]

@@ -21,6 +21,11 @@ mode = os.environ.get("FAKE_MODE", "ok")
 log = os.environ["FAKE_LOG"]
 if mode == "old" and "--strict-mcp-config" in argv:
     print("error: unknown option '--strict-mcp-config'", file=sys.stderr); sys.exit(1)
+if mode == "late_err" and "--strict-mcp-config" in argv:
+    # stdout 을 먼저 닫고 잠깐 뒤 stderr — 읽기 스레드가 늦으면 '모르는 옵션'을 못 보던 경합
+    sys.stdout.close(); os.close(1)
+    sys.stderr.write(("warning: " + "x" * 200 + "\n") * 4000)       # 파이프 버퍼보다 훨씬 많이 — 마지막 줄은 끝난 뒤에 읽힌다
+    print("error: unknown option '--strict-mcp-config'", file=sys.stderr); sys.stderr.flush(); os._exit(1)
 msg = json.loads(sys.stdin.readline())
 opts = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
 with open(log, "a", encoding="utf-8") as f:
@@ -119,3 +124,14 @@ def test_resolve_backend_and_auth_text(tmp_path, monkeypatch):
     assert "API 키" in describe_auth({"loggedIn": True, "authMethod": "api_key"})
     assert "한도" in explain_error("Claude AI usage limit reached|123")
     assert os.environ.get("FAKE_MODE") is None
+
+
+def test_unknown_option_is_seen_even_when_stderr_arrives_late(fake, monkeypatch):
+    """stdout 이 먼저 닫히고 stderr 가 프로세스 끝 직전에 와도 '모르는 옵션'을 읽고 그 옵션을 빼고 다시 실행한다
+    (읽기 스레드를 기다리지 않아 바쁜 PC 에서 옛 CLI 가 그냥 실패하던 경합)."""
+    shim, calls, tmp = fake
+    monkeypatch.setenv("FAKE_MODE", "late_err")
+    logs: list[str] = []
+    c = ClaudeCodeClient(str(shim), workdir=tmp / "wd", log=logs.append)
+    assert c.structured(system="s", shared_context="c", instruction="i", schema=SCHEMA) == {"a": 1}
+    assert any("모르는 옵션" in m for m in logs)

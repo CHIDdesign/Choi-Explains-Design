@@ -62,7 +62,7 @@ class Settings:
     music_dir: str = ""              # 내 음악 폴더(비우면 user/music)
     # 🎬 AI 스튜디오(멀티 에이전트)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
-    agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}
+    agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low", "timeline_review": "high"}
     agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
     glossary: dict[str, str] = field(default_factory=lambda: {
         "디자인 띵킹": "디자인 씽킹",

@@ -131,3 +131,13 @@ def test_materials_folder_sets_images_dir(app, tmp_path):
     assert "이미지 2장" in w.materials_label.text()
     w._set_materials("")
     assert w._spec().images_dir == ""
+
+
+def test_result_page_flags_needs_review(app, tmp_path):
+    """게이트 E 가 검토 필요를 붙이면 결과 화면 제목·안내에 그대로 보인다."""
+    from studio.gui.app import MainWindow
+    w = MainWindow()
+    w._show_results({"title": "질문이 먼저다", "output": str(tmp_path), "needs_review": True})
+    assert w.r_title.text().startswith("⚠ 검토 필요") and "⚠검토필요.md" in w.r_sub.text()
+    w._show_results({"title": "질문이 먼저다", "output": str(tmp_path)})
+    assert w.r_title.text().startswith("완성!")

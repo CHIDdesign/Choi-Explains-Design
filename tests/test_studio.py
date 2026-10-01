@@ -403,3 +403,23 @@ def test_motion_stage_stands_by_half_a_second():
     # 이미 0.5초 안에 무언가 서 있으면 건드리지 않는다
     spec2 = {"elements": [{"type": "text", "text": "a", "size": 5, "at": 0.3}, {"type": "rect", "at": 2.0}]}
     assert [e["at"] for e in clean_spec(spec2, 8.0)["elements"]] == [0.3, 2.0]
+
+
+def test_timeline_qa_schema_is_strict_and_agent_registered():
+    from studio.agents.studio import AGENTS
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False
+                assert set(node.get("required", [])) == set(node.get("properties", {}))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    walk(S.TIMELINE_QA)
+    assert AGENTS["timeline_review"].schema is S.TIMELINE_QA
+    prompt = (ROOT / "prompts" / "agents" / "timeline_review.md").read_text(encoding="utf-8")
+    for slot in ("{{events}}", "{{srt}}", "{{plan}}", "{{gate}}"):
+        assert slot in prompt
