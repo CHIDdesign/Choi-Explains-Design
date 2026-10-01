@@ -93,8 +93,8 @@ def _seg_with(segs: dict[int, str], word: str) -> int:
 
 
 def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict:
-    if agent == "colorist":  # 전사본 없이 비교 시트 한 장만 받는다
-        assert n_images == 1, n_images
+    if agent == "colorist":  # 전사본 없이 비교 시트 + 원본 스코프 시트 두 장
+        assert n_images == 2, n_images
         return {"look": "warm_film", "strength": 0.7, "exposure": 0.0, "warmth": 0.05, "saturation": 1.0,
                 "reason": "피부가 가장 자연스럽다"}
     segs = _segs(body)

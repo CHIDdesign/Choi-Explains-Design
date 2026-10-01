@@ -75,9 +75,27 @@ def test_failing_lane_stops_others_and_raises_cause(tmp_path):
         time.sleep(0.1)
         raise ValueError("원인")
     t0 = time.time()
-    with pytest.raises(ValueError, match="원인"):
-        p._run_step([["director"], ["grade"]], {"director": slow, "grade": boom})
+    with pytest.raises(ValueError, match="원인"):       # 꼭 필요한 단계(대본 맞추기)의 실패는 작업을 멈춘다
+        p._run_step([["director"], ["align"]], {"director": slow, "align": boom})
     assert time.time() - t0 < 2.0 and p.cancel.cancelled
+
+
+def test_leaf_stage_failure_is_skipped_with_a_safe_fallback(tmp_path):
+    """말단 작업(효과음·검수·편집 검사 …)이 실패하면 그 단계만 건너뛰고(대체 상태) 나머지는 끝까지 돈다."""
+    from types import SimpleNamespace
+    p = _bare(tmp_path)
+    p.soft_failures = []
+    p.spec = SimpleNamespace(sfx=True, music=True)
+    ran = []
+
+    def bad():
+        raise RuntimeError("효과음 서버 다운")
+    p._run_step([["verify"], ["sound", "bundle"]],
+                {"verify": lambda: ran.append("verify"), "sound": bad, "bundle": lambda: ran.append("bundle")})
+    assert ran == ["verify", "bundle"] or sorted(ran) == ["bundle", "verify"]
+    assert not p.cancel.cancelled and p.spec.sfx is False and p.spec.music is False
+    assert p.soft_failures[0]["stage"] == "sound" and "효과음 서버 다운" in p.soft_failures[0]["error"]
+    assert "건너뛰고 계속" in (tmp_path / "log.txt").read_text(encoding="utf-8")
 
 
 def test_hidden_prep_failure_does_not_fail_the_step(tmp_path):

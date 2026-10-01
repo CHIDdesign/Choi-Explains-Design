@@ -125,6 +125,9 @@ SCHEDULE: list[list[list[str]]] = [
     [["export"]],
 ]
 PLAN_ONLY = ("probe", "audio", "asr", "face", "align", "grade", "director")
+# 말단 작업 — 실패해도 영상은 끝까지 만든다(그 단계만 건너뛰고 안전한 대체 상태로). 원본·음성 인식·대본 맞추기·
+# 렌더·합치기만 영상에 꼭 필요하다. 채널 주인: "초기 작업의 외부 프로그램 오류 하나로 전체 작업이 다 망한다"
+SOFT_STAGES = {"audio", "face", "grade", "verify", "broll", "stock", "sound", "qa", "export"}
 
 
 def schedule_for(until: str = "all") -> list[list[list[str]]]:
@@ -262,6 +265,7 @@ class Pipeline:
         self.smap: SourceMap = SourceMap()
         self.quality: dict[int, Quality] = {}          # 카메라 → 화면 품질 표본
         self.face_cams: dict[int, list[dict]] = {}     # 카메라 → 얼굴 트랙(카메라 영상 시각)
+        self.soft_failures: list[dict] = []             # 건너뛴 말단 작업(리포트·진단용)
         self.long_pieces: list[Piece] = []             # 롱폼 앵글 조각
         self.short_pieces: list[list[Piece]] = []
         self.hl_map: Optional[TimeMap] = None          # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 컷
@@ -411,7 +415,21 @@ class Pipeline:
         self.eta.start(key)
         t_stage = time.time()
         self._stage(key, 0.0)
-        fn()
+        try:
+            fn()
+        except Cancelled:
+            raise
+        except Exception as e:
+            if key not in SOFT_STAGES or self.cancel.cancelled:
+                raise
+            self._log_file_only(traceback.format_exc())
+            self.log(f"⚠️ {STAGE_LABEL[key]} 실패 — 이 단계만 건너뛰고 계속합니다: {e}")
+            self.soft_failures.append({"stage": key, "label": STAGE_LABEL[key], "error": str(e)[:300]})
+            try:
+                getattr(self, f"_soft_{key}", lambda: None)()
+            except Exception as e2:  # noqa: BLE001 - 대체 상태조차 못 만들면 원래 오류로
+                self._log_file_only(traceback.format_exc())
+                raise e from e2
         self._stage(key, 1.0)
         self.eta.finish(key)
         self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
@@ -452,6 +470,51 @@ class Pipeline:
             raise first[0]
         if errors:
             raise errors[0]
+
+    # ------------------------------------------------------------------
+    # 말단 작업이 실패했을 때의 대체 상태(SOFT_STAGES) — 영상은 끝까지 나온다
+    def _soft_audio(self) -> None:
+        """목소리 다듬기 실패 → 다듬지 않은 원본 목소리(잡음 제거·EQ 없이)."""
+        voice, asr = self.work / "voice.wav", self.work / "asr16k.wav"
+        src = self.spec.audio or self.spec.video
+        if not self.smap.single and (self.work / "master_audio.wav").exists():
+            src = str(self.work / "master_audio.wav")
+        try:
+            build_voice_track(self.ff, src, voice, external_audio=None, duration=self.info.duration, enhance=False,
+                              denoise_model=None, av_offset=self.info.av_offset, log=self.log, cancel=self.cancel)
+        except Exception as e:  # noqa: BLE001 - 그래도 안 되면 소리만 그대로 뽑는다
+            self._log_file_only(f"   (원본 목소리 다듬기 없이 뽑기도 실패 → 소리만 추출: {e})")
+            self.ff.extract_audio(src, voice, rate=48000, mono=True, cancel=self.cancel, duration=self.info.duration)
+        self.ff.extract_audio(voice, asr, rate=16000, mono=True, cancel=self.cancel, duration=self.info.duration)
+        self.log("   → 다듬지 않은 원본 목소리로 계속합니다")
+
+    def _soft_face(self) -> None:
+        self.face_cams, self.quality, self.face = {}, {}, []
+        self.log("   → 얼굴 위치 없이(화면 가운데 기준) 계속합니다")
+
+    def _soft_grade(self) -> None:
+        self.grade_info = {}
+        for c in self.smap.cams:
+            self._cube(c.idx).unlink(missing_ok=True)
+        self.log("   → 색보정 없이 원본 색으로 계속합니다")
+
+    def _soft_broll(self) -> None:
+        """찾지 못한(파일이 없는) 자료 사진은 뺀다 — 렌더가 없는 파일을 찾다 실패하지 않게."""
+        for gl in [self.plan_long.get("graphics", [])] + [sh.get("graphics", []) for sh in self.plan_shorts]:
+            gl[:] = [g for g in gl if g.get("template") != "photo" or str(g.get("image", "")).startswith("images/")]
+        self.log("   → 자료 사진 없이 계속합니다")
+
+    def _soft_stock(self) -> None:
+        lists = [self.plan_long.get("graphics", [])] + [sh.get("graphics", []) for sh in self.plan_shorts]
+        for gl in lists:
+            gl[:] = [g for g in gl if g.get("template") != "broll" or g.get("src")]
+        strip_stock_images(lists)
+        self.log("   → 스톡 없이 계속합니다")
+
+    def _soft_sound(self) -> None:
+        self.spec.sfx = False
+        self.spec.music = False
+        self.log("   → 효과음·배경음악 없이(목소리만) 계속합니다")
 
     # ------------------------------------------------------------------
     def stage_probe(self) -> None:
@@ -554,10 +617,32 @@ class Pipeline:
         if cached.get("key") == key and cached.get("words"):
             self.log(f"음성 인식: 캐시 사용 ({len(cached['words'])}단어)")
             return
-        res = transcribe(self.work / "asr16k.wav", model_name=self.settings.whisper_model,
-                         device=self.settings.whisper_device, compute_type=self.settings.whisper_compute,
-                         batch_size=self.settings.whisper_batch, hint_terms=hints, duration=self.info.duration,
-                         log=self.log, progress=self._sp("asr"), cancel=self.cancel)
+        # 음성 인식은 영상에 꼭 필요하다 — 설정대로 안 되면(GPU 드라이버·모델 내려받기·메모리) CPU, 더 작은 모델 순으로
+        # 다시 시도한다. 하나라도 되면 작업은 계속된다
+        s = self.settings
+        tries = [(s.whisper_model, s.whisper_device, s.whisper_compute, s.whisper_batch)]
+        if s.whisper_device != "cpu":
+            tries.append((s.whisper_model, "cpu", "int8", max(1, s.whisper_batch // 2)))
+        for small in ("medium", "small"):
+            if small != s.whisper_model:
+                tries.append((small, "cpu", "int8", 4))
+        res = None
+        for n, (model, device, compute, batch) in enumerate(tries):
+            try:
+                res = transcribe(self.work / "asr16k.wav", model_name=model, device=device, compute_type=compute,
+                                 batch_size=batch, hint_terms=hints, duration=self.info.duration,
+                                 log=self.log, progress=self._sp("asr"), cancel=self.cancel)
+                break
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                self._log_file_only(traceback.format_exc())
+                if n == len(tries) - 1:
+                    raise
+                nxt = tries[n + 1]
+                self.log(f"⚠️ 음성 인식({model} · {device}) 실패 → {nxt[0]} · {nxt[1]} 로 다시: {e}")
+                self.soft_failures.append({"stage": "asr", "label": "음성 인식", "error": f"{model}/{device}: {e}"[:300]})
+        assert res is not None
         res["key"] = key
         write_json(self.work / "transcript.json", res)
         self.log(f"인식 완료: {len(res['words'])}단어")
@@ -875,7 +960,10 @@ class Pipeline:
                 if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
                     raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1,
                                                       max_sec=self.spec.short_max_sec)
-            except DirectorError as e:
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - AI 응답이 이상해도(형식 오류 등) 단일 디렉터 → 규칙으로
+                self._log_file_only(traceback.format_exc())
                 self.log(f"🎬 총괄 감독 실패 → 단일 디렉터로 진행: {e}")
                 raw_long = raw_shorts = None
         if raw_long is not None:
@@ -896,7 +984,10 @@ class Pipeline:
                     raw_shorts = self.claude.structured(system=sys_prompt, shared_context=ctx,
                                                         instruction=shorts_instruction(brief), schema=SHORTS_PLAN,
                                                         cancel=self.cancel, label="숏폼 기획")
-            except DirectorError as e:
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                self._log_file_only(traceback.format_exc())
                 self.log(f"Claude 실패 → 규칙 기반 편집으로 진행: {e}")
                 self.director_name = "규칙 기반(Claude 실패)"
                 raw_long = fallback.long_plan(brief, self.utts, self.tags)
@@ -2379,6 +2470,9 @@ class Pipeline:
                              broll=self.broll_log, studio=self.plan_long.get("studio") or None,
                              qa=self.qa_log or (self.plan_long.get("qa") or {}).get("rounds"))
         report += self._craft_report()
+        if self.soft_failures:
+            report += "\n## ⚠️ 건너뛴 작업(실패했지만 영상은 끝까지 만들었습니다)\n\n" + "".join(
+                f"- {f['label']}: {f['error']}\n" for f in self.soft_failures)
         write_text(self.extras / "편집리포트.md", report)
         shutil.copyfile(self.work / "plan.json", self.extras / "plan.json")
         self.results["extras"] = str(self.extras)
