@@ -22,11 +22,21 @@ export const ensureFonts = () => {
     loadFont({family: 'Pretendard', url: staticFile(`fonts/Pretendard-${name}.woff2`), weight});
   }
   loadFont({family: 'Anton', url: staticFile('fonts/Anton-Regular.woff2'), weight: '400'});
+  // 서체 역할표(docs/롱폼_무대_디자인.md 6장). 한글 subset(korean)을 먼저, 라틴 파일은 라틴 범위만 — 라틴 글자는 뒤에 선언한
+  // 라틴 face 가 이기고, 한글은 korean face 로 떨어진다
+  const LATIN = 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD';
+  for (const [family, file] of [['Jua', 'Jua'], ['Black Han Sans', 'BlackHanSans'], ['Nanum Pen Script', 'NanumPenScript']]) {
+    loadFont({family, url: staticFile(`fonts/${file}-korean.woff2`), weight: '400'});
+    loadFont({family, url: staticFile(`fonts/${file}-latin.woff2`), weight: '400', unicodeRange: LATIN});
+  }
+  loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-Bold.woff2'), weight: '700'});
+  loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-BoldItalic.woff2'), weight: '700',
+    style: 'italic'});
 };
 
 /**
- * 폰트 로드 단언(HyperFrames `font_family_without_font_face` 의 렌더 시점판): Pretendard·Anton 이 실제로 로드되지 않았으면
- * 렌더를 **실패**시킨다. 예전엔 조용히 맑은 고딕·기본 산세리프로 렌더돼 결과물에서만 드러났다.
+ * 폰트 로드 단언(HyperFrames `font_family_without_font_face` 의 렌더 시점판): 번들 서체(Pretendard·Anton·Jua·Black Han Sans·
+ * Nanum Pen Script·Playfair Display)가 실제로 로드되지 않았으면 렌더를 **실패**시킨다. 예전엔 조용히 맑은 고딕·기본 산세리프로 렌더돼 결과물에서만 드러났다.
  * 컴포지션 루트에서 한 번 부른다.
  */
 export const useFontGuard = () => {
@@ -48,7 +58,7 @@ export const useFontGuard = () => {
       return ok;
     };
     // loadFont 는 비동기로 FontFace 를 만들므로 document.fonts.ready 만 믿으면 아직 등록 전일 수 있다 → 폴링
-    const want = ['Pretendard', 'Anton'];
+    const want = ['Pretendard', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display'];
     const started = Date.now();
     const tick = () => {
       const missing = want.filter((f) => !loaded(f));

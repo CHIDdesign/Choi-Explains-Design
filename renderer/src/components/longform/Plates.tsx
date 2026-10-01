@@ -10,7 +10,7 @@ import {pipBoxes} from '../paper/Collage';
 import {hashSeed} from '../paper/Paper';
 import type {Box} from '../paper/Paper';
 import {Badge, PaperNote, ReverseLine} from './Note';
-import {Annotated, RiseLine, Rule} from './Stage';
+import {Annotated, Numerals, RiseLine, Rule} from './Stage';
 
 /**
  * 얼굴 옆 종이 메모(롱폼 무대 재질 v2, classic 챕터) — 화자 반대편 상단 기준선에 놓이는 위가 찢긴 크림 메모.
@@ -82,9 +82,11 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
     </div>
   );
   const ruleEl = <div style={{marginTop: gapS}}><Rule frame={frame} delay={4} color={rule} /></div>;
+  // 각주는 손글씨(종이 위 주석, 26px 이상), 숫자·영문은 이탤릭 세리프
   const foot = (text: string, delay = 16) => text ? (
-    <div style={{marginTop: gapS, fontFamily: FONT.sans, fontWeight: 500, fontSize: noteSize, color: note,
-      opacity: tween(frame, delay, 10), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>( {text} )</div>
+    <div style={{marginTop: gapS, fontFamily: FONT.hand, fontWeight: 400, fontSize: Math.max(26, noteSize * 1.4), color: note,
+      opacity: tween(frame, delay, 10), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+      ( <Numerals text={text} size="0.78em" /> )</div>
   ) : null;
 
   if (template === 'stat') {
@@ -141,7 +143,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
             opacity: tween(frame, 12 + lines.length * 3, 10)}}>
             <Rule frame={frame} delay={12 + lines.length * 3} color={accent} thick={2} width={40 * s} />
             <div style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: noteSize * 1.1, color: dim,
-              whiteSpace: 'nowrap'}}>{who}</div>
+              whiteSpace: 'nowrap'}}><Numerals text={who} /></div>
           </div>
         ) : null}
       </div>
@@ -183,12 +185,13 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
       <div style={{marginTop: gapS * 1.2, display: 'flex', flexDirection: 'column'}}>
         {hb.lines.map((l, i) => (
           <RiseLine key={i} frame={frame} delay={6 + i * 3}>
-            <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: hb.size, lineHeight: 1.16,
-              letterSpacing: '-0.035em', whiteSpace: 'nowrap'}}>
+            <div style={{fontFamily: template === 'keyword' ? FONT.round : FONT.display,
+              fontWeight: template === 'keyword' ? 400 : 900, fontSize: hb.size * (template === 'keyword' ? 1.04 : 1),
+              lineHeight: 1.16, letterSpacing: template === 'keyword' ? '-0.01em' : '-0.035em', whiteSpace: 'nowrap'}}>
               <Annotated text={l} accent={i === nHead - 1 ? data.accent : null}
                 p={tween(frame, 14 + i * 3, LONG.underline, 'outQuint')} color={fg} accentColor={accent} />
               {eng && i === nHead - 1 ? (
-                <span style={{fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 500, fontSize: hb.size * 0.42,
+                <span style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 700, fontSize: hb.size * 0.42,
                   color: accent, marginLeft: hb.size * 0.3, letterSpacing: '0', verticalAlign: 'baseline',
                   opacity: tween(frame, 10, 10)}}>{eng}</span>
               ) : null}
@@ -246,8 +249,8 @@ export const MediaContent: React.FC<{data: GraphicData; template: TemplateName; 
             <div style={{display: 'flex', alignItems: 'baseline', gap: 12 * s, whiteSpace: 'nowrap'}}>
               {data.title ? <span style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: Math.round(26 * s),
                 color: fg, letterSpacing: '-0.02em'}}>{data.title}</span> : null}
-              {data.body ? <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: Math.round(20 * s),
-                color: dim}}>{data.body}</span> : null}
+              {data.body ? <span style={{fontFamily: FONT.hand, fontWeight: 400, fontSize: Math.max(24, Math.round(26 * s)),
+                color: dim}}><Numerals text={data.body} size="0.8em" /></span> : null}
             </div>
           </RiseLine>
           {data.credit ? <div style={{opacity: tween(frame, 12, 10), flexShrink: 0}}>

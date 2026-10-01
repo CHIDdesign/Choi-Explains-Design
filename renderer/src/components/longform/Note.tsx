@@ -72,8 +72,8 @@ export const Badge: React.FC<{text: string; size?: number; accent?: string; opac
 /** 반전 상자 문구(레퍼런스: 두 줄 중 핵심 줄만 색 상자) — 왼→오 와이프 8f */
 export const ReverseLine: React.FC<{text: string; size: number; bg: string; color?: string; p: number}> = ({text, size,
   bg, color = '#FFFFFF', p}) => (
-  <span style={{display: 'inline-block', fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.22,
-    letterSpacing: '-0.035em', whiteSpace: 'nowrap', color, background: bg, padding: `${size * 0.04}px ${size * 0.3}px ${size * 0.1}px`,
+  <span style={{display: 'inline-block', fontFamily: FONT.round, fontWeight: 400, fontSize: size * 1.04, lineHeight: 1.22,
+    letterSpacing: '-0.01em', whiteSpace: 'nowrap', color, background: bg, padding: `${size * 0.04}px ${size * 0.3}px ${size * 0.1}px`,
     borderRadius: 4, clipPath: `inset(0 ${(1 - Math.max(0, Math.min(1, p))) * 100}% 0 0)`}}>{text}</span>
 );
 
@@ -142,7 +142,7 @@ export const SectionBar: React.FC<{text: string; frame: number; dur: number; W: 
           translate: '0 2px'}}>!</span>
       </div>
       <div style={{position: 'absolute', left: 30 + badge + 34, top: 0, height: h, display: 'flex', alignItems: 'center',
-        fontFamily: FONT.display, fontWeight: 900, fontSize: size, letterSpacing: '-0.035em', color: NOTE.ink,
+        fontFamily: FONT.round, fontWeight: 400, fontSize: size * 1.06, letterSpacing: '-0.01em', color: NOTE.ink,
         whiteSpace: 'nowrap', opacity: tween(frame, 6, 10)}}>{text}</div>
     </div>
   );
@@ -180,7 +180,7 @@ export const KeywordSlam: React.FC<{keyword: string; sub?: string; f: number; W:
       <div style={{position: 'absolute', left: 0, right: 0, top: '50%', translate: '0 -56%', display: 'flex',
         flexDirection: 'column', alignItems: 'center', opacity: p, filter: `blur(${interpolate(p, [0, 1], [8, 0])}px)`,
         scale: `${interpolate(p, [0, 1], [1.06, 1])}`}}>
-        <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.05, letterSpacing: '-0.045em',
+        <div style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: size, lineHeight: 1.08, letterSpacing: '-0.01em',
           color: '#FFFFFF', whiteSpace: 'nowrap', textShadow: '0 4px 0 rgba(0,0,0,0.35), 0 16px 40px rgba(0,0,0,0.45)'}}>
           {keyword}
         </div>

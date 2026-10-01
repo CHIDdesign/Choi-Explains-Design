@@ -73,7 +73,7 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
         out.update(text=text, size=_num(el.get("size"), 2, 40, 7))
         if "weight" in el:
             out["weight"] = int(_num(el.get("weight"), 300, 900, 800))
-        if el.get("font") in ("sans", "display", "serif", "latin"):
+        if el.get("font") in ("sans", "display", "serif", "latin", "heavy", "round", "hand"):
             out["font"] = el["font"]
         if "maxWidth" in el:
             out["maxWidth"] = _num(el.get("maxWidth"), 10, 100, 80)

@@ -99,11 +99,11 @@ export const PaperEndCard: React.FC<{frame: number; brand: Brand; episode: Episo
             </div>
           ))}
         </div>
-        <div style={{marginTop: 70, fontFamily: FONT.display, fontSize: 84, fontWeight: 400, letterSpacing: '-0.035em',
-          lineHeight: 1.15, opacity: tween(frame, 20, DUR.reveal), whiteSpace: 'nowrap'}}>
+        <div style={{marginTop: 70, fontFamily: FONT.serif, fontSize: 78, fontWeight: 500, letterSpacing: '-0.02em',
+          lineHeight: 1.2, opacity: tween(frame, 20, DUR.reveal), whiteSpace: 'nowrap'}}>
           <AccentText text="다음 이야기에서 만나요." accent="만나요" />
         </div>
-        <div style={{marginTop: 18, fontFamily: FONT.sans, fontSize: 24, color: PAPER.note,
+        <div style={{marginTop: 18, fontFamily: FONT.hand, fontSize: 32, color: PAPER.note,
           opacity: tween(frame, 26, DUR.normal)}}>( {episode.title} )</div>
       </div>
       {slot({x: W - 156 - 640, y: 176, w: 640, h: 360}, '다음 영상', 10)}

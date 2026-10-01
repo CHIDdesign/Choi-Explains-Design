@@ -121,6 +121,20 @@ export const Annotated: React.FC<{text: string; accent?: string | null; p: numbe
   );
 };
 
+/** 글 속 숫자·영문 덩어리만 이탤릭 세리프 숫자체(Playfair)로 — 연도·영문 원어·단위(레퍼런스의 '1858', '약 4km') */
+const NUM_RUN = /([0-9A-Za-z][0-9A-Za-z.,%+\-−~:/']*)/g;
+export const Numerals: React.FC<{text: string; size?: string; color?: string}> = ({text, size = '1.08em', color}) => {
+  const parts = text.split(NUM_RUN);
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 1
+        ? <span key={i} style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 700, fontSize: size,
+          letterSpacing: '0', color}}>{part}</span>
+        : <React.Fragment key={i}>{part}</React.Fragment>))}
+    </>
+  );
+};
+
 /** 보드 판의 희미한 점 격자(강의 노트 종이) */
 export const DotGrid: React.FC<{color?: string; gap?: number; opacity?: number}> = ({color = 'rgba(241,236,221,0.16)',
   gap = STAGE.grid, opacity = 1}) => (

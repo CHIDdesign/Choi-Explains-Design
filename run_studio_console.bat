@@ -36,5 +36,11 @@ fc /b "requirements.txt" ".venv\.req_stamp" >nul 2>&1
 if errorlevel 1 (
   ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt && copy /y "requirements.txt" ".venv\.req_stamp" >nul
 )
+fc /b "renderer\package.json" "renderer\node_modules\.pkg_stamp" >nul 2>&1
+if errorlevel 1 (
+  pushd renderer
+  call npm install --no-audit --no-fund && copy /y "package.json" "node_modules\.pkg_stamp" >nul
+  popd
+)
 ".venv\Scripts\python.exe" -m studio
 pause

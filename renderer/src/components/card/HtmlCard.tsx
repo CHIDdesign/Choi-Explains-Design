@@ -37,6 +37,10 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--font-body': FONT.sans,
   '--font-serif': FONT.serif,
   '--font-latin': FONT.latin,
+  '--font-heavy': FONT.heavy,
+  '--font-round': FONT.round,
+  '--font-hand': FONT.hand,
+  '--font-numeral': FONT.numeral,
   '--font-mono': FONT.mono,
 });
 
@@ -47,6 +51,10 @@ export const wrapCard = (card: CardSpec): string =>
 
 const FAMILIES: [RegExp, string][] = [
   [/pretendard|--font-head|--font-body|--font-mono/i, 'Pretendard'],
+  [/black han sans|--font-heavy/i, 'Black Han Sans'],
+  [/jua|--font-round/i, 'Jua'],
+  [/nanum pen script|--font-hand/i, 'Nanum Pen Script'],
+  [/playfair display|--font-numeral/i, 'Playfair Display'],
   [/noto serif kr|--font-serif|serif/i, 'Noto Serif KR'],
   [/anton|--font-latin/i, 'Anton'],
 ];

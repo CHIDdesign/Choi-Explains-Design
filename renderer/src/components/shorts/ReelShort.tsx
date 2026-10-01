@@ -207,8 +207,8 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
         {props.seriesLabel ? <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 34,
           color: '#6B6B70', marginBottom: 20}}>{props.seriesLabel}</div> : null}
         {lines.map((l, i) => (
-          <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.16,
-            letterSpacing: '-0.04em', color: INK, whiteSpace: 'nowrap',
+          <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: size, lineHeight: 1.18,
+            letterSpacing: '-0.01em', color: INK, whiteSpace: 'nowrap',
             translate: `0 ${interpolate(tween(frame, 2 + i * 3, 12), [0, 1], [24, 0])}px`,
             opacity: tween(frame, 2 + i * 3, 10)}}>
             <Highlighted text={l} accent={titleAccent(props, l, i, lines.length)} p={tween(frame, 10 + i * 4, 14)}

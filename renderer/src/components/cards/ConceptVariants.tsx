@@ -84,8 +84,8 @@ export const ConceptCardBody: React.FC<ConceptCardProps> = ({label, head, body, 
           {label ? <div style={{opacity: tween(f, 2, 10), marginBottom: 22 * scale}}>
             <LabelTag text={label} size={34 * scale} /></div> : null}
           {lines.map((l, i) => (
-            <div key={i} style={{fontFamily: headFont, fontWeight: numeric ? 400 : 500, fontSize: ps, lineHeight: 1.16,
-              letterSpacing: '-0.04em', whiteSpace: 'nowrap', opacity: tween(f, 3 + i * 3, 12),
+            <div key={i} style={{fontFamily: numeric ? FONT.latin : FONT.round, fontWeight: 400, fontSize: ps, lineHeight: 1.18,
+              letterSpacing: numeric ? '0' : '-0.01em', whiteSpace: 'nowrap', opacity: tween(f, 3 + i * 3, 12),
               translate: `0 ${interpolate(tween(f, 3 + i * 3, 14), [0, 1], [16, 0])}px`}}>
               <AccentText text={l} accent={i === lines.length - 1 ? accent : null} />
             </div>

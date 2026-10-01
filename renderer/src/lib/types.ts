@@ -91,7 +91,7 @@ export type MotionText = MotionElBase & {
   text: string;
   size: number; // 장면 높이 대비 %
   weight?: number;
-  font?: 'sans' | 'display' | 'serif' | 'latin';
+  font?: 'sans' | 'display' | 'serif' | 'latin' | 'heavy' | 'round' | 'hand'; // heavy=Black Han Sans(한 방) round=Jua(메모) hand=손글씨
   maxWidth?: number; // %
   align?: 'left' | 'center' | 'right';
   highlight?: string; // 강조색으로 칠할 부분 문자열

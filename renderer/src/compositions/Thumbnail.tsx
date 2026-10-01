@@ -46,8 +46,8 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
         <div style={{position: 'absolute', left: 44, top: 0, bottom: 0, width: panelW - 70, display: 'flex',
           flexDirection: 'column', justifyContent: 'center'}}>
           {fit.lines.map((l, i) => (
-            <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: fit.size, lineHeight: 1.02,
-              letterSpacing: '-0.05em', color: '#111', whiteSpace: 'nowrap'}}>
+            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.02,
+              letterSpacing: '-0.01em', color: '#111', whiteSpace: 'nowrap'}}>
               <Highlighted line={l} highlight={highlight} color="#fff" />
             </div>
           ))}
@@ -74,8 +74,8 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
           alignItems: faceX > 0.5 ? 'flex-start' : 'flex-end'}}>
           <div style={{width: 64, height: 10, background: theme.accent, marginBottom: 22}} />
           {fit.lines.map((l, i) => (
-            <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: fit.size, lineHeight: 1.04,
-              letterSpacing: '-0.05em', color: '#fff', whiteSpace: 'nowrap',
+            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.04,
+              letterSpacing: '-0.01em', color: '#fff', whiteSpace: 'nowrap',
               textAlign: faceX > 0.5 ? 'left' : 'right'}}>
               <Highlighted line={l} highlight={highlight} color={theme.accentLight} />
             </div>
@@ -97,7 +97,7 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
         alignItems: 'flex-start', gap: 8}}>
         {fit.lines.map((l, i) => (
           <div key={i} style={{background: i === fit.lines.length - 1 ? theme.accent : '#111', padding: '4px 18px 10px',
-            fontFamily: FONT.display, fontWeight: 900, fontSize: fit.size, lineHeight: 1.08, letterSpacing: '-0.04em',
+            fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.08, letterSpacing: '-0.01em',
             color: '#fff', whiteSpace: 'nowrap'}}>{l}</div>
         ))}
       </div>

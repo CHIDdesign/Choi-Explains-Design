@@ -137,10 +137,12 @@ const TextEl: React.FC<{el: Extract<MotionEl, {type: 'text'}>; c: Ctx}> = ({el, 
   const st = elementState(el, c);
   if (!st.visible) return null;
   const size = (el.size / 100) * c.H;
-  const font = el.font === 'serif' ? FONT.serif : el.font === 'latin' ? FONT.latin : FONT.display;
+  const font = el.font === 'serif' ? FONT.serif : el.font === 'latin' ? FONT.latin : el.font === 'heavy' ? FONT.heavy
+    : el.font === 'round' ? FONT.round : el.font === 'hand' ? FONT.hand : FONT.display;
+  const single = el.font === 'latin' || el.font === 'heavy' || el.font === 'round' || el.font === 'hand';
   const color = colorOf(el.color, c.surface, c.surface.fg);
   const maxW = el.maxWidth ? (el.maxWidth / 100) * c.W : undefined;
-  const style: React.CSSProperties = {fontFamily: font, fontWeight: el.font === 'latin' ? 400 : el.weight ?? 800,
+  const style: React.CSSProperties = {fontFamily: font, fontWeight: single ? 400 : el.weight ?? 800,
     fontSize: size, lineHeight: 1.12, letterSpacing: size > 60 ? '-0.04em' : '-0.02em', color, textAlign: el.align ?? 'center',
     maxWidth: maxW, whiteSpace: maxW ? 'normal' : 'nowrap', wordBreak: 'keep-all'};
   const reveal = el.reveal ?? (st.enter === 'mask' ? 'words' : 'none');

@@ -38,4 +38,12 @@ if errorlevel 1 (
   echo 새 버전에 필요한 파이썬 패키지를 확인합니다...
   ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt && copy /y "requirements.txt" ".venv\.req_stamp" >nul
 )
+rem 렌더러 패키지(서체 포함)가 늘었으면 자동 설치 — 번들 서체가 없으면 렌더가 멈추도록 되어 있다
+fc /b "renderer\package.json" "renderer\node_modules\.pkg_stamp" >nul 2>&1
+if errorlevel 1 (
+  echo 새 버전에 필요한 렌더러 패키지·서체를 확인합니다...
+  pushd renderer
+  call npm install --no-audit --no-fund && copy /y "package.json" "node_modules\.pkg_stamp" >nul
+  popd
+)
 start "" ".venv\Scripts\pythonw.exe" -m studio

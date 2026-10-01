@@ -54,7 +54,8 @@ LOCAL_SRC_RE = re.compile(r"^(images|fx|broll|stock|cards)/[A-Za-z0-9_./-]+$")
 SCOPE_RE = re.compile(r"""\.card\[data-card-id=(?:"[^"]*"|'[^']*'|[^\]]*)\]\s*""")
 FONT_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;}]+)", re.I)
 FONT_SHORTHAND_RE = re.compile(r"(?<![a-z-])font\s*:\s*([^;}]+)", re.I)
-FONT_OK = {"pretendard", "noto serif kr", "anton", "serif", "sans-serif", "monospace", "system-ui", "ui-serif",
+FONT_OK = {"pretendard", "noto serif kr", "anton", "jua", "black han sans", "nanum pen script", "playfair display",
+           "serif", "sans-serif", "monospace", "system-ui", "ui-serif",
            "ui-sans-serif", "ui-monospace", "inherit", "apple sd gothic neo", "malgun gothic", "nanum myeongjo"}
 CSS_FORBIDDEN = re.compile(r"@import|@font-face|@charset|expression\s*\(|behavior\s*:|-moz-binding|javascript:|"
                            r"position\s*:\s*fixed|url\s*\(|@keyframes|\btransition\b|\banimation\b", re.I)

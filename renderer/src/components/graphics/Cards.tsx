@@ -44,8 +44,8 @@ export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box,
         <div style={{height: 32}} />
         {lines.map((l, i) => (
           <MaskLine key={i} frame={frame} delay={8 + i * 4}>
-            <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.08,
-              letterSpacing: '-0.04em', color: surface.fg}}>{l}</div>
+            <div style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: size, lineHeight: 1.1,
+              letterSpacing: '-0.01em', color: surface.fg}}>{l}</div>
           </MaskLine>
         ))}
         {data.subtitle ? (
@@ -132,11 +132,11 @@ export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface,
         <div style={{overflow: 'hidden'}}>
           <div
             style={{
-              fontFamily: FONT.display,
-              fontWeight: 900,
+              fontFamily: FONT.heavy,
+              fontWeight: 400,
               fontSize: size,
-              lineHeight: 1,
-              letterSpacing: '-0.045em',
+              lineHeight: 1.04,
+              letterSpacing: '-0.01em',
               color: surface.name === 'signal' ? surface.fg : surface.name === 'overlay' ? '#fff' : surface.fg,
               translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`,
               whiteSpace: 'nowrap',
@@ -188,8 +188,8 @@ export const DefinitionCard: React.FC<TemplateProps> = ({data, frame, surface, b
       </MaskLine>
       {data.subtitle ? (
         <MaskLine frame={frame} delay={7}>
-          <div style={{marginTop: 14, fontFamily: FONT.sans, fontWeight: 500, fontSize: 40, color: surface.accent,
-            letterSpacing: '0.01em'}}>{data.subtitle}</div>
+          <div style={{marginTop: 14, fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 700, fontSize: 40,
+            color: surface.accent, letterSpacing: '0'}}>{data.subtitle}</div>
         </MaskLine>
       ) : null}
       <div style={{height: 40}} />

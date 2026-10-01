@@ -68,8 +68,8 @@ export const CalloutLayer: React.FC<{items: Callout[]; t: number; fps: number; W
         <LabelChip text={c.label} theme={theme} size={24} /></div> : null}
       {lines.map((l, i) => (
         <RiseLine key={i} frame={f} delay={2 + i * 3} dur={LONG.underline}>
-          <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.12,
-            letterSpacing: '-0.04em', whiteSpace: 'nowrap', textAlign: c.side === 'right' ? 'left' : 'right',
+          <div style={{fontFamily: FONT.round, fontWeight: 400, fontSize: size * 1.04, lineHeight: 1.14,
+            letterSpacing: '-0.01em', whiteSpace: 'nowrap', textAlign: c.side === 'right' ? 'left' : 'right',
             textShadow: '0 2px 2px rgba(0,0,0,0.5), 0 10px 30px rgba(0,0,0,0.55)'}}>
             <Annotated text={l} accent={accentOf(l, i)} p={tween(f, 12 + i * 3, LONG.underline, 'outQuint')}
               color="#FFFFFF" accentColor={theme.accentLight} thick="0.065em" />

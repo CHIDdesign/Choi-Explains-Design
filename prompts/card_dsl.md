@@ -44,7 +44,13 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 | `--font-body` | Pretendard(400~600) | 본문·라벨 |
 | `--font-serif` | Noto Serif KR(명조) | 인용·앞말·기울임 |
 | `--font-latin` | Anton | **숫자·영문 큰 글자** |
+| `--font-heavy` | Black Han Sans(굵기 하나) | **한 방**: 1~4어절 90px 이상의 선언·키워드 |
+| `--font-round` | Jua(둥근 메모체, 굵기 하나) | 메모처럼 붙인 2~8어절 40~70px, 반전 상자 문구 |
+| `--font-numeral` | Playfair Display italic 700 | 본문 옆 작은 연도·영문 원어·단위 |
+| `--font-hand` | Nanum Pen Script(손글씨) | 종이 위 주석·각주, **26px 이상만** |
 | `--font-mono` | 고정폭 | 시간·메타 |
+
+서체는 카드당 **세 가족까지**(docs/롱폼_무대_디자인.md 6장 역할표).
 
 ### 타이포 크기(1920×1080 기준 · split 은 ×0.75)
 제목 96–132px · 본문 32–40px · 라벨/킥커 26–30px · 큰 숫자 160–240px(`--font-latin`) · 인용 32–40px(명조 기울임).

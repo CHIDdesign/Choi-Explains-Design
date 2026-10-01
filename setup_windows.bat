@@ -119,6 +119,7 @@ rem ---------- 렌더러(Remotion) ----------
 echo [설치] 렌더러 패키지 npm install ...
 pushd renderer
 call npm install --no-audit --no-fund || (popd & goto :fail)
+copy /y "package.json" "node_modules\.pkg_stamp" >nul
 echo [설치] 렌더링용 Chrome Headless Shell...
 call npx remotion browser ensure || (popd & goto :fail)
 popd

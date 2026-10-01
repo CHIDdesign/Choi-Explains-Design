@@ -19,7 +19,7 @@
 - `keys`: 이동 키프레임 `[{t, x?, y?, scale?, rotate?, opacity?}]`. 첫 상태는 요소의 x/y 가 자동으로 들어가며, 화면 안 이동은 자동으로 ease-in-out.
 
 요소 타입:
-- `text`: {text, size(장면 높이 대비 %, 제목 7~10 · 본문 4~5), weight, font: sans|display|serif|latin, maxWidth, align, highlight(강조할 단어), reveal: words|chars|lines|none}. 기본 등장은 마스크 리빌. 줄바꿈은 `\n`.
+- `text`: {text, size(장면 높이 대비 %, 제목 7~10 · 본문 4~5), weight, font: sans|display|serif|latin|heavy|round|hand(heavy=Black Han Sans 한 방 · round=Jua 둥근 메모체 · hand=손글씨 주석, 셋은 굵기 하나), maxWidth, align, highlight(강조할 단어), reveal: words|chars|lines|none}. 기본 등장은 마스크 리빌. 줄바꿈은 `\n`.
 - `rect`: {w, h, radius, fill, stroke, strokeWidth}. enter:"draw" 면 외곽선이 그려진다.
 - `circle`: {r(가로 대비 %), fill, stroke}
 - `line` / `arrow`: {x2, y2, curve(-1~1 휘어짐), dashed, strokeWidth}. 기본 등장은 그리기.

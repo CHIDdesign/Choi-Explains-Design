@@ -104,8 +104,8 @@ export const RecapBoard: React.FC<TemplateProps> = ({data, frame, dur, surface, 
       <div style={{marginTop: 18, display: 'flex', flexDirection: 'column'}}>
         {hb.lines.map((l, i) => (
           <RiseLine key={i} frame={frame} delay={5 + i * 3}>
-            <div style={{fontFamily: FONT.display, fontWeight: 800, fontSize: hb.size, lineHeight: 1.18,
-              letterSpacing: '-0.035em', color: surface.fg, whiteSpace: 'nowrap'}}>{l}</div>
+            <div style={{fontFamily: FONT.serif, fontWeight: 700, fontSize: hb.size * 0.96, lineHeight: 1.26,
+              letterSpacing: '-0.02em', color: surface.fg, whiteSpace: 'nowrap'}}>{l}</div>
           </RiseLine>
         ))}
       </div>

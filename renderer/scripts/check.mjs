@@ -30,6 +30,8 @@ const vars = {
   '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#FFFFFF',
   '--font-head': '"Pretendard", "Malgun Gothic", sans-serif', '--font-body': '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
   '--font-serif': '"Noto Serif KR", "Nanum Myeongjo", serif', '--font-latin': '"Anton", "Pretendard", sans-serif',
+  '--font-heavy': '"Black Han Sans", "Pretendard", sans-serif', '--font-round': '"Jua", "Pretendard", sans-serif',
+  '--font-hand': '"Nanum Pen Script", "Pretendard", cursive', '--font-numeral': '"Playfair Display", "Noto Serif KR", serif',
   '--font-mono': '"Pretendard", monospace',
 };
 
@@ -38,6 +40,12 @@ const fontFaces = () => {
   const w = [['Regular', 400], ['Medium', 500], ['SemiBold', 600], ['Bold', 700], ['ExtraBold', 800], ['Black', 900]];
   const faces = w.map(([n, wt]) => `@font-face{font-family:"Pretendard";font-weight:${wt};src:url("${pub}Pretendard-${n}.woff2") format("woff2");}`);
   faces.push(`@font-face{font-family:"Anton";font-weight:400;src:url("${pub}Anton-Regular.woff2") format("woff2");}`);
+  for (const [fam, file] of [['Jua', 'Jua'], ['Black Han Sans', 'BlackHanSans'], ['Nanum Pen Script', 'NanumPenScript']]) {
+    faces.push(`@font-face{font-family:"${fam}";font-weight:400;src:url("${pub}${file}-korean.woff2") format("woff2");}`);
+    faces.push(`@font-face{font-family:"${fam}";font-weight:400;src:url("${pub}${file}-latin.woff2") format("woff2");unicode-range:U+0000-00FF,U+2000-206F,U+20AC,U+2122,U+2212;}`);
+  }
+  faces.push(`@font-face{font-family:"Playfair Display";font-weight:700;src:url("${pub}PlayfairDisplay-Bold.woff2") format("woff2");}`);
+  faces.push(`@font-face{font-family:"Playfair Display";font-weight:700;font-style:italic;src:url("${pub}PlayfairDisplay-BoldItalic.woff2") format("woff2");}`);
   const serif = path.join(root, 'node_modules', '@fontsource', 'noto-serif-kr');
   const links = ['500', '700'].filter((x) => fs.existsSync(path.join(serif, `${x}.css`)))
     .map((x) => `<link rel="stylesheet" href="${pathToFileURL(path.join(serif, `${x}.css`)).href}">`);
@@ -76,7 +84,7 @@ const audit = async (opts) => {
   }
   // 글꼴: 카드 글자로 로드 요청 뒤 확인
   const text = root.textContent || '가';
-  const fams = ['Pretendard', 'Noto Serif KR', 'Anton'];
+  const fams = ['Pretendard', 'Noto Serif KR', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display'];
   try {
     await Promise.all(fams.flatMap((f) => ['400', '700'].map((w) => document.fonts.load(`${w} 40px "${f}"`, text))));
     await document.fonts.ready;

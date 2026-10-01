@@ -63,8 +63,8 @@ export const StackCaption: React.FC<{
       ) : null}
       <div style={{opacity: pk, translate: `0 ${interpolate(pk, [0, 1], [10, 0])}px`,
         filter: `blur(${interpolate(pk, [0, 1], [12, 0])}px) ${glow}`}}>
-        <span style={{fontFamily: parts.number ? FONT.latin : FONT.display, fontWeight: parts.number ? 400 : 900,
-          fontSize: parts.number ? keySize * 1.12 : keySize, lineHeight: 1.08, letterSpacing: parts.number ? '0' : '-0.04em',
+        <span style={{fontFamily: parts.number ? FONT.latin : FONT.heavy, fontWeight: 400,
+          fontSize: parts.number ? keySize * 1.12 : keySize, lineHeight: 1.1, letterSpacing: parts.number ? '0' : '-0.01em',
           whiteSpace: 'nowrap', color: onLight ? accent : 'transparent',
           backgroundImage: onLight ? undefined : `linear-gradient(180deg, #FFF6EA 12%, ${warm} 92%)`,
           WebkitBackgroundClip: onLight ? undefined : 'text', backgroundClip: onLight ? undefined : 'text'}}>

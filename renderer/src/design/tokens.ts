@@ -53,11 +53,26 @@ export const NOTE = {
   dots: 'rgba(38,33,30,0.13)',
 } as const;
 
+/**
+ * 서체 역할표(docs/롱폼_무대_디자인.md 6장) — 내용·성격·크기·자리로 고른다. 한 화면에 세 가족까지.
+ *  sans    Pretendard 400~700   읽는 글: 자막·본문·목록·각주·작은 라벨(26px 미만은 늘 이것)
+ *  display Pretendard 800~900   정밀한 제목: 용어(정의)·도식·목록 제목
+ *  heavy   Black Han Sans       한 방(1~4어절, 90px 이상, 화면 중앙·전면): 키워드 슬램·훅 타이틀·챕터 제목·두 층 자막 핵심어
+ *  round   Jua                  말하듯 붙인 메모(2~8어절, 40~70px, 얼굴 옆·위): 메모 헤드라인·소제목 바·콜아웃·반전 상자
+ *  serif   Noto Serif KR        문장(주장·인용·여운, 40~60px): 인용 카드·챕터 주장·정리 보드 헤드라인·엔드카드
+ *  latin   Anton                큰 숫자: 챕터 번호·카운터·순번
+ *  numeral Playfair Display     이탤릭 세리프 숫자·영문(본문 옆 작은 것): 연도·영문 원어·단위 — <Numerals> 가 자동으로 감싼다
+ *  hand    Nanum Pen Script     손글씨 주석(26px 이상, 종이 위에만): 메모 각주·사진 캡션 설명·엔드카드 메모
+ */
 export const FONT = {
   sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
   display: '"Pretendard", "Malgun Gothic", sans-serif',
   latin: '"Anton", "Pretendard", sans-serif',
   serif: '"Noto Serif KR", "Nanum Myeongjo", serif',
+  heavy: '"Black Han Sans", "Pretendard", sans-serif',
+  round: '"Jua", "Pretendard", sans-serif',
+  numeral: '"Playfair Display", "Noto Serif KR", serif',
+  hand: '"Nanum Pen Script", "Pretendard", cursive',
   mono: '"Pretendard", monospace',
 };
 
