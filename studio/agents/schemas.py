@@ -37,6 +37,14 @@ BRIEF = _obj({
     "bgm_mood": {"type": "string", "enum": BGM_MOODS},
     "shorts_bgm_mood": {"type": "string", "enum": BGM_MOODS},
     "notes_for_team": STR,
+    # 녹음의 구조적 이상(대본을 두 번 읽음·이름을 잘못 말함 등) — 자유 글 메모가 아니라 코드가 읽는 필드(docs/upgrade/13 2-1)
+    "integrity": _obj({
+        "passes": INT,                                                   # 대본을 처음부터 끝까지 읽은 횟수(보통 1)
+        "main_pass_segs": _obj({"start_seg": INT, "end_seg": INT}),      # 주 테이크 범위(passes=1 이면 전체)
+        "drop_ranges": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
+        "expected_sec": INT,                                             # 주 테이크만 썼을 때 예상 길이(초)
+        "issues": STR_LIST,
+    }),
 })
 
 # ✂️ 편집 감독
@@ -52,6 +60,9 @@ EDITOR = _obj({
     # ⚡ 펀치 구간: 크리에이터식 펀치 편집(하드 펀치인·큰 단어 슬램·휩 전환·임팩트 효과음)을 허용하는 특정 구간 —
     # 훅·클라이맥스·빠른 열거. 0~3개, 전체의 20% 이하. 그 밖은 젠틀 규칙 그대로
     "energy_spans": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
+    # 🙂 얼굴 홀드: 건드리지 않을 구간 — 그 안과 뒤 1.5초에 그래픽·정리 보드·콜아웃·전환·효과음이 없다(고백·결론·질문 뒤).
+    # 영상당 4~8곳, 한 곳 6~25초(docs/upgrade/05 4-3)
+    "holds": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
     # 🎬 오프닝 하이라이트(콜드 오픈): 본편 앞에 붙일 가장 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내).
     # 결론·반전·질문·숫자처럼 앞뒤 없이도 서는 문장. 첫 두 발화는 제외(바로 뒤에 다시 나온다)
     "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
@@ -99,8 +110,9 @@ STOCK = _obj({
         "kind": {"type": "string", "enum": ["video", "photo"]},
         "query_en": STR, "query_ko": STR,
         "layout": {"type": "string", "enum": list(LAYOUTS)},
-        "purpose": STR,
+        "purpose": STR,      # 앱 내부 메모 — 화면에 나오지 않는다
         "must_show": STR,
+        "caption": STR,      # 화면 라벨(선택): 그 문장의 주장 2~12자 — 검색어·연출 메모 금지(게이트 B3·B4)
     })},
     "photos": {"type": "array", "items": _obj({
         "start_seg": INT, "start_word": STR,

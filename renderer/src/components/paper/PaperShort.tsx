@@ -160,7 +160,8 @@ export const PaperShort: React.FC<ShortProps> = (props) => {
       </TransitionStage>
       {g && gp > 0.02 ? (
         <div style={{position: 'absolute', left: 64, top: 1400, width: 520, opacity: gp}}>
-          <LabelTag text={(media(g) ? g.data.title : '') || `( ${TEMPLATE_LABEL[g.template]} )`} variant="black"
+          <LabelTag text={(media(g) ? g.data.title : '') || (TEMPLATE_LABEL[g.template] ? `( ${TEMPLATE_LABEL[g.template]} )` : '')}
+            variant="black"
             size={32} />
         </div>
       ) : null}

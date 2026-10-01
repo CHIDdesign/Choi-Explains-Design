@@ -170,7 +170,7 @@ class MediaResolver:
                 self.log(f"인물 사진 후보 조회 실패({query}): {e}")
             if p.candidates:
                 return p
-        p.result = self._lead_or_search(query)
+        p.result = self._lead_or_search(query, names)
         return p
 
     def _logo(self, query: str, names: tuple[str, ...], info: Optional[dict[str, Any]]) -> Optional[ImageResult]:
@@ -197,18 +197,21 @@ class MediaResolver:
                 self.log(f"위키데이터 로고 실패({query}): {e}")
         return None
 
-    def _lead_or_search(self, query: str) -> Optional[ImageResult]:
+    def _lead_or_search(self, query: str, names: tuple[str, ...] = ()) -> Optional[ImageResult]:
+        """위키백과 대표 이미지(영어 위키는 원어/영어 이름부터) → 커먼즈 검색(한국어 → 원어 이름)."""
+        alt = next((n for n in names if n and n.strip().lower() != query.strip().lower()), "")
         if self.wp is not None:
             self.dst_dir.mkdir(parents=True, exist_ok=True)
-            res = self.wp.fetch(query, self.dst_dir)
+            res = self.wp.fetch(query, self.dst_dir, alt=alt) if alt else self.wp.fetch(query, self.dst_dir)
             if res:
                 self.log(f"자료 사진(위키백과): '{query}' → {res.path.name} ({res.license})")
                 return res
         if self.wm is not None:
-            res = self.wm.fetch(query, self.dst_dir)
-            if res:
-                self.log(f"자료 사진: '{query}' → {res.path.name} ({res.license})")
-                return res
+            for q in [query] + ([alt] if alt else []):
+                res = self.wm.fetch(q, self.dst_dir)
+                if res:
+                    self.log(f"자료 사진: '{q}' → {res.path.name} ({res.license})")
+                    return res
         return None
 
     # --- 2단계: 인물 사진 고르기 ------------------------------------------------------

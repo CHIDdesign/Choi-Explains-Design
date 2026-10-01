@@ -221,3 +221,37 @@ def test_query_shortening_keeps_what_must_be_seen():
     assert "designer working" not in v and all(x.lower() != "working" for x in v)
     assert ko_query("노트북") == "노트북 컴퓨터" and ko_query("노트북 컴퓨터") == "노트북 컴퓨터"
     assert ko_query("스케치하는 학생") == "스케치하는 학생"
+
+
+def test_openverse_filters_nc_nd_and_uses_attribution(monkeypatch):
+    """P0-3(10/1: 화면에 CC BY-NC 사진): 요청에 license_type=commercial,modification, 응답도 한 번 더 걸러 nc·nd·sampling 을
+    버리고, 화면 출처는 짧게 · 업로드 정보는 attribution 전문."""
+    from studio.stock.openverse import Openverse, license_ok
+    resp = {"results": [
+        {"id": "a", "title": "Sketchbook", "url": "https://x/a.jpg", "width": 2000, "height": 1300, "creator": "Kim",
+         "license": "by-nc", "license_version": "2.0", "source": "flickr", "attribution": "A by Kim, CC BY-NC 2.0"},
+        {"id": "b", "title": "Mood board", "url": "https://x/b.jpg", "width": 2000, "height": 1300, "creator": "Lee",
+         "license": "by-nd", "license_version": "4.0", "source": "flickr", "attribution": "B"},
+        {"id": "c", "title": "Design desk", "url": "https://x/c.jpg", "width": 2400, "height": 1600, "creator": "Park",
+         "license": "by-sa", "license_version": "4.0", "source": "wikimedia",
+         "foreign_landing_url": "https://commons.wikimedia.org/wiki/File:C.jpg",
+         "attribution": '"Design desk" by Park is licensed under CC BY-SA 4.0. To view a copy of this license, visit '
+                        'https://creativecommons.org/licenses/by-sa/4.0/.'},
+        {"id": "d", "title": "Old print", "url": "https://x/d.jpg", "width": 1800, "height": 1200, "creator": "",
+         "license": "pdm", "license_version": "", "source": "smithsonian", "attribution": "Old print, public domain"},
+        {"id": "e", "title": "tiny", "url": "https://x/e.jpg", "width": 600, "height": 400, "creator": "Choi",
+         "license": "cc0", "source": "x", "attribution": ""}]}
+    seen = {}
+
+    def fake(self, url, params, headers=None):
+        seen.update(params)
+        return resp
+    monkeypatch.setattr(Openverse, "_get_json", fake)
+    got = Openverse().search_photos("design desk", per_page=6)
+    assert seen["license_type"] == "commercial,modification"
+    assert [c.id for c in got] == ["c", "d"]                     # nc·nd·작은 것 제외
+    assert got[0].credit == "Park · CC BY-SA 4.0 · wikimedia via Openverse"
+    assert got[0].attribution.startswith('"Design desk" by Park is licensed under CC BY-SA 4.0')
+    assert got[1].credit == "Public Domain · smithsonian via Openverse"
+    assert not any(license_ok(c) for c in ("by-nc", "by-nd", "by-nc-sa", "by-nc-nd", "sampling+", "", "nc-sampling+"))
+    assert all(license_ok(c) for c in ("by", "by-sa", "cc0", "pdm"))

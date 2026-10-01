@@ -370,3 +370,36 @@ def test_normalize_long_is_idempotent_with_script_tags():
     assert json.dumps(first, sort_keys=True, ensure_ascii=False) == json.dumps(second, sort_keys=True, ensure_ascii=False)
     assert sum(1 for e in second["emphasis"] if e["kind"] == "punch") == 1
     assert sum(1 for d in second["drop"] if d["seg"] == 3) == 1
+
+
+def test_long_cards_and_motion_are_retyped_for_shorts_not_shrunk():
+    """10/1: 1920×1080 으로 짠 카드·모션을 숏폼 위 카드에 0.46배로 줄여 넣어 본문이 16px 가 됐다 — 숏폼 개념 카드로 다시 짠다."""
+    from studio.pipeline import short_retype
+    card = {"template": "card", "layout": "fullscreen", "start_seg": 3, "title": "",
+            "card": {"html": '<div class="card"><p class="k">원리</p><h1>여백은 숨 쉴 공간</h1></div>', "css": ""}}
+    c = short_retype(card)
+    assert c["template"] == "keyword" and c["layout"] == "split" and "card" not in c
+    assert c["title"] == "원리" and c["subtitle"] == "여백은 숨 쉴 공간"
+    motion = {"template": "motion", "layout": "fullscreen", "start_seg": 4, "title": "근접성",
+              "spec": {"elements": [{"type": "text", "text": "가까우면 한 덩어리", "size": 6},
+                                    {"type": "rect", "x": 50, "y": 50}]}}
+    m = short_retype(motion)
+    assert m["template"] == "keyword" and m["title"] == "근접성" and m["subtitle"] == "가까우면 한 덩어리" and "spec" not in m
+    assert short_retype({"template": "motion", "title": "", "spec": {"elements": [{"type": "rect"}]}}) is None
+    dg = {"template": "process", "items": ["a", "b"], "start_seg": 5}
+    assert short_retype(dg) == dg and short_retype(dg) is not dg
+
+
+def test_motion_stage_stands_by_half_a_second():
+    """F-6(10/1): 모든 요소가 말에 묶여 빈 배경이 2~3초 — 0.5초까지 아무것도 없으면 판·제목을 0초로(선·점은 말 그대로)."""
+    from studio.motion.spec import clean_spec
+    spec = {"elements": [{"type": "rect", "x": 50, "y": 50, "w": 60, "h": 40, "at": 2.0},
+                         {"type": "text", "text": "근접성", "size": 9, "x": 50, "y": 20, "at": 2.4},
+                         {"type": "text", "text": "가까우면", "size": 5, "x": 30, "y": 60, "at": 3.0},
+                         {"type": "line", "x": 10, "y": 80, "x2": 90, "y2": 80, "at": 3.5}]}
+    out = clean_spec(spec, 8.0)
+    at = [e["at"] for e in out["elements"]]
+    assert at == [0.0, 0.0, 3.0, 3.5]
+    # 이미 0.5초 안에 무언가 서 있으면 건드리지 않는다
+    spec2 = {"elements": [{"type": "text", "text": "a", "size": 5, "at": 0.3}, {"type": "rect", "at": 2.0}]}
+    assert [e["at"] for e in clean_spec(spec2, 8.0)["elements"]] == [0.3, 2.0]

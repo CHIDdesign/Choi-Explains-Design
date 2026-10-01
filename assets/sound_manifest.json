@@ -1,5 +1,5 @@
 {
- "about": "Choi Studio 효과음·배경음악·잡음 제거 모델 목록. 파일은 처음 실행 때 assets/sound/ 로 내려받는다(저장소에는 넣지 않음). 모든 주소는 쿠키·API 키 없이 GET 으로 받을 수 있는 것만 확인해서 넣었다(2026-09-29, sha256 검증).",
+ "about": "Choi Studio 효과음·배경음악·잡음 제거 모델 목록. 파일은 처음 실행 때 assets/sound/ 로 내려받는다(저장소에는 넣지 않음). 모든 주소는 쿠키·API 키 없이 GET 으로 받을 수 있는 것만 확인해서 넣었다(2026-09-29, sha256 검증). 2026-10-01: 항목마다 enabled · commercial_ok · license{class(A 위험 없음 · B 채널 등록 · C 크레딧 필요 · D Content ID 등록 · X 비상업·변경 금지·AI 생성), type, content_id, attribution} — enabled·commercial_ok 가 false 인 항목은 받지도 싣지도 않는다(docs/upgrade/04b 7절).",
  "sfx": [
   {
    "id": "whoosh_soft_1",
@@ -15,7 +15,16 @@
    "sha256": "3d8d01e534b857d442f6653b4abd9d7aad3b37a6e96d7adb420c4db6c8012dfd",
    "bytes": 12538,
    "title": "Wind Swoosh Short",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-wind-swoosh-short-289744/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-wind-swoosh-short-289744/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_soft_2",
@@ -29,7 +38,16 @@
    "sha256": "8af9843a636d3b4961f0c8b3545a21e674bd43d59f97d5c38d3f9a3f04674fd2",
    "bytes": 71724,
    "title": "Air woosh",
-   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+   "page": "https://mixkit.co/free-sound-effects/whoosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_soft_3",
@@ -43,7 +61,16 @@
    "sha256": "e702dc99aac9ba1b9a12416068606e6c4c3fc4c7896555bed490745373df0d76",
    "bytes": 44058,
    "title": "Short wind swoosh",
-   "page": "https://mixkit.co/free-sound-effects/swoosh/"
+   "page": "https://mixkit.co/free-sound-effects/swoosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_fast_1",
@@ -59,7 +86,16 @@
    "sha256": "0681e6f903496c04fd661b3f44b09132a2555aed5bffd115356c75ea73bceda8",
    "bytes": 33792,
    "title": "Fast Swoosh",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-fast-swoosh-383967/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-fast-swoosh-383967/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_fast_2",
@@ -75,7 +111,16 @@
    "sha256": "f76f7bb42ea075c4f791a19de93d489ffecd6ee744e87165aabe804919c705e6",
    "bytes": 81408,
    "title": "Futuristic Zoom Whoosh 2",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-futuristic-zoom-whoosh-2-183978/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-futuristic-zoom-whoosh-2-183978/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_fast_3",
@@ -89,7 +134,16 @@
    "sha256": "b88fd5d484251930efd6eca78c4340339908ea29d1e69bd24fb5191a10da4f78",
    "bytes": 57624,
    "title": "Fast whoosh transition",
-   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+   "page": "https://mixkit.co/free-sound-effects/whoosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_deep_1",
@@ -103,7 +157,16 @@
    "sha256": "121333b65bc1bcde3eaa5f155f136df258100f4d4b4d1c5e8cc67015d1e6387c",
    "bytes": 92185,
    "title": "Deep air woosh",
-   "page": "https://mixkit.co/free-sound-effects/woosh/"
+   "page": "https://mixkit.co/free-sound-effects/woosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_deep_2",
@@ -117,7 +180,16 @@
    "sha256": "9854bff8a78fcebef95350ff0ec72a41ba449ab372bbd601b55d84de13bd626d",
    "bytes": 115904,
    "title": "Cinematic whoosh deep impact",
-   "page": "https://mixkit.co/free-sound-effects/impact/"
+   "page": "https://mixkit.co/free-sound-effects/impact/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "whoosh_deep_3",
@@ -131,7 +203,16 @@
    "sha256": "b08198fe3a699296aca18c5911fd140dded026639be294036151dbc47a317f02",
    "bytes": 201481,
    "title": "Cinematic tunnel reverb woosh",
-   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+   "page": "https://mixkit.co/free-sound-effects/whoosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swoosh_short_1",
@@ -147,7 +228,16 @@
    "sha256": "85fb1b2114b80f5dec0011ce659cf119794f835ca2af184ea2ac105a9630c24d",
    "bytes": 36864,
    "title": "Swoosh 05",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-swoosh-05-329226/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-swoosh-05-329226/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swoosh_short_2",
@@ -163,7 +253,16 @@
    "sha256": "acac9d9e5137fdb038f39aef89650b437a30a6b38c833859115c0677692c77dd",
    "bytes": 11702,
    "title": "Swing Whoosh",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-swing-whoosh-110410/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-swing-whoosh-110410/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swoosh_short_3",
@@ -177,7 +276,16 @@
    "sha256": "591d7273938a10f65e064a5a8577a655c72bbf7d13ef3ce625dfcffa860ec879",
    "bytes": 35288,
    "title": "Quick swoosh accent",
-   "page": "https://mixkit.co/free-sound-effects/swoosh/"
+   "page": "https://mixkit.co/free-sound-effects/swoosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "pop_1",
@@ -193,7 +301,16 @@
    "sha256": "bb2b4b4514f3f5793a3fa04a8552812f2564f98c99da7a2b1e4d168c184dad28",
    "bytes": 33792,
    "title": "Bubble Pop 06",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-bubble-pop-06-351337/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-bubble-pop-06-351337/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "pop_2",
@@ -209,7 +326,16 @@
    "sha256": "93e44e8f096a1d32fabf513ab02c4f122094774067bfccbbdff0404313fa6b03",
    "bytes": 65280,
    "title": "Pop Clean",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-pop-clean-312648/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-pop-clean-312648/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "pop_3",
@@ -225,7 +351,16 @@
    "sha256": "b89f463a8ebc94babe30ec854cbf7493eafdee8c04ea9eb12b444e44166b0b7b",
    "bytes": 32600,
    "title": "Sharp Pop",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-sharp-pop-328170/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-sharp-pop-328170/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "click_1",
@@ -241,7 +376,16 @@
    "sha256": "e9fdb3ed918d112c06a6573fae13c236b18d7c6d2225ab917048e20851d60feb",
    "bytes": 33792,
    "title": "Computer Mouse Click 02",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-computer-mouse-click-02-383961/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-computer-mouse-click-02-383961/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "click_2",
@@ -255,7 +399,16 @@
    "sha256": "0ce47beb583157b856876924b70392ab4483d7babb1661352d66f7191345ef0c",
    "bytes": 13046,
    "title": "Interface click",
-   "page": "https://mixkit.co/free-sound-effects/click/"
+   "page": "https://mixkit.co/free-sound-effects/click/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "click_3",
@@ -269,7 +422,16 @@
    "sha256": "8be2160373d4463bfea8aa3125747ae9adf0b3deb7e933d1a974c684f3d95e7d",
    "bytes": 12944,
    "title": "Tech click",
-   "page": "https://mixkit.co/free-sound-effects/click/"
+   "page": "https://mixkit.co/free-sound-effects/click/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "riser_1",
@@ -283,7 +445,16 @@
    "sha256": "12b32cd18a5888822c5b4ecc3849c8df6f9c68fea9871b8360b039a856e1ba51",
    "bytes": 92591,
    "title": "Cinematic Riser 2.wav",
-   "page": "https://freesound.org/people/original_sound/sounds/363123/"
+   "page": "https://freesound.org/people/original_sound/sounds/363123/",
+   "enabled": false,
+   "commercial_ok": false,
+   "license": {
+    "class": "X",
+    "type": "CC BY-NC 3.0",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "riser_2",
@@ -297,7 +468,16 @@
    "sha256": "af2dfa590f2080c7eb86e3c5c84a9e433a07003ab944eabf8ff9ac83cd14d46b",
    "bytes": 91058,
    "title": "Riser Quick 2",
-   "page": "https://freesound.org/people/original_sound/sounds/376576/"
+   "page": "https://freesound.org/people/original_sound/sounds/376576/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "C",
+    "type": "CC BY",
+    "content_id": "unknown",
+    "attribution": "Riser Quick 2 by original_sound — https://freesound.org/s/376576/ — CC BY",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "riser_3",
@@ -311,7 +491,16 @@
    "sha256": "22158444a8bab90fdf014c305d37e21f74882e7e6b1df186bc5c9886b48d0ca3",
    "bytes": 82884,
    "title": "Cinematic trailer riser",
-   "page": "https://mixkit.co/free-sound-effects/cinematic/"
+   "page": "https://mixkit.co/free-sound-effects/cinematic/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "impact_1",
@@ -327,7 +516,16 @@
    "sha256": "824993119db92d61141199500533294aac3ea01b83e3410396a4c5f65aa54183",
    "bytes": 66816,
    "title": "Cinematic Impact Boom 05",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-cinematic-impact-boom-05-352465/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-cinematic-impact-boom-05-352465/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "impact_2",
@@ -341,7 +539,16 @@
    "sha256": "c4f8b69331a5b24b5e072c6514adb43b2023ff3c2e8b87b153346b37620b0221",
    "bytes": 137505,
    "title": "Deep cinematic subtle drum impact",
-   "page": "https://mixkit.co/free-sound-effects/cinematic/"
+   "page": "https://mixkit.co/free-sound-effects/cinematic/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "impact_3",
@@ -355,7 +562,16 @@
    "sha256": "661d10a08644b5629e68d57f35f3f0928ec3c0dc98df425cf979f08b74871a13",
    "bytes": 233740,
    "title": "Cinematic impact echo",
-   "page": "https://mixkit.co/free-sound-effects/impact/"
+   "page": "https://mixkit.co/free-sound-effects/impact/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "sub_drop_1",
@@ -369,7 +585,16 @@
    "sha256": "cd886173aa0270c9adbdb04fa14eb7f4cde53bd70506a4bf8d6e14de00e6bfd9",
    "bytes": 44575,
    "title": "Sub Drop Smooth.wav",
-   "page": "https://freesound.org/people/newagesoup/sounds/428073/"
+   "page": "https://freesound.org/people/newagesoup/sounds/428073/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "?",
+    "type": "Freesound — 라이선스 미확인(페이지에서 확인)",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": ""
+   }
   },
   {
    "id": "sub_drop_2",
@@ -383,7 +608,16 @@
    "sha256": "6a964a1b97bfdfccafbc05169029690f60ddf00959f3d341c8a941b02e9ebb71",
    "bytes": 98376,
    "title": "Bass Drop",
-   "page": "https://freesound.org/people/qubodup/sounds/212768/"
+   "page": "https://freesound.org/people/qubodup/sounds/212768/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "?",
+    "type": "Freesound — 라이선스 미확인(페이지에서 확인)",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": ""
+   }
   },
   {
    "id": "sub_drop_3",
@@ -397,7 +631,16 @@
    "sha256": "8bd0c7fd63fbb8a4442ffe1176aa41b260d1fafbcf728e3c63648eb5bcd4e16b",
    "bytes": 36222,
    "title": "Short bass hit",
-   "page": "https://mixkit.co/free-sound-effects/hit/"
+   "page": "https://mixkit.co/free-sound-effects/hit/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "reverse_cymbal_1",
@@ -411,7 +654,16 @@
    "sha256": "5f138c046f605691fd908d4de6bbd776473807c0b56224a2e9a900be5cfeac5f",
    "bytes": 71585,
    "title": "Rpeople_RevCrash2.wav",
-   "page": "https://freesound.org/people/rhythmpeople/sounds/165154/"
+   "page": "https://freesound.org/people/rhythmpeople/sounds/165154/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "?",
+    "type": "Freesound — 라이선스 미확인(페이지에서 확인)",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": ""
+   }
   },
   {
    "id": "reverse_cymbal_2",
@@ -425,7 +677,16 @@
    "sha256": "ed8257d52ec953dac90af3d64505a845012f1ca40f5120f61041084549b7ee23",
    "bytes": 116570,
    "title": "crash1_reverse.wav",
-   "page": "https://freesound.org/people/Halleck/sounds/30938/"
+   "page": "https://freesound.org/people/Halleck/sounds/30938/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "C",
+    "type": "CC BY",
+    "content_id": "unknown",
+    "attribution": "crash1_reverse.wav by Halleck — https://freesound.org/s/30938/ — CC BY",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "reverse_cymbal_3",
@@ -439,7 +700,16 @@
    "sha256": "718e625538fc12c0aa7f5cb16ce15275133d13f747d9be4dfd319fdd097641f5",
    "bytes": 73878,
    "title": "reverse crash.wav",
-   "page": "https://freesound.org/people/genocidalguitar/sounds/110218/"
+   "page": "https://freesound.org/people/genocidalguitar/sounds/110218/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "?",
+    "type": "Freesound — 라이선스 미확인(페이지에서 확인)",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": ""
+   }
   },
   {
    "id": "ding_1",
@@ -455,7 +725,16 @@
    "sha256": "421705f7822705620531f7884d93db408a8c679e810bac185e0cf6897b55d9a6",
    "bytes": 36096,
    "title": "Ding~",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-126626/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-126626/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "ding_2",
@@ -471,7 +750,16 @@
    "sha256": "4d84f36954e59c852883d268408e745e510efa7849c9347953ef49737de73fa4",
    "bytes": 40124,
    "title": "Ding",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-101377/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-101377/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "ding_3",
@@ -485,7 +773,16 @@
    "sha256": "8b294a697c2e3396849d2aa1c0d5e40910a876be704791c4a1bcbeefae8ff252",
    "bytes": 42891,
    "title": "Relaxing bell chime",
-   "page": "https://mixkit.co/free-sound-effects/chimes/"
+   "page": "https://mixkit.co/free-sound-effects/chimes/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "typing_1",
@@ -501,7 +798,16 @@
    "sha256": "8c454d6fcc54f701f5caf6722142fe4be03888b97e9ca3d8bbe882d04102a5eb",
    "bytes": 259134,
    "title": "Typing Keyboard ASMR",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-typing-keyboard-asmr-356116/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-typing-keyboard-asmr-356116/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "typing_2",
@@ -515,7 +821,16 @@
    "sha256": "3584ad18f294d90cb9af946446155fb0b67fa41aa5b7b9c1dc13dcf1eec2da95",
    "bytes": 74535,
    "title": "Electronic typing",
-   "page": "https://mixkit.co/free-sound-effects/type/"
+   "page": "https://mixkit.co/free-sound-effects/type/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "typing_3",
@@ -529,7 +844,16 @@
    "sha256": "7b2829a8d1eaaf262249856be4b6df2e1b3b67d408297b48c293e5828857e2f5",
    "bytes": 79049,
    "title": "Typing on an electronic device",
-   "page": "https://mixkit.co/free-sound-effects/typewriter/"
+   "page": "https://mixkit.co/free-sound-effects/typewriter/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "camera_shutter_1",
@@ -543,7 +867,16 @@
    "sha256": "7a3f4f159209dede2e9f209d50f98f34cf2c7e792fc0fe847dff092bfabd5aa3",
    "bytes": 49898,
    "title": "Camera digital shutter",
-   "page": "https://mixkit.co/free-sound-effects/camera/"
+   "page": "https://mixkit.co/free-sound-effects/camera/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "camera_shutter_2",
@@ -557,7 +890,16 @@
    "sha256": "fa11a2de7e3d0215bb21955e8d67f690dd9b219e46952aba7e2372c78ccf2ce4",
    "bytes": 47132,
    "title": "Camera lens shutter",
-   "page": "https://mixkit.co/free-sound-effects/camera/"
+   "page": "https://mixkit.co/free-sound-effects/camera/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "camera_shutter_3",
@@ -571,7 +913,16 @@
    "sha256": "b33152521d12edd3d6d0bdcf7e29a0b1c6fc4c4c52d613486cd2fe2bdd200692",
    "bytes": 18370,
    "title": "Camera shutter hard click",
-   "page": "https://mixkit.co/free-sound-effects/camera/"
+   "page": "https://mixkit.co/free-sound-effects/camera/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "paper_1",
@@ -587,7 +938,16 @@
    "sha256": "68bf63f894673533e192ec148d2dcc010fc3a05b51b7c4e711fdb394f9cbaa47",
    "bytes": 13056,
    "title": "Paper Collect 3",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-paper-collect-3-186600/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-paper-collect-3-186600/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "paper_2",
@@ -601,7 +961,16 @@
    "sha256": "3b2b05dd402127a6ee15f33c5c6690568f389848b1a8d11d6d70cab7d0268bd4",
    "bytes": 18060,
    "title": "Page turn single",
-   "page": "https://mixkit.co/free-sound-effects/paper/"
+   "page": "https://mixkit.co/free-sound-effects/paper/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "paper_3",
@@ -615,7 +984,16 @@
    "sha256": "d3b034ccdc89c75c6091a048c3f487847fad14e9d7ad663d343dc8766a206433",
    "bytes": 30379,
    "title": "Big paper page turn",
-   "page": "https://mixkit.co/free-sound-effects/paper/"
+   "page": "https://mixkit.co/free-sound-effects/paper/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "glitch_1",
@@ -631,7 +1009,16 @@
    "sha256": "4d396112b4f4f41014ac8f9874a2c799e6bf8af1fdb17ead6c63240e9b9e82cc",
    "bytes": 35328,
    "title": "Digital Glitch Noise HD",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-digital-glitch-noise-hd-379465/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-digital-glitch-noise-hd-379465/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "glitch_2",
@@ -645,7 +1032,16 @@
    "sha256": "05b2df6532ab7f968b939bd3a45158f44c8048438a1d30361fd6228a92f540ce",
    "bytes": 38314,
    "title": "Digital glitch break",
-   "page": "https://mixkit.co/free-sound-effects/glitch/"
+   "page": "https://mixkit.co/free-sound-effects/glitch/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "glitch_3",
@@ -659,7 +1055,16 @@
    "sha256": "0a51e61a9d9110b5cf316607804fd43343de31b1ba89b10163931ea6ebb9ace7",
    "bytes": 46822,
    "title": "Tech device glitch",
-   "page": "https://mixkit.co/free-sound-effects/glitch/"
+   "page": "https://mixkit.co/free-sound-effects/glitch/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "notification_1",
@@ -675,7 +1080,16 @@
    "sha256": "d6a99e9d0721b7404b351ab5faff4ab3b79a061e3c383983640e007a81ae264f",
    "bytes": 36864,
    "title": "New Notification 09",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-09-352705/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-09-352705/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "notification_2",
@@ -691,7 +1105,16 @@
    "sha256": "86d967f2c46c458c37e7b5ec8bdb0734ca630f5b9a5df7870c716e5ac11b102b",
    "bytes": 36096,
    "title": "New Notification 08",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-08-352461/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-08-352461/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "notification_3",
@@ -705,7 +1128,16 @@
    "sha256": "58ecb2df40864551fd8aa7f770c13646187854df7fe4ca74497997b24f7669cd",
    "bytes": 13059,
    "title": "Message pop alert",
-   "page": "https://mixkit.co/free-sound-effects/pop/"
+   "page": "https://mixkit.co/free-sound-effects/pop/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swipe_1",
@@ -721,7 +1153,16 @@
    "sha256": "1128e32fb5dc96025ad160ede46bf26c4f163424705ad7d9cea0f93f243e7933",
    "bytes": 48483,
    "title": "Movement Swipe Whoosh 1",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-movement-swipe-whoosh-1-186575/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-movement-swipe-whoosh-1-186575/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swipe_2",
@@ -735,7 +1176,16 @@
    "sha256": "d9158ed4d147b58a2575c3979d097dc36333f8d8c001af1f6fcbf3fc5c7461ef",
    "bytes": 35650,
    "title": "Fast swipe zoom",
-   "page": "https://mixkit.co/free-sound-effects/woosh/"
+   "page": "https://mixkit.co/free-sound-effects/woosh/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "swipe_3",
@@ -749,7 +1199,16 @@
    "sha256": "8b98f2c91a976b6a29b9b536380d216a7861ae8f81f6e5547489c51329e381b9",
    "bytes": 34864,
    "title": "UI zoom out",
-   "page": "https://mixkit.co/free-sound-effects/zoom/"
+   "page": "https://mixkit.co/free-sound-effects/zoom/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "bell_soft_1",
@@ -765,7 +1224,16 @@
    "sha256": "6df44d627010cb873be33b5e79a89c723650cf979a575409f6935efbbc87bc23",
    "bytes": 31764,
    "title": "Bell Ring",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-bell-ring-390294/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-bell-ring-390294/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "bell_soft_2",
@@ -781,7 +1249,16 @@
    "sha256": "d4437b03d2ddad96ccb19d8b18937a4a6ad7c549a0a1623dd264d2de9d1d5176",
    "bytes": 259134,
    "title": "Log Soft Low Frequency Bell Sound Temple ASMR",
-   "page": "https://pixabay.com/sound-effects/film-special-effects-log-soft-low-frequency-bell-sound-temple-asmr-309725/"
+   "page": "https://pixabay.com/sound-effects/film-special-effects-log-soft-low-frequency-bell-sound-temple-asmr-309725/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Pixabay Content License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   },
   {
    "id": "bell_soft_3",
@@ -795,7 +1272,16 @@
    "sha256": "7300912e0a685b9fefefa275ac2669c92bf1e0db0ea9ef75c98bc73a2fecb4f6",
    "bytes": 105280,
    "title": "Bell notification",
-   "page": "https://mixkit.co/free-sound-effects/notification/"
+   "page": "https://mixkit.co/free-sound-effects/notification/",
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "A",
+    "type": "Mixkit Sound Effects Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01"
+   }
   }
  ],
  "bgm": [
@@ -814,7 +1300,17 @@
    "title": "Calm Piano Music",
    "artist": "Clavier-Music",
    "page": "https://pixabay.com/music/modern-classical-calm-piano-music-351839/",
-   "lead_silence_s": 0.0
+   "lead_silence_s": 0.0,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡"
+   }
   },
   {
    "id": "bgm_minimal_piano",
@@ -831,7 +1327,17 @@
    "title": "Calm Inspiring",
    "artist": "leberch",
    "page": "https://pixabay.com/music/modern-classical-calm-inspiring-251916/",
-   "lead_silence_s": 0.4
+   "lead_silence_s": 0.4,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡"
+   }
   },
   {
    "id": "bgm_inspiring_piano",
@@ -848,7 +1354,17 @@
    "title": "Soft Piano Inspiration",
    "artist": "Grand_Project",
    "page": "https://pixabay.com/music/modern-classical-soft-piano-inspiration-399920/",
-   "lead_silence_s": 0.05
+   "lead_silence_s": 0.05,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡, 과압축"
+   }
   },
   {
    "id": "bgm_ambient_space",
@@ -865,7 +1381,17 @@
    "title": "Calm Space Music",
    "artist": "Clavier-Music",
    "page": "https://pixabay.com/music/ambient-calm-space-music-312291/",
-   "lead_silence_s": 0.0
+   "lead_silence_s": 0.0,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡"
+   }
   },
   {
    "id": "bgm_lofi_coverless",
@@ -882,7 +1408,17 @@
    "title": "Coverless book (Lofi)",
    "artist": "AmbientAUDIOVISION",
    "page": "https://pixabay.com/music/beats-coverless-book-lofi-186307/",
-   "lead_silence_s": 5.5
+   "lead_silence_s": 5.5,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡, 앞 5.6초 무음"
+   }
   },
   {
    "id": "bgm_lofi_study",
@@ -899,7 +1435,17 @@
    "title": "Chill Study Desk - Focus & Concentration Lofi",
    "artist": "DesiFreeMusic",
    "page": "https://pixabay.com/music/lofi-chill-study-desk-focus-amp-concentration-lofi-451181/",
-   "lead_silence_s": 0.0
+   "lead_silence_s": 0.0,
+   "enabled": false,
+   "commercial_ok": false,
+   "license": {
+    "class": "X",
+    "type": "Pixabay Content License",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "AI 생성 표시"
+   }
   },
   {
    "id": "bgm_inspiring_corporate",
@@ -916,7 +1462,17 @@
    "title": "Digital Synergy",
    "artist": "Turning_Pages",
    "page": "https://pixabay.com/music/corporate-digital-synergy-483918/",
-   "lead_silence_s": 0.05
+   "lead_silence_s": 0.05,
+   "enabled": false,
+   "commercial_ok": false,
+   "license": {
+    "class": "X",
+    "type": "Pixabay Content License",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "AI 생성 표시 · 코퍼레이트 장르"
+   }
   },
   {
    "id": "bgm_upbeat_future",
@@ -933,7 +1489,17 @@
    "title": "Electronic Future Beats_Fadeout",
    "artist": "QubeSounds",
    "page": "https://pixabay.com/music/electronic-future-beats-fadeout-117997/",
-   "lead_silence_s": 0.0
+   "lead_silence_s": 0.0,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "Pixabay Content License",
+    "content_id": "registered",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "Content ID 등록 곡, 과압축"
+   }
   },
   {
    "id": "bgm_upbeat_showreel",
@@ -950,7 +1516,17 @@
    "title": "Creative Technology Showreel",
    "artist": "Pumpupthemind",
    "page": "https://pixabay.com/music/beats-creative-technology-showreel-241274/",
-   "lead_silence_s": 0.05
+   "lead_silence_s": 0.05,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "C",
+    "type": "Pixabay Content License",
+    "content_id": "unknown",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "업비트 장르·밀도(교육 채널에 안 맞음)"
+   }
   },
   {
    "id": "bgm_lofi_mixkit",
@@ -965,7 +1541,17 @@
    "title": "Lo-Fi 04",
    "artist": "Lily J",
    "page": "https://mixkit.co/free-stock-music/chillout/",
-   "lead_silence_s": 0.05
+   "lead_silence_s": 0.05,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "C",
+    "type": "Mixkit Stock Music Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "과압축(LRA 2.0) · 코퍼레이트 분류"
+   }
   },
   {
    "id": "bgm_ambient_mixkit",
@@ -980,7 +1566,17 @@
    "title": "Forest Mist Whispers",
    "artist": "Alejandro Magaña (A. M.)",
    "page": "https://mixkit.co/free-stock-music/ambient/",
-   "lead_silence_s": 0.2
+   "lead_silence_s": 0.2,
+   "enabled": true,
+   "commercial_ok": true,
+   "license": {
+    "class": "C",
+    "type": "Mixkit Stock Music Free License",
+    "content_id": "none",
+    "attribution": "",
+    "checked": "2026-10-01",
+    "note": "임시 유지 — 말 대역(1~4 kHz)이 많아 말 없는 자리에만"
+   }
   },
   {
    "id": "bgm_minimal_wallpaper",
@@ -995,7 +1591,17 @@
    "title": "Wallpaper",
    "artist": "Kevin MacLeod",
    "page": "https://incompetech.com/music/royalty-free/music.html",
-   "lead_silence_s": 0.0
+   "lead_silence_s": 0.0,
+   "enabled": false,
+   "commercial_ok": true,
+   "license": {
+    "class": "D",
+    "type": "CC BY 4.0",
+    "content_id": "registered",
+    "attribution": "Wallpaper — Kevin MacLeod (incompetech.com) / Licensed under Creative Commons: By Attribution 4.0 / https://creativecommons.org/licenses/by/4.0/",
+    "checked": "2026-10-01",
+    "note": "Incompetech 가 Content ID 사전 등록, 과압축"
+   }
   }
  ],
  "models": [

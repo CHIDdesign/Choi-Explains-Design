@@ -34,6 +34,7 @@ export type GraphicData = {
   title_b?: string;
   items_b?: string[];
   highlight?: number;
+  stepAt?: {t: number; index: number}[]; // 단계 그래픽: 그래픽 시작 기준 초 — 그 낱말에서 강조 단계가 바뀐다
   author?: string;
   source?: string;
   image?: string; // public 폴더 기준 상대경로 (예: images/braun.jpg)
@@ -44,6 +45,7 @@ export type GraphicData = {
   scene?: string; // motion: 코드 생성 장면 id(실험적)
   kind?: 'video' | 'photo'; // broll
   logo?: boolean; // photo: 브랜드 로고 카드(크림 종이 위 로고 SVG) — 어두운 그라데이션·필름 룩 없이, 글은 잉크색
+  mat?: boolean; // photo: 세로 사진을 크림 종이 여백 액자(1600×1000)에 넣은 것 — 로고 카드처럼 그린다
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
   accent?: string; // 개념 카드·사진 액자 글(두 스킨): 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)

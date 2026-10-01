@@ -92,6 +92,45 @@ class _Detector:
         return None
 
 
+def eye_contrast(gray: np.ndarray, eyes: list[tuple[float, float]]) -> Optional[float]:
+    """두 눈 주변 작은 조각의 밝기 대비(p95 − p5, 0~1) 평균 — 뜬 눈은 흰자·홍채·동공이 있어 대비가 크고, 감은 눈은 눈꺼풀
+    살갗이라 평평하다. 절대 기준이 아니라 같은 영상의 후보끼리 비교하는 값(썸네일 프레임 고르기, docs/upgrade/10 3-1)."""
+    if len(eyes) < 2:
+        return None
+    (x1, y1), (x2, y2) = eyes[:2]
+    d = float(np.hypot(x2 - x1, y2 - y1))
+    if d < 8:
+        return None
+    r = max(3, int(round(d * 0.2)))
+    vals = []
+    for x, y in eyes[:2]:
+        xi, yi = int(round(x)), int(round(y))
+        patch = gray[max(0, yi - r // 2):yi + r // 2 + 1, max(0, xi - r):xi + r + 1]
+        if patch.size < 9:
+            return None
+        lo, hi = np.percentile(patch, [5, 95])
+        vals.append((hi - lo) / 255.0)
+    return float(np.mean(vals))
+
+
+def eye_openness(frame: np.ndarray, detector: Optional["_Detector"] = None) -> Optional[float]:
+    """프레임 → eye_contrast(YuNet 눈 랜드마크). YuNet 이 없거나 얼굴이 없으면 None."""
+    h, w = frame.shape[:2]
+    det = detector or _Detector(w, h, noop_log)
+    if det.yunet is None:
+        return None
+    try:
+        det.yunet.setInputSize((w, h))
+    except Exception:  # noqa: BLE001
+        pass
+    _, faces = det.yunet.detect(frame)
+    if faces is None or len(faces) == 0:
+        return None
+    f = max(faces, key=lambda r: r[2] * r[3])
+    gray = det.cv2.cvtColor(frame, det.cv2.COLOR_BGR2GRAY)
+    return eye_contrast(gray, [(float(f[4]), float(f[5])), (float(f[6]), float(f[7]))])
+
+
 def frame_quality(frame: np.ndarray, box: Optional[tuple[float, float, float, float]]) -> tuple[float, float, float]:
     """(초점 = log1p(라플라시안 분산), 밝기 0~1, 날아가거나 뭉개진 화소 비율). 얼굴이 있으면 얼굴 영역,
     없으면 화면 가운데. 영역을 높이 96px 로 맞춰 재므로 카메라 해상도·얼굴 크기가 달라도 비교할 수 있다."""

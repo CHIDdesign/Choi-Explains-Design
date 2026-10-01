@@ -3,7 +3,7 @@ import {continueRender, delayRender} from 'remotion';
 import gsap from 'gsap';
 import {compileCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import type {CompiledCard} from '../../../vendor/hyperframes/card-anim.mjs';
-import {FONT, rgba} from '../../design/tokens';
+import {FONT, rgba, NOTE} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {CardSpec} from '../../lib/types';
@@ -17,11 +17,13 @@ import type {TemplateProps} from '../graphics/common';
 export const HtmlCard: React.FC<TemplateProps> = (p) => (p.data.card ? <CardBody {...p} card={p.data.card} /> : null);
 
 /** 카드 CSS 가 쓰는 채널 토큰(변수) — prompts/card_dsl.md 의 표와 같아야 한다 */
+// 한 재질(docs/upgrade/06 3-1, F-10): 카드의 '흰 바탕'·'잉크 바탕'은 순백(#FFF)·순흑(#111)이 아니라 메모·로고 카드와 같은
+// 크림 종이(NOTE.paper)·따뜻한 잉크(NOTE.ink) — 한 영상에 전면 배경색이 셋을 넘지 않게(게이트 B9)
 export const cardVars = (theme: Theme, surface: Surface): Record<string, string> => ({
-  '--bg': surface.bg === 'transparent' ? 'transparent' : theme.paper,
-  '--paper': theme.paper,
+  '--bg': surface.bg === 'transparent' ? 'transparent' : NOTE.paper,
+  '--paper': NOTE.paper,
   '--paper-line': theme.paperLine,
-  '--ink': theme.ink,
+  '--ink': NOTE.ink,
   '--ink-soft': theme.inkSoft,
   '--muted': 'rgba(28, 28, 28, 0.7)',
   '--accent': theme.accent,
@@ -32,7 +34,7 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--board-edge': theme.boardEdge,
   '--chalk': theme.chalk,
   '--chalk-dim': theme.chalkDim,
-  '--white': theme.white,
+  '--white': NOTE.paper,
   '--font-head': FONT.display,
   '--font-body': FONT.sans,
   '--font-serif': FONT.serif,

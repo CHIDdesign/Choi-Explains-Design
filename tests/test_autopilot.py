@@ -358,12 +358,77 @@ def test_bgm_curve_ducks_under_voice_and_dips():
     from studio.media.mix import BgmPlan, bgm_gain_curve
     act = np.zeros(1000, np.float32)
     act[200:600] = 1
-    plan = BgmPlan(path="x", swells=[(0.0, 1.0)], dips=[(8.0, 9.0)], fade_in=0, fade_out=0)
+    plan = BgmPlan(path="x", swells=[(0.0, 1.0)], dips=[(8.0, 9.0)], fade_in=0, fade_out=0, dip_fade=0.5)
     g = bgm_gain_curve(act, plan, 10.0)
     assert g[400] == pytest.approx(plan.under_db, abs=0.5)           # 말하는 동안 덕킹
     assert g[50] == pytest.approx(plan.swell_db, abs=0.5)            # 인트로 스웰
     assert g[890] < -40                                               # 핵심 문장 직전 비우기
     assert g[700] > plan.under_db + 5                                 # 쉼에서는 다시 올라옴
+
+
+def test_bgm_dip_is_gradual_and_end_fades_from_speech_end():
+    """음악 비우기는 2.5초 코사인으로 들어가고(뚝 끊기지 않음), 끝은 말이 끝난 곳부터 사라진다(04 11절 3·6번)."""
+    from studio.media.mix import BgmPlan, bgm_gain_curve
+    act = np.zeros(2000, np.float32)
+    plan = BgmPlan(path="x", dips=[(10.0, 11.0)], fade_in=0, fade_out=3.0, end_at=15.0)
+    g = bgm_gain_curve(act, plan, 20.0)
+    steps = np.diff(g[700:1000])
+    assert g[700] > g[850] > g[990] and float(steps.max()) <= 0.05 and float(-steps.min()) < 6.0
+    assert g[1050] < -40                                               # 비운 자리
+    assert g[1400] > g[1600] > g[1900] and g[1999] < g[1400] - 30     # 말이 끝난 15초부터 끝까지 사라짐
+
+
+def test_bgm_gain_follows_voice_loudness():
+    """음악 게인 = 목소리 실측 라우드니스 기준(롱 −20 · 숏 −18 LU). 목소리가 작게 녹음되면 음악도 같이 내려간다."""
+    from studio.media.mix import bgm_levels
+    u, gap, sw = bgm_levels(-16.0, -20.0)
+    assert u == pytest.approx(-22.0) and gap == pytest.approx(-14.0) and sw <= -16.0 - 6.0 + 14.0 + 1e-6
+    u2, _, _ = bgm_levels(-24.0, -20.0)
+    assert u2 == pytest.approx(u - 8.0)
+    us, gs, _ = bgm_levels(-16.0, -18.0, short=True)
+    assert us == pytest.approx(-20.0) and gs == pytest.approx(-16.0)
+    assert bgm_levels(None, -20.0)[0] == pytest.approx(-22.0)            # 측정 실패 → 목소리 −16 LUFS 로
+
+
+def test_bgm_never_wraps_end_to_start(tmp_path):
+    """곡이 영상보다 짧으면 끝→처음으로 잇지 않는다 — 끝에서 사라지고 다음 챕터 카드(앵커)에서 처음부터 다시(10/1: 11:42)."""
+    from studio.media.ffmpeg import FFmpeg
+    from studio.media.mix import SR, BgmPlan, _BgmSource
+    song = tmp_path / "song.wav"
+    import subprocess
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=20",
+                    "-ar", "48000", "-ac", "2", str(song)], check=True)
+    plan = BgmPlan(path=str(song), lufs=-14.0, restart_at=[35.0, 50.0], start_offset=0.5)
+    src = _BgmSource(FFmpeg("ffmpeg", "ffprobe"), plan, int(60 * SR))
+    starts = [round(a / SR, 2) for a, _, _ in src.pieces]
+    assert starts == [0.0, 35.0], starts                                # 0초 한 번, 곡이 끝난 뒤 첫 앵커에서 다시
+    assert all(L <= int(19.5 * SR) + 1 for _, L, _ in src.pieces)       # 앞 무음 0.5초는 건너뛰었다
+    gap = src.get(int(25 * SR), int(5 * SR))
+    assert float(np.abs(gap).max()) < 1e-6                              # 곡이 끝난 뒤 앵커까지는 음악 없음
+
+
+def test_manifest_disabled_entries_not_loaded(tmp_path):
+    """04b 7절: Content ID 등록·AI 생성·비상업(CC BY-NC) 항목은 받지도 싣지도 않는다. CC BY 는 출처 문구를 가진다."""
+    import json as _json
+
+    from studio.sound.library import SoundLibrary
+    man = _json.loads((ROOT / "assets" / "sound_manifest.json").read_text(encoding="utf-8"))
+    on = [b["id"] for b in man["bgm"] if b.get("enabled") is not False and b.get("commercial_ok") is not False]
+    assert on == ["bgm_ambient_mixkit"]
+    r1 = next(x for x in man["sfx"] if x["id"] == "riser_1")
+    assert r1["commercial_ok"] is False and "NC" in r1["license"]["type"]
+    assert "Halleck" in next(x for x in man["sfx"] if x["id"] == "reverse_cymbal_2")["license"]["attribution"]
+    (tmp_path / "manifest.json").write_text(_json.dumps({"sfx": [
+        {"id": "ok_1", "category": "pop", "url": "https://x/ok_1.wav", "enabled": True},
+        {"id": "nc_1", "category": "pop", "url": "https://x/nc_1.wav", "commercial_ok": False},
+        {"id": "off_1", "category": "pop", "url": "https://x/off_1.wav", "enabled": False}], "bgm": [], "models": []}),
+        encoding="utf-8")
+    (tmp_path / "sfx").mkdir(exist_ok=True)
+    for n in ("ok_1", "nc_1", "off_1"):
+        (tmp_path / "sfx" / f"{n}.wav").write_bytes(b"x")
+    lib = SoundLibrary(tmp_path, tmp_path / "manifest.json")
+    lib.ensure(download=False, kinds=("sfx",))
+    assert {x.id for x in lib.sfx if x.source != "synth"} == {"ok_1"}
 
 
 def test_mix_and_master_hit_minus_14_lufs(tmp_path):
@@ -462,7 +527,9 @@ def test_paper_skin_moves_fullscreen_concepts_next_to_speaker():
 
 def test_camera_plan_uses_framed_shots_gently():
     tm = TimeMap([Span(0, 12), Span(14, 30), Span(32, 50), Span(52, 70), Span(72, 90)])
-    shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[])
+    # 기본은 끔(10/1: 화자 화면 전체에 찢어진 테두리 — docs/upgrade/06 F-5). 렌더러·엔진의 장치는 남아 있다
+    assert not any(s.get("framed") for s in camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[]))
+    shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[], P={**PARAMS, "framed_every": 2})
     framed = [s for s in shots if s.get("framed")]
     assert framed and all(s["end"] - s["start"] >= PARAMS["framed_min"] for s in framed)
     for i, s in enumerate(shots):
@@ -734,3 +801,83 @@ def test_beige_wall_does_not_blotch_or_turn_pink():
     assert noise(out) <= 1.6 * noise(wall), (noise(wall), noise(out))   # 예전 3.4배
     _, _, _, _, hw = _lab(out)
     assert hw >= 75, hw                                               # 분홍(60° 쪽)으로 끌려가지 않는다
+
+
+def test_unresolved_photo_becomes_type_card_and_is_logged(tmp_path):
+    """P0-4: 못 구한 자료를 조용히 지우지 않는다 — 사진은 이름 카드, 스톡은 리서처의 caption 이 있으면 자료 카드,
+    둘 다 없으면 비우되 '잃음'으로 로그(리포트)."""
+    from studio.director.plan import type_card
+    from studio.stock.providers import StockHub
+    from studio.stock.research import StockResearcher
+    photo = {"template": "photo", "layout": "pip", "start_seg": 7, "end_seg": 7, "start_word": "", "title": "브라운 SK4",
+             "subtitle": "Braun SK 4", "body": "", "image": "브라운 SK4", "wiki": True, "entity": "work"}
+    c = type_card(photo, "1956년 라디오·전축")
+    assert c["template"] == "keyword" and c["layout"] == "overlay" and c["title"] == "브라운 SK4"
+    assert c["subtitle"] == "1956년 라디오·전축" and c["image"] == "" and "wiki" not in c and c["fallback"] == "type_card"
+    assert type_card({**photo, "title": ""}) is None
+
+    hub = StockHub([])
+    hub.search = lambda st, n: []          # 어느 제공처에도 없음
+    lists = [[{"template": "broll", "layout": "fullscreen", "start_seg": 3, "end_seg": 3, "title": "영감은 쌓인다",
+               "stock": {"kind": "photo", "query_en": "mood board", "query_ko": "무드보드", "purpose": "", "must_show": ""}},
+              {"template": "broll", "layout": "pip", "start_seg": 5, "end_seg": 5, "title": "",
+               "stock": {"kind": "video", "query_en": "product render", "query_ko": "", "purpose": "", "must_show": ""}}]]
+    logs: list[str] = []
+    r = StockResearcher(hub, ff=None, work=tmp_path, public=tmp_path / "public", log=logs.append)
+    r.run(lists)
+    assert [g["template"] for g in lists[0]] == ["keyword"] and lists[0][0]["title"] == "영감은 쌓인다"
+    assert r.stats["fallback"] == 1 and r.stats["lost"] == 1
+    assert {f["origin"] for f in r.fallbacks} == {"type_card", "lost"} and not r.credits
+    assert any("그 자리는 비웁니다" in m for m in logs)
+
+
+def test_eye_contrast_separates_open_from_closed_eyes():
+    """썸네일(10/1: 눈 감은 프레임): 뜬 눈 조각은 흰자·동공 대비가 크고, 감은 눈은 눈꺼풀 살갗이라 평평하다."""
+    from studio.vision.face import eye_contrast
+    skin = np.full((200, 300), 150, np.uint8)
+    open_ = skin.copy()
+    for x in (100, 200):                       # 흰자 + 동공
+        open_[92:108, x - 14:x + 15] = 235
+        open_[94:106, x - 5:x + 6] = 25
+    closed = skin.copy()
+    for x in (100, 200):                       # 속눈썹 선 하나
+        closed[100:102, x - 14:x + 15] = 110
+    eyes = [(100.0, 100.0), (200.0, 100.0)]
+    o, c = eye_contrast(open_, eyes), eye_contrast(closed, eyes)
+    assert o is not None and c is not None and o > 0.5 and c < 0.75 * o
+    assert eye_contrast(open_, eyes[:1]) is None
+
+
+def test_thumb_frames_come_from_speech_gaps_in_the_final_cut(tmp_path):
+    """썸네일 프레임은 최종 타임라인(주 테이크)의 말의 틈에서만 — 말하는 중간·버린 테이크·옆으로 돈 얼굴은 안 된다."""
+    from types import SimpleNamespace
+
+    import studio.pipeline as pl
+    from studio.media.sources import Quality
+    from studio.models import Span, TimeMap, Utterance, Word
+    p = object.__new__(pl.Pipeline)
+    # 0~60초: 말이 1초마다(틈 0.1초) — 20초·40초 뒤에만 0.6초 쉼. 60~120초는 버린 테이크
+    words = []
+    t = 0.0
+    while t < 59.0:
+        gap = 0.6 if abs(t - 20.0) < 0.5 or abs(t - 40.0) < 0.5 else 0.1
+        words.append(Word("말", t, t + 0.9, 0.9))
+        t += 0.9 + gap
+    p.utts = [Utterance(id=0, start=0.0, end=60.0, text="", asr_text="", words=words, status="keep")]
+    p.timemap = TimeMap([Span(0.0, 60.0)])
+    p.plan_long = {"moments": []}
+    cam = SimpleNamespace(idx=0, path="x.mp4")
+    p._cam_at = lambda t: cam
+    p.smap = SimpleNamespace(to_cam=lambda t, c: t)
+    q = [{"t": k * 0.25, "f": 0.95, "s": 0.4, "sh": 5.0, "l": 0.5, "c": 0.0,
+          "fr": 0.3 if 39.0 <= k * 0.25 <= 42.0 else 0.95} for k in range(480)]
+    p.quality = {0: Quality(q)}
+    p.ff = SimpleNamespace(grab_frame=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no video")))
+    p.work = tmp_path
+    p.log = (logs := []).append
+    p._log_file_only = lambda m: None
+    face = [{"t": k * 0.25, "x": 0.5, "y": 0.4, "s": 0.4} for k in range(480)]
+    out = p._thumb_frames(face, lambda t: 0.5 <= t <= 59.5)
+    ts = [round(x["t"], 1) for x in out]
+    assert ts and all(19.0 <= t <= 22.5 for t in ts), ts            # 40초 틈은 얼굴이 옆으로 돌아 탈락
+    assert any("썸네일 프레임" in m for m in logs)

@@ -15,8 +15,8 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
   const p = enter(frame, 0, 14);
   const out = exit(frame, dur, 10);
   if (layout === 'fullscreen' || layout === 'pip') {
-    // 브랜드 로고 카드: 크림 종이 위 로고 — 사진용 어둠·필름 입자 없이 아주 느린 푸시, 이름은 잉크색 가운데 아래
-    if (data.logo) {
+    // 브랜드 로고 카드·세로 사진 여백 액자: 크림 종이 위 — 사진용 어둠·필름 입자 없이 아주 느린 푸시, 이름은 잉크색 가운데 아래
+    if (data.logo || data.mat) {
       return (
         <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: NOTE.paper}}>
           <Img src={src} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',

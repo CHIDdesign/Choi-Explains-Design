@@ -87,9 +87,9 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 |---|---|---|---|---|
 | `editorial` | 잡지 표지 — 큰 제목, 굵은 룰, 한 낱말만 강조색 | `--paper` | 제목 `--font-head` 900 · 인용 `--font-serif` | 주황 블록·룰 |
 | `academic` | 노트 — 옅은 격자, 명조, 밑줄 강조 | `--paper` + 격자(`repeating-linear-gradient`) | `--font-serif` 제목 | 형광펜 `highlight` |
-| `whiteboard` | 화이트보드 — 손으로 그린 테두리(`draw-path`), 마커 | `--white` | `--font-head` 800 | 주황 마커 밑줄 |
-| `swiss` | 스위스 그리드 — 흰 바탕, 굵은 고딕, 위아래 굵은 룰(`grow-x`), 큰 숫자 | `--white` | `--font-head` 900 · 숫자 `--font-latin` | 룰만 강조색 |
-| `minimal` | 잉크 — 검정 바탕, 흰 큰 글자 하나 | `--ink` | `--font-head` 900 | 흰색(강조색 최소) |
+| `whiteboard` | 화이트보드 — 손으로 그린 테두리(`draw-path`), 마커 | `--white`(크림 종이 — 순백 없음) | `--font-head` 800 | 주황 마커 밑줄 |
+| `swiss` | 스위스 그리드 — 종이 바탕, 굵은 고딕, 위아래 굵은 룰(`grow-x`), 큰 숫자 | `--white`(크림 종이) | `--font-head` 900 · 숫자 `--font-latin` | 룰만 강조색 |
+| `minimal` | 잉크 — 따뜻한 잉크 바탕, 종이색 큰 글자 하나 | `--ink`(따뜻한 잉크 — 순흑 없음) | `--font-head` 900 | 흰색(강조색 최소) |
 | `board` | 칠판 — 채널 도식 톤(짙은 배경, 크림 분필, 손으로 긋는 선) | `--board` | `--chalk` 색 `--font-body` | `--accent-light` |
 
 콘텐츠 종류가 아니라 **톤**으로 고른다: 선언·인용은 editorial, 정의·원리는 academic, 과정·스케치는 whiteboard, 숫자·비교는 swiss,

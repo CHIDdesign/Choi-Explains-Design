@@ -34,10 +34,11 @@ FALLBACK = {
 }
 
 MOODS_LONG = ("minimal", "calm", "ambient", "lofi", "inspiring")
-MOODS_SHORT = ("upbeat", "inspiring", "lofi", "minimal")
+# 숏폼도 롱폼과 같은 계열 — 업비트·인스파이어링(코퍼레이트) 기본은 뺐다(docs/upgrade/04 11절 5번). 숏폼은 롱폼 곡을 물려받는다
+MOODS_SHORT = MOODS_LONG
 MOOD_ALIAS = {"piano": ("calm", "minimal"), "calm": ("calm", "minimal"), "minimal": ("minimal", "calm"),
               "ambient": ("ambient", "minimal"), "lofi": ("lofi",), "inspiring": ("inspiring",),
-              "upbeat": ("upbeat", "inspiring")}
+              "upbeat": ("ambient", "minimal", "calm")}
 
 
 @dataclass
@@ -52,6 +53,8 @@ class Sound:
     mood: str = ""
     title: str = ""
     credit: str = ""
+    attribution: str = ""        # 라이선스가 요구하는 출처 문구(CC BY 등) — 업로드 정보에 그대로
+    lead_silence: float = 0.0    # 곡 앞 무음(초) — 건너뛰고 시작
 
 
 def _sha256(p: Path) -> str:
@@ -113,7 +116,9 @@ class SoundLibrary:
         now = _time.time()
         host_fail: dict[str, int] = {}
         want = set(kinds or ("sfx", "bgm", "models"))
-        entries = [(k, e) for k in ("sfx", "bgm", "models") if k in want for e in m.get(k, [])]
+        # 권리(04b 7절): 끈 항목(Content ID 등록·AI 생성·장르)과 상업 이용이 안 되는 항목(CC BY-NC 등)은 받지도 싣지도 않는다
+        entries = [(k, e) for k in ("sfx", "bgm", "models") if k in want for e in m.get(k, [])
+                   if e.get("enabled", True) is not False and e.get("commercial_ok", True) is not False]
         self.sfx, self.bgm, self.models = [], [], {}
         failed: list[str] = []
         got = 0
@@ -151,16 +156,18 @@ class SoundLibrary:
                 if not ok:
                     failed.append(f"{kind}:{e['id']}")
             if ok:
+                attr = str(((e.get("license") or {}).get("attribution")) or "")
                 if kind == "sfx":
                     self.sfx.append(Sound(e["id"], e.get("category", ""), dst, float(e.get("peak_s") or 0.0),
                                           float(e.get("duration") or 0.0), e.get("source", ""), e.get("lufs"),
-                                          title=e.get("title", "")))
+                                          title=e.get("title", ""), attribution=attr))
                 elif kind == "bgm":
                     self.bgm.append(Sound(e["id"], "bgm", dst, 0.0, float(e.get("duration") or 0.0),
                                           e.get("source", ""), e.get("lufs"), mood=e.get("mood", ""),
                                           title=e.get("title", ""),
-                                          credit=" · ".join(x for x in (e.get("title"), e.get("artist"),
-                                                                        e.get("source")) if x)))
+                                          credit=attr or " · ".join(x for x in (e.get("title"), e.get("artist"),
+                                                                                e.get("source")) if x),
+                                          attribution=attr, lead_silence=float(e.get("lead_silence_s") or 0.0)))
                 else:
                     self.models[e["id"]] = dst
             progress((i + 1) / max(1, len(entries)) * 0.9)
@@ -212,7 +219,7 @@ class SoundLibrary:
             pool = [b for b in self.bgm if b.mood == mood and (b.duration or 999) >= min_duration]
             if pool:
                 return random.Random(seed).choice(pool)
-        return random.Random(seed).choice(self.bgm)
+        return None        # 맞는 무드가 없으면 음악 없이 — 아무 곡이나 고르지 않는다(04 11절)
 
     def playlist(self, first: Sound, n: int, *, seed: int = 0) -> list[Sound]:
         """챕터마다 곡을 바꿀 때 쓸 목록: 첫 곡과 같은 무드(없으면 가까운 무드) 곡을 겹치지 않게."""

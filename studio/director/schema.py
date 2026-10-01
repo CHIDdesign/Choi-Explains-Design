@@ -48,6 +48,8 @@ GRAPHIC = _obj({
     "title_b": STR,
     "items_b": STR_LIST,
     "highlight": INT,
+    # 단계 그래픽: 같은 도식을 단계마다 새로 띄우지 말고 하나에 — 그 낱말을 말할 때 강조가 그 단계로([] = 없음)
+    "steps": {"type": "array", "items": _obj({"word": STR, "highlight": INT})},
     "author": STR,
     "source": STR,
     "image": STR,

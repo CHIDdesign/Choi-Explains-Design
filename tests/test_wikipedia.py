@@ -283,7 +283,7 @@ def test_merge_plan_keeps_entity_kind_for_logo_and_portrait():
         {"start_seg": 2, "start_word": "핀터레스트", "name_ko": "핀터레스트", "name_en": "Pinterest", "kind": "brand",
          "layout": "pip", "reason": "참고 서비스"}]}})
     g = raw_long["graphics"][0]
-    assert g["entity"] == "brand" and g["name_en"] == "Pinterest" and g["body"] == "브랜드"   # 화면에 'brand' 영어 금지
+    assert g["entity"] == "brand" and g["name_en"] == "Pinterest" and g["body"] == ""   # 종류는 화면에 내지 않는다(B5)
     clean = _clean_graphic({**g, "logo": True}, {2})
     assert clean["entity"] == "brand" and clean["name_en"] == "Pinterest" and clean["logo"] is True
 
@@ -334,3 +334,56 @@ def test_pick_portraits_uses_vision_then_rules(monkeypatch, tmp_path):
     p2 = MediaPlan("디터 람스", "person", candidates=[dict(c) for c in cands], info=wp.info)
     Pipeline._pick_portraits(SimpleNamespace(_ensure_studio=lambda: None, ctx="", log=logs.append), r, [p2])
     assert p2.result is not None and "portrait" in p2.result.path.name
+
+
+def test_lookup_falls_back_to_name_en(monkeypatch, tmp_path):
+    """P0-1: 한국어 표기로는 영어 문서를 못 찾는다 — 영어 위키는 자료 리서처의 name_en 부터."""
+    wp = WikipediaImages(cache_dir=tmp_path)
+    asked = []
+
+    def summary(term, lang):
+        asked.append((lang, term))
+        if lang == "en" and term == "Massimo Vignelli":
+            return {"type": "standard", "title": "Massimo Vignelli", "originalimage": {"source": "https://u/MV.jpg"}}
+        return None
+    monkeypatch.setattr(wp, "summary", summary)
+    monkeypatch.setattr(wp, "file_meta", lambda img, lang: {"license": "CC BY-SA 3.0", "url": img, "width": 800,
+                                                           "height": 1000, "mime": "image/jpeg"})
+    got = wp.lookup("마시모 비녤리", alt="Massimo Vignelli")
+    assert got and got["title"] == "Massimo Vignelli" and asked[:2] == [("ko", "마시모 비녤리"), ("en", "Massimo Vignelli")]
+    assert got["orientation"] == "portrait"                        # P0-11: 세로라도 버리지 않는다(여백 액자로)
+
+
+def test_network_error_is_not_cached_as_none(monkeypatch, tmp_path):
+    """P0-8: 일시 실패(네트워크·429)를 '없음'으로 캐시하면 다음 실행에도 영영 못 찾는다."""
+    wp = WikipediaImages(cache_dir=tmp_path)
+
+    def down(term, lang):
+        raise RuntimeError("Wikipedia HTTP 503")
+    monkeypatch.setattr(wp, "summary", down)
+    assert wp.lookup("디터 람스") is None
+    assert not list(tmp_path.glob("wp_*.json"))
+    # 정말 없는 것(오류 없이 문서 없음)은 캐시한다
+    monkeypatch.setattr(wp, "summary", lambda term, lang: None)
+    assert wp.lookup("없는 것") is None
+    assert len(list(tmp_path.glob("wp_*.json"))) == 1
+
+
+def test_portrait_image_is_kept_with_orientation(tmp_path):
+    """P0-11: 세로 이미지(전신 사진·포스터)는 버리지 않고 크림 종이 여백 액자(16:10)로 — 가로는 그대로."""
+    from PIL import Image
+
+    from studio.broll.mat import CARD_H, CARD_W, mat_tall
+    tall = tmp_path / "poster.jpg"
+    Image.new("RGB", (600, 1400), (200, 40, 40)).save(tall)
+    wide = tmp_path / "wide.jpg"
+    Image.new("RGB", (1600, 900), (40, 40, 200)).save(wide)
+    out = mat_tall(tall)
+    assert out is not None and out.name == "poster_mat.jpg"
+    im = Image.open(out)
+    assert im.size == (CARD_W, CARD_H)
+    assert im.getpixel((40, 40)) == (0xF5, 0xF2, 0xEA) or sum(abs(a - b) for a, b in zip(im.getpixel((40, 40)),
+                                                                                          (0xF5, 0xF2, 0xEA))) < 6
+    r, g, b = im.getpixel((CARD_W // 2, int(CARD_H * 0.44)))
+    assert r > 150 and g < 90                                      # 가운데에 사진(빨강)이 통째로
+    assert mat_tall(wide) is None

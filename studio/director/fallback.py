@@ -98,7 +98,7 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
         "music": {"mood": "솔로 피아노, 잔잔한 언더스코어, 80~90 BPM", "notes": "인트로와 챕터 전환에서만 음량을 올린다."},
         "title": brief.title,
         "bgm_mood": "minimal",
-        "shorts_bgm_mood": "upbeat",
+        "shorts_bgm_mood": "",          # 숏폼은 롱폼 곡을 물려받는다(업비트 기본 없음)
     }
 
 

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QGridLayout, Q
 from .. import __version__
 from ..director.claude_code import auth_status, describe_auth, find_claude, open_login, resolve_backend
 from ..eta import Eta, EtaDisplay, fmt_left
+from ..gate import GateBlocked
 from ..paths import USER_DIR, ensure_user_dirs
 from ..pipeline import EXTRAS, STAGES, JobSpec, Pipeline, new_job_dir
 from ..settings import Settings
@@ -67,6 +68,10 @@ class Worker(QObject):
             self.finished.emit(p.run(until=self.until))
         except Cancelled:
             self.failed.emit("취소했습니다.")
+        except GateBlocked as e:   # 🚦 품질 게이트 — 오류가 아니라 '사람이 볼 차례'
+            self.failed.emit(f"{e}\n\n이유와 표: {self.job_dir / 'output' / '품질게이트_중단.md'}\n"
+                             f"원본·대본을 확인한 뒤에도 이대로 만들려면 명령 창에서:\n"
+                             f"python -m studio rerender \"{self.job_dir}\" --force-render")
         except Exception as e:  # noqa: BLE001 - 모든 오류를 창에 표시
             self.failed.emit(f"{e}\n\n{traceback.format_exc()[-2500:]}")
 
@@ -425,6 +430,23 @@ class MainWindow(QMainWindow):
                                 self.video), 4)
         grid.addWidget(StepCard("3", "대본", "읽은 대본 전체", self.script, load), 3)
         outer.addLayout(grid, 1)
+        # ④ 자료 폴더(선택) — 내 사진·스케치·장표·스크린샷. 이름이 대본의 고유명사와 맞으면 그 자료가 먼저 쓰인다.
+        # 비어 있어도 예전과 똑같이 동작한다(docs/upgrade/03 P0-9)
+        mat = QHBoxLayout()
+        mat.addWidget(_label("④ 자료 폴더(선택)", "panelTitle"))
+        self.materials_label = _label("", "stepHint", wrap=True)
+        mat.addWidget(self.materials_label, 1)
+        pick = QPushButton("폴더 고르기")
+        pick.setObjectName("ghost")
+        pick.clicked.connect(self._pick_materials)
+        mat.addWidget(pick)
+        self.materials_clear = QPushButton("비우기")
+        self.materials_clear.setObjectName("ghost")
+        self.materials_clear.clicked.connect(lambda: self._set_materials(""))
+        mat.addWidget(self.materials_clear)
+        outer.addLayout(mat)
+        self.materials_dir = ""
+        self._set_materials("")
         bar = QHBoxLayout()
         self.summary = _label("", "stepHint", wrap=True)
         bar.addWidget(self.summary, 1)
@@ -557,13 +579,35 @@ class MainWindow(QMainWindow):
     # 입력 처리
     # ------------------------------------------------------------------
     def _on_files(self, paths: list[str]) -> None:
-        """탐색기에서 끌어다 놓거나 붙여넣은 파일: 영상이면 ②(여러 개면 모두 더함), 글이면 ③."""
+        """탐색기에서 끌어다 놓거나 붙여넣은 파일: 영상이면 ②(여러 개면 모두 더함), 글이면 ③, 폴더면 ④ 자료 폴더."""
         videos = [p for p in paths if Path(p).suffix.lower() in VIDEO_EXTS]
         if videos:
             self.video.add_paths(videos)
         for p in paths:
             if Path(p).suffix.lower() in TEXT_EXTS:
                 self._set_script_file(p)
+            elif Path(p).is_dir():
+                self._set_materials(p)
+
+    def _pick_materials(self) -> None:
+        p = QFileDialog.getExistingDirectory(self, "자료 폴더(내 사진·스케치·장표)", self.materials_dir or "")
+        if p:
+            self._set_materials(p)
+
+    def _set_materials(self, folder: str) -> None:
+        """④ 자료 폴더: 폴더 안 이미지 수와 앞의 몇 개 이름을 보여 준다."""
+        from ..broll.images import list_local_images
+        self.materials_dir = folder if folder and Path(folder).is_dir() else ""
+        if not self.materials_dir:
+            self.materials_label.setText("내 사진·스케치·장표가 있으면 폴더를 골라 주세요. 파일 이름이 대본의 이름과 맞으면 "
+                                         "그 자료를 먼저 씁니다(예: 디터 람스.jpg). 없어도 됩니다.")
+            self.materials_clear.setEnabled(False)
+            return
+        imgs = list_local_images(self.materials_dir)
+        names = ", ".join(p.stem for p in imgs[:4]) + (" …" if len(imgs) > 4 else "")
+        self.materials_label.setText(f"{Path(self.materials_dir).name} — 이미지 {len(imgs)}장"
+                                     + (f" ({names})" if names else " (이미지가 없습니다)"))
+        self.materials_clear.setEnabled(True)
 
     def _paste(self) -> None:
         md = QApplication.clipboard().mimeData()
@@ -642,12 +686,13 @@ class MainWindow(QMainWindow):
 
     def _spec(self) -> JobSpec:
         return JobSpec(video=self.video.path, videos=self.video.paths[1:], topic=self.topic.toPlainText().strip(),
-                       script=self.script.toPlainText())
+                       script=self.script.toPlainText(), images_dir=self.materials_dir)
 
     def _save_inputs(self) -> None:
         ensure_user_dirs()
         write_json(LAST_INPUTS, {"topic": self.topic.toPlainText(), "script": self.script.toPlainText(),
-                                 "video": self.video.path, "videos": self.video.paths})
+                                 "video": self.video.path, "videos": self.video.paths,
+                                 "materials": self.materials_dir})
 
     def _restore_inputs(self) -> None:
         d = read_json(LAST_INPUTS, {})
@@ -657,6 +702,7 @@ class MainWindow(QMainWindow):
             vids = [v for v in (d.get("videos") or [d.get("video", "")]) if v and Path(v).exists()]
             if vids:
                 self.video.set_paths(vids)
+            self._set_materials(d.get("materials", ""))
         self._update_ready()
 
     # ------------------------------------------------------------------
@@ -785,9 +831,12 @@ class MainWindow(QMainWindow):
         if msg.startswith("취소"):
             self.pages.setCurrentIndex(0)
             return
-        QMessageBox.critical(self, "만들지 못했습니다",
-                             msg.split("\n\n")[0] + "\n\n아래 'AI 팀 작업 기록'에 자세한 내용이 있습니다. "
-                             "같은 입력으로 다시 누르면 끝난 단계는 건너뛰고 이어서 합니다.")
+        if msg.startswith("품질 게이트"):
+            QMessageBox.warning(self, "렌더하지 않았습니다 — 품질 게이트", msg)
+        else:
+            QMessageBox.critical(self, "만들지 못했습니다",
+                                 msg.split("\n\n")[0] + "\n\n아래 'AI 팀 작업 기록'에 자세한 내용이 있습니다. "
+                                 "같은 입력으로 다시 누르면 끝난 단계는 건너뛰고 이어서 합니다.")
         self.cancel_btn.setText("입력 화면으로")
         self.cancel_btn.clicked.disconnect()
         self.cancel_btn.clicked.connect(self._back_to_input)

@@ -24,10 +24,10 @@ const CONTRAST_BODY = 4.5;
 const CONTRAST_LARGE = 3.0;
 
 const vars = {
-  '--bg': '#EFEAE0', '--paper': '#EFEAE0', '--paper-line': '#D9D6CF', '--ink': '#111111', '--ink-soft': '#1C1C1C',
+  '--bg': '#F5F2EA', '--paper': '#F5F2EA', '--paper-line': '#D9D6CF', '--ink': '#26211E', '--ink-soft': '#1C1C1C',
   '--muted': 'rgba(28, 28, 28, 0.7)', '--accent': '#E8682C', '--accent-deep': '#9E4720', '--accent-light': '#EC7F52',
   '--accent-soft': 'rgba(232, 104, 44, 0.32)', '--board': '#1A1C1B', '--board-edge': '#2A2D2B', '--chalk': '#F1ECDD',
-  '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#FFFFFF',
+  '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#F5F2EA',   // HtmlCard.tsx cardVars 와 같게(크림 종이·따뜻한 잉크)
   '--font-head': '"Pretendard", "Malgun Gothic", sans-serif', '--font-body': '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
   '--font-serif': '"Noto Serif KR", "Nanum Myeongjo", serif', '--font-latin': '"Anton", "Pretendard", sans-serif',
   '--font-heavy': '"Black Han Sans", "Pretendard", sans-serif', '--font-round': '"Jua", "Pretendard", sans-serif',
@@ -174,9 +174,9 @@ const audit = async (opts) => {
     const fs = parseFloat(cs.fontSize);
     const sel = desc(el);
     const fam = (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim();
-    if (fam && !/^(pretendard|noto serif kr|anton|serif|sans-serif|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
+    if (fam && !/^(pretendard|noto serif kr|anton|jua|black han sans|nanum pen script|playfair display|serif|sans-serif|cursive|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
       push('font_family_not_bundled', fam, sel);
-    } else if (fam && !/^(serif|sans-serif|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
+    } else if (fam && !/^(serif|sans-serif|cursive|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
       const w = cs.fontWeight === 'bold' ? '700' : cs.fontWeight;
       if (!document.fonts.check(`${w} ${Math.round(fs)}px "${fam}"`)) push('font_not_loaded', `${fam} ${w}`, sel);
     }

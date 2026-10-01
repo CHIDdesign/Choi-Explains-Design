@@ -23,9 +23,24 @@ const DiagramTitle: React.FC<{text: string; label: string} & TemplateProps> = ({
 
 const titleSpace = (props: TemplateProps) => (props.data.title ? (props.compact ? 70 : 130) : 0);
 
-/** 현재 강조 인덱스: highlight 지정이 있으면 그것, 없으면 -1 */
-const hl = (props: TemplateProps) =>
-  typeof props.data.highlight === 'number' && props.data.highlight >= 0 ? props.data.highlight : -1;
+/** 현재 강조 인덱스: 단계 그래픽(stepAt)이면 지금 프레임까지 말한 마지막 단계 — 강조가 그 낱말에서 바뀐다
+ * (docs/upgrade/05 6-5: 단계마다 그래픽을 새로 띄우면 강조가 말보다 4~6초 늦었다). 아니면 highlight, 없으면 -1. */
+const hl = (props: TemplateProps) => {
+  const steps = props.data.stepAt;
+  if (steps && steps.length) {
+    const t = props.frame / props.fps;
+    let cur = -1;
+    for (const s of steps) {
+      if (t >= s.t) cur = s.index;
+    }
+    return cur;
+  }
+  return typeof props.data.highlight === 'number' && props.data.highlight >= 0 ? props.data.highlight : -1;
+};
+
+/** 강조 모드인가(항목을 한꺼번에 세우고 강조만 옮김) — 단계 그래픽은 첫 단계 전에도 강조 모드 그대로(중간에 등장 방식이 바뀌지 않게) */
+const stepped = (props: TemplateProps) =>
+  (props.data.stepAt?.length ?? 0) > 0 || (typeof props.data.highlight === 'number' && props.data.highlight >= 0);
 
 // ---------------------------------------------------------------------------
 // 단계 프로세스 — 선으로 이어진 노드, 현재 단계 강조
@@ -53,7 +68,7 @@ export const ProcessDiagram: React.FC<TemplateProps> = (props) => {
           <line x1={slot / 2} y1={cy} x2={slot / 2 + (box.w - slot) * lineP} y2={cy} stroke={surface.dim}
             strokeWidth={3} />
           {items.map((_, i) => {
-            const at = active >= 0 ? 6 + i * 4 : revealAt(i, n, dur, 6) * 0.6;
+            const at = stepped(props) ? 6 + i * 4 : revealAt(i, n, dur, 6) * 0.6;
             const p = enter(frame, at, 14);
             const cx = slot * i + slot / 2;
             const on = i === active;
@@ -137,7 +152,7 @@ export const CycleDiagram: React.FC<TemplateProps> = (props) => {
       {items.map((it, i) => {
         const [x, y] = pos(i);
         const on = i === active;
-        const p = enter(frame, active >= 0 ? 6 + i * 3 : revealAt(i, n, dur, 6) * 0.6, 14);
+        const p = enter(frame, stepped(props) ? 6 + i * 3 : revealAt(i, n, dur, 6) * 0.6, 14);
         const lab = fitBlock(it, node * 2.6, node * 1.6, compact ? 32 : 38, 18, 1.2, 2);
         return (
           <div key={i} style={{position: 'absolute', left: x - node * 1.3, top: y - node * 0.62, width: node * 2.6,
@@ -368,7 +383,7 @@ export const PyramidDiagram: React.FC<TemplateProps> = (props) => {
         const wTop = baseW * (1 - (level + 1) / n);
         const y = top + h - (level + 1) * layerH;
         const on = i === active;
-        const p = enter(frame, active >= 0 ? 4 + i * 5 : revealAt(i, n, dur, 4) * 0.6, 14);
+        const p = enter(frame, stepped(props) ? 4 + i * 5 : revealAt(i, n, dur, 4) * 0.6, 14);
         const clip = `polygon(${(baseW - wTop) / 2}px 0, ${(baseW + wTop) / 2}px 0, ${(baseW + wBottom) / 2}px 100%, ${(baseW - wBottom) / 2}px 100%)`;
         return (
           <div key={i} style={{position: 'absolute', left: cx - baseW / 2, top: y + 3, width: baseW, height: layerH - 6,

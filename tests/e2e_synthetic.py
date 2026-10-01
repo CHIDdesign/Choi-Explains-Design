@@ -9,6 +9,8 @@
                   가까운 앵글 · 17~23초 초점 나감) → 소리 싱크 · 목소리 카메라 · 앵글 고르기(흐린 구간 피하기) 확인
 --multi split:    나눠 찍은 원본 2개(두 번째 파일이 앞 파일 마지막 문장을 다시 말하며 시작) → 가상 타임라인 이어 붙이기 ·
                   파일을 넘나드는 테이크 고르기 확인
+--multi retake:   같은 대본을 처음부터 끝까지 두 번 찍은 원본 2개(다른 구도·다른 빠르기, 10/1 테스트의 P0 버그) →
+                  읽기 회차 2개를 가려 한 편으로(길이가 두 배가 되지 않고 같은 대본 문장이 한 번만)
 """
 from __future__ import annotations
 
@@ -114,9 +116,10 @@ def check_multi(mode: str, job: Path) -> None:
     used = sorted({c["src"] for c in props["clips"]})
     print("묶음:", [[(Path(c["path"]).name, c["offset"]) for c in g["cams"]] for g in src["groups"]])
     print("롱폼 클립 소스:", used, "· 앵글 조각:", [(p["start"], p["end"], p["cam"], p["why"]) for p in angles["long"]])
-    assert used == ["media/proxy.mp4", "media/proxy_2.mp4"], used
     xml = (job / "output" / "부가자료" / "롱폼_premiere.xml").read_text(encoding="utf-8")
-    assert "source.mp4" in xml and "source_b.mp4" in xml
+    if mode != "retake":
+        assert used == ["media/proxy.mp4", "media/proxy_2.mp4"], used
+        assert "source.mp4" in xml and "source_b.mp4" in xml
     if mode == "multicam":
         assert len(src["groups"]) == 1 and len(src["groups"][0]["cams"]) == 2
         a, b = src["groups"][0]["cams"]
@@ -125,6 +128,27 @@ def check_multi(mode: str, job: Path) -> None:
         # B 가 초점이 나간 구간(B 시각 17~23초 = 가상 15.8~21.8초, 남기는 말 한가운데)에서는 B 를 쓰지 않는다
         bad = sum(max(0.0, min(p["end"], 21.3) - max(p["start"], 16.3)) for p in angles["long"] if p["cam"] == 1)
         assert bad < 0.6, bad
+    elif mode == "retake":
+        assert len(src["groups"]) == 2, src["groups"]
+        align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
+        rep = align["report"]
+        print("읽기 회차:", rep.get("pass_mode"), rep.get("main_pass"), rep.get("passes"), "· 역할:", src.get("roles"))
+        assert rep["pass_mode"] == "best_pass" and len(rep["passes"]) == 2 and rep["main_pass"] in (0, 1)
+        assert sorted((src.get("roles") or {}).values()) == ["alt_take", "main"], src.get("roles")
+        # 본편은 주 테이크(그 회차의 파일)로 — 다른 회차 파일은 빠진 문장 보강에만
+        main_proxy = "media/proxy.mp4" if rep["main_pass"] == 0 else "media/proxy_2.mp4"
+        assert main_proxy in used, used
+        kept = [u["text"] for u in align["utterances"] if u["status"] == "keep"]
+        for line in ("먼저 넓게 펼치고", "어포던스라는", "좋은 질문에는 세 가지", "결국 좋은 디자인은"):
+            assert sum(line in t for t in kept) == 1, (line, kept)       # 같은 대본 문장이 한 번만
+        keeps = json.loads((job / "work" / "keeps_long.json").read_text(encoding="utf-8"))
+        body = sum(k["end"] - k["start"] for k in keeps)
+        one = max(g["duration"] for g in src["groups"])
+        print(f"본편 {body:.1f}초 · 회차 하나(긴 쪽) {one:.1f}초")
+        assert body <= 1.0 * one, (body, one)                             # 두 배가 아니다
+        report = (job / "output" / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
+        assert "읽기 회차" in report
+        return
     else:
         assert len(src["groups"]) == 2
         align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
@@ -141,7 +165,7 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--work", default=str(ROOT / "projects" / "_e2e"))
     ap.add_argument("--face", default="", help="실제 얼굴 영상 클립(반복해서 원본으로 씀)")
-    ap.add_argument("--multi", default="", choices=["", "multicam", "split"], help="원본 여러 개 시험")
+    ap.add_argument("--multi", default="", choices=["", "multicam", "split", "retake"], help="원본 여러 개 시험")
     args = ap.parse_args()
     work = Path(args.work)
     if work.exists() and not args.keep:
@@ -150,7 +174,17 @@ def main() -> int:
     video = work / "source.mp4"
     videos: list[Path] = []
     job = work / "job"
-    if args.multi == "split":
+    if args.multi == "retake":
+        # 같은 대본 전체를 두 번(두 번째는 다른 구도 · 쉼이 1.6배 · NG 없이 깔끔하게)
+        words, duration = make_words()
+        clean = [(t, p) for t, p in SPOKEN if t not in ("디자인 과정에는 더블 다이어몬드라는", "아 다시 할게요")]
+        words_b, duration_b = make_words([(t, p * 1.6 + 0.3) for t, p in clean])
+        by_file = {str(video): words, str(work / "source_b.mp4"): words_b}
+        if not video.exists():
+            make_media(video, words, duration, args.face)
+            make_media(work / "source_b.mp4", words_b, duration_b, args.face, angle="b")
+        videos = [work / "source_b.mp4"]
+    elif args.multi == "split":
         # 나눠 찍기: 두 번째 파일은 앞 파일의 마지막 문장을 다시 말하며 시작(파일을 넘나드는 테이크)
         words, duration = make_words(SPOKEN[:6])
         words_b, duration_b = make_words([SPOKEN[5]] + SPOKEN[6:])

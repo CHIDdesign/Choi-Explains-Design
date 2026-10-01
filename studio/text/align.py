@@ -113,6 +113,10 @@ class AlignReport:
     missing_sentences: list[str] | None = None
     trimmed_takes: int = 0        # 다시 말한 부분만 잘라내고 고유한 앞부분은 살린 테이크
     restored: list[str] | None = None   # 다른 테이크가 담지 않아 되살린 발화(대본 문장)
+    # 대본 읽기 회차(passes.py): 대본 전체를 두 번 이상 읽은 녹음 → 주 테이크 하나 + 다른 회차는 보강용
+    passes: list[dict] | None = None
+    main_pass: int = 0
+    pass_mode: str = "single"     # single | best_pass | stitch
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -120,7 +124,8 @@ class AlignReport:
 
 class ScriptAligner:
     def __init__(self, script: ParsedScript, glossary: Optional[dict[str, str]] = None,
-                 match_threshold: float = 66.0, script_text_threshold: float = 86.0, audio=None, visual=None):
+                 match_threshold: float = 66.0, script_text_threshold: float = 86.0, audio=None, visual=None,
+                 source_of=None, prefer_pass: Optional[int] = None):
         self.script = script
         self.audio = audio  # 16kHz 모노(float) — 테이크 음량 비교용, 없어도 된다
         # visual(a, b) → 0~1: 그 구간에서 가장 잘 나온 앵글의 화면 품질(얼굴·초점·노출·정면) — 없어도 된다
@@ -130,6 +135,9 @@ class ScriptAligner:
         self.match_threshold = match_threshold
         self.script_text_threshold = script_text_threshold
         self._trimmed = 0
+        self.source_of = source_of          # 발화 → 묶음(파일) 번호 — 회차 경계 힌트
+        self.prefer_pass = prefer_pass
+        self._pass_of: dict[int, int] = {}
 
     # --------------------------------------------------------------
     def run(self, utts: list[Utterance]) -> tuple[list[Utterance], list[Tag], AlignReport]:
@@ -137,6 +145,7 @@ class ScriptAligner:
         has_script = len(self.snorm) > 20
         if has_script:
             self._match_all(utts)
+            self._split_passes(utts, rep)
         self._mark_meta(utts)
         if has_script:
             self._mark_retakes_by_script(utts)
@@ -193,6 +202,29 @@ class ScriptAligner:
                 u.script_span = (self.smap[a], self.smap[max(a, b - 1)] + 1)
                 cursor = max(cursor, b) if score >= 80 else cursor
 
+    def _split_passes(self, utts: list[Utterance], rep: AlignReport) -> None:
+        """대본을 처음부터 다시 읽은 회차를 가린다(docs/upgrade/02). 회차가 여럿이고 모두 대본의 80% 이상을 덮으면
+        best_pass: 주 테이크 하나만 남기고 다른 회차의 발화는 '다른 회차'(retake)로 — 빠진 문장은 뒤의 복원이 채운다.
+        아니면 stitch: 회차가 다른 같은 대목은 거리 제한 없이 리테이크로 묶는다."""
+        from .passes import choose_main_pass, detect_passes
+        passes = detect_passes(utts, len(self.script.clean), source_of=self.source_of, text=self.script.clean)
+        self._pass_of = {i: p.idx for p in passes for i in p.utts}
+        if len(passes) < 2:
+            return
+        quality = (lambda u: self.visual(u.start, u.end)) if self.visual else None
+        rep.passes = [p.to_dict() for p in passes]
+        if all(p.coverage >= 0.8 for p in passes):
+            main = choose_main_pass(passes, utts, quality=quality, prefer=self.prefer_pass)
+            rep.pass_mode, rep.main_pass = "best_pass", main
+            rep.passes = [p.to_dict() for p in passes]
+            keep_ids = set(passes[main].utts)
+            for u in utts:
+                if u.id not in keep_ids and u.kept:
+                    u.status = "retake"
+                    u.note = f"다른 회차(대본 전체를 {len(passes)}번 읽음 — 주 테이크는 {main + 1}차)"
+        else:
+            rep.pass_mode = "stitch"
+
     def _align(self, un: str, lo: int, hi: int) -> Optional[tuple[float, int, int]]:
         window = self.snorm[lo:hi]
         if not window or len(un) > len(window):
@@ -237,11 +269,16 @@ class ScriptAligner:
         """같은 대본 구간을 여러 번 말한 테이크들을 묶고, 가장 또렷한 테이크만 남긴다."""
         kept = [u for u in utts if u.kept and u.script_span]
         groups = _UnionFind(len(kept))
+        multi = len(set(self._pass_of.values())) > 1 or self.source_of is not None
         for j, uj in enumerate(kept):
             aj, bj = uj.script_span  # type: ignore[misc]
-            for i in range(max(0, j - 10), j):
+            for i in range(0 if multi else max(0, j - 10), j):
                 ui = kept[i]
-                if uj.start - ui.end > 120:  # 2분 이상 떨어진 반복은 의도적 반복으로 본다
+                same_pass = self._pass_of.get(ui.id, 0) == self._pass_of.get(uj.id, 0) and (
+                    self.source_of is None or self.source_of(ui) == self.source_of(uj))     # 다른 파일 = 다시 찍은 테이크
+                # 같은 회차 안의 2분 넘게 떨어진 반복은 의도적 반복으로 본다. 회차가 다르면 거리와 상관없이 같은 문장의
+                # 다른 테이크(대본 전체를 다시 읽은 녹음 — 예전엔 둘 다 남아 영상이 두 배가 됐다)
+                if same_pass and (j - i > 10 or uj.start - ui.end > 120):
                     continue
                 ai, bi = ui.script_span  # type: ignore[misc]
                 overlap = min(bi, bj) - max(ai, aj)

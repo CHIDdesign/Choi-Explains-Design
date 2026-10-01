@@ -165,43 +165,51 @@ class WikipediaImages:
         return any(k in lic for k in OK_LICENSES)
 
     # --- 가져오기 ---------------------------------------------------------
-    def lookup(self, term: str) -> Optional[dict[str, Any]]:
-        """문서와 쓸 수 있는 대표 이미지(없으면 None). 캐시는 검색어 단위."""
+    def lookup(self, term: str, alt: str = "") -> Optional[dict[str, Any]]:
+        """문서와 쓸 수 있는 대표 이미지(없으면 None). alt = 원어/영어 이름(자료 리서처의 name_en) — 영어 위키는 그 이름부터
+        (한국어 표기로는 영어 문서를 못 찾는다). 세로 이미지도 버리지 않는다(orientation — 쓰는 쪽이 여백 액자로 넣는다).
+        캐시는 검색어 단위 — 네트워크 오류로 못 찾은 것은 '없음'으로 캐시하지 않는다(다음 실행에 다시 찾는다)."""
+        alt = alt.strip() if alt and alt.strip().lower() != term.strip().lower() else ""
         cache = None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-            cache = self.cache_dir / f"wp_{_safe(term, 60)}.json"
+            cache = self.cache_dir / f"wp_{_safe(term + ('__' + alt if alt else ''), 60)}.json"
             if cache.exists():
                 data = json.loads(cache.read_text(encoding="utf-8"))
                 return data or None
         found: Optional[dict[str, Any]] = None
+        errored = False
         for lang in self.langs:
-            try:
-                s = self.summary(term, lang)
-            except Exception as e:  # noqa: BLE001 - 네트워크 오류는 다음 언어로
-                self.log(f"위키백과({lang}) 조회 실패({term}): {e}")
-                continue
-            if not s:
-                continue
-            img = (s.get("originalimage") or s.get("thumbnail") or {}).get("source", "")
-            if not img:
-                continue
-            try:
-                meta = self.file_meta(img, lang)
-            except Exception as e:  # noqa: BLE001
-                self.log(f"위키백과 이미지 정보 실패({term}): {e}")
-                continue
-            if not self.license_ok(meta):
-                self.log(f"위키백과 '{s.get('title')}' 대표 이미지는 자유 라이선스가 아님({meta.get('license') or '?'}) — 건너뜀")
-                continue
-            w, h = meta.get("width") or 0, meta.get("height") or 0
-            if w and h and w / max(1, h) < 0.5:
-                continue   # 너무 세로로 긴 이미지(인물 전신 사진 등)는 액자에 안 맞는다
-            found = {"lang": lang, "title": s.get("title", term), "description": s.get("description", ""),
-                     "page": ((s.get("content_urls") or {}).get("desktop") or {}).get("page", ""),
-                     "image": meta}
-            break
-        if cache:
+            names = [term] if lang == "ko" or not alt else [alt, term]
+            for name in names:
+                try:
+                    s = self.summary(name, lang)
+                except Exception as e:  # noqa: BLE001 - 네트워크 오류는 다음 이름·언어로
+                    self.log(f"위키백과({lang}) 조회 실패({name}): {e}")
+                    errored = True
+                    continue
+                if not s:
+                    continue
+                img = (s.get("originalimage") or s.get("thumbnail") or {}).get("source", "")
+                if not img:
+                    continue
+                try:
+                    meta = self.file_meta(img, lang)
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"위키백과 이미지 정보 실패({name}): {e}")
+                    errored = True
+                    continue
+                if not self.license_ok(meta):
+                    self.log(f"위키백과 '{s.get('title')}' 대표 이미지는 자유 라이선스가 아님({meta.get('license') or '?'}) — 건너뜀")
+                    continue
+                w, h = meta.get("width") or 0, meta.get("height") or 0
+                found = {"lang": lang, "title": s.get("title", name), "description": s.get("description", ""),
+                         "page": ((s.get("content_urls") or {}).get("desktop") or {}).get("page", ""),
+                         "image": meta, "orientation": "portrait" if w and h and w / max(1, h) < 1.0 else "landscape"}
+                break
+            if found:
+                break
+        if cache and (found or not errored):
             cache.write_text(json.dumps(found or {}, ensure_ascii=False), encoding="utf-8")
         return found
 
@@ -315,8 +323,8 @@ class WikipediaImages:
                     and min(w, h) >= 600 and 0.5 <= w / max(1, h) <= 2.0)
         return [m for m in out if usable(m)][:limit]
 
-    def fetch(self, term: str, dst_dir: Path) -> Optional[ImageResult]:
-        found = self.lookup(term)
+    def fetch(self, term: str, dst_dir: Path, alt: str = "") -> Optional[ImageResult]:
+        found = self.lookup(term, alt)
         if not found:
             return None
         meta = found["image"]

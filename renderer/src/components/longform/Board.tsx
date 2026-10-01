@@ -50,9 +50,11 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
       <div style={{position: 'absolute', left: innerX, right: pad, top: pad, height: headH, display: 'flex',
         alignItems: 'center', justifyContent: 'space-between', opacity: tween(frame, 4, 10)}}>
         <Badge text={chapterTag || brand.name} size={20} />
-        <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 18, color: s.dim, letterSpacing: '0.02em'}}>
-          ( {TEMPLATE_LABEL[g.template] || g.template} )
-        </span>
+        {TEMPLATE_LABEL[g.template] ? (
+          <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 18, color: s.dim, letterSpacing: '0.02em'}}>
+            ( {TEMPLATE_LABEL[g.template]} )
+          </span>
+        ) : null}
       </div>
       <div style={{position: 'absolute', left: innerX, width: innerW, top: pad + headH + 12}}>
         <Rule frame={frame} delay={6} color={s.rule} />

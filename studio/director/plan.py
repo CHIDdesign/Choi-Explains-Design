@@ -1,6 +1,7 @@
 """디렉터 출력(발화 ID 기준) 검증 → 대본 태그 강제 반영 → 편집 시간 기준 이벤트로 변환."""
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
@@ -17,7 +18,7 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
-EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo")
+EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
@@ -29,6 +30,127 @@ def blank_graphic(template: str, seg: int) -> dict[str, Any]:
             "end_seg": seg, "start_word": "", "title": "", "subtitle": "", "body": "", "items": [],
             "title_b": "", "items_b": [], "highlight": -1, "author": "", "source": "", "image": "",
             "reason": ""}
+
+
+def type_card(g: dict, description: str = "") -> Optional[dict]:
+    """자료를 못 구한 사진·스톡 → 타이포 자료 카드(이름 + 한 줄) — 사다리의 마지막 칸(docs/upgrade/03 P0-4). 화면 글자로 쓸
+    이름(사진: 이름, 스톡: 리서처의 caption)이 없으면 None(그 자리는 비우고 로그만)."""
+    title = str(g.get("title") or "").strip()
+    if not title:
+        return None
+    card = copy.deepcopy(g)
+    card["template"] = "keyword"
+    card["layout"] = {"pip": "overlay"}.get(g.get("layout", ""), g.get("layout") or "overlay")
+    if card["layout"] not in TEMPLATES["keyword"].layouts:
+        card["layout"] = "overlay"
+    card["title"] = title[:14]
+    card["subtitle"] = str(description or g.get("body") or "")[:28] if g.get("template") == "photo" else ""
+    card["body"] = ""
+    card["fallback"] = "type_card"
+    for k in ("stock", "image", "wiki", "src", "credit", "logo", "mat", "kenburns", "stock_url", "kind"):
+        card.pop(k, None)
+    card["image"] = ""
+    return card
+
+
+STEP_TEMPLATES = ("process", "cycle", "double_diamond", "timeline", "pyramid", "list", "matrix", "venn")
+
+
+def _clean_steps(steps: Any, n_items: int, valid: list[int]) -> list[dict[str, Any]]:
+    """단계 그래픽의 steps: [{word, highlight(, seg)}] — 낱말에서 강조 단계가 바뀐다(docs/upgrade/05 6-1). 단계가 2개 미만이면 [].
+    seg 는 내부용(자동으로 합친 단계 — 그 단계가 시작하는 발화)."""
+    out: list[dict[str, Any]] = []
+    for st in steps if isinstance(steps, list) else []:
+        if not isinstance(st, dict):
+            continue
+        try:
+            h = int(st.get("highlight", -1))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= h < max(1, n_items):
+            continue
+        item: dict[str, Any] = {"word": str(st.get("word") or "").strip()[:24], "highlight": h}
+        if st.get("seg") is not None and st.get("seg") in valid:
+            item["seg"] = st["seg"]
+        if item["word"] or "seg" in item:
+            out.append(item)
+    return out[:8] if len(out) >= 2 else []
+
+
+def merge_step_runs(graphics: list[dict[str, Any]]) -> int:
+    """같은 도식(템플릿·제목·항목이 같음)을 강조만 바꿔 잇달아 낸 그래픽들을 하나로 합치고 steps 로 — 단계마다 그래픽이
+    새로 들어오면 강조가 말보다 4~6초 늦다(10/1: 더블 다이아몬드 셋, '정의' 강조 +3.9초 · '아이디어' +5.7초).
+    다음 그래픽이 앞 그래픽 끝에서 2발화 안에 시작할 때만. 반환: 합친 그래픽 수."""
+    merged = 0
+    order = sorted(range(len(graphics)), key=lambda i: graphics[i].get("start_seg", 0))
+    drop: set[int] = set()
+    k = 0
+    while k < len(order):
+        i = order[k]
+        g = graphics[i]
+        run = [i]
+        if g.get("template") in STEP_TEMPLATES and not g.get("steps"):
+            j = k + 1
+            while j < len(order):
+                h = graphics[order[j]]
+                prev = graphics[run[-1]]
+                same = (h.get("template") == g.get("template") and h.get("items") == g.get("items")
+                        and (h.get("title") or "") == (g.get("title") or "") and not h.get("steps"))
+                if not same or h.get("start_seg", 0) - prev.get("end_seg", prev.get("start_seg", 0)) > 2:
+                    break
+                run.append(order[j])
+                j += 1
+        if len(run) >= 2 and len({graphics[x].get("highlight", -1) for x in run}) >= 2:
+            steps = [{"word": graphics[x].get("start_word") or "", "highlight": graphics[x].get("highlight", -1),
+                      "seg": graphics[x].get("start_seg")} for x in run if graphics[x].get("highlight", -1) >= 0]
+            if len(steps) >= 2:
+                g["steps"] = steps
+                g["highlight"] = steps[0]["highlight"]
+                g["end_seg"] = max(graphics[x].get("end_seg", graphics[x].get("start_seg", 0)) for x in run)
+                g["reason"] = (g.get("reason") or "") + f" · 단계 {len(steps)}개를 한 그래픽으로(낱말에서 강조)"
+                drop.update(run[1:])
+                merged += len(run) - 1
+            k += len(run)
+            continue
+        k += 1
+    if drop:
+        graphics[:] = [g for n, g in enumerate(graphics) if n not in drop]
+    return merged
+
+
+def step_times(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float) -> list[dict[str, Any]]:
+    """steps → stepAt [{t(그래픽 시작 기준 초), index}] — 그 낱말을 말하는 순간(앞 단계 낱말보다 뒤, 그래픽 발화 범위 안).
+    낱말을 못 찾으면 그 단계 발화(seg)의 시작. 2개 미만이면 []."""
+    by_id = {u.id: u for u in utts}
+    lo, hi = g.get("start_seg", 0), g.get("end_seg", g.get("start_seg", 0))
+    span = [u for u in sorted(utts, key=lambda u: u.start) if lo <= u.id <= hi and u.kept and u.words]
+    out: list[dict[str, Any]] = []
+    last_src = -1e9
+    for st in g.get("steps") or []:
+        hit: Optional[float] = None          # 원본 시각
+        cands = [by_id[st["seg"]]] if st.get("seg") in by_id else span
+        for u in cands:
+            if st.get("word"):
+                w = find_word([x for x in u.words if x.start >= last_src - 1e-6], st["word"])
+                if w is not None:
+                    hit = w.start
+            if hit is None and st.get("seg") == u.id and u.words:
+                hit = max(u.words[0].start, last_src)
+            if hit is not None:
+                break
+        if hit is None:
+            continue
+        t = timemap.src_to_edit(hit, snap=True)
+        if t is None:
+            continue
+        last_src = hit
+        out.append({"t": round(max(0.0, t - start), 3), "index": int(st["highlight"])})
+    # 시각이 거꾸로 가면(편집 순서가 바뀐 숏폼 등) 그 단계는 뺀다
+    mono: list[dict[str, Any]] = []
+    for x in out:
+        if not mono or x["t"] > mono[-1]["t"]:
+            mono.append(x)
+    return mono if len(mono) >= 2 else []
 
 
 def _split_items(s: str) -> list[str]:
@@ -147,6 +269,9 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         out["highlight"] = int(out.get("highlight", -1))
     except (TypeError, ValueError):
         out["highlight"] = -1
+    steps = _clean_steps(g.get("steps"), len(out["items"]) or 8, valid)
+    if steps:
+        out["steps"] = steps
     # 템플릿별 최소 요건
     tn = out["template"]
     if tn in ("keyword", "chapter", "stat") and not out["title"].strip():
@@ -189,6 +314,14 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         if not (stock["query_en"] or stock["query_ko"]):
             return None
         out["stock"] = stock
+        # 단일 디렉터·숏폼 PD 의 broll 은 title=한국어 검색어, subtitle=video|photo, body=연출 메모 — 검색어로 옮겼으니
+        # 화면에서는 지운다(게이트 B3·B4·B5). 자료 리서처의 caption(주장)은 남는다
+        if out["title"] and (out["title"] == stock["query_ko"] or out["title"] == stock["query_en"]):
+            out["title"] = ""
+        if out["subtitle"] in ("video", "photo"):
+            out["subtitle"] = ""
+        if out["body"] and out["body"] == stock["purpose"]:
+            out["body"] = ""
         for k in ("src", "kind", "credit", "kenburns", "stock_url"):
             if g.get(k):
                 out[k] = g[k]
@@ -203,6 +336,8 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
                 out[k] = str(g[k])[:80]
         if g.get("logo"):
             out["logo"] = True
+        if g.get("mat"):
+            out["mat"] = True        # 세로 사진을 크림 종이 여백 액자에 넣은 것(로고 카드처럼 그린다)
     if tn == "photo" and g.get("subtitle") and "image" in out and not out.get("image_en"):
         pass
     return out
@@ -237,6 +372,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)
         "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
         "highlights": [],                        # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 발화들
+        "holds": [],                             # 🙂 얼굴 홀드(그래픽·보드·콜아웃·효과음 없이 얼굴만 — 고백·결론·질문 뒤)
         "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
         "bgm_mood": str(raw.get("bgm_mood", "") or ""),
         "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
@@ -254,6 +390,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
                 plan["chapters"].append({"seg": cg["start_seg"], "title": cg["title"]})
             else:
                 plan["graphics"].append(cg)
+    merge_step_runs(plan["graphics"])
     for e in raw.get("emphasis", []) or []:
         if isinstance(e, dict) and e.get("seg") in kept and e.get("kind") in ("punch", "highlight"):
             item = {"seg": e["seg"], "word": str(e.get("word", "")), "kind": e["kind"]}
@@ -284,6 +421,16 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             a, b = b, a
         plan["energy_spans"].append({"start_seg": a, "end_seg": b, "reason": str(e.get("reason", "") or "")[:60]})
 
+    for h in (raw.get("holds", []) or [])[:10]:
+        if not isinstance(h, dict):
+            continue
+        a, b = _nearest(kept, h.get("start_seg")), _nearest(kept, h.get("end_seg", h.get("start_seg")))
+        if a is None or b is None:
+            continue
+        if b < a:
+            a, b = b, a
+        if not any(x["start_seg"] <= b and a <= x["end_seg"] for x in plan["holds"]):
+            plan["holds"].append({"start_seg": a, "end_seg": b, "reason": str(h.get("reason", "") or "")[:60]})
     for h in raw.get("highlights", []) or []:
         seg = h.get("seg") if isinstance(h, dict) else h
         if seg in kept and seg not in kept[:2] and not any(x["seg"] == seg for x in plan["highlights"]):
@@ -635,6 +782,15 @@ def time_graphics(
         for k in EXTRA_DATA_KEYS:
             if g.get(k):
                 data[k] = g[k]
+        if g.get("steps"):
+            # 단계 그래픽: 강조가 그 낱말에서 바뀐다(그래픽은 하나, 끝은 마지막 단계 문장의 끝)
+            at = step_times(g, utts, timemap, start)
+            if at:
+                data["stepAt"] = at
+                data["highlight"] = at[0]["index"]
+                end = max(end, start + at[-1]["t"] + 1.6)
+                if total:
+                    end = min(end, total - 0.3)
         if g["template"] == "broll" and not g.get("src"):
             continue  # 소재를 못 구한 B-roll 은 버린다(틀린 B-roll 보다 없는 게 낫다)
         if g["template"] == "motion":
@@ -652,22 +808,53 @@ def time_graphics(
     return resolve_overlaps(timed + list(reserved or []), total=total)
 
 
-def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optional[float] = None) -> list[TimedGraphic]:
-    items = sorted(items, key=lambda g: (g.start, -g.priority))
+EVIDENCE = ("photo", "broll")      # 실물 자료(사진·스톡) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
+
+
+def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optional[float] = None,
+                     max_shift: float = 8.0) -> list[TimedGraphic]:
+    """시간순으로 겹침을 푼다. 더 중요한 그래픽이 오면 앞의 것을 줄이거나 버리고, 덜 중요하면 뒤로 민다.
+    실물 자료(EVIDENCE)는 밀리거나 밀려나도 버리지 않고 최소 길이를 지켜 다음 빈 자리로 옮긴다 — 원래 자리에서 max_shift
+    초 안에서만(10/1: 받아 둔 홍익대 사진이 타이틀 카드에 밀려 지워졌는데 바로 뒤 5초가 비어 있었다)."""
+    queue = sorted(items, key=lambda g: (g.start, -g.priority))
+    orig = {id(g): g.start for g in queue}
+
+    def min_dur(x: TimedGraphic) -> float:
+        return TEMPLATES[x.template].min_dur if x.template in TEMPLATES else 1.5
+
+    def defer(x: TimedGraphic, t: float) -> bool:
+        """자료 x 를 t 부터 다시 놓는다(큐에 다시 넣음). 옮길 수 없으면 False."""
+        if x.template not in EVIDENCE or t - orig.get(id(x), x.start) > max_shift:
+            return False
+        d = max(x.end - x.start, min_dur(x))
+        x.start, x.end = t, t + d
+        if total is not None:
+            x.end = min(x.end, total - 0.3)
+        if x.end - x.start < min_dur(x) * 0.8:
+            return False
+        k = 0
+        while k < len(queue) and (queue[k].start, -queue[k].priority) <= (x.start, -x.priority):
+            k += 1
+        queue.insert(k, x)
+        return True
+
     out: list[TimedGraphic] = []
-    for g in items:
+    while queue:
+        g = queue.pop(0)
         if not out or g.start >= out[-1].end + gap:
             out.append(g)
             continue
         last = out[-1]
-        min_last = TEMPLATES[last.template].min_dur if last.template in TEMPLATES else 1.5
-        min_g = TEMPLATES[g.template].min_dur if g.template in TEMPLATES else 1.5
+        min_last, min_g = min_dur(last), min_dur(g)
         if g.priority > last.priority and g.start - last.start >= min_last * 0.8:
             last.end = g.start - gap
             out.append(g)
         elif g.priority > last.priority:
-            # 새 그래픽이 더 중요하고 이전 것이 너무 짧아지면 이전 것을 버린다
+            # 새 그래픽이 더 중요하고 이전 것이 너무 짧아지면 이전 것을 버린다 — 실물 자료면 새 그래픽 뒤로 옮긴다
             out[-1] = g
+            defer(last, g.end + gap)
+        elif g.template in EVIDENCE:
+            defer(g, last.end + gap)
         else:
             g.start = last.end + gap
             if g.end - g.start < min_g * 0.8 and (g.priority >= 8 or g.source == "tag"):

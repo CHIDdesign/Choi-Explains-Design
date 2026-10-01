@@ -99,3 +99,15 @@ def test_pushed_graphic_does_not_run_past_speech():
     b = TimedGraphic("g2", "process", "fullscreen", 96.0, 99.0, {}, 8, "tag")
     out = resolve_overlaps([a, b], total=100.0)
     assert all(g.end <= 99.7 + 1e-6 for g in out)
+
+
+def test_low_severity_text_fix_is_applied():
+    """P0-6(10/1): 아트 디렉터가 검색어 라벨 4건을 지적하고 새 제목까지 냈지만 low 라서 0건 반영됐다.
+    글자 줄이기·빼기는 low 여도 반영, 레이아웃 바꾸기·장면 다시 그리기는 high·medium 만."""
+    from studio.pipeline import qa_actionable
+    issues = [{"target": "g35", "severity": "low", "action": "shorten_text", "new_title": "참고의 함정"},
+              {"target": "g36", "severity": "low", "action": "drop"},
+              {"target": "g37", "severity": "low", "action": "change_layout"},
+              {"target": "g38", "severity": "medium", "action": "revise_scene"},
+              {"target": "g39", "severity": "high", "action": "none"}]
+    assert [i["target"] for i in qa_actionable(issues)] == ["g35", "g36", "g38"]

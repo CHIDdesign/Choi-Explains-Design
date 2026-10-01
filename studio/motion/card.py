@@ -357,6 +357,21 @@ def _check_fonts(css: str, problems: list[str]) -> str:
     return css
 
 
+PURE_BG = re.compile(r"(background(?:-color)?\s*:\s*)(#fff(?:fff)?|white|#000(?:000)?|black|#111(?:111)?|#0b0b0b)\b", re.I)
+
+
+def house_backgrounds(css: str, problems: list[str]) -> str:
+    """배경의 순백·순흑을 하우스 토큰으로(크림 종이 var(--paper) · 따뜻한 잉크 var(--ink)) — 10/1: 흰 카드·검은 카드가
+    크림 메모·회색 종이 사이에 끼어 재질이 네 가지였다(docs/upgrade/06 F-10, 게이트 B9). 글자색은 건드리지 않는다."""
+    def sub(m: re.Match) -> str:
+        v = m.group(2).lower()
+        return m.group(1) + ("var(--paper)" if v in ("#fff", "#ffffff", "white") else "var(--ink)")
+    new = PURE_BG.sub(sub, css)
+    if new != css:
+        problems.append("순백·순흑 배경 → 크림 종이·잉크")
+    return new
+
+
 def clean_css(css: str, card_id: str, problems: list[str]) -> str:
     css = _strip_css_comments(css)
     if CSS_FORBIDDEN.search(css):
@@ -414,7 +429,7 @@ def clean_card(card: Any, *, layout: str = "fullscreen", card_id: str = "", stri
         cid = re.sub(r"[^A-Za-z0-9_-]", "", cid)[:32] or "card"
         if not cid[0].isalpha():
             cid = "c" + cid
-    css = clean_css("\n".join(p.css) + "\n" + css_in, cid, problems)
+    css = house_backgrounds(clean_css("\n".join(p.css) + "\n" + css_in, cid, problems), problems)
     if len(css) > MAX_CSS:
         return None
     inner = "".join(p.out).strip()

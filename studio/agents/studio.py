@@ -54,7 +54,6 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
 # 자료 사진 아래 붙는 짧은 꼬리표(예전엔 'brand'·'person' 같은 영어가 화면에 그대로 나왔다)
-PHOTO_KIND_LABEL = {"person": "인물", "brand": "브랜드", "work": "작품", "place": "장소", "religion": "종교"}
 
 
 def studio_system_prompt() -> str:
@@ -195,17 +194,21 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             continue
         layout = ph.get("layout") if ph.get("layout") in ("pip", "split", "fullscreen") else "pip"
         kind = str(ph.get("kind") or "")
+        # 화면 글자는 이름뿐 — 종류(kind)는 내부 분류라 화면에 내지 않는다(10/1: 핀터레스트 사진 위 검은 라벨 'brand').
+        # 인물은 자료 사진 단계가 위키백과 짧은 설명을 body 에 넣는다
         graphics.append(_g("photo", layout, ph.get("start_seg", -1), ph.get("start_seg", -1), ph.get("start_word", ""),
                            title=name_ko or name_en, image=name_ko or name_en, subtitle=name_en,
-                           body=PHOTO_KIND_LABEL.get(kind, ""), reason="자료 리서처(위키백과): " + str(ph.get("reason", "")),
+                           body="", reason="자료 리서처(위키백과): " + str(ph.get("reason", "")),
                            wiki=True, entity=kind, name_en=name_en))
     for r in stock.get("requests", []) or []:
         if not (r.get("query_en") or r.get("query_ko")):
             continue
+        # 검색어·연출 메모(purpose)는 화면에 내지 않는다(10/1: 스톡 위 큰 글씨 '스케치북 넘기기', 검은 라벨 '…전환점') —
+        # 화면 라벨은 자료 리서처가 따로 준 caption(그 문장의 주장)이 있을 때만
         graphics.append(_g("broll", r.get("layout") or "fullscreen", r.get("start_seg", -1),
                            r.get("end_seg", r.get("start_seg", -1)), r.get("start_word", ""),
-                           title=r.get("query_ko", ""), image=r.get("query_en", ""), subtitle=r.get("kind", "video"),
-                           body=r.get("purpose", ""), reason="자료 리서처: " + str(r.get("purpose", "")),
+                           title=str(r.get("caption") or "").strip()[:14], image=r.get("query_en", ""), subtitle="",
+                           body="", reason="자료 리서처: " + str(r.get("purpose", "")),
                            stock={k: r.get(k, "") for k in ("kind", "query_en", "query_ko", "purpose", "must_show")}))
 
     moments = [m for m in editor.get("moments", []) or [] if isinstance(m, dict)]
@@ -223,6 +226,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "title": brief.get("title", ""),
         "moments": moments,
         "energy_spans": [e for e in editor.get("energy_spans", []) or [] if isinstance(e, dict)],
+        "holds": [h for h in editor.get("holds", []) or [] if isinstance(h, dict)],
         "highlights": [h for h in editor.get("highlights", []) or [] if isinstance(h, dict)],
         "bgm_mood": brief.get("bgm_mood", ""),
         "shorts_bgm_mood": brief.get("shorts_bgm_mood", ""),
@@ -244,6 +248,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
             "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),
             "wiki_photos": len(stock.get("photos", []) or []),
+            "integrity": brief.get("integrity") or {},
         },
     }
     return raw_long, shorts

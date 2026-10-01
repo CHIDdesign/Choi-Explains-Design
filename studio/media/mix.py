@@ -50,8 +50,14 @@ class BgmPlan:
     fade_in: float = 1.5
     fade_out: float = 3.0
     tail: float = 0.0                 # 보이스가 끝난 뒤 이어질 길이(엔드카드 등)
-    playlist: list[tuple[str, Optional[float]]] = field(default_factory=list)  # 챕터마다 바꿀 곡들(path, lufs)
-    switch_at: list[float] = field(default_factory=list)                         # 곡을 바꿀 시각(챕터 시작)
+    playlist: list[tuple[str, Optional[float]]] = field(default_factory=list)  # (옛) 챕터마다 바꿀 곡들 — 이제 한 곡
+    switch_at: list[float] = field(default_factory=list)                         # (옛) 곡을 바꿀 시각
+    # 목소리 실측 라우드니스 기준(LU): 말하는 동안 음악 = 목소리 + rel_lu(롱 −20, 숏 −18). None 이면 under_db 고정값
+    rel_lu: Optional[float] = None
+    short: bool = False               # 숏폼(쉼에서 덜 올라온다)
+    restart_at: list[float] = field(default_factory=list)   # 곡이 다 끝났으면 다시 시작할 구조 앵커(챕터 카드)
+    dip_fade: float = 2.5             # 음악을 비울 때 들어가는 페이드(초) — 뚝 끊기지 않게
+    end_at: Optional[float] = None    # 끝 페이드가 시작할 곳(말이 끝난 곳) — 없으면 끝에서 fade_out 초 전
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +135,20 @@ def voice_activity(voice_wav: str | Path, *, threshold_db: float = -42.0, hang: 
     return act
 
 
+def bgm_levels(voice_lufs: Optional[float], rel_lu: float, *, short: bool = False) -> tuple[float, float, float]:
+    """목소리 실측 라우드니스 → 곡(−14 LUFS 로 맞춘 뒤)에 걸 게인 (말하는 동안, 쉼, 부풀림) dB.
+    말하는 동안 음악 = 목소리 + rel_lu(롱 −20 · 숏 −18 LU — 레퍼런스 18~26 LU 아래), 쉼에서는 롱 +8 · 숏 +4 dB 만 올라오고,
+    인트로·챕터 카드·엔드카드 부풀림도 목소리보다 6 LU 아래까지만(04 11절 1번). 측정 못 하면 목소리 −16 LUFS 로 본다."""
+    v = voice_lufs if voice_lufs is not None and -60.0 < voice_lufs < 0.0 else -16.0
+    under = (v + rel_lu) - (-14.0)
+    gap = under + (4.0 if short else 8.0)
+    swell = min(under + 14.0, (v - 6.0) - (-14.0))
+    return round(under, 2), round(gap, 2), round(max(gap, swell), 2)
+
+
 def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
-    """10ms 단위 배경음악 게인(dB). 내려갈 땐 빠르게(60ms), 올라올 땐 천천히(400ms)."""
+    """10ms 단위 배경음악 게인(dB). 내려갈 땐 빠르게(60ms), 올라올 땐 천천히(400ms).
+    비우기(dips)는 dip_fade 초에 걸쳐 들어가고(뚝 끊지 않는다), 끝은 말이 끝난 곳부터 코사인으로 사라진다."""
     n = int(np.ceil(total * 100)) + 1
     a = np.zeros(n, np.float32)
     a[: min(n, len(act))] = act[:n]
@@ -138,9 +156,17 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
     for s, e in plan.swells:
         i0, i1 = max(0, int(s * 100)), min(n, int(e * 100))
         target[i0:i1] = np.maximum(target[i0:i1], plan.swell_db)
+    dip_mask = np.zeros(n, np.float32)       # 0 = 그대로, 1 = 완전히 비움(진폭 비율로 섞는다)
+    fade_n = max(1, int(plan.dip_fade * 100))
     for s, e in plan.dips:
         i0, i1 = max(0, int(s * 100)), min(n, int(e * 100))
-        target[i0:i1] = -60.0
+        if i1 <= i0:
+            continue
+        dip_mask[i0:i1] = 1.0
+        r0 = max(0, i0 - fade_n)
+        if i0 > r0:     # 앞쪽 페이드(코사인)
+            ramp = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, i0 - r0, dtype=np.float32))
+            dip_mask[r0:i0] = np.maximum(dip_mask[r0:i0], ramp)
     out = np.empty_like(target)
     cur = float(target[0])
     down = 1 - np.exp(-1 / 5.0)    # ≈50ms
@@ -148,13 +174,18 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
     for i, tv in enumerate(target):
         cur += (tv - cur) * (down if tv < cur else up)
         out[i] = cur
-    # 페이드 인/아웃
+    if dip_mask.any():
+        out += 20 * np.log10(np.maximum(1e-3, 1.0 - dip_mask))
+    # 페이드 인
     fi = int(plan.fade_in * 100)
     if fi > 0:
         out[:fi] += 20 * np.log10(np.linspace(0.02, 1, min(fi, n)) + 1e-6)[: len(out[:fi])]
-    fo = int(plan.fade_out * 100)
-    if fo > 0:
-        out[-fo:] += 20 * np.log10(np.linspace(1, 0.001, min(fo, n)) + 1e-6)[-len(out[-fo:]):]
+    # 끝: 말이 끝난 곳(end_at)부터 영상 끝까지 코사인으로(최소 fade_out 초) — 임의 지점 3초 선형이 아니라
+    e0 = int(plan.end_at * 100) if plan.end_at is not None else n - int(plan.fade_out * 100)
+    e0 = max(0, min(e0, n - int(plan.fade_out * 100)))
+    if n - e0 > 1:
+        k = np.linspace(0, np.pi / 2, n - e0, dtype=np.float32)
+        out[e0:] += 20 * np.log10(np.maximum(1e-3, np.cos(k)))
     return out
 
 
@@ -165,32 +196,30 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
 class _BgmSource:
     """배경음악을 60초 조각 단위로 만들어 준다(20분 영상도 곡 몇 개 분량의 메모리만 쓴다).
 
-    곡(들)을 '조각(piece)'으로 이어 붙인다: 조각 = 한 곡을 처음부터 L 샘플, 앞뒤 2초 등전력 크로스페이드.
-    챕터가 바뀌는 곳(switch_at)에서는 다음 곡으로 넘어간다.
+    한 영상 한 곡: 곡을 앞 무음(lead_silence)을 건너뛰고 처음부터 한 번 깐다. 곡이 영상보다 짧으면 **끝→처음으로 잇지 않는다**
+    (10/1: 11:42 에 곡 끝이 처음으로 붙었다) — 끝 2.5초를 페이드하고 다음 구조 앵커(챕터 카드, restart_at)에서 처음부터 다시.
+    앵커가 없으면 그 뒤는 음악 없이.
     """
 
-    def __init__(self, ff: FFmpeg, plan: BgmPlan, n_total: int, xfade: float = 2.0):
+    def __init__(self, ff: FFmpeg, plan: BgmPlan, n_total: int, xfade: float = 2.5):
         self.ff = ff
         self.xf = int(xfade * SR)
-        tracks = plan.playlist or [(plan.path, plan.lufs)]
-        cuts = [0] + sorted({int(t * SR) for t in plan.switch_at if 3 * SR < t * SR < n_total - 3 * SR}) + [n_total]
+        path, lufs = (plan.playlist[0] if plan.playlist else (plan.path, plan.lufs))
         self.decoded: dict[str, np.ndarray] = {}
         self.pieces: list[tuple[int, int, str]] = []   # (시작 샘플, 길이, 경로)
-        for i in range(len(cuts) - 1):
-            path, lufs = tracks[i % len(tracks)]
-            raw = self._track(path, lufs, plan.start_offset if i == 0 else 0.0)
-            if not len(raw):
-                continue
-            a, b = cuts[i], cuts[i + 1]
-            last_seg = i == len(cuts) - 2
-            pos = a
-            while pos < b:
-                want = b - pos + (0 if last_seg else self.xf)
-                L = min(len(raw), want)
-                self.pieces.append((pos, L, path))
-                if pos + L >= b + (0 if last_seg else self.xf) or L < self.xf * 2:
-                    break
-                pos += L - self.xf
+        raw = self._track(path, lufs, plan.start_offset)
+        anchors = sorted({int(t * SR) for t in plan.restart_at if 0 < t * SR < n_total - 6 * SR})
+        pos = 0
+        while len(raw) and pos < n_total:
+            L = min(len(raw), n_total - pos)
+            self.pieces.append((pos, L, path))
+            if pos + L >= n_total:
+                break
+            nxt = [a for a in anchors if a >= pos + L + SR // 2]
+            if not nxt:
+                break
+            pos = nxt[0]
+        self._ends_early = {k for k, (a, L, _) in enumerate(self.pieces) if a + L < n_total}
         self._cache: dict[int, np.ndarray] = {}
 
     def _track(self, path: str, lufs: Optional[float], offset: float) -> np.ndarray:
@@ -209,10 +238,10 @@ class _BgmSource:
             src = next(v for kk, v in self.decoded.items() if kk.startswith(path + "@"))
             x = src[:L].copy()
             f = min(self.xf, L // 3)
-            if k > 0 and f:
-                x[:f] *= np.sqrt(np.linspace(0, 1, f, dtype=np.float32))[:, None]
-            if k < len(self.pieces) - 1 and f:
-                x[-f:] *= np.sqrt(np.linspace(1, 0, f, dtype=np.float32))[:, None]
+            if k > 0 and f:             # 앵커에서 다시 시작: 코사인 페이드 인
+                x[:f] *= (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, f, dtype=np.float32)))[:, None]
+            if k in self._ends_early and f:   # 곡이 끝나는 곳: 코사인 페이드 아웃(다음 곡·처음으로 잇지 않는다)
+                x[-f:] *= (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, f, dtype=np.float32)))[:, None]
             self._cache[k] = x
         return self._cache[k]
 
@@ -253,10 +282,16 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
     curve = None
     if bgm:
         try:
+            if bgm.rel_lu is not None:      # 목소리 실측 라우드니스 기준 상대 레벨
+                v = measure_lufs(ff, voice_wav)
+                bgm.under_db, bgm.gap_db, bgm.swell_db = bgm_levels(v, bgm.rel_lu, short=bgm.short)
+                report["voice_lufs"] = v
+                report["bgm_under_db"] = bgm.under_db
             track = _BgmSource(ff, bgm, n_total)
             act = voice_activity(voice_wav)
             curve = bgm_gain_curve(act, bgm, total)
             report["bgm_tracks"] = len({p for _, _, p in track.pieces})
+            report["bgm_pieces"] = len(track.pieces)
         except (FFmpegError, ValueError) as e:
             log(f"배경음악 준비 실패(음악 없이 진행): {e}")
             track = None

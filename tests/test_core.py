@@ -381,3 +381,27 @@ def test_highlights_normalized_and_fallback_picks_hooky_sentences():
     # 규칙 후보: 첫 두 발화 뒤, 앞 문맥에 매달리지 않는 짧은 문장만
     hl = fallback.highlight_segs(utts)
     assert all(h["seg"] not in kept[:2] for h in hl)
+
+
+def test_evidence_shifts_to_free_slot_after_title_card():
+    """P0-7(10/1): 홍익대 사진(408.4~414.0)이 타이틀 카드(408.8~412.2, 우선순위 12)에 밀려 지워졌다 — 바로 뒤가 비어 있었다.
+    실물 자료는 버리지 않고 다음 빈 자리로 옮긴다(원래 자리에서 8초 안). 도식은 예전처럼 짧아지면 버린다."""
+    from studio.director.plan import TimedGraphic, resolve_overlaps
+    title = TimedGraphic("title", "title", "fullscreen", 408.8, 412.2, {}, 12, "auto")
+    photo = TimedGraphic("g31", "photo", "pip", 408.4, 414.0, {"image": "images/hongik.jpg"}, 6)
+    out = resolve_overlaps([title, photo], total=700.0)
+    got = {g.id: g for g in out}
+    assert "g31" in got and got["g31"].start >= 412.2 and got["g31"].end - got["g31"].start >= 4.0
+    # 앞에 같은 우선순위 도식이 있으면 그 뒤로(버리지 않음), 너무 멀어지면(8초 넘게) 그때만 뺀다
+    diag = TimedGraphic("g5", "process", "split", 100.0, 107.0, {}, 6)
+    stock = TimedGraphic("g33", "broll", "fullscreen", 101.0, 104.0, {"src": "broll/a.mp4"}, 6)
+    out = {g.id: g for g in resolve_overlaps([diag, stock], total=700.0)}
+    assert out["g33"].start >= 107.0 and out["g33"].end - out["g33"].start >= 3.0
+    far = TimedGraphic("g6", "process", "split", 200.0, 215.0, {}, 6)
+    stock2 = TimedGraphic("g34", "broll", "fullscreen", 201.0, 204.0, {"src": "broll/b.mp4"}, 6)
+    assert "g34" not in {g.id for g in resolve_overlaps([far, stock2], total=700.0)}
+    # 사진이 앞에 있고 더 중요한 도식이 곧바로 오면 사진을 도식 뒤로 옮긴다
+    ph = TimedGraphic("g40", "photo", "pip", 300.0, 304.0, {}, 6)
+    big = TimedGraphic("g41", "process", "fullscreen", 300.5, 305.0, {}, 9)
+    out = {g.id: g for g in resolve_overlaps([ph, big], total=700.0)}
+    assert out["g41"].start == 300.5 and out["g40"].start >= 305.0

@@ -142,8 +142,6 @@ class Wikimedia:
             non_commercial_or_nd = re.search(r"(^|[\s-])n[cd]($|[\s-])", lic)
             if not r["url"] or not any(k in lic for k in OK_LICENSES) or non_commercial_or_nd or r["restrictions"]:
                 continue
-            if r["width"] and r["height"] and r["width"] / max(1, r["height"]) < 0.55:
-                continue  # 너무 세로로 긴 이미지 제외
             ext = ".png" if "png" in r["mime"] else ".jpg"
             name = re.sub(r"[^0-9A-Za-z가-힣]+", "_", query)[:50] + ext
             dst = dst_dir / name
@@ -161,7 +159,7 @@ class Wikimedia:
 
 
 def resolve_image(query: str, *, local: list[Path], dst_dir: Path, wikimedia: Optional[Wikimedia],
-                  wikipedia: Optional[Any] = None, log: LogFn = noop_log) -> Optional[ImageResult]:
+                  wikipedia: Optional[Any] = None, log: LogFn = noop_log, alt: str = "") -> Optional[ImageResult]:
     """순서: ① 내 이미지 폴더 → ② 위키백과 문서의 대표 이미지(고유명사에 가장 정확) → ③ 위키미디어 커먼즈 검색."""
     hit = match_local(query, local)
     if hit:
@@ -172,14 +170,15 @@ def resolve_image(query: str, *, local: list[Path], dst_dir: Path, wikimedia: Op
         return ImageResult(dst, "", origin="local")
     if wikipedia:
         dst_dir.mkdir(parents=True, exist_ok=True)
-        res = wikipedia.fetch(query, dst_dir)
+        res = wikipedia.fetch(query, dst_dir, alt=alt) if alt else wikipedia.fetch(query, dst_dir)
         if res:
             log(f"자료 사진(위키백과): '{query}' → {res.path.name} ({res.license})")
             return res
     if wikimedia:
-        res = wikimedia.fetch(query, dst_dir)
-        if res:
-            log(f"자료 사진: '{query}' → {res.path.name} ({res.license})")
-            return res
+        for q in [query] + ([alt] if alt and alt != query else []):
+            res = wikimedia.fetch(q, dst_dir)
+            if res:
+                log(f"자료 사진: '{q}' → {res.path.name} ({res.license})")
+                return res
     log(f"자료 사진을 찾지 못함: '{query}' (images 폴더에 '{query}.jpg' 로 넣으면 사용됩니다)")
     return None

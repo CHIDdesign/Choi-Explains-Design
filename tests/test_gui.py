@@ -113,3 +113,21 @@ def test_progress_page_live_preview_and_eta(app, tmp_path):
     assert w.bar.value() == 300
     w.worker = None
     w.close()
+
+
+def test_materials_folder_sets_images_dir(app, tmp_path):
+    """P0-9: ④ 자료 폴더(선택) → JobSpec.images_dir. 폴더 안 이미지 수를 보여 주고, 비어 있으면 예전과 똑같다."""
+    from PIL import Image
+
+    from studio.gui.app import MainWindow
+    w = MainWindow()
+    assert w._spec().images_dir == "" and not w.materials_clear.isEnabled()
+    folder = tmp_path / "자료"
+    folder.mkdir()
+    for name in ("디터 람스.jpg", "과제 스케치.png"):
+        Image.new("RGB", (40, 30), (200, 200, 200)).save(folder / name)
+    w._on_files([str(folder)])                       # 폴더를 끌어다 놓으면 ④
+    assert w._spec().images_dir == str(folder)
+    assert "이미지 2장" in w.materials_label.text()
+    w._set_materials("")
+    assert w._spec().images_dir == ""

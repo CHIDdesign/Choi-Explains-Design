@@ -66,9 +66,11 @@ export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName 
   }
 };
 
+// 화면에 나오는 역할 이름 — 내부 템플릿 이름(chapter·keyword·motion·card·broll·title)은 화면에 내지 않는다(품질 게이트 B5,
+// 10/1 테스트: 숏폼 카드 머리에 'motion'·'card', 보드 머리줄에 '( motion )'). 빈 문자열이면 쓰는 곳이 라벨을 그리지 않는다.
 export const TEMPLATE_LABEL: Record<TemplateName, string> = {
-  chapter: 'chapter',
-  keyword: 'keyword',
+  chapter: '',
+  keyword: '',
   definition: '정의',
   quote: '인용',
   list: '정리',
@@ -82,10 +84,10 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   venn: '교집합',
   pyramid: '위계',
   photo: '자료',
-  motion: 'motion',
-  card: 'card',
-  broll: 'footage',
-  title: 'episode',
+  motion: '',
+  card: '',
+  broll: '',
+  title: '',
   lower_third: '',
   recap: '정리',
 };

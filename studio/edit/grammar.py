@@ -41,13 +41,16 @@ PARAMS: dict[str, Any] = {
     # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다 — 셜록현준 리서치(20~40초마다 카메라
     # 변화, 얼굴만 25초가 절대 상한)의 가운데 값. 컷이 아니라 1.2초 글라이드(1.00↔1.06)라 젠틀함은 그대로(예전 60초)
     "max_shot": 30.0,
+    "hold_pad": 1.5,          # 🙂 얼굴 홀드 뒤에 더 비우는 시간(감정이 닿는 데 시간이 걸린다 — docs/upgrade/05 4-3)
+    "hold_max": 25.0,         # 홀드 한 곳의 최대 길이(게이트 A7 과 같은 값)
     "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
     "push_per_sec": 0.004,      # 느린 드리프트 0.4%/초 — 최대 5%
     "push_max": 0.05,
     "soft_cut": 0.1,            # 같은 프레이밍으로 이어지는 점프컷: 앞 장면 마지막 프레임을 0.1초 동안 섞어 튐을 줄임
     # 종이 스킨의 세 번째 '앵글': 화자를 찢어진 액자에 담아 종이 위에(사용자 레퍼런스 2). 와이드↔미디엄 사이사이,
     # 8초 이상인 샷만, 0.6초에 걸쳐 천천히 들어가고 나온다. classic 스킨은 파이프라인이 framed_every=0 으로 끈다.
-    "framed_every": 2,          # 앵글 전환 두 번에 한 번은 액자 샷
+    # 액자 샷은 끈다(10/1: 화자 화면 전체에 찢어진 흰 테두리가 생겼다 사라짐 — docs/upgrade/06 F-5). 렌더러 코드는 남겨 둔다
+    "framed_every": 0,
     "framed_min": 8.0,
     "framed_glide": 0.6,
     # 강조: 하드컷 펀치인(+15~20%) 대신 0.7초에 걸쳐 천천히 당기는 글라이드(+4~9%), 영상당 8회·40초 간격
@@ -150,6 +153,7 @@ class EditDecisions:
     bgm_swells: list[tuple[float, float]] = field(default_factory=list)
     bgm_switch: list[float] = field(default_factory=list)  # 배경음악을 다음 곡으로 바꿀 시각(챕터 카드)
     bgm_dips: list[tuple[float, float]] = field(default_factory=list)  # 음악을 비울 구간(핵심 문장 직전)
+    bgm_anchors: list[float] = field(default_factory=list)  # 곡이 끝났으면 다시 시작할 자리(챕터 카드)
     soft_cut: float = 0.0          # 같은 프레이밍 점프컷을 섞는 시간(초) — props.mark_soft_cuts
     stats: dict[str, Any] = field(default_factory=dict)
 
@@ -273,7 +277,8 @@ def list_reveal_times(g: dict, fps: float = FPS_BASE) -> list[float]:
 def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], covers: list[tuple],
                 sentence_starts: list[float], P: dict = PARAMS, seed: int = 1,
                 framed_ranges: Optional[list[tuple[float, float]]] = None,
-                angle_cuts: Optional[list[float]] = None) -> list[dict]:
+                angle_cuts: Optional[list[float]] = None,
+                holds: Optional[list[tuple[float, float]]] = None) -> list[dict]:
     """점프컷 프레이밍(교육 영상용 젠틀 편집). 컷 지점에서만 와이드(1.00)/미디엄(1.06)을 번갈아 바꾼다 —
     챕터 시작·전체화면 그래픽 복귀·NG 를 잘라낸 큰 점프(≥big_jump)에서만(평범한 컷은 그대로).
     그 사이 같은 프레이밍의 점프컷은 소프트 컷(props.mark_soft_cuts)이 가린다. 얼굴만 max_shot 넘게 이어지면
@@ -307,7 +312,7 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
     for b in bounds[1:] + [total]:
         while b - filled[-1] > P["max_shot"]:
             mid = [s for s in extra if filled[-1] + P["min_shot"] <= s <= b - P["min_shot"]
-                   and not _inside(s, covers)]
+                   and not _inside(s, covers) and not any(a0 <= s <= b0 for a0, b0 in holds or [])]
             if not mid:
                 break
             target = filled[-1] + P["max_shot"] * 0.6
@@ -372,15 +377,25 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                     face: Optional[list[dict]] = None, P: dict = PARAMS, seed: int = 1,
                     framed_ranges: Optional[list[tuple[float, float]]] = None,
                     angle_cuts: Optional[list[float]] = None,
-                    punch_spans: Optional[list[tuple[float, float]]] = None, PU: dict = PUNCH) -> EditDecisions:
-    """punch_spans: ⚡ 펀치 구간(편집 시각). 그 안에서는 PU 의 값으로 하드 펀치인·단어 슬램·휩·임팩트를 허용한다."""
+                    punch_spans: Optional[list[tuple[float, float]]] = None, PU: dict = PUNCH,
+                    holds: Optional[list[tuple[float, float]]] = None) -> EditDecisions:
+    """punch_spans: ⚡ 펀치 구간(편집 시각). 그 안에서는 PU 의 값으로 하드 펀치인·단어 슬램·휩·임팩트를 허용한다.
+    holds: 🙂 얼굴 홀드(편집 시각, 뒤 여유 포함) — 그 안에는 강조·콜아웃·전환·효과음이 없고 프레이밍도 움직이지 않는다
+    (편집 감독이 '얼굴로' 지킨 고백·결론 — 10/1: 정리 보드가 S158–S160 을 덮었다). 홀드 앞에서 음악을 비운다."""
     ed = EditDecisions(soft_cut=P["soft_cut"])
+    holds = [(a, b) for a, b in (holds or []) if b > a]
+
+    def in_hold(t: float, end: Optional[float] = None) -> bool:
+        e = t if end is None else end
+        return any(t < b and e >= a for a, b in holds)
+    if holds:
+        moments = [m for m in moments if not in_hold(m.t, m.end)]
     spans = [(a, b) for a, b in (punch_spans or []) if b > a]
     covers = _covers(graphics, speech_total)
     chapter_starts = [c["start"] for c in chapters if c["start"] > 0.5]
     ed.camera = camera_plan(timemap, speech_total, chapter_starts=chapter_starts, covers=covers,
                             sentence_starts=sentence_starts, P=P, seed=seed, framed_ranges=framed_ranges,
-                            angle_cuts=angle_cuts)
+                            angle_cuts=angle_cuts, holds=holds)
 
     # ---- 전환 -------------------------------------------------------------
     tx: list[dict] = []
@@ -570,12 +585,18 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         if not ed.bgm_dips or m.t - ed.bgm_dips[-1][1] > 30:
             ed.bgm_dips.append((round(max(0.0, m.t - 0.8), 3), round(m.t + 0.2, 3)))
     ed.bgm_swells += [(max(0.0, c - 0.6), c + 2.4) for c in chapter_starts]
-    # 챕터가 바뀌면 곡도 바꾼다(최소 90초 간격 — 짧은 챕터마다 바꾸면 산만하다)
-    for c in chapter_starts:
-        if c - (ed.bgm_switch[-1] if ed.bgm_switch else 0.0) >= 90.0 and speech_total - c >= 45.0:
-            ed.bgm_switch.append(round(c, 3))
+    # 한 영상 한 곡 — 챕터마다 곡을 바꾸지 않는다(10/1: 조성·템포가 다른 세 곡을 이었다, docs/upgrade/04 11절 2번).
+    # 챕터 시작은 곡이 다 끝났을 때 다시 시작할 구조 앵커로만 쓴다(mix.BgmPlan.restart_at)
+    ed.bgm_anchors = [round(c, 3) for c in chapter_starts]
     if endcard and total > speech_total:
         ed.bgm_swells.append((speech_total, total))
+    if holds:
+        ed.transitions = [x for x in ed.transitions if not in_hold(x["t"])]
+        ed.sfx = [x for x in ed.sfx if not in_hold(x["t"])]
+        ed.callouts = [x for x in ed.callouts if not in_hold(x["start"], x["end"])]
+        ed.punches = [x for x in ed.punches if not in_hold(x["t"])]
+        # 홀드 앞 숨: 음악을 0.8초 전부터 비운다(시작 0.2초 뒤까지)
+        ed.bgm_dips = sorted(ed.bgm_dips + [(round(max(0.0, a - 0.8), 3), round(a + 0.2, 3)) for a, _ in holds])
     face_time = speech_total - sum(b - a for a, b, _ in covers)
     runs = face_only_runs(graphics, ed.callouts, speech_total)
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),
@@ -583,7 +604,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                 "face_ratio": round(face_time / max(1e-6, speech_total), 3),
                 "max_face_run": round(max(runs, default=0.0), 1),
                 "face_runs_over_25s": sum(1 for r in runs if r > 25.0),
-                "punch_spans": len(spans), "hot_punches": sum(1 for p in punches if p.get("hot"))}
+                "punch_spans": len(spans), "hot_punches": sum(1 for p in punches if p.get("hot")),
+                "holds": len(holds), "hold_sec": round(sum(b - a for a, b in holds), 1)}
     return ed
 
 

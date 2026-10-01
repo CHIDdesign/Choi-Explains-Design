@@ -144,6 +144,29 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
     return out
 
 
+STAGE_BY = 0.5          # 이 시각까지 무대(구도)가 서 있어야 한다 — 빈 배경만 2~3초 뜨지 않게(게이트 C4)
+
+
+def stage_first(els: list[dict[str, Any]]) -> int:
+    """0프레임 무대(docs/upgrade/06 F-6): 0.5초까지 아무것도 서지 않는 장면이면 구도를 먼저 세운다 — 판·상자(rect)와 가장 큰
+    제목 글자를 0초로. 선·화살표·점·숫자·작은 글자는 말에 맞춘 시각 그대로(강조는 말에서 온다). 그래도 없으면 가장 먼저 오는
+    요소를 0초로. 반환: 옮긴 요소 수."""
+    if not els or any(float(e.get("at", 0)) <= STAGE_BY for e in els):
+        return 0
+    moved = 0
+    texts = [e for e in els if e["type"] == "text"]
+    big = max((float(e.get("size", 0)) for e in texts), default=0.0)
+    for e in els:
+        if e["type"] == "rect" or (e["type"] == "text" and big and float(e.get("size", 0)) >= big - 1e-6):
+            e["at"] = 0.0
+            moved += 1
+    if not moved:
+        first = min(els, key=lambda e: float(e.get("at", 0)))
+        first["at"] = 0.0
+        moved = 1
+    return moved
+
+
 def clean_spec(spec: Any, scene_dur: float) -> dict[str, Any] | None:
     if not isinstance(spec, dict):
         return None
@@ -151,6 +174,7 @@ def clean_spec(spec: Any, scene_dur: float) -> dict[str, Any] | None:
                        if isinstance(e, dict)) if e]
     if not els:
         return None
+    stage_first(els)
     out: dict[str, Any] = {"elements": els}
     if spec.get("bg") in BGS:
         out["bg"] = spec["bg"]

@@ -111,3 +111,39 @@ def test_merge_plan_turns_cards_into_card_graphics():
     assert cards[0]["card"]["w"] == 1920 and raw["studio"]["cards"] == 1
     assert "card" in TEMPLATES and TEMPLATES["card"].layouts == ("fullscreen", "split", "overlay")
     assert "cards" in S.MOTION["properties"] and "html" in S.CARD_REVISE["properties"]
+
+
+def test_check_accepts_bundled_display_fonts(tmp_path):
+    """F-4(10/1): 카드의 --font-heavy·--font-round·--font-hand·--font-numeral(Black Han Sans·Jua·Nanum Pen Script·
+    Playfair Display)을 check.mjs 가 '번들 아님'으로 걸러 키워드 카드로 바뀌었다. 렌더와 같은 Chrome 으로 확인."""
+    import shutil
+
+    import pytest
+
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    html = ('<div class="card"><p class="k">핵심</p><h1 class="h">여백은 숨</h1><p class="m">손으로 쓴 메모</p>'
+            '<p class="n">1956</p></div>')
+    css = (".card{background:#F5F2EA;color:#26211E;padding:80px;width:1920px;height:1080px;box-sizing:border-box}"
+           ".k{font-family:var(--font-round);font-size:48px}.h{font-family:var(--font-heavy);font-size:120px}"
+           ".m{font-family:var(--font-hand);font-size:56px}"
+           ".n{font-family:var(--font-numeral);font-style:italic;font-weight:700;font-size:64px}")
+    card = clean_card({"id": "f1", "html": html, "css": css, "style": "editorial"}, layout="fullscreen")
+    card["id"] = "f1"
+    res = check_cards([card], node=find_node(""), out_dir=tmp_path, fps=30, durations={"f1": 5.0},
+                      browser_executable=browser)
+    assert res["f1"]["ok"], res["f1"]["problems"]
+
+
+def test_card_pure_white_and_black_backgrounds_become_house_paper_and_ink():
+    """F-10(10/1): 순백·순흑 카드가 크림 메모 사이에 끼어 재질이 네 가지였다 — 배경만 하우스 토큰으로(글자색은 그대로)."""
+    c = clean_card({"id": "w", "html": '<div class="card"><h1 class="t">근접성</h1></div>',
+                    "css": ".card{background:#ffffff;color:#000}.t{background-color: black;color:#fff}"}, layout="fullscreen")
+    assert c and "var(--paper)" in c["css"] and "var(--ink)" in c["css"]
+    assert "#ffffff" not in c["css"].lower() and "black" not in c["css"].lower()
+    assert "color:#000" in c["css"].replace(" ", "") and "color:#fff" in c["css"].replace(" ", "")
+    tsx = (ROOT / "renderer" / "src" / "components" / "card" / "HtmlCard.tsx").read_text(encoding="utf-8")
+    assert "'--white': NOTE.paper" in tsx and "'--ink': NOTE.ink" in tsx

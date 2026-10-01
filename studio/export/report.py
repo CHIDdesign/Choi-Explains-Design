@@ -41,7 +41,7 @@ def youtube_text(plan: dict[str, Any], chapters: list[dict], shorts: list[dict],
 def edit_report(*, title: str, source_duration: float, long_duration: float, align_report: dict,
                 utts: list, graphics: list[dict], chapters: list[dict], shorts: list[dict],
                 director: str, usage: list[dict], broll: list[dict], studio: dict | None = None,
-                qa: list[dict] | None = None) -> str:
+                qa: list[dict] | None = None, gate: str = "") -> str:
     removed = [u for u in utts if not u.kept]
     lines = [f"# 편집 리포트 — {title}", "",
              f"- 편집 판단: {director}",
@@ -52,6 +52,8 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
              f"- 대본 커버리지 {align_report.get('script_coverage', 0) * 100:.0f}%"
              + (f" · **최종 편집본 대본 문장 {fid.get('sentences', 0) - len(fid.get('missing') or [])}/"
                 f"{fid.get('sentences', 0)}개 들어감**" if (fid := align_report.get("fidelity") or {}) else ""), ""]
+    if gate:            # 🚦 품질 게이트가 첫 절(검토가 필요하면 맨 위에서 보이게)
+        lines += [gate.rstrip("\n"), ""]
     if studio:
         lines += ["## 🎬 AI 스튜디오 브리프", "",
                   f"- 로그라인: {studio.get('logline', '')}",
@@ -88,6 +90,14 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         lines.append(f"- 되살림(최종 확인 — 편집본에서 빠져 원본에서 다시 넣음): {t}")
     for t in align_report.get("director_drop_refused") or []:
         lines.append(f"- 삭제 거절: {t}")
+    passes = align_report.get("passes") or []
+    if len(passes) > 1:
+        if align_report.get("pass_mode") == "best_pass":
+            lines.append(f"- 대본 읽기 회차: {len(passes)}회 — {int(align_report.get('main_pass', 0)) + 1}차를 주 테이크로 한 편으로 "
+                         "합침(다른 회차는 빠진 문장 보강에만). 회차별 커버리지 "
+                         + " · ".join(f"{p['idx'] + 1}차 {p['coverage'] * 100:.0f}%" for p in passes))
+        else:
+            lines.append(f"- 대본 읽기 회차: {len(passes)}회(나눠 읽음) — 같은 문장은 가장 좋은 테이크 하나만")
     cr = align_report.get("cut_review") or {}
     if cr:
         lines.append(f"- ✂️ 컷 편집 총괄(Opus): 되살린 발화 {len(cr.get('restored_utts') or [])} · 더 뺀 발화 "

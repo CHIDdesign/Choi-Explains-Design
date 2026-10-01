@@ -139,17 +139,20 @@ export const RoughBorder: React.FC<{b?: Box; t?: number; seed?: number; opacity?
   );
 };
 
-/** 라벨 태그 — white: 흰 둥근 상자 + 검정 굵은 글씨(레퍼런스 1), black: 검정 상자 + 흰 글씨(레퍼런스 3) */
+/** 라벨 태그 — white: 흰 둥근 상자 + 검정 굵은 글씨(레퍼런스 1), black: 검정 상자 + 흰 글씨(레퍼런스 3).
+ * 글자가 비면 그리지 않는다(빈 상자 금지 — 내부 이름 대신 빈 라벨이 오는 곳). */
 export const LabelTag: React.FC<{text: string; variant?: 'white' | 'black'; size?: number;
   style?: React.CSSProperties}> = ({text, variant = 'white', size = 32, style}) => (
-  <div style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: variant === 'white' ? 800 : 600,
-    fontSize: size, lineHeight: 1.25, letterSpacing: '-0.02em', whiteSpace: 'nowrap',
-    color: variant === 'white' ? PAPER.ink : PAPER.white,
-    background: variant === 'white' ? PAPER.white : 'rgba(17,17,17,0.94)',
-    borderRadius: variant === 'white' ? size * 0.22 : 2, padding: `${size * 0.14}px ${size * 0.42}px ${size * 0.18}px`,
-    boxShadow: variant === 'black' ? '0 6px 18px rgba(0,0,0,0.35)' : undefined, ...style}}>
-    {text}
-  </div>
+  text && text.trim() ? (
+    <div style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: variant === 'white' ? 800 : 600,
+      fontSize: size, lineHeight: 1.25, letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+      color: variant === 'white' ? PAPER.ink : PAPER.white,
+      background: variant === 'white' ? PAPER.white : 'rgba(17,17,17,0.94)',
+      borderRadius: variant === 'white' ? size * 0.22 : 2, padding: `${size * 0.14}px ${size * 0.42}px ${size * 0.18}px`,
+      boxShadow: variant === 'black' ? '0 6px 18px rgba(0,0,0,0.35)' : undefined, ...style}}>
+      {text}
+    </div>
+  ) : null
 );
 
 /** 우상단 출처 표기(레퍼런스: "출처: …") */

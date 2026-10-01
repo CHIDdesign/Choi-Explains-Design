@@ -35,7 +35,18 @@ class StockCandidate:
     def credit(self) -> str:
         if self.provider == "Unsplash" and self.author:
             return f"Photo by {self.author} on Unsplash"  # Unsplash 가이드라인 표기
+        if self.provider == "Openverse":
+            # CC 라이선스는 작가·라이선스·출처를 밝혀야 한다 — 화면에는 짧게, 전문(attribution)은 업로드 정보에
+            from .openverse import license_label
+            lic = license_label(self.extra.get("license", ""), self.extra.get("license_version", ""))
+            src = self.extra.get("source") or "Openverse"
+            return " · ".join(x for x in (self.author, lic, f"{src} via Openverse") if x)
         return f"{self.author} / {self.provider}" if self.author else self.provider
+
+    @property
+    def attribution(self) -> str:
+        """라이선스가 요구하는 출처 전문(Openverse 의 attribution) — 없으면 짧은 출처."""
+        return str(self.extra.get("attribution") or "") or self.credit
 
     @property
     def key(self) -> str:

@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional
 from .. import net
 from ..media.ffmpeg import FFmpeg
 from ..util import Cancelled, CancelToken, LogFn, noop_log, read_json, text_hash, write_json
+from ..director.plan import type_card
 from .base import StockCandidate, StockError
 from .providers import StockHub
 from .process import prepare_photo, prepare_video
@@ -94,6 +95,7 @@ class StockResearcher:
         self.cache_file = work / "stock.json"
         self.cache: dict[str, Any] = read_json(self.cache_file, {})
         self.credits: list[dict[str, Any]] = []
+        self.fallbacks: list[dict[str, Any]] = []        # 못 구한 요청 → 자료 카드(type_card) 또는 잃음(lost)
         self.stats: dict[str, int] = {}
 
     # ------------------------------------------------------------------
@@ -208,8 +210,11 @@ class StockResearcher:
             self.cache[k] = got or {"none": True, "why": "download_failed"}
             progress(0.5 + 0.5 * (i + 1) / max(1, len(todo)))
         write_json(self.cache_file, self.cache)
-        # 4) 그래픽에 반영
+        # 4) 그래픽에 반영 — 못 구한 요청은 조용히 지우지 않는다: 리서처가 준 화면 글(caption)이 있으면 타이포 자료 카드로,
+        #    없으면 그 자리를 비우고 무엇을 잃었는지 로그(P0-4)
         used: set[str] = set()
+        self.stats.setdefault("fallback", 0)
+        self.stats.setdefault("lost", 0)
         for gl in graphic_lists:
             keep = []
             for g in gl:
@@ -218,6 +223,18 @@ class StockResearcher:
                     continue
                 res = self.cache.get(request_key(g.get("stock") or {}), {})
                 if not res or res.get("none") or not (self.public / res["src"]).exists():
+                    why = (res or {}).get("why", "no_results")
+                    card = type_card(g)
+                    st = g.get("stock") or {}
+                    if card is not None:
+                        self.stats["fallback"] += 1
+                        keep.append(card)
+                        self.log(f"🎞 '{st.get('query_en')}' 소재 없음({why}) → 자료 카드 「{card['title']}」")
+                    else:
+                        self.stats["lost"] += 1
+                        self.log(f"🎞 '{st.get('query_en')}' 소재 없음({why}) — 그 자리는 비웁니다")
+                    self.fallbacks.append({"query": st.get("query_en"), "origin": "type_card" if card else "lost",
+                                           "why": why})
                     continue
                 g.update(src=res["src"], kind=res["kind"], credit=res["credit"], stock_url=res["url"])
                 if res["kind"] == "photo":
@@ -227,7 +244,8 @@ class StockResearcher:
                     used.add(res["src"])
                     self.stats["used"] += 1
                     self.credits.append({"query": g["stock"].get("query_en"), "origin": res.get("provider", "stock"),
-                                         "credit": res["credit"], "url": res["url"], "author_url": res.get("author_url", "")})
+                                         "credit": res["credit"], "url": res["url"], "author_url": res.get("author_url", ""),
+                                         "attribution": res.get("attribution", "")})
             gl[:] = keep
         self.log(f"🎞 스톡 확보 {len(used)}건")
 
@@ -287,10 +305,10 @@ class StockResearcher:
                 raw = self.hub.download(c, self.work / "stock_raw" / f"img_{c.key}.bin")
                 dst = self._prepare_image(raw, f"img_{c.key}")
                 res = {"src": f"broll/{dst.name}", "kind": "image", "credit": c.credit, "url": c.url,
-                       "author_url": c.author_url, "provider": c.provider}
+                       "author_url": c.author_url, "provider": c.provider, "attribution": c.attribution}
                 self.cache[key] = res
                 self.credits.append({"query": query, "origin": c.provider, "credit": c.credit, "url": c.url,
-                                     "author_url": c.author_url})
+                                     "author_url": c.author_url, "attribution": c.attribution})
                 return res
             except Cancelled:
                 raise
@@ -339,4 +357,4 @@ class StockResearcher:
                 prepare_photo(raw, dst)
         self.log(f"🎞 {c.provider} {c.kind} {c.id} · {c.credit}")
         return {"src": f"broll/{dst.name}", "kind": c.kind, "credit": c.credit, "url": c.url,
-                "author_url": c.author_url, "provider": c.provider}
+                "author_url": c.author_url, "provider": c.provider, "attribution": c.attribution}

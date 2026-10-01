@@ -228,12 +228,19 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     const n = parseInt(c.number, 10);
     return Number.isFinite(n) ? `${n}. ${c.title}` : c.title;
   };
+  // 퇴장 순서(docs/upgrade/06 F-8): 화자가 판·액자에서 돌아오는 마지막 12(종이 15)프레임 전에 그래픽이 먼저 사라진다 —
+  // 예전엔 반투명해진 도식이 커지는 얼굴 위에 겹쳤다. 화자가 돌아오는 구간의 마지막 그래픽에만(이어지는 그래픽은 그대로)
+  const exitLead = (g: Graphic) => {
+    const sp = spans.find((x) => Math.abs(x.end - g.end) < 1e-3 && g.start >= x.start - 1e-3);
+    return sp ? (sp.look === 'paper' ? 15 : 12) : 0;
+  };
   const seq = (g: Graphic) => {
     const from = toFrame(g.start, fps);
     const dur = Math.max(1, toFrame(g.end, fps) - from);
+    const shown = Math.max(Math.min(dur, 8), dur - exitLead(g));
     return (
       <Sequence key={g.id} from={from} durationInFrames={dur} name={`${g.template} ${g.id}`}>
-        <GraphicSeq g={g} dur={dur} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
+        <GraphicSeq g={g} dur={shown} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
           faceX={sampleFace(props.face, g.start + 0.3).x} />
       </Sequence>
     );

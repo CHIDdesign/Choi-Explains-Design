@@ -21,6 +21,16 @@ def _text_or_file(v: str) -> str:
     return _read(v) if v and Path(v).exists() else (v or "")
 
 
+def _run(pipe, until: str) -> int:
+    from .gate import GateBlocked
+    try:
+        pipe.run(until=until)
+    except GateBlocked as e:
+        print(f"\n{e}\n\n이대로 만들려면: python -m studio rerender \"{pipe.dir}\" --force-render", flush=True)
+        return 3
+    return 0
+
+
 def cli(argv: list[str]) -> int:
     from .pipeline import JobSpec, Pipeline, new_job_dir
     from .settings import Settings
@@ -47,9 +57,12 @@ def cli(argv: list[str]) -> int:
     r.add_argument("--no-long", action="store_true")
     r.add_argument("--until", default="all", choices=["all", "plan"])
     r.add_argument("--job-dir", default="")
+    force_help = "품질 게이트가 멈춰도 렌더(원본·대본을 확인한 뒤에만 — 이유는 output/품질게이트_중단.md)"
+    r.add_argument("--force-render", action="store_true", help=force_help)
     rr = sub.add_parser("rerender", help="작업 폴더를 다시 렌더")
     rr.add_argument("job_dir")
     rr.add_argument("--until", default="all", choices=["all", "plan"])
+    rr.add_argument("--force-render", action="store_true", help=force_help)
     args = ap.parse_args(argv)
 
     settings = Settings.load()
@@ -72,13 +85,13 @@ def cli(argv: list[str]) -> int:
                        out_height=args.height, pace=args.pace, use_claude=not args.no_claude,
                        make_long=not args.no_long)
         job_dir = Path(args.job_dir) if args.job_dir else new_job_dir(settings, spec.working_title())
-        Pipeline(spec, settings, job_dir, log=log, progress=progress).run(until=args.until)
-        return 0
+        return _run(Pipeline(spec, settings, job_dir, log=log, progress=progress, force_render=args.force_render),
+                    args.until)
     if args.cmd == "rerender":
         job_dir = Path(args.job_dir)
         spec = JobSpec.from_dict(read_json(job_dir / "job.json", {}))
-        Pipeline(spec, settings, job_dir, log=log, progress=progress).run(until=args.until)
-        return 0
+        return _run(Pipeline(spec, settings, job_dir, log=log, progress=progress, force_render=args.force_render),
+                    args.until)
     ap.print_help()
     return 1
 

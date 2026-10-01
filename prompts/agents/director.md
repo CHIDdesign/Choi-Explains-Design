@@ -35,8 +35,15 @@
 - `shorts_ideas`: 숏폼 후보 **연속 구간**과 각도(후킹 가이드 참고). 롱폼을 안 본 사람도 이해되는 완결된 아이디어 하나씩.
 - `caption_direction`: 자막 톤 한 줄(예: "절제된 에디토리얼, 전문용어만 마커").
 - `music`: 무드와 운용.
-- `bgm_mood`: 롱폼 배경음악 무드. minimal | calm | ambient | lofi | piano | inspiring | upbeat. 기본은 minimal 또는 piano.
-- `shorts_bgm_mood`: 숏폼 배경음악 무드. 기본은 upbeat 또는 inspiring.
+- `bgm_mood`: 롱폼 배경음악 무드. minimal | calm | ambient | lofi | piano | inspiring | upbeat. 기본은 minimal 또는 ambient —
+  한 영상에 한 곡이고 말 아래 깔리는 바닥이다(코퍼레이트·업비트는 교육 채널 톤에 맞지 않는다).
+- `shorts_bgm_mood`: 숏폼 배경음악 무드. 숏폼은 롱폼 곡을 물려받으므로 `bgm_mood` 와 같은 값을 적는다(업비트·인스파이어링 기본 없음).
 - `notes_for_team`: 팀 전체에 주는 연출 메모(짧게).
+- `integrity`: 녹음의 구조적 이상을 **코드가 읽는 필드로** 낸다(자유 글 메모에만 적지 않는다).
+  - 전사본에 같은 대본이 두 번 이상 들어 있으면(처음부터 끝까지 다시 읽은 녹음) `passes`(읽은 횟수) · `main_pass_segs`(주 테이크로
+    쓸 회차의 S번호 범위 — 보통 더 잘 말한 나중 회차) · `drop_ranges`(쓰지 않을 회차의 S번호 범위와 이유)를 낸다. 앱은 남는 회차가 그
+    대본 구간을 덮을 때만 범위를 지운다(대본 문장이 사라지지 않는다).
+  - `expected_sec`: 주 테이크만 썼을 때 예상 길이(초). `issues`: 그 밖의 이상(이름을 잘못 말함, 인사가 두 번 등).
+  - 이상이 없으면 `passes`=1, `main_pass_segs`=전체, 나머지는 비운다.
 
 {{user_direction}}
