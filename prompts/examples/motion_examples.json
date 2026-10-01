@@ -1,0 +1,174 @@
+{
+ "proximity": {
+  "bg": "board",
+  "label": "게슈탈트 · 근접성",
+  "elements": [
+   {
+    "type": "text",
+    "text": "가까이 있으면 한 무리로 본다",
+    "x": 50,
+    "y": 14,
+    "size": 7.5,
+    "weight": 800,
+    "highlight": "한 무리",
+    "at": 0.1
+   },
+   {
+    "type": "dots",
+    "count": 12,
+    "cols": 12,
+    "gap": 5.4,
+    "r": 1.3,
+    "x": 50,
+    "y": 52,
+    "at": 0.4,
+    "groups": [
+     4,
+     4,
+     4
+    ],
+    "groupAt": 1.8,
+    "groupGap": 9,
+    "highlight": [
+     4,
+     5,
+     6,
+     7
+    ]
+   },
+   {
+    "type": "text",
+    "text": "같은 점, 다른 간격",
+    "x": 50,
+    "y": 70,
+    "size": 4.2,
+    "weight": 600,
+    "color": "dim",
+    "at": 2.8,
+    "enter": "up"
+   },
+   {
+    "type": "text",
+    "text": "Proximity",
+    "x": 50,
+    "y": 86,
+    "size": 5,
+    "font": "latin",
+    "color": "dim",
+    "at": 3.2,
+    "enter": "fade"
+   }
+  ]
+ },
+ "form_function": {
+  "bg": "board",
+  "label": "형태와 기능",
+  "grid": true,
+  "elements": [
+   {
+    "type": "rect",
+    "w": 18,
+    "h": 30,
+    "radius": 18,
+    "x": 28,
+    "y": 48,
+    "at": 0.2
+   },
+   {
+    "type": "circle",
+    "r": 7,
+    "x": 72,
+    "y": 48,
+    "at": 0.6
+   },
+   {
+    "type": "arrow",
+    "x": 40,
+    "y": 48,
+    "x2": 62,
+    "y2": 48,
+    "at": 1.2,
+    "color": "accent",
+    "strokeWidth": 4
+   },
+   {
+    "type": "text",
+    "text": "형태",
+    "x": 28,
+    "y": 76,
+    "size": 6,
+    "at": 1.0
+   },
+   {
+    "type": "text",
+    "text": "기능",
+    "x": 72,
+    "y": 76,
+    "size": 6,
+    "at": 1.6,
+    "highlight": "기능"
+   },
+   {
+    "type": "text",
+    "text": "Form follows function",
+    "x": 50,
+    "y": 12,
+    "size": 5,
+    "font": "latin",
+    "color": "dim",
+    "at": 2.0,
+    "enter": "fade"
+   }
+  ]
+ },
+ "usability_stat": {
+  "bg": "ink",
+  "label": "사용성 테스트",
+  "elements": [
+   {
+    "type": "counter",
+    "from": 0,
+    "to": 85,
+    "suffix": "%",
+    "size": 34,
+    "x": 30,
+    "y": 50,
+    "dur": 1.4,
+    "at": 0.2
+   },
+   {
+    "type": "text",
+    "text": "다섯 명이면\n문제의 대부분이 보인다",
+    "x": 52,
+    "y": 42,
+    "size": 6,
+    "weight": 700,
+    "anchor": "left",
+    "align": "left",
+    "reveal": "lines",
+    "at": 0.6
+   },
+   {
+    "type": "bar",
+    "w": 36,
+    "h": 2.6,
+    "value": 0.85,
+    "label": "5명",
+    "x": 52,
+    "y": 66,
+    "at": 1.2
+   },
+   {
+    "type": "bar",
+    "w": 36,
+    "h": 2.6,
+    "value": 0.31,
+    "label": "1명",
+    "x": 52,
+    "y": 80,
+    "at": 1.5,
+    "color": "dim"
+   }
+  ]
+ }
+}

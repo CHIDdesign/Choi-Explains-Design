@@ -1,0 +1,37 @@
+{
+  "name": "choi-studio-renderer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion renderer for Choi Explains Design (long-form + shorts + thumbnails)",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "gallery": "remotion studio src/index.ts --props=./scripts/gallery-props.json",
+    "render": "node scripts/render.mjs",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/copy-fonts.mjs"
+  },
+  "dependencies": {
+    "@fontsource/anton": "5.3.0",
+    "@fontsource/black-han-sans": "5.3.0",
+    "@fontsource/jua": "5.3.0",
+    "@fontsource/nanum-pen-script": "5.3.0",
+    "@fontsource/noto-serif-kr": "5.3.0",
+    "@fontsource/playfair-display": "5.3.0",
+    "@remotion/bundler": "4.0.530",
+    "@remotion/cli": "4.0.530",
+    "@remotion/fonts": "4.0.530",
+    "@remotion/layout-utils": "4.0.530",
+    "@remotion/paths": "4.0.530",
+    "@remotion/renderer": "4.0.530",
+    "gsap": "3.15.0",
+    "pretendard": "1.3.9",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.530"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

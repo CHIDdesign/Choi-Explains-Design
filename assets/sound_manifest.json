@@ -1,0 +1,1063 @@
+{
+ "about": "Choi Studio 효과음·배경음악·잡음 제거 모델 목록. 파일은 처음 실행 때 assets/sound/ 로 내려받는다(저장소에는 넣지 않음). 모든 주소는 쿠키·API 키 없이 GET 으로 받을 수 있는 것만 확인해서 넣었다(2026-09-29, sha256 검증).",
+ "sfx": [
+  {
+   "id": "whoosh_soft_1",
+   "category": "whoosh_soft",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/01/19/audio_fca0fdbc60.mp3?filename=wind-swoosh-short-289744.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/01/19/audio_fca0fdbc60.mp3"
+   ],
+   "duration": 0.392,
+   "peak_s": 0.07,
+   "lufs": -25.4,
+   "sha256": "3d8d01e534b857d442f6653b4abd9d7aad3b37a6e96d7adb420c4db6c8012dfd",
+   "bytes": 12538,
+   "title": "Wind Swoosh Short",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-wind-swoosh-short-289744/"
+  },
+  {
+   "id": "whoosh_soft_2",
+   "category": "whoosh_soft",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1489/1489-preview.mp3",
+   "mirrors": [],
+   "duration": 2.351,
+   "peak_s": 0.72,
+   "lufs": -18.0,
+   "sha256": "8af9843a636d3b4961f0c8b3545a21e674bd43d59f97d5c38d3f9a3f04674fd2",
+   "bytes": 71724,
+   "title": "Air woosh",
+   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+  },
+  {
+   "id": "whoosh_soft_3",
+   "category": "whoosh_soft",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1461/1461-preview.mp3",
+   "mirrors": [],
+   "duration": 1.437,
+   "peak_s": 0.16,
+   "lufs": -15.5,
+   "sha256": "e702dc99aac9ba1b9a12416068606e6c4c3fc4c7896555bed490745373df0d76",
+   "bytes": 44058,
+   "title": "Short wind swoosh",
+   "page": "https://mixkit.co/free-sound-effects/swoosh/"
+  },
+  {
+   "id": "whoosh_fast_1",
+   "category": "whoosh_fast",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/08/03/audio_f3fcedb3d6.mp3?filename=universfield-fast-swoosh-383967.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/08/03/audio_f3fcedb3d6.mp3"
+   ],
+   "duration": 1.056,
+   "peak_s": 0.135,
+   "lufs": -19.7,
+   "sha256": "0681e6f903496c04fd661b3f44b09132a2555aed5bffd115356c75ea73bceda8",
+   "bytes": 33792,
+   "title": "Fast Swoosh",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-fast-swoosh-383967/"
+  },
+  {
+   "id": "whoosh_fast_2",
+   "category": "whoosh_fast",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/01/02/audio_b9c068df47.mp3?filename=futuristic-zoom-whoosh-2-183978.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/01/02/audio_b9c068df47.mp3"
+   ],
+   "duration": 2.544,
+   "peak_s": 0.745,
+   "lufs": -14.1,
+   "sha256": "f76f7bb42ea075c4f791a19de93d489ffecd6ee744e87165aabe804919c705e6",
+   "bytes": 81408,
+   "title": "Futuristic Zoom Whoosh 2",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-futuristic-zoom-whoosh-2-183978/"
+  },
+  {
+   "id": "whoosh_fast_3",
+   "category": "whoosh_fast",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1490/1490-preview.mp3",
+   "mirrors": [],
+   "duration": 1.802,
+   "peak_s": 0.72,
+   "lufs": -15.4,
+   "sha256": "b88fd5d484251930efd6eca78c4340339908ea29d1e69bd24fb5191a10da4f78",
+   "bytes": 57624,
+   "title": "Fast whoosh transition",
+   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+  },
+  {
+   "id": "whoosh_deep_1",
+   "category": "whoosh_deep",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2604/2604-preview.mp3",
+   "mirrors": [],
+   "duration": 3.004,
+   "peak_s": 0.495,
+   "lufs": -12.8,
+   "sha256": "121333b65bc1bcde3eaa5f155f136df258100f4d4b4d1c5e8cc67015d1e6387c",
+   "bytes": 92185,
+   "title": "Deep air woosh",
+   "page": "https://mixkit.co/free-sound-effects/woosh/"
+  },
+  {
+   "id": "whoosh_deep_2",
+   "category": "whoosh_deep",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1143/1143-preview.mp3",
+   "mirrors": [],
+   "duration": 4.101,
+   "peak_s": 0.555,
+   "lufs": -13.2,
+   "sha256": "9854bff8a78fcebef95350ff0ec72a41ba449ab372bbd601b55d84de13bd626d",
+   "bytes": 115904,
+   "title": "Cinematic whoosh deep impact",
+   "page": "https://mixkit.co/free-sound-effects/impact/"
+  },
+  {
+   "id": "whoosh_deep_3",
+   "category": "whoosh_deep",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1486/1486-preview.mp3",
+   "mirrors": [],
+   "duration": 6.792,
+   "peak_s": 0.615,
+   "lufs": -13.7,
+   "sha256": "b08198fe3a699296aca18c5911fd140dded026639be294036151dbc47a317f02",
+   "bytes": 201481,
+   "title": "Cinematic tunnel reverb woosh",
+   "page": "https://mixkit.co/free-sound-effects/whoosh/"
+  },
+  {
+   "id": "swoosh_short_1",
+   "category": "swoosh_short",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/04/18/audio_7d59b40dd6.mp3?filename=universfield-swoosh-05-329226.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/04/18/audio_7d59b40dd6.mp3"
+   ],
+   "duration": 1.152,
+   "peak_s": 0.225,
+   "lufs": -20.2,
+   "sha256": "85fb1b2114b80f5dec0011ce659cf119794f835ca2af184ea2ac105a9630c24d",
+   "bytes": 36864,
+   "title": "Swoosh 05",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-swoosh-05-329226/"
+  },
+  {
+   "id": "swoosh_short_2",
+   "category": "swoosh_short",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2022/04/29/audio_f28098ce3c.mp3?filename=swing-whoosh-110410.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2022/04/29/audio_f28098ce3c.mp3"
+   ],
+   "duration": 0.366,
+   "peak_s": 0.115,
+   "lufs": -32.5,
+   "sha256": "acac9d9e5137fdb038f39aef89650b437a30a6b38c833859115c0677692c77dd",
+   "bytes": 11702,
+   "title": "Swing Whoosh",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-swing-whoosh-110410/"
+  },
+  {
+   "id": "swoosh_short_3",
+   "category": "swoosh_short",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1464/1464-preview.mp3",
+   "mirrors": [],
+   "duration": 1.149,
+   "peak_s": 0.11,
+   "lufs": -16.9,
+   "sha256": "591d7273938a10f65e064a5a8577a655c72bbf7d13ef3ce625dfcffa860ec879",
+   "bytes": 35288,
+   "title": "Quick swoosh accent",
+   "page": "https://mixkit.co/free-sound-effects/swoosh/"
+  },
+  {
+   "id": "pop_1",
+   "category": "pop",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/05/29/audio_145c0e7b22.mp3?filename=universfield-bubble-pop-06-351337.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/05/29/audio_145c0e7b22.mp3"
+   ],
+   "duration": 1.056,
+   "peak_s": 0.13,
+   "lufs": -18.5,
+   "sha256": "bb2b4b4514f3f5793a3fa04a8552812f2564f98c99da7a2b1e4d168c184dad28",
+   "bytes": 33792,
+   "title": "Bubble Pop 06",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-bubble-pop-06-351337/"
+  },
+  {
+   "id": "pop_2",
+   "category": "pop",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/03/12/audio_2952099e82.mp3?filename=pop-clean-312648.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/03/12/audio_2952099e82.mp3"
+   ],
+   "duration": 2.04,
+   "peak_s": 0.04,
+   "lufs": -16.8,
+   "sha256": "93e44e8f096a1d32fabf513ab02c4f122094774067bfccbbdff0404313fa6b03",
+   "bytes": 65280,
+   "title": "Pop Clean",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-pop-clean-312648/"
+  },
+  {
+   "id": "pop_3",
+   "category": "pop",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/04/16/audio_e64f22fd21.mp3?filename=sharp-pop-328170.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/04/16/audio_e64f22fd21.mp3"
+   ],
+   "duration": 1.019,
+   "peak_s": 0.035,
+   "lufs": -17.0,
+   "sha256": "b89f463a8ebc94babe30ec854cbf7493eafdee8c04ea9eb12b444e44166b0b7b",
+   "bytes": 32600,
+   "title": "Sharp Pop",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-sharp-pop-328170/"
+  },
+  {
+   "id": "click_1",
+   "category": "click",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/08/03/audio_1df12d5efc.mp3?filename=universfield-computer-mouse-click-02-383961.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/08/03/audio_1df12d5efc.mp3"
+   ],
+   "duration": 1.056,
+   "peak_s": 0.07,
+   "lufs": -28.8,
+   "sha256": "e9fdb3ed918d112c06a6573fae13c236b18d7c6d2225ab917048e20851d60feb",
+   "bytes": 33792,
+   "title": "Computer Mouse Click 02",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-computer-mouse-click-02-383961/"
+  },
+  {
+   "id": "click_2",
+   "category": "click",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1126/1126-preview.mp3",
+   "mirrors": [],
+   "duration": 0.496,
+   "peak_s": 0.18,
+   "lufs": -36.5,
+   "sha256": "0ce47beb583157b856876924b70392ab4483d7babb1661352d66f7191345ef0c",
+   "bytes": 13046,
+   "title": "Interface click",
+   "page": "https://mixkit.co/free-sound-effects/click/"
+  },
+  {
+   "id": "click_3",
+   "category": "click",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1140/1140-preview.mp3",
+   "mirrors": [],
+   "duration": 0.47,
+   "peak_s": 0.05,
+   "lufs": -17.2,
+   "sha256": "8be2160373d4463bfea8aa3125747ae9adf0b3deb7e933d1a974c684f3d95e7d",
+   "bytes": 12944,
+   "title": "Tech click",
+   "page": "https://mixkit.co/free-sound-effects/click/"
+  },
+  {
+   "id": "riser_1",
+   "category": "riser",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/363/363123_6687700-hq.mp3",
+   "mirrors": [],
+   "duration": 3.291,
+   "peak_s": 3.115,
+   "lufs": -17.9,
+   "sha256": "12b32cd18a5888822c5b4ecc3849c8df6f9c68fea9871b8360b039a856e1ba51",
+   "bytes": 92591,
+   "title": "Cinematic Riser 2.wav",
+   "page": "https://freesound.org/people/original_sound/sounds/363123/"
+  },
+  {
+   "id": "riser_2",
+   "category": "riser",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/376/376576_6687700-hq.mp3",
+   "mirrors": [],
+   "duration": 4.049,
+   "peak_s": 3.62,
+   "lufs": -19.6,
+   "sha256": "af2dfa590f2080c7eb86e3c5c84a9e433a07003ab944eabf8ff9ac83cd14d46b",
+   "bytes": 91058,
+   "title": "Riser Quick 2",
+   "page": "https://freesound.org/people/original_sound/sounds/376576/"
+  },
+  {
+   "id": "riser_3",
+   "category": "riser",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/790/790-preview.mp3",
+   "mirrors": [],
+   "duration": 2.612,
+   "peak_s": 2.54,
+   "lufs": -22.3,
+   "sha256": "22158444a8bab90fdf014c305d37e21f74882e7e6b1df186bc5c9886b48d0ca3",
+   "bytes": 82884,
+   "title": "Cinematic trailer riser",
+   "page": "https://mixkit.co/free-sound-effects/cinematic/"
+  },
+  {
+   "id": "impact_1",
+   "category": "impact",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/05/31/audio_be1e4daf3e.mp3?filename=impact-cinematic-boom-5-352465.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/05/31/audio_be1e4daf3e.mp3"
+   ],
+   "duration": 2.088,
+   "peak_s": 0.355,
+   "lufs": -16.6,
+   "sha256": "824993119db92d61141199500533294aac3ea01b83e3410396a4c5f65aa54183",
+   "bytes": 66816,
+   "title": "Cinematic Impact Boom 05",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-cinematic-impact-boom-05-352465/"
+  },
+  {
+   "id": "impact_2",
+   "category": "impact",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/549/549-preview.mp3",
+   "mirrors": [],
+   "duration": 4.545,
+   "peak_s": 1.76,
+   "lufs": -19.1,
+   "sha256": "c4f8b69331a5b24b5e072c6514adb43b2023ff3c2e8b87b153346b37620b0221",
+   "bytes": 137505,
+   "title": "Deep cinematic subtle drum impact",
+   "page": "https://mixkit.co/free-sound-effects/cinematic/"
+  },
+  {
+   "id": "impact_3",
+   "category": "impact",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/780/780-preview.mp3",
+   "mirrors": [],
+   "duration": 7.784,
+   "peak_s": 0.19,
+   "lufs": -14.5,
+   "sha256": "661d10a08644b5629e68d57f35f3f0928ec3c0dc98df425cf979f08b74871a13",
+   "bytes": 233740,
+   "title": "Cinematic impact echo",
+   "page": "https://mixkit.co/free-sound-effects/impact/"
+  },
+  {
+   "id": "sub_drop_1",
+   "category": "sub_drop",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/428/428073_4067257-hq.mp3",
+   "mirrors": [],
+   "duration": 3.788,
+   "peak_s": 0.78,
+   "lufs": -8.1,
+   "sha256": "cd886173aa0270c9adbdb04fa14eb7f4cde53bd70506a4bf8d6e14de00e6bfd9",
+   "bytes": 44575,
+   "title": "Sub Drop Smooth.wav",
+   "page": "https://freesound.org/people/newagesoup/sounds/428073/"
+  },
+  {
+   "id": "sub_drop_2",
+   "category": "sub_drop",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/212/212768_71257-hq.mp3",
+   "mirrors": [],
+   "duration": 4.824,
+   "peak_s": 0.39,
+   "lufs": -5.7,
+   "sha256": "6a964a1b97bfdfccafbc05169029690f60ddf00959f3d341c8a941b02e9ebb71",
+   "bytes": 98376,
+   "title": "Bass Drop",
+   "page": "https://freesound.org/people/qubodup/sounds/212768/"
+  },
+  {
+   "id": "sub_drop_3",
+   "category": "sub_drop",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2299/2299-preview.mp3",
+   "mirrors": [],
+   "duration": 1.149,
+   "peak_s": 0.09,
+   "lufs": -14.5,
+   "sha256": "8bd0c7fd63fbb8a4442ffe1176aa41b260d1fafbcf728e3c63648eb5bcd4e16b",
+   "bytes": 36222,
+   "title": "Short bass hit",
+   "page": "https://mixkit.co/free-sound-effects/hit/"
+  },
+  {
+   "id": "reverse_cymbal_1",
+   "category": "reverse_cymbal",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/165/165154_2997898-hq.mp3",
+   "mirrors": [],
+   "duration": 3.109,
+   "peak_s": 3.015,
+   "lufs": -17.6,
+   "sha256": "5f138c046f605691fd908d4de6bbd776473807c0b56224a2e9a900be5cfeac5f",
+   "bytes": 71585,
+   "title": "Rpeople_RevCrash2.wav",
+   "page": "https://freesound.org/people/rhythmpeople/sounds/165154/"
+  },
+  {
+   "id": "reverse_cymbal_2",
+   "category": "reverse_cymbal",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/30/30938_6281-hq.mp3",
+   "mirrors": [],
+   "duration": 5.146,
+   "peak_s": 5.085,
+   "lufs": -14.9,
+   "sha256": "ed8257d52ec953dac90af3d64505a845012f1ca40f5120f61041084549b7ee23",
+   "bytes": 116570,
+   "title": "crash1_reverse.wav",
+   "page": "https://freesound.org/people/Halleck/sounds/30938/"
+  },
+  {
+   "id": "reverse_cymbal_3",
+   "category": "reverse_cymbal",
+   "source": "freesound",
+   "url": "https://cdn.freesound.org/previews/110/110218_1763875-hq.mp3",
+   "mirrors": [],
+   "duration": 3.109,
+   "peak_s": 2.94,
+   "lufs": -28.3,
+   "sha256": "718e625538fc12c0aa7f5cb16ce15275133d13f747d9be4dfd319fdd097641f5",
+   "bytes": 73878,
+   "title": "reverse crash.wav",
+   "page": "https://freesound.org/people/genocidalguitar/sounds/110218/"
+  },
+  {
+   "id": "ding_1",
+   "category": "ding",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2022/11/21/audio_1b7f7e3ca3.mp3?filename=ding-126626.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2022/11/21/audio_1b7f7e3ca3.mp3"
+   ],
+   "duration": 1.128,
+   "peak_s": 0.095,
+   "lufs": -26.6,
+   "sha256": "421705f7822705620531f7884d93db408a8c679e810bac185e0cf6897b55d9a6",
+   "bytes": 36096,
+   "title": "Ding~",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-126626/"
+  },
+  {
+   "id": "ding_2",
+   "category": "ding",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2022/03/24/audio_c50d7fecf2.mp3?filename=ding-101377.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2022/03/24/audio_c50d7fecf2.mp3"
+   ],
+   "duration": 1.254,
+   "peak_s": 0.09,
+   "lufs": -24.0,
+   "sha256": "4d84f36954e59c852883d268408e745e510efa7849c9347953ef49737de73fa4",
+   "bytes": 40124,
+   "title": "Ding",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-ding-101377/"
+  },
+  {
+   "id": "ding_3",
+   "category": "ding",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/3109/3109-preview.mp3",
+   "mirrors": [],
+   "duration": 1.724,
+   "peak_s": 0.07,
+   "lufs": -22.2,
+   "sha256": "8b294a697c2e3396849d2aa1c0d5e40910a876be704791c4a1bcbeefae8ff252",
+   "bytes": 42891,
+   "title": "Relaxing bell chime",
+   "page": "https://mixkit.co/free-sound-effects/chimes/"
+  },
+  {
+   "id": "typing_1",
+   "category": "typing",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/06/06/audio_1a8e296837.mp3?filename=dragon-studio-typing-keyboard-asmr-356116.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/06/06/audio_1a8e296837.mp3"
+   ],
+   "duration": 8.098,
+   "peak_s": 2.87,
+   "lufs": -30.9,
+   "sha256": "8c454d6fcc54f701f5caf6722142fe4be03888b97e9ca3d8bbe882d04102a5eb",
+   "bytes": 259134,
+   "title": "Typing Keyboard ASMR",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-typing-keyboard-asmr-356116/"
+  },
+  {
+   "id": "typing_2",
+   "category": "typing",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1397/1397-preview.mp3",
+   "mirrors": [],
+   "duration": 2.168,
+   "peak_s": 1.13,
+   "lufs": -19.1,
+   "sha256": "3584ad18f294d90cb9af946446155fb0b67fa41aa5b7b9c1dc13dcf1eec2da95",
+   "bytes": 74535,
+   "title": "Electronic typing",
+   "page": "https://mixkit.co/free-sound-effects/type/"
+  },
+  {
+   "id": "typing_3",
+   "category": "typing",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1376/1376-preview.mp3",
+   "mirrors": [],
+   "duration": 3.918,
+   "peak_s": 0.905,
+   "lufs": -18.9,
+   "sha256": "7b2829a8d1eaaf262249856be4b6df2e1b3b67d408297b48c293e5828857e2f5",
+   "bytes": 79049,
+   "title": "Typing on an electronic device",
+   "page": "https://mixkit.co/free-sound-effects/typewriter/"
+  },
+  {
+   "id": "camera_shutter_1",
+   "category": "camera_shutter",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1432/1432-preview.mp3",
+   "mirrors": [],
+   "duration": 1.541,
+   "peak_s": 0.3,
+   "lufs": -22.9,
+   "sha256": "7a3f4f159209dede2e9f209d50f98f34cf2c7e792fc0fe847dff092bfabd5aa3",
+   "bytes": 49898,
+   "title": "Camera digital shutter",
+   "page": "https://mixkit.co/free-sound-effects/camera/"
+  },
+  {
+   "id": "camera_shutter_2",
+   "category": "camera_shutter",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1433/1433-preview.mp3",
+   "mirrors": [],
+   "duration": 1.463,
+   "peak_s": 0.03,
+   "lufs": -24.0,
+   "sha256": "fa11a2de7e3d0215bb21955e8d67f690dd9b219e46952aba7e2372c78ccf2ce4",
+   "bytes": 47132,
+   "title": "Camera lens shutter",
+   "page": "https://mixkit.co/free-sound-effects/camera/"
+  },
+  {
+   "id": "camera_shutter_3",
+   "category": "camera_shutter",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1430/1430-preview.mp3",
+   "mirrors": [],
+   "duration": 0.679,
+   "peak_s": 0.135,
+   "lufs": -19.6,
+   "sha256": "b33152521d12edd3d6d0bdcf7e29a0b1c6fc4c4c52d613486cd2fe2bdd200692",
+   "bytes": 18370,
+   "title": "Camera shutter hard click",
+   "page": "https://mixkit.co/free-sound-effects/camera/"
+  },
+  {
+   "id": "paper_1",
+   "category": "paper",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/01/17/audio_edcc072ccd.mp3?filename=paper-collect-3-186600.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/01/17/audio_edcc072ccd.mp3"
+   ],
+   "duration": 0.408,
+   "peak_s": 0.16,
+   "lufs": -27.1,
+   "sha256": "68bf63f894673533e192ec148d2dcc010fc3a05b51b7c4e711fdb394f9cbaa47",
+   "bytes": 13056,
+   "title": "Paper Collect 3",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-paper-collect-3-186600/"
+  },
+  {
+   "id": "paper_2",
+   "category": "paper",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1104/1104-preview.mp3",
+   "mirrors": [],
+   "duration": 0.496,
+   "peak_s": 0.145,
+   "lufs": -30.4,
+   "sha256": "3b2b05dd402127a6ee15f33c5c6690568f389848b1a8d11d6d70cab7d0268bd4",
+   "bytes": 18060,
+   "title": "Page turn single",
+   "page": "https://mixkit.co/free-sound-effects/paper/"
+  },
+  {
+   "id": "paper_3",
+   "category": "paper",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/1105/1105-preview.mp3",
+   "mirrors": [],
+   "duration": 0.862,
+   "peak_s": 0.33,
+   "lufs": -21.8,
+   "sha256": "d3b034ccdc89c75c6091a048c3f487847fad14e9d7ad663d343dc8766a206433",
+   "bytes": 30379,
+   "title": "Big paper page turn",
+   "page": "https://mixkit.co/free-sound-effects/paper/"
+  },
+  {
+   "id": "glitch_1",
+   "category": "glitch",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/07/24/audio_80472f5d2c.mp3?filename=virtual_vibes-digital-glitch-noise-hd-379465.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/07/24/audio_80472f5d2c.mp3"
+   ],
+   "duration": 1.104,
+   "peak_s": 0.57,
+   "lufs": -12.7,
+   "sha256": "4d396112b4f4f41014ac8f9874a2c799e6bf8af1fdb17ead6c63240e9b9e82cc",
+   "bytes": 35328,
+   "title": "Digital Glitch Noise HD",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-digital-glitch-noise-hd-379465/"
+  },
+  {
+   "id": "glitch_2",
+   "category": "glitch",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2951/2951-preview.mp3",
+   "mirrors": [],
+   "duration": 1.097,
+   "peak_s": 0.015,
+   "lufs": -22.3,
+   "sha256": "05b2df6532ab7f968b939bd3a45158f44c8048438a1d30361fd6228a92f540ce",
+   "bytes": 38314,
+   "title": "Digital glitch break",
+   "page": "https://mixkit.co/free-sound-effects/glitch/"
+  },
+  {
+   "id": "glitch_3",
+   "category": "glitch",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2948/2948-preview.mp3",
+   "mirrors": [],
+   "duration": 1.358,
+   "peak_s": 0.345,
+   "lufs": -13.4,
+   "sha256": "0a51e61a9d9110b5cf316607804fd43343de31b1ba89b10163931ea6ebb9ace7",
+   "bytes": 46822,
+   "title": "Tech device glitch",
+   "page": "https://mixkit.co/free-sound-effects/glitch/"
+  },
+  {
+   "id": "notification_1",
+   "category": "notification",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/06/02/audio_f91dce208a.mp3?filename=universfield-new-notification-09-352705.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/06/02/audio_f91dce208a.mp3"
+   ],
+   "duration": 1.152,
+   "peak_s": 0.22,
+   "lufs": -13.2,
+   "sha256": "d6a99e9d0721b7404b351ab5faff4ab3b79a061e3c383983640e007a81ae264f",
+   "bytes": 36864,
+   "title": "New Notification 09",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-09-352705/"
+  },
+  {
+   "id": "notification_2",
+   "category": "notification",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/05/31/audio_ab68e9bc04.mp3?filename=new-notification-08-352461.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/05/31/audio_ab68e9bc04.mp3"
+   ],
+   "duration": 1.128,
+   "peak_s": 0.14,
+   "lufs": -19.8,
+   "sha256": "86d967f2c46c458c37e7b5ec8bdb0734ca630f5b9a5df7870c716e5ac11b102b",
+   "bytes": 36096,
+   "title": "New Notification 08",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-new-notification-08-352461/"
+  },
+  {
+   "id": "notification_3",
+   "category": "notification",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3",
+   "mirrors": [],
+   "duration": 1.097,
+   "peak_s": 0.06,
+   "lufs": -24.7,
+   "sha256": "58ecb2df40864551fd8aa7f770c13646187854df7fe4ca74497997b24f7669cd",
+   "bytes": 13059,
+   "title": "Message pop alert",
+   "page": "https://mixkit.co/free-sound-effects/pop/"
+  },
+  {
+   "id": "swipe_1",
+   "category": "swipe",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/01/17/audio_009e568069.mp3?filename=movement-swipe-whoosh-1-186575.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/01/17/audio_009e568069.mp3"
+   ],
+   "duration": 1.515,
+   "peak_s": 0.1,
+   "lufs": -21.1,
+   "sha256": "1128e32fb5dc96025ad160ede46bf26c4f163424705ad7d9cea0f93f243e7933",
+   "bytes": 48483,
+   "title": "Movement Swipe Whoosh 1",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-movement-swipe-whoosh-1-186575/"
+  },
+  {
+   "id": "swipe_2",
+   "category": "swipe",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2627/2627-preview.mp3",
+   "mirrors": [],
+   "duration": 1.097,
+   "peak_s": 0.27,
+   "lufs": -13.1,
+   "sha256": "d9158ed4d147b58a2575c3979d097dc36333f8d8c001af1f6fcbf3fc5c7461ef",
+   "bytes": 35650,
+   "title": "Fast swipe zoom",
+   "page": "https://mixkit.co/free-sound-effects/woosh/"
+  },
+  {
+   "id": "swipe_3",
+   "category": "swipe",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/2619/2619-preview.mp3",
+   "mirrors": [],
+   "duration": 1.176,
+   "peak_s": 0.325,
+   "lufs": -18.5,
+   "sha256": "8b98f2c91a976b6a29b9b536380d216a7861ae8f81f6e5547489c51329e381b9",
+   "bytes": 34864,
+   "title": "UI zoom out",
+   "page": "https://mixkit.co/free-sound-effects/zoom/"
+  },
+  {
+   "id": "bell_soft_1",
+   "category": "bell_soft",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/08/15/audio_c12b07d680.mp3?filename=dragon-studio-bell-ring-390294.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/08/15/audio_c12b07d680.mp3"
+   ],
+   "duration": 0.993,
+   "peak_s": 0.075,
+   "lufs": -29.6,
+   "sha256": "6df44d627010cb873be33b5e79a89c723650cf979a575409f6935efbbc87bc23",
+   "bytes": 31764,
+   "title": "Bell Ring",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-bell-ring-390294/"
+  },
+  {
+   "id": "bell_soft_2",
+   "category": "bell_soft",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/03/06/audio_856ae61a60.mp3?filename=log-soft-low-frequency-bell-sound-temple-asmr-309725.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/03/06/audio_856ae61a60.mp3"
+   ],
+   "duration": 8.098,
+   "peak_s": 0.07,
+   "lufs": -16.3,
+   "sha256": "d4437b03d2ddad96ccb19d8b18937a4a6ad7c549a0a1623dd264d2de9d1d5176",
+   "bytes": 259134,
+   "title": "Log Soft Low Frequency Bell Sound Temple ASMR",
+   "page": "https://pixabay.com/sound-effects/film-special-effects-log-soft-low-frequency-bell-sound-temple-asmr-309725/"
+  },
+  {
+   "id": "bell_soft_3",
+   "category": "bell_soft",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/active_storage/sfx/933/933-preview.mp3",
+   "mirrors": [],
+   "duration": 3.396,
+   "peak_s": 0.1,
+   "lufs": -14.9,
+   "sha256": "7300912e0a685b9fefefa275ac2669c92bf1e0db0ea9ef75c98bc73a2fecb4f6",
+   "bytes": 105280,
+   "title": "Bell notification",
+   "page": "https://mixkit.co/free-sound-effects/notification/"
+  }
+ ],
+ "bgm": [
+  {
+   "id": "bgm_calm_piano",
+   "mood": "calm",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/05/30/audio_9bc5426c20.mp3?filename=calm-piano-music-351839.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/05/30/audio_9bc5426c20.mp3"
+   ],
+   "duration": 157.49,
+   "lufs": -15.4,
+   "sha256": "97683b7a00cc9b8836284cf6af7af7b551572d92aba1be2b90989d9a3a767697",
+   "bytes": 5039616,
+   "title": "Calm Piano Music",
+   "artist": "Clavier-Music",
+   "page": "https://pixabay.com/music/modern-classical-calm-piano-music-351839/",
+   "lead_silence_s": 0.0
+  },
+  {
+   "id": "bgm_minimal_piano",
+   "mood": "minimal",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/10/17/audio_74b9006f8c.mp3?filename=calm-piano-inspiring-251916.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/10/17/audio_74b9006f8c.mp3"
+   ],
+   "duration": 133.59,
+   "lufs": -19.8,
+   "sha256": "02b108840a726a38aa28193b3f0fa47342dff29df7dbe3476d1c2917cc2831ad",
+   "bytes": 4274886,
+   "title": "Calm Inspiring",
+   "artist": "leberch",
+   "page": "https://pixabay.com/music/modern-classical-calm-inspiring-251916/",
+   "lead_silence_s": 0.4
+  },
+  {
+   "id": "bgm_inspiring_piano",
+   "mood": "inspiring",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/09/05/audio_6bf25415fa.mp3?filename=grand_project-soft-piano-inspiration-399920.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/09/05/audio_6bf25415fa.mp3"
+   ],
+   "duration": 267.05,
+   "lufs": -10.0,
+   "sha256": "adec2ece66b1605495e3bd91dd5e656cb5f053355a54d06bd996ecf50c10bb9a",
+   "bytes": 8545593,
+   "title": "Soft Piano Inspiration",
+   "artist": "Grand_Project",
+   "page": "https://pixabay.com/music/modern-classical-soft-piano-inspiration-399920/",
+   "lead_silence_s": 0.05
+  },
+  {
+   "id": "bgm_ambient_space",
+   "mood": "ambient",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/03/11/audio_03e017e1e5.mp3?filename=calm-space-music-312291.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/03/11/audio_03e017e1e5.mp3"
+   ],
+   "duration": 156.53,
+   "lufs": -13.8,
+   "sha256": "213aae7ca556416c656034b3b5cbaabf539f1a0cf10fca050c386cd21aced559",
+   "bytes": 5008896,
+   "title": "Calm Space Music",
+   "artist": "Clavier-Music",
+   "page": "https://pixabay.com/music/ambient-calm-space-music-312291/",
+   "lead_silence_s": 0.0
+  },
+  {
+   "id": "bgm_lofi_coverless",
+   "mood": "lofi",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/01/15/audio_9914e58808.mp3?filename=coverless-book-lofi-186307.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/01/15/audio_9914e58808.mp3"
+   ],
+   "duration": 264.05,
+   "lufs": -17.6,
+   "sha256": "2028db873e1f3e1ead03ad87076bf977d9cebab805e95441e26a3e6155724651",
+   "bytes": 8449462,
+   "title": "Coverless book (Lofi)",
+   "artist": "AmbientAUDIOVISION",
+   "page": "https://pixabay.com/music/beats-coverless-book-lofi-186307/",
+   "lead_silence_s": 5.5
+  },
+  {
+   "id": "bgm_lofi_study",
+   "mood": "lofi",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2025/12/14/audio_de38cecd46.mp3?filename=chill-study-desk-focus-amp-concentration-lofi-451181.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2025/12/14/audio_de38cecd46.mp3"
+   ],
+   "duration": 144.19,
+   "lufs": -14.3,
+   "sha256": "80c50514ed8512da08bb93335dc1c1f13c57f034c3a52b85a90ac41116036f24",
+   "bytes": 4614144,
+   "title": "Chill Study Desk - Focus & Concentration Lofi",
+   "artist": "DesiFreeMusic",
+   "page": "https://pixabay.com/music/lofi-chill-study-desk-focus-amp-concentration-lofi-451181/",
+   "lead_silence_s": 0.0
+  },
+  {
+   "id": "bgm_inspiring_corporate",
+   "mood": "inspiring",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2026/02/12/audio_2cdf6a3afc.mp3?filename=turning_pages-digital-synergy-483918.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2026/02/12/audio_2cdf6a3afc.mp3"
+   ],
+   "duration": 199.18,
+   "lufs": -13.9,
+   "sha256": "68f874a108121178a60068abe08110921935ca9c61217b33c43a52521fdcd6a9",
+   "bytes": 6373877,
+   "title": "Digital Synergy",
+   "artist": "Turning_Pages",
+   "page": "https://pixabay.com/music/corporate-digital-synergy-483918/",
+   "lead_silence_s": 0.05
+  },
+  {
+   "id": "bgm_upbeat_future",
+   "mood": "upbeat",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2022/08/23/audio_d16737dc28.mp3?filename=electronic-future-beats-117997.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2022/08/23/audio_d16737dc28.mp3"
+   ],
+   "duration": 126.04,
+   "lufs": -8.9,
+   "sha256": "40ecc9ec15181877188702676d7ff4e18948264971d7cd749523ffed6e7ea4e1",
+   "bytes": 4033306,
+   "title": "Electronic Future Beats_Fadeout",
+   "artist": "QubeSounds",
+   "page": "https://pixabay.com/music/electronic-future-beats-fadeout-117997/",
+   "lead_silence_s": 0.0
+  },
+  {
+   "id": "bgm_upbeat_showreel",
+   "mood": "upbeat",
+   "source": "pixabay",
+   "url": "https://cdn.pixabay.com/download/audio/2024/09/16/audio_a10608d6cd.mp3?filename=creative-technology-showreel-241274.mp3",
+   "mirrors": [
+    "https://cdn.pixabay.com/audio/2024/09/16/audio_a10608d6cd.mp3"
+   ],
+   "duration": 110.5,
+   "lufs": -10.3,
+   "sha256": "a9863291f9457db855dd3937d5b84b6d8d8894f4f8f46691a81b48af5c6cb919",
+   "bytes": 3535934,
+   "title": "Creative Technology Showreel",
+   "artist": "Pumpupthemind",
+   "page": "https://pixabay.com/music/beats-creative-technology-showreel-241274/",
+   "lead_silence_s": 0.05
+  },
+  {
+   "id": "bgm_lofi_mixkit",
+   "mood": "lofi",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/music/766/766.mp3",
+   "mirrors": [],
+   "duration": 164.36,
+   "lufs": -10.4,
+   "sha256": "a390d7785e8283979dccbe7a0faeee7af04a0a9f6d1ddc98ec25dcedbdcc7b2d",
+   "bytes": 6574497,
+   "title": "Lo-Fi 04",
+   "artist": "Lily J",
+   "page": "https://mixkit.co/free-stock-music/chillout/",
+   "lead_silence_s": 0.05
+  },
+  {
+   "id": "bgm_ambient_mixkit",
+   "mood": "ambient",
+   "source": "mixkit",
+   "url": "https://assets.mixkit.co/music/148/148.mp3",
+   "mirrors": [],
+   "duration": 150.94,
+   "lufs": -14.8,
+   "sha256": "30232da0b9521ed35e009162bfe7c63d06c9c8e4ca81ea5137ab63a9dc66cd98",
+   "bytes": 4830022,
+   "title": "Forest Mist Whispers",
+   "artist": "Alejandro Magaña (A. M.)",
+   "page": "https://mixkit.co/free-stock-music/ambient/",
+   "lead_silence_s": 0.2
+  },
+  {
+   "id": "bgm_minimal_wallpaper",
+   "mood": "minimal",
+   "source": "incompetech",
+   "url": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wallpaper.mp3",
+   "mirrors": [],
+   "duration": 220.06,
+   "lufs": -11.2,
+   "sha256": "9fa810e5193c88f1b360537366f210f16c2588106d5292f0659e9957fa274f96",
+   "bytes": 8804339,
+   "title": "Wallpaper",
+   "artist": "Kevin MacLeod",
+   "page": "https://incompetech.com/music/royalty-free/music.html",
+   "lead_silence_s": 0.0
+  }
+ ],
+ "models": [
+  {
+   "id": "rnnoise_std",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/std.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/std.rnnn"
+   ],
+   "sha256": "6b8943dc4a9b6b24425873992a44f29c0577503276456af46a8854774faeb294",
+   "bytes": 302903,
+   "title": "Xiph RNNoise original (general)"
+  },
+  {
+   "id": "rnnoise_bd",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/bd.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/bd.rnnn"
+   ],
+   "sha256": "ae3f7411e1e6a884f839a4a145c394408398f09854dbc1216ee02faafc98a17b",
+   "bytes": 299693,
+   "title": "beguiling-drafter (Gregor Richards)"
+  },
+  {
+   "id": "rnnoise_cb",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/cb.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/cb.rnnn"
+   ],
+   "sha256": "f1357c4e5be9dee8467bead486dfced2d75b640c26ad0b594fa7f102322371d9",
+   "bytes": 299741,
+   "title": "conjoined-burgers (Gregor Richards)"
+  },
+  {
+   "id": "rnnoise_lq",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/lq.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/lq.rnnn"
+   ],
+   "sha256": "1957528b752799fddf06270bc5469af7cf54c3badc358544ae2abed730943ff9",
+   "bytes": 297041,
+   "title": "leavened-quisling (Gregor Richards)"
+  },
+  {
+   "id": "rnnoise_mp",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/mp.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/mp.rnnn"
+   ],
+   "sha256": "4e84a448a4baf937992aaf4d10c8258007ec5d24219b6647dfd5fb4b563ad231",
+   "bytes": 296861,
+   "title": "marathon-prescription (Gregor Richards)"
+  },
+  {
+   "id": "rnnoise_sh",
+   "url": "https://raw.githubusercontent.com/richardpl/arnndn-models/master/sh.rnnn",
+   "mirrors": [
+    "https://cdn.jsdelivr.net/gh/richardpl/arnndn-models@master/sh.rnnn"
+   ],
+   "sha256": "70bb6685eb0c2a1d18e2918dca3fbfbd39317010b1802eb1b6ea73a92f3fdec0",
+   "bytes": 297646,
+   "title": "somnolent-hogwash (Gregor Richards)"
+  }
+ ]
+}

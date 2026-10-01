@@ -1,0 +1,332 @@
+"""🎞 자료 리서처: B-roll 요청 → 무료 스톡 검색(Pixabay·Pexels·Coverr·Unsplash·Openverse) → 후보 컨택트 시트
+→ Claude 가 보고 선택 → 다운로드·정리.
+
+- 요청마다 후보 최대 6개를 한 장의 시트(C1~C6 라벨)로 묶어 비전으로 보낸다(이미지 수·토큰 절약).
+- 제공처별 후보를 번갈아 섞는다. 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
+  그 B-roll 은 쓰지 않는다(틀린 B-roll 보다 없는 게 낫다).
+- 모션 장면 안의 'pixabay:<vector|illustration|photo>:<검색어>' 이미지 요소는 resolve_images 가 broll/img_* 로 바꾼다.
+- 결과는 work/stock.json 에 캐시 → 재실행 때 검색·선택·다운로드를 반복하지 않는다.
+  단, 캐시에 남기는 '없음'은 에이전트가 직접 뺀 것뿐이다. 검색 0건·네트워크·다운로드 실패는 다음 실행에 다시 시도한다
+  (예전에는 한 번 실패하면 영원히 '없음'으로 남았다).
+"""
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from .. import net
+from ..media.ffmpeg import FFmpeg
+from ..util import Cancelled, CancelToken, LogFn, noop_log, read_json, text_hash, write_json
+from .base import StockCandidate, StockError
+from .providers import StockHub
+from .process import prepare_photo, prepare_video
+
+PickFn = Callable[[str, list[tuple[str, bytes, str]]], list[dict[str, Any]]]
+
+CELL_W, CELL_H, COLS = 400, 225, 3
+NEED_SEC = 8.0   # broll 템플릿 최대 7초 + 여유
+
+
+def strip_stock_images(graphic_lists: list[list[dict[str, Any]]]) -> int:
+    """아직 파일로 바뀌지 않은 'pixabay:' 이미지 요소를 뺀다(스톡이 꺼졌을 때)."""
+    n = 0
+    for gl in graphic_lists:
+        for g in gl:
+            spec = g.get("spec") if g.get("template") == "motion" else None
+            if isinstance(spec, dict):
+                before = len(spec.get("elements", []) or [])
+                spec["elements"] = [e for e in spec.get("elements", []) or []
+                                    if not (isinstance(e, dict) and str(e.get("src", "")).startswith("pixabay:"))]
+                n += before - len(spec["elements"])
+    return n
+
+
+def request_key(st: dict[str, Any]) -> str:
+    return text_hash(st.get("kind", ""), st.get("query_en", ""), st.get("query_ko", ""), "stock-v1")
+
+
+def contact_sheet(thumbs: list[tuple[str, Optional[bytes]]]) -> bytes:
+    """[(라벨, jpeg 바이트)] → 3열 격자 JPEG. 라벨은 ASCII 만(PIL 기본 폰트)."""
+    from PIL import Image, ImageDraw, ImageOps
+
+    rows = max(1, (len(thumbs) + COLS - 1) // COLS)
+    sheet = Image.new("RGB", (CELL_W * COLS + 8 * (COLS + 1), CELL_H * rows + 8 * (rows + 1)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    for i, (label, data) in enumerate(thumbs):
+        x = 8 + (i % COLS) * (CELL_W + 8)
+        y = 8 + (i // COLS) * (CELL_H + 8)
+        if data:
+            try:
+                im = Image.open(io.BytesIO(data)).convert("RGB")
+                im = ImageOps.fit(im, (CELL_W, CELL_H), Image.LANCZOS)
+                sheet.paste(im, (x, y))
+            except Exception:  # noqa: BLE001 - 깨진 썸네일은 빈 칸
+                pass
+        tw = 8 + 7 * len(label)
+        draw.rectangle([x, y, x + tw, y + 18], fill=(0, 0, 0))
+        draw.text((x + 4, y + 3), label, fill=(255, 255, 255))
+    buf = io.BytesIO()
+    sheet.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+class StockResearcher:
+    def __init__(self, hub: StockHub, ff: FFmpeg, *, work: Path, public: Path, fps: int = 30,
+                 pick: Optional[PickFn] = None, log: LogFn = noop_log, cancel: Optional[CancelToken] = None,
+                 per_request: int = 6):
+        self.hub = hub
+        self.ff = ff
+        self.work = work
+        self.public = public
+        self.fps = fps
+        self.pick = pick
+        self.log = log
+        self.cancel = cancel
+        self.per_request = per_request
+        self.cache_file = work / "stock.json"
+        self.cache: dict[str, Any] = read_json(self.cache_file, {})
+        self.credits: list[dict[str, Any]] = []
+        self.stats: dict[str, int] = {}
+
+    # ------------------------------------------------------------------
+    def search(self, st: dict[str, Any]) -> list[StockCandidate]:
+        return self.hub.search(st, self.per_request)
+
+    def _thumb(self, c: StockCandidate) -> Optional[bytes]:
+        if not c.thumb:
+            return None
+        try:
+            r = net.request(c.thumb, timeout=20)
+            return r.content if r.ok else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    # ------------------------------------------------------------------
+    def run(self, graphic_lists: list[list[dict[str, Any]]], progress: Callable[[float], None] = lambda f: None) -> None:
+        """broll 그래픽에 src/kind/credit 를 채우고, 소재를 못 구한 것은 목록에서 뺀다."""
+        reqs: dict[str, dict[str, Any]] = {}
+        for gl in graphic_lists:
+            for g in gl:
+                if g.get("template") == "broll" and isinstance(g.get("stock"), dict):
+                    reqs.setdefault(request_key(g["stock"]), g["stock"])
+        if not reqs:
+            return
+        self.log(f"🎞 스톡 요청 {len(reqs)}건 · 검색처: {', '.join(self.hub.names) or '없음'}")
+        todo = [k for k in reqs if not self._cached_ok(k)]
+        # 1) 검색
+        cands: dict[str, list[StockCandidate]] = {}
+        self.stats = {"requests": len(reqs), "cached": len(reqs) - len(todo), "found": 0, "rejected": 0,
+                      "no_results": 0, "download_failed": 0, "used": 0}
+        for i, k in enumerate(todo):
+            if self.cancel:
+                self.cancel.check()
+            try:
+                cands[k] = self.search(reqs[k])
+            except StockError as e:                    # 한 요청의 오류로 나머지 요청을 모두 버리지 않는다
+                self.log(f"🎞 {e}")
+                cands[k] = []
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - 네트워크 오류는 그 요청만 건너뜀
+                self.log(f"🎞 검색 실패 '{reqs[k].get('query_en')}': {e}")
+                cands[k] = []
+            trace = getattr(self.hub, "last_trace", [])
+            if cands.get(k):
+                self.stats["found"] += 1
+                self.log(f"🎞 '{reqs[k].get('query_en')}' 후보 {len(cands[k])}개 ({trace[-1] if trace else ''})")
+            else:
+                self.stats["no_results"] += 1
+                self.log(f"🎞 '{reqs[k].get('query_en')}' 후보 없음 — " + " | ".join(trace[:6]))
+            progress(0.3 * (i + 1) / max(1, len(todo)))
+        # 2) 선택(Claude 비전) — 후보가 있는 요청만 시트로
+        live = [k for k in todo if cands.get(k)]
+        choice: dict[str, int] = {k: 0 for k in live}
+        if live and self.pick:
+            sheets, lines = [], []
+            for n, k in enumerate(live, 1):
+                st = reqs[k]
+                thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
+                           self._thumb(c))
+                          for j, c in enumerate(cands[k], 1)]
+                sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
+                lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
+                             f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}")
+            try:
+                picks = self.pick("\n".join(lines), sheets)
+                choice = {}
+                for p in picks:
+                    r, c = int(p.get("request", 0)), int(p.get("candidate", -1))
+                    if 1 <= r <= len(live):
+                        choice[live[r - 1]] = c - 1 if c >= 1 else -1
+                        if c < 1:
+                            self.stats["rejected"] += 1
+                            self.log(f"🎞 R{r}: 맞는 소재 없음 → 제외 ({p.get('reason', '')})")
+                for k in live:
+                    choice.setdefault(k, 0)
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - 선택 실패 시 첫 후보
+                self.log(f"🎞 자동 선택 실패 → 첫 후보 사용: {e}")
+                choice = {k: 0 for k in live}
+        progress(0.5)
+        # 3) 다운로드·정리
+        for i, k in enumerate(todo):
+            if self.cancel:
+                self.cancel.check()
+            idx = choice.get(k, -1)
+            if k not in cands or not cands.get(k):
+                self.cache[k] = {"none": True, "why": "no_results"}      # 다음 실행에 다시 검색
+                continue
+            if idx >= len(cands[k]):
+                idx = 0                                                  # 없는 번호를 골랐으면 첫 후보(영구 제외 아님)
+            if idx < 0:
+                self.cache[k] = {"none": True, "why": "rejected"}        # 에이전트가 뺀 것만 확정
+                continue
+            # 고른 후보가 안 받아지면 다음 후보로
+            got = None
+            for c in [cands[k][idx]] + [x for j, x in enumerate(cands[k]) if j != idx][:2]:
+                try:
+                    got = self._fetch(c)
+                    break
+                except Cancelled:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"🎞 다운로드 실패({c.provider} {c.id}): {e}")
+            if got is None:
+                self.stats["download_failed"] += 1
+            self.cache[k] = got or {"none": True, "why": "download_failed"}
+            progress(0.5 + 0.5 * (i + 1) / max(1, len(todo)))
+        write_json(self.cache_file, self.cache)
+        # 4) 그래픽에 반영
+        used: set[str] = set()
+        for gl in graphic_lists:
+            keep = []
+            for g in gl:
+                if g.get("template") != "broll":
+                    keep.append(g)
+                    continue
+                res = self.cache.get(request_key(g.get("stock") or {}), {})
+                if not res or res.get("none") or not (self.public / res["src"]).exists():
+                    continue
+                g.update(src=res["src"], kind=res["kind"], credit=res["credit"], stock_url=res["url"])
+                if res["kind"] == "photo":
+                    g.setdefault("kenburns", "in")
+                keep.append(g)
+                if res["src"] not in used:
+                    used.add(res["src"])
+                    self.stats["used"] += 1
+                    self.credits.append({"query": g["stock"].get("query_en"), "origin": res.get("provider", "stock"),
+                                         "credit": res["credit"], "url": res["url"], "author_url": res.get("author_url", "")})
+            gl[:] = keep
+        self.log(f"🎞 스톡 확보 {len(used)}건")
+
+    # ------------------------------------------------------------------
+    def resolve_images(self, graphic_lists: list[list[dict[str, Any]]]) -> int:
+        """모션 장면 안의 'pixabay:<vector|illustration|photo>:<영어 검색어>' 이미지를 Pixabay 에서 받아
+        broll/img_….png|jpg 로 바꾼다(키가 없으면 사진은 Openverse). 못 구한 요소는 장면에서 뺀다 — 장면은 남는다."""
+        refs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for gl in graphic_lists:
+            for g in gl:
+                spec = g.get("spec") if g.get("template") == "motion" else None
+                if not isinstance(spec, dict):
+                    continue
+                for el in spec.get("elements", []) or []:
+                    if isinstance(el, dict) and el.get("type") == "image" and str(el.get("src", "")).startswith("pixabay:"):
+                        refs.append((spec, el))
+        if not refs:
+            return 0
+        got: dict[str, Optional[dict[str, Any]]] = {}
+        n = 0
+        for spec, el in refs:
+            ref = el["src"]
+            if ref not in got:
+                got[ref] = self._image_for(ref)
+            res = got[ref]
+            if res:
+                el["src"] = res["src"]
+                n += 1
+            else:
+                spec["elements"] = [e for e in spec.get("elements", []) if e is not el]
+        write_json(self.cache_file, self.cache)
+        ok = sum(1 for v in got.values() if v)
+        self.log(f"🖼 모션 그래픽 이미지 {ok}/{len(got)}건 확보(Pixabay)")
+        self.stats["images"] = ok
+        return n
+
+    def _image_for(self, ref: str) -> Optional[dict[str, Any]]:
+        parts = ref.split(":", 2)
+        kind, query = (parts[1], parts[2]) if len(parts) == 3 else ("vector", parts[-1])
+        key = text_hash(ref, "img-v1")
+        res = self.cache.get(key)
+        if res and not res.get("none") and (self.public / res.get("src", "__")).exists():
+            return res
+        from .providers import query_variants
+        pix = next((p for p in self.hub.providers if p.name == "Pixabay"), None)
+        ov = next((p for p in self.hub.providers if p.name == "Openverse"), None)
+        cands: list[StockCandidate] = []
+        for q in query_variants(query):
+            if pix is not None:
+                cands = self.hub._call(pix, "search_images", q, image_type=kind, per_page=5)
+            if not cands and kind != "vector" and ov is not None:
+                cands = self.hub._call(ov, "search_photos", q, per_page=5)
+            if cands:
+                break
+        for c in cands[:3]:
+            try:
+                raw = self.hub.download(c, self.work / "stock_raw" / f"img_{c.key}.bin")
+                dst = self._prepare_image(raw, f"img_{c.key}")
+                res = {"src": f"broll/{dst.name}", "kind": "image", "credit": c.credit, "url": c.url,
+                       "author_url": c.author_url, "provider": c.provider}
+                self.cache[key] = res
+                self.credits.append({"query": query, "origin": c.provider, "credit": c.credit, "url": c.url,
+                                     "author_url": c.author_url})
+                return res
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
+        self.log(f"🖼 '{query}'({kind}) 이미지 없음 → 그 요소만 뺌")
+        return None
+
+    def _prepare_image(self, raw: Path, name: str, max_side: int = 1400) -> Path:
+        """투명 PNG 는 그대로(알파 유지), 나머지는 JPEG. 긴 변 1400px."""
+        from PIL import Image
+        out_dir = self.public / "broll"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        im = Image.open(raw)
+        alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+        im = im.convert("RGBA" if alpha else "RGB")
+        s = max_side / max(im.size)
+        if s < 1:
+            im = im.resize((int(im.width * s), int(im.height * s)), Image.LANCZOS)
+        dst = out_dir / f"{name}.{'png' if alpha else 'jpg'}"
+        im.save(dst, **({"optimize": True} if alpha else {"quality": 90}))
+        return dst
+
+    def _cached_ok(self, k: str) -> bool:
+        res = self.cache.get(k)
+        if not res:
+            return False
+        if res.get("none"):
+            return res.get("why") == "rejected"
+        return (self.public / res.get("src", "__")).exists()
+
+    def _fetch(self, c: StockCandidate) -> dict[str, Any]:
+        raw_dir = self.work / "stock_raw"
+        out_dir = self.public / "broll"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if c.kind == "video":
+            raw = self.hub.download(c, raw_dir / f"{c.key}.mp4")
+            dst = out_dir / f"{c.key}.mp4"
+            if not dst.exists():
+                prepare_video(self.ff, raw, dst, need=NEED_SEC, fps=self.fps, src_duration=c.duration, log=self.log,
+                              cancel=self.cancel)
+        else:
+            raw = self.hub.download(c, raw_dir / f"{c.key}.jpg")
+            dst = out_dir / f"{c.key}.jpg"
+            if not dst.exists():
+                prepare_photo(raw, dst)
+        self.log(f"🎞 {c.provider} {c.kind} {c.id} · {c.credit}")
+        return {"src": f"broll/{dst.name}", "kind": c.kind, "credit": c.credit, "url": c.url,
+                "author_url": c.author_url, "provider": c.provider}

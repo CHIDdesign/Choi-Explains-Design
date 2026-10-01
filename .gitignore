@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Remotion
+renderer/node_modules/
+renderer/out/
+renderer/assets/fonts/*.woff2
+renderer/assets/fonts/ui/
+renderer/public/
+renderer/.remotion/
+
+# Local user data (API keys, jobs, caches)
+user/
+projects/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Portable tools downloaded by setup_windows.bat (Node.js, FFmpeg)
+tools/
+
+# Whisper 음성인식 모델 캐시(HF_HOME) — 설치 때 받음
+models/hf/
+# 처음 실행 때 내려받는 효과음·배경음악·잡음 제거 모델(개인 사용, 저장소에 넣지 않음)
+assets/sound/
+assets/choi_studio.ico
