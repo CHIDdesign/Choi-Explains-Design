@@ -5,8 +5,8 @@ import sys
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QButtonGroup, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ..director.claude_code import auth_status, claude_version, describe_auth, find_claude, open_login
@@ -147,6 +147,27 @@ class SettingsDialog(QDialog):
                            "검색합니다. 출처는 화면 ▣ 와 설명란에 자동 표기."))
         tabs.addTab(st, "스톡")
 
+        # --- 소리
+        so = QWidget()
+        fso = QFormLayout(so)
+        self.sfx = QCheckBox("효과음 넣기")
+        self.sfx.setChecked(bool(getattr(s, "sfx_enabled", False)))
+        self.music = QComboBox()
+        modes = [("mine", "내 음악 폴더의 곡만"), ("library", "기본 라이브러리(자동 선곡)"), ("off", "배경음악 없음")]
+        for key, label in modes:
+            self.music.addItem(label, key)
+        keys = [k for k, _ in modes]
+        mode = getattr(s, "music_mode", "mine")
+        self.music.setCurrentIndex(keys.index(mode) if mode in keys else 0)
+        self.music_dir = QLineEdit(getattr(s, "music_dir", ""))
+        self.music_dir.setPlaceholderText("비우면 user\\music 폴더")
+        fso.addRow("효과음", self.sfx)
+        fso.addRow("배경음악", self.music)
+        fso.addRow("내 음악 폴더", self.music_dir)
+        fso.addRow("", hint("기본은 효과음 없이, 배경음악은 내 음악 폴더에 넣은 곡만 씁니다(mp3·wav·m4a 등, 목소리 아래로 "
+                            "작게 깔림). 폴더가 비어 있으면 배경음악 없이 만듭니다. 마음에 들지 않는 소리를 넣느니 넣지 않습니다."))
+        tabs.addTab(so, "소리")
+
         # --- 브랜드
         br = QWidget()
         f2 = QFormLayout(br)
@@ -272,5 +293,8 @@ class SettingsDialog(QDialog):
         s.render.concurrency = self.concurrency.value()
         s.render.crf = self.crf.value()
         s.wikimedia_contact = self.wm.text().strip()
+        s.sfx_enabled = self.sfx.isChecked()
+        s.music_mode = self.music.currentData() or "mine"
+        s.music_dir = self.music_dir.text().strip()
         s.save()
         self.accept()

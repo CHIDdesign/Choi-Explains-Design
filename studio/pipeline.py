@@ -128,6 +128,7 @@ PLAN_ONLY = ("probe", "audio", "asr", "face", "align", "grade", "director")
 # 말단 작업 — 실패해도 영상은 끝까지 만든다(그 단계만 건너뛰고 안전한 대체 상태로). 원본·음성 인식·대본 맞추기·
 # 렌더·합치기만 영상에 꼭 필요하다. 채널 주인: "초기 작업의 외부 프로그램 오류 하나로 전체 작업이 다 망한다"
 SOFT_STAGES = {"audio", "face", "grade", "verify", "broll", "stock", "sound", "qa", "export"}
+MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 
 
 def schedule_for(until: str = "all") -> list[list[list[str]]]:
@@ -372,6 +373,7 @@ class Pipeline:
         fns["proxy"] = self._encode_proxies          # 컷은 AI 기획과 편집본이 모두 끝난 뒤(_make_edit)
         fns["bundle"] = self._prebundle
         schedule = schedule_for(until)
+        self._resolve_sound()
         self.eta.begin()
         srcs = self.spec.sources()
         self.log(f"══ 작업 시작 {time.strftime('%Y-%m-%d %H:%M')} · 원본 {Path(srcs[0]).name}"
@@ -470,6 +472,31 @@ class Pipeline:
             raise first[0]
         if errors:
             raise errors[0]
+
+    # ------------------------------------------------------------------
+    def _resolve_sound(self) -> None:
+        """설정의 소리 방침 → 이번 작업: 효과음은 켰을 때만, 배경음악은 직접 고른 곡 → 내 음악 폴더(mine) →
+        기본 라이브러리(library) → 없음(off). 내 음악 폴더가 비어 있으면 배경음악 없이(라이브러리로 몰래 넘어가지 않는다)."""
+        st = self.settings
+        if not getattr(st, "sfx_enabled", False):
+            self.spec.sfx = False
+        mode = getattr(st, "music_mode", "mine")
+        if self.spec.bgm and Path(self.spec.bgm).exists():
+            return
+        if mode == "off":
+            self.spec.music = False
+        elif mode == "mine" and self.spec.music:
+            folder = Path(getattr(st, "music_dir", "") or (USER_DIR / "music"))
+            tracks = sorted(p for p in folder.glob("*") if p.suffix.lower() in MUSIC_EXT) if folder.is_dir() else []
+            if tracks:
+                # 같은 영상이면 같은 곡(다시 돌려도 바뀌지 않게), 영상마다 돌아가며
+                self.spec.bgm = str(tracks[int(text_hash(self.spec.topic or self.spec.video), 16) % len(tracks)])
+                self.log(f"🔊 배경음악: 내 음악 폴더의 「{Path(self.spec.bgm).stem}」")
+            else:
+                self.spec.music = False
+                self.log(f"🔊 배경음악 없이(내 음악 폴더 {folder} 가 비어 있음 — 곡을 넣으면 그 곡을 씁니다)")
+        if not self.spec.sfx:
+            self._log_file_only("   (효과음 끔 — 고급 설정 › 소리에서 켤 수 있음)")
 
     # ------------------------------------------------------------------
     # 말단 작업이 실패했을 때의 대체 상태(SOFT_STAGES) — 영상은 끝까지 나온다
@@ -1686,7 +1713,7 @@ class Pipeline:
 
     def stage_sound(self) -> None:
         """🔊 효과음·배경음악 라이브러리 준비(처음 한 번 내려받고 이후 재사용, 실패 시 내장 효과음)."""
-        if not (self.spec.sfx or self.spec.music):
+        if not (self.spec.sfx or (self.spec.music and not self.spec.bgm)):
             return
         lib = self._sound_lib(full=True)
         cats = sorted({s.category for s in lib.sfx if s.source != "synth"})
@@ -2288,7 +2315,7 @@ class Pipeline:
 
     def _mix_all(self, progress: Callable[[float], None] = lambda f: None) -> None:
         """편집 결정(효과음 큐 · 음악 스웰/교체/비우기)대로 목소리 + 음악 + 효과음 → 마스터 WAV(m['mix'])."""
-        lib = self._sound_lib(full=True) if (self.spec.sfx or self.spec.music) else None
+        lib = self._sound_lib(full=True) if (self.spec.sfx or (self.spec.music and not self.spec.bgm)) else None
         n = len(self.masters)
         for k, m in enumerate(self.masters):
             self.cancel.check()
@@ -2297,7 +2324,7 @@ class Pipeline:
             if lib is not None and self.spec.sfx:
                 for j, e in enumerate(ed.sfx):
                     snd = lib.pick(e["category"], seed=j)
-                    if snd is None:
+                    if snd is None or snd.source == "synth":     # 절차적으로 만든 효과음은 완성본에 쓰지 않는다
                         continue
                     cues.append(SfxCue(t=e["t"], path=str(snd.path), gain_db=e["gain_db"], peak=snd.peak,
                                        name=e["category"], fade_out=2.5 if e["category"] == "riser" else 0.0))

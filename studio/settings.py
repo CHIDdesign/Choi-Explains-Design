@@ -56,6 +56,10 @@ class Settings:
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
     download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
+    # 🔊 소리 — 채널 주인: "효과음과 음원이 싹 다 별로". 이상한 소리를 넣느니 넣지 않는다
+    sfx_enabled: bool = False        # 효과음(기본 끔)
+    music_mode: str = "mine"         # 배경음악: mine = 내 음악 폴더의 곡만 · library = 기본 라이브러리 · off = 없음
+    music_dir: str = ""              # 내 음악 폴더(비우면 user/music)
     # 🎬 AI 스튜디오(멀티 에이전트)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}

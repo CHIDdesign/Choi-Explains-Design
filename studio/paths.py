@@ -17,3 +17,4 @@ SETTINGS_FILE = USER_DIR / "settings.json"
 
 def ensure_user_dirs() -> None:
     USER_DIR.mkdir(parents=True, exist_ok=True)
+    (USER_DIR / "music").mkdir(exist_ok=True)      # 배경음악으로 쓸 내 곡(설정 › 소리)
