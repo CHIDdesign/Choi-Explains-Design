@@ -88,6 +88,11 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         lines.append(f"- 되살림(최종 확인 — 편집본에서 빠져 원본에서 다시 넣음): {t}")
     for t in align_report.get("director_drop_refused") or []:
         lines.append(f"- 삭제 거절: {t}")
+    cr = align_report.get("cut_review") or {}
+    if cr:
+        lines.append(f"- ✂️ 컷 편집 총괄(Opus): 되살린 발화 {len(cr.get('restored_utts') or [])} · 더 뺀 발화 "
+                     f"{len(cr.get('cut_utts') or [])} · 되살린 말 {len(cr.get('restored_removals') or [])}"
+                     + (f" — {cr['notes']}" if cr.get("notes") else ""))
     lines.append("")
     fid = align_report.get("fidelity") or {}
     missing = fid.get("missing") if fid else (align_report.get("missing_sentences") or [])

@@ -41,7 +41,8 @@ from .director import fallback
 from .director.catalog import TEMPLATES
 from .director.claude import ClaudeClient, DirectorError
 from .director.claude_code import ClaudeCodeClient, find_claude, resolve_backend
-from .director.context import JobBrief, long_instruction, shared_context, shorts_instruction, system_prompt
+from .director.context import (JobBrief, load_prompt, long_instruction, shared_context, shorts_instruction,
+                               system_prompt)
 from .motion.card import card_settle_time, card_text
 from .motion.check import CheckError, check_cards, problem_lines
 from .director.plan import (TimedGraphic, blank_graphic, normalize_long, normalize_shorts, seg_edit_times,
@@ -349,6 +350,7 @@ class Pipeline:
         gpu = gpu_expected(self.settings.whisper_device, self.log)
         variants = {"asr": "asr@gpu" if gpu else "asr@cpu", "verify": "verify@gpu" if gpu else "verify@cpu",
                     "director": "director@ai" if ai else "director@rule",
+                    "align": "align@ai" if (ai and self.spec.studio_mode) else "align",
                     "qa": "qa@ai" if ai else "qa@rule",
                     "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
         self.eta.plan(keys, variants, self._eta_features(), steps=steps)
@@ -695,6 +697,7 @@ class Pipeline:
                                 visual=visual_scorer(self.smap, self.quality))
         self.utts, self.tags, rep = aligner.run(utts)
         self.align_report = rep.to_dict()
+        self._cut_review(parsed, [Word.from_dict(w) for w in tr.get("words", [])])
         self.align_report["words_removed"] = self.removed
         write_json(self.work / "align.json", {"utterances": [u.to_dict() for u in self.utts],
                                               "tags": [t.to_dict() for t in self.tags],
@@ -708,6 +711,34 @@ class Pipeline:
             self.log(f"📜 대본 충실: 되살린 문장 「{t[:40]}」")
         if parsed.has_text and rep.missing_sentences:
             self.log(f"📜 영상에서 찾지 못한 대본 문장 {len(rep.missing_sentences)}개(말하지 않았거나 인식 실패) — 편집리포트 참고")
+
+    def _cut_review(self, parsed, raw: list[Word]) -> None:
+        """✂️ 컷 편집 총괄(Opus): 규칙이 만든 컷 초안(발화 남김/뺌 · 단어 정리)을 대본과 함께 보고 틀린 판단만 고친다.
+        AI 가 없거나 실패하면 규칙 초안 그대로(대본 충실 보증은 그대로 뒤에서 지킨다). 결과는 work/cut_review.json 캐시."""
+        from .text import cut_review
+        studio = self._ensure_studio()
+        if studio is None:
+            return
+        draft = cut_review.draft_text(parsed.sentences, self.utts, self.removed, raw)
+        key = text_hash(draft, "cut-v1")
+        cached = read_json(self.work / "cut_review.json", {})
+        res = cached.get("result") if cached.get("key") == key else None
+        if res is None:
+            self.log("✂️ 컷 편집 총괄: 규칙 초안을 대본과 함께 검토")
+            try:
+                instr = load_prompt("agents/cut_editor.md")
+                res = studio.call("cut_editor", draft, instr)
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - 총괄 검토가 안 되면 규칙 초안 그대로
+                self._log_file_only(traceback.format_exc())
+                self.log(f"✂️ 컷 편집 총괄 실패 → 규칙 초안 그대로: {e}")
+                return
+            write_json(self.work / "cut_review.json", {"key": key, "result": res})
+        rv, self.removed = cut_review.apply(res, self.utts, self.removed, raw)
+        self.align_report["cut_review"] = {"restored_utts": rv.restored_utts, "cut_utts": rv.cut_utts,
+                                           "restored_removals": rv.restored_removals, "notes": rv.notes}
+        self.log(f"✂️ 컷 편집 총괄: {rv.summary()}" + (f" — {rv.notes}" if rv.notes and rv.notes != rv.summary() else ""))
 
     def stage_face(self) -> None:
         """얼굴 추적 + 화면 품질 표본 — 카메라마다. 원본이 여러 개면 얼굴 트랙은 묶음 기준 카메라를 따라 잇는다
@@ -1254,7 +1285,8 @@ class Pipeline:
             kept_words = [w for u in order if u.kept for w in u.words]
             cov = fidelity.coverage(sents, kept_words)
             times = fidelity.sentence_times(sents, kept_words)
-            cands = [u for u in order if not u.kept and u.status in ("retake", "director_drop", "meta") and u.words]
+            cands = [u for u in order if not u.kept and u.status in ("retake", "director_drop", "editor_cut", "meta")
+                     and u.words]
             if not cands:
                 break
             owner = {id(w): u for u in cands for w in u.words}

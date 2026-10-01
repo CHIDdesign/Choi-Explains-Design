@@ -37,6 +37,7 @@ class Agent:
 
 AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("director", "🎬 총괄 감독", "director", S.BRIEF, "high"),
+    Agent("cut_editor", "✂️ 컷 편집 총괄", "cut_editor", S.CUT_REVIEW, "high", 16000),
     Agent("editor", "✂️ 편집 감독", "editor", S.EDITOR, "medium", 16000),
     Agent("motion", "🎨 모션 디자이너", "motion", S.MOTION, "high", 48000),
     Agent("stock", "🎞 자료 리서처", "stock", S.STOCK, "medium", 16000),

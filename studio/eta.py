@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "asr@gpu": lambda f: 40 + 10 * f["m"],
     "asr@cpu": lambda f: 40 + 80 * f["m"],
     "align": lambda f: 5 + 2 * f["m"],
+    "align@ai": lambda f: 60 + 8 * f["m"],     # ✂️ 컷 편집 총괄(Opus)이 초안을 검토
     "face": lambda f: 10 + 8 * f.get("mv", f["m"]) * f["k"],        # mv: 원본 영상 길이 합(다시점이면 카메라 수만큼)
     "grade": lambda f: 25 + 3 * f.get("mv", f["m"]),
     "director@ai": lambda f: 150 + 20 * f["m"],

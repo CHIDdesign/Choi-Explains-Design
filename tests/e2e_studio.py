@@ -93,6 +93,9 @@ def _seg_with(segs: dict[int, str], word: str) -> int:
 
 
 def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict:
+    if agent == "cut_editor":  # 대본 + 컷 초안을 받는다(그림 없음)
+        assert n_images == 0 and "# 전사와 컷 초안" in json.dumps(body, ensure_ascii=False)
+        return {"utterances": [], "removals": [], "notes": "초안 그대로"}
     if agent == "colorist":  # 전사본 없이 비교 시트 + 원본 스코프 시트 두 장
         assert n_images == 2, n_images
         return {"look": "warm_film", "strength": 0.7, "exposure": 0.0, "warmth": 0.05, "saturation": 1.0,
@@ -198,7 +201,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
-    for key, marker in (("director", "logline"), ("editor", "moments"), ("motion", "scenes"), ("stock", "requests"),
+    for key, marker in (("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
+                        ("stock", "requests"),
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
@@ -391,7 +395,7 @@ def main() -> int:
 
     agents = [c["agent"] for c in CALLS]
     for a in ("director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
-              "motion_revise", "colorist"):
+              "motion_revise", "colorist", "cut_editor"):
         assert a in agents, f"{a} 호출 없음: {agents}"
     # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전
     assert agents.index("director") < min(agents.index(a) for a in ("editor", "motion", "stock", "captions", "shorts",

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..director.catalog import LAYOUTS, TEMPLATE_NAMES
-from ..director.schema import GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHORTS_PLAN, STR, STR_LIST, _obj
+from ..director.schema import BOOL, GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHORTS_PLAN, STR, STR_LIST, _obj
 
 INTENTS = ["hook", "context", "explain", "example", "name_concept", "story", "data", "compare", "transition",
            "return_to_life", "payoff"]
@@ -158,3 +158,11 @@ SHORTS = SHORTS_PLAN
 
 __all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
+
+
+# ✂️ 컷 편집 총괄(Opus) — 규칙이 만든 컷 초안(발화 남김/뺌 · 단어 정리)을 대본과 함께 보고 최종 판단. 바꿀 것만 낸다
+CUT_REVIEW = _obj({
+    "utterances": {"type": "array", "items": _obj({"id": INT, "keep": BOOL, "reason": STR})},
+    "removals": {"type": "array", "items": _obj({"id": INT, "keep_removed": BOOL, "reason": STR})},
+    "notes": STR,
+})
