@@ -30,6 +30,15 @@ echo   (관리자 권한으로 자동 실행 · winget 불필요 · 처음에는
 echo ==============================================================
 echo.
 
+rem OneDrive(동기화 폴더) 안이면 6GB 가 넘는 설치 파일(.venv·node_modules·음성인식 모델)을 OneDrive 가 계속 올리고,
+rem 다른 PC·계정에서 설치한 파일이 동기화로 섞여 들어와 고장 나기 쉽다 — 옮기라고 알린다(설치는 계속)
+if not "!CD:OneDrive=!"=="!CD!" (
+  echo [안내] 이 폴더는 OneDrive 안에 있습니다: !CD!
+  echo        설치 파일이 6GB 가 넘어 OneDrive 가 계속 올리고, 다른 PC 의 설치 파일이 섞여 들어와 고장 날 수 있습니다.
+  echo        가능하면 이 폴더를 C:\ChoiStudio 처럼 OneDrive 밖으로 옮긴 뒤 거기서 다시 실행하세요.
+  echo.
+)
+
 rem Node.js·FFmpeg 는 이 폴더의 tools\ 에 설치해서 이 창에서 바로 쓴다(재시작 불필요)
 set "TOOLS=%CD%\tools"
 set "PATH=%TOOLS%\node;%TOOLS%\ffmpeg\bin;%PATH%"
@@ -104,16 +113,36 @@ ffmpeg -hide_banner -encoders 2>nul | findstr /c:"h264_nvenc" >nul && echo   NVE
 echo.
 
 rem ---------- 가상환경 + 파이썬 패키지 ----------
+rem 예전 가상환경(.venv)이 이 PC 에 없는 파이썬을 가리키면 쓸 수 없다 — 다른 PC·다른 계정에서 만든 .venv 가
+rem OneDrive·복사로 따라왔거나, 파이썬을 지우거나 바꾼 경우("The system cannot find the file ...\python.exe").
+rem 그런 .venv 는 지우고 지금 찾은 파이썬으로 새로 만든다
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+  if errorlevel 1 (
+    echo [정리] 기존 파이썬 가상환경^(.venv^)이 이 PC 에 없는 파이썬을 가리킵니다. 지우고 새로 만듭니다...
+    rmdir /s /q ".venv"
+  )
+)
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+  if errorlevel 1 (
+    echo [오류] .venv 폴더를 지우지 못했습니다. Choi Studio 창을 모두 닫고, 이 폴더 안의 .venv 를 직접 지운 뒤 다시 실행하세요.
+    goto :fail
+  )
+)
 if not exist ".venv\Scripts\python.exe" (
   echo [설치] 파이썬 가상환경 생성...
   %PY% -m venv .venv || goto :fail
 )
+rem 이후로는 가상환경의 파이썬을 경로로 직접 부른다(PATH 의 다른 python.exe 가 끼어들지 않게)
+set "VPY=%CD%\.venv\Scripts\python.exe"
+"%VPY%" -c "import sys" || goto :fail
 call ".venv\Scripts\activate.bat"
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt || goto :fail
+"%VPY%" -m pip install --upgrade pip
+"%VPY%" -m pip install -r requirements.txt || goto :fail
 copy /y "requirements.txt" ".venv\.req_stamp" >nul
 echo [설치] GPU 음성인식용 CUDA 라이브러리 cuBLAS / cuDNN ^(약 1.5GB^)...
-python -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" || goto :fail
+"%VPY%" -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" || goto :fail
 
 rem ---------- 렌더러(Remotion) ----------
 echo [설치] 렌더러 패키지 npm install ...
@@ -151,21 +180,21 @@ if defined CLAUDE_EXE (
 rem ---------- 효과음·배경음악·잡음 제거 모델(처음 한 번, 약 80MB) ----------
 echo.
 echo [설치] 효과음·배경음악^(Pixabay 등^)과 목소리 잡음 제거 모델을 내려받습니다...
-python -c "from studio.sound.library import SoundLibrary; lib=SoundLibrary(log=print).ensure(); print('  효과음', len(lib.sfx), '개 · 배경음악', len(lib.bgm), '곡')"
+"%VPY%" -c "from studio.sound.library import SoundLibrary; lib=SoundLibrary(log=print).ensure(); print('  효과음', len(lib.sfx), '개 · 배경음악', len(lib.bgm), '곡')"
 
 rem ---------- (선택) Pixabay 키: 스톡 '영상' B-roll ----------
-python -c "from studio.settings import Settings; import sys; sys.exit(0 if Settings.load().pixabay_api_key else 1)" >nul 2>nul
+"%VPY%" -c "from studio.settings import Settings; import sys; sys.exit(0 if Settings.load().pixabay_api_key else 1)" >nul 2>nul
 if errorlevel 1 (
   echo.
   echo [선택] Pixabay API 키가 있으면 스톡 '영상' B-roll 도 자동으로 가져옵니다.
   echo        없어도 사진 B-roll·효과음·음악은 동작합니다. https://pixabay.com/api/docs/ 에서 무료 가입 후 키 확인.
   set "PIXKEY="
   set /p PIXKEY="  Pixabay 키를 붙여넣고 Enter ^(없으면 그냥 Enter^): "
-  if defined PIXKEY python -c "from studio.settings import Settings; s=Settings.load(); s.pixabay_api_key='!PIXKEY!'.strip(); s.save(); print('  저장했습니다.')"
+  if defined PIXKEY "%VPY%" -c "from studio.settings import Settings; s=Settings.load(); s.pixabay_api_key='!PIXKEY!'.strip(); s.save(); print('  저장했습니다.')"
 )
 
 rem ---------- 바탕화면 바로가기(항상 관리자 권한으로 실행) ----------
-python -m studio.gui.icon "%CD%\assets\choi_studio.ico" >nul 2>nul
+"%VPY%" -m studio.gui.icon "%CD%\assets\choi_studio.ico" >nul 2>nul
 %PS% -Shortcut -Target "%CD%\run_studio.bat" -Icon "%CD%\assets\choi_studio.ico"
 
 rem ---------- Whisper 모델 미리 받기 ----------
@@ -173,7 +202,7 @@ echo.
 choice /c YN /m "Whisper large-v3 음성인식 모델 약 3GB 를 지금 미리 받을까요"
 if %errorlevel%==1 (
   echo   약 3GB 를 받습니다^(몇 분~20분^). 'HF_TOKEN' 경고가 나와도 정상이며 토큰은 필요 없습니다.
-  python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8'); print('모델 준비 완료')"
+  "%VPY%" -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8'); print('모델 준비 완료')"
 )
 
 echo.

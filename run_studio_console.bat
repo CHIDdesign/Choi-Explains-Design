@@ -26,6 +26,14 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
+rem 이 .venv 가 이 PC 에 없는 파이썬을 가리키면(다른 PC·계정에서 복사·동기화된 폴더) setup 이 새로 만든다
+".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
+if errorlevel 1 (
+  echo 파이썬 가상환경^(.venv^)이 이 PC 에 없는 파이썬을 가리킵니다^(다른 PC·계정에서 복사하거나 OneDrive 로 동기화된 폴더^).
+  echo setup_windows.bat 을 다시 실행하면 새로 만듭니다.
+  pause
+  exit /b 1
+)
 set "PATH=%~dp0tools\node;%~dp0tools\ffmpeg\bin;%PATH%"
 rem 음성인식 모델·임시 파일은 프로그램 폴더 안에(C 드라이브 용량 절약)
 set "HF_HOME=%~dp0models\hf"
