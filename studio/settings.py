@@ -43,6 +43,7 @@ class Settings:
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
+    whisper_batch: int = 8            # 배치 추론 크기(GPU 약 3~4배·CPU 약 2배 빠름, 메모리가 모자라면 자동으로 줄임). 1 = 순차
     ffmpeg_path: str = ""
     ffprobe_path: str = ""
     node_path: str = ""
@@ -56,7 +57,7 @@ class Settings:
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
     download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
     # 🎬 AI 스튜디오(멀티 에이전트)
-    studio_workers: int = 4           # 동시에 일하는 전문 에이전트 수
+    studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low"}
     agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
     glossary: dict[str, str] = field(default_factory=lambda: {
@@ -90,6 +91,9 @@ class Settings:
                 s.render = _merge(RenderSettings(), raw["render"])
             else:
                 setattr(s, f.name, raw[f.name])
+        # 예전 기본값(4)으로 저장된 설정: 전문가 여섯 중 둘이 앞 넷을 기다려 기획이 한 바퀴 더 걸렸다 → 6
+        if raw.get("studio_workers") == 4:
+            s.studio_workers = 6
         # 작업 폴더: 비어 있으면 기본(프로그램 폴더/projects). 프로그램 폴더를 옮기고 예전 폴더를 지웠으면(설치 안내대로
         # D:\ChoiStudio 로 옮긴 경우) 예전 절대 경로 대신 기본으로 — 꽉 찬 C: 에 예전 경로를 다시 만들지 않게
         pd = str(s.projects_dir or "")

@@ -749,23 +749,21 @@ class MainWindow(QMainWindow):
         self.p_pct.setText(f"{v / 10:.0f}%")
 
     def _on_progress(self, key: str, frac: float, overall: float) -> None:
+        """단계마다 따로 표시 — 서로 기다리지 않는 단계는 동시에 돌므로(pipeline.SCHEDULE) ● 가 여럿일 수 있다."""
         self._set_overall(overall)
-        keys = [k for k, _, _ in STAGES]
-        if key in keys:
-            idx = keys.index(key)
-            for i, (k, label, _) in enumerate(STAGES):
-                lab = self.stage_rows[k]
-                if i < idx:
-                    text, name = f"✓  {label}", "stageDone"
-                elif i == idx:
-                    text, name = f"●  {label}  {frac * 100:.0f}%", "stageNow"
-                else:
-                    continue
-                if lab.text() != text:
-                    lab.setText(text)
-                if lab.objectName() != name:
-                    lab.setObjectName(name)
-                    self._restyle(lab)
+        lab = self.stage_rows.get(key)
+        label = next((lb for k, lb, _ in STAGES if k == key), None)
+        if lab is None or label is None or lab.objectName() == "stageDone":
+            return
+        if frac >= 1.0:
+            text, name = f"✓  {label}", "stageDone"
+        else:
+            text, name = f"●  {label}  {frac * 100:.0f}%", "stageNow"
+        if lab.text() != text:
+            lab.setText(text)
+        if lab.objectName() != name:
+            lab.setObjectName(name)
+            self._restyle(lab)
 
     def _tick(self) -> None:
         now = time.time()

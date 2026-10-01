@@ -38,7 +38,9 @@ PARAMS: dict[str, Any] = {
     "medium": 1.06,             # 두 번째 '카메라'(차이는 작게)
     "medium_x": 0.016,
     "min_shot": 6.0,            # 긴 얼굴 구간을 문장 시작에서 나눌 때 앞뒤로 남길 최소 길이(초)
-    "max_shot": 60.0,           # 얼굴만 이보다 길게 이어질 때만 문장 시작에서 글라이드로 한 번 바꾼다
+    # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다 — 셜록현준 리서치(20~40초마다 카메라
+    # 변화, 얼굴만 25초가 절대 상한)의 가운데 값. 컷이 아니라 1.2초 글라이드(1.00↔1.06)라 젠틀함은 그대로(예전 60초)
+    "max_shot": 30.0,
     "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
     "push_per_sec": 0.004,      # 느린 드리프트 0.4%/초 — 최대 5%
     "push_max": 0.05,
@@ -69,6 +71,9 @@ PARAMS: dict[str, Any] = {
     "list_click_max": 6,
     # 강조 자막·콜아웃
     "impact_min_gap": 22.0,
+    # 콜아웃(화자 반대편 키워드)은 강조 글라이드(40초 간격·8회)와 따로 고른다 — 레퍼런스 실측 얼굴+오버레이 화면이
+    # 롱폼의 약 21%인데, 글라이드에 묶여 있을 때는 영상당 8개(약 4%)가 상한이었다. 강도 2 이상·콜아웃 문구가 있는 순간
+    "callout_min_gap": 20.0,
     "callout_center": 0.14,     # 얼굴이 가운데에서 이 비율 안이면 콜아웃 동안 반대쪽으로 리프레이밍
     "callout_zoom": 1.10,
     "callout_shift": 0.06,      # 화면 폭 비율(확대 여유 안에서만 실제로 움직인다)
@@ -233,6 +238,20 @@ def _face_x(face: list[dict], t: float) -> float:
         return 0.5
     near = min(face, key=lambda f: abs(f.get("t", 0) - t))
     return float(near.get("x", 0.5))
+
+
+def face_only_runs(graphics: list[dict], callouts: list[dict], total: float) -> list[float]:
+    """화면에 얼굴만 있는(그래픽·콜아웃이 하나도 없는) 구간 길이들 — 레퍼런스 실측: 보통 10초 이하, 25초가 절대 상한."""
+    spans = sorted((max(0.0, x["start"]), min(total, x["end"])) for x in list(graphics) + list(callouts)
+                   if x["end"] > x["start"])
+    runs, t = [], 0.0
+    for a, b in spans:
+        if a > t:
+            runs.append(a - t)
+        t = max(t, b)
+    if total > t:
+        runs.append(total - t)
+    return runs
 
 
 def list_reveal_times(g: dict, fps: float = FPS_BASE) -> list[float]:
@@ -431,12 +450,28 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     busy = text_spans + [(g["start"], g["end"], None) for g in graphics
                          if g.get("layout") in ("split", "pip", "overlay") or g.get("template") == "lower_third"]
     by_t = {round(m.t, 3): m for m in moments}
+    # 콜아웃 후보: 강조 글라이드가 된 순간 + 글라이드 간격(40초)·상한(8회)에 밀렸지만 콜아웃 문구가 있는 강도 2 이상 순간
+    cands = [dict(p, punch=True) for p in punches]
+    taken = {p["t"] for p in punches}
+    for m in moments:
+        t = round(m.t, 3)
+        hot = in_spans(m.t, spans)
+        if t in taken or not m.callout.strip() or (m.intensity < 2 and not hot):
+            continue
+        if _inside(m.t, covers, pad=0.4) or _inside(m.t, side, pad=0.4) \
+                or _inside(m.t, [(e["t"] - 0.5, e["t"] + 0.5) for e in tx]):
+            continue
+        cands.append({"t": t, "end": round(max(m.end + 0.15, m.t + 1.0), 3), "intensity": m.intensity, "hot": hot,
+                      "kind": m.kind, "punch": False})
+        taken.add(t)
+    cands.sort(key=lambda c: c["t"])
     last_callout = -1e9
     called: set[float] = set()
-    for p in punches:
+    for p in cands:
         m = by_t.get(p["t"])
         text = (m.callout if m else "").strip()
-        if not text or p["t"] - last_callout < (PU if p.get("hot") else P)["impact_min_gap"] or _inside(p["t"], busy, pad=0.3):
+        gap = PU["impact_min_gap"] if p.get("hot") else P["callout_min_gap"]
+        if not text or p["t"] - last_callout < gap or _inside(p["t"], busy, pad=0.3):
             continue
         nxt = min([a for a, _, _ in covers if a > p["t"]] + [a for a, _, _ in busy if a > p["t"]] + [speech_total])
         end = min(p["t"] + 4.2, max(p["end"] + 0.8, p["t"] + 2.8), nxt - 0.15)
@@ -450,6 +485,8 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                             "side": "right" if fx < 0.5 else "left"})
         last_callout = p["t"]
         called.add(p["t"])
+        if not p["punch"]:
+            ed.callouts[-1]["pop"] = True    # 글라이드 없는 콜아웃: 등장에 작은 pop(효과음 간격 규칙은 그대로)
     # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 천천히(glide) 옮겨 자리를 만든다(셜록현준식 리프레이밍).
     # 이때는 리프레이밍 자체가 강조 역할을 하므로 같은 순간의 강조 글라이드는 뺀다(효과음은 유지).
     reframed: set[float] = set()
@@ -509,6 +546,9 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
             add(p["t"], PU["sfx_for_punch"].get(p["intensity"], "pop"), 5, f"펀치 강조({p['kind']})")
         else:
             add(p["t"], "pop" if p["intensity"] >= 2 else "", 4 if p["intensity"] >= 3 else 2, f"강조({p['kind']})")
+    for c in ed.callouts:
+        if c.pop("pop", False):
+            add(c["start"] + 0.08, "pop", 2, "콜아웃")
     # 결론·감정 문장 밑에는 효과음을 깔지 않는다(리서치) — 대신 배경음악을 0.8초 전에 비워 '숨'을 준다
     if endcard and total > speech_total + 0.5:
         add(speech_total + 0.2, "whoosh_soft", 3, "엔드카드")
@@ -537,9 +577,12 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     if endcard and total > speech_total:
         ed.bgm_swells.append((speech_total, total))
     face_time = speech_total - sum(b - a for a, b, _ in covers)
+    runs = face_only_runs(graphics, ed.callouts, speech_total)
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),
                 "sfx": len(ed.sfx), "impact_captions": len(ed.impact_cues), "callouts": len(ed.callouts),
                 "face_ratio": round(face_time / max(1e-6, speech_total), 3),
+                "max_face_run": round(max(runs, default=0.0), 1),
+                "face_runs_over_25s": sum(1 for r in runs if r > 25.0),
                 "punch_spans": len(spans), "hot_punches": sum(1 for p in punches if p.get("hot"))}
     return ed
 

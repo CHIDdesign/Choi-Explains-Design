@@ -1,5 +1,6 @@
 import React, {useMemo} from 'react';
 import {interpolate} from 'remotion';
+import {grainOffset, useNoiseTile} from '../../lib/noise';
 import {EASE, LONG, tween, tweenOut} from '../../design/motion';
 import {FONT, NOTE} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
@@ -39,17 +40,14 @@ export const Halftone: React.FC<{opacity?: number; size?: number; color?: string
     backgroundImage: `radial-gradient(${color} 0.9px, transparent 1.2px)`, backgroundSize: `${size}px ${size}px`}} />
 );
 
-/** 종이 질감(섬유 + 아주 옅은 얼룩) */
-export const PaperFiber: React.FC<{id: string; opacity?: number}> = ({id, opacity = 0.16}) => (
-  <svg width="100%" height="100%" style={{position: 'absolute', inset: 0, pointerEvents: 'none', opacity,
-    mixBlendMode: 'multiply'}}>
-    <filter id={`fiber-${id}`}>
-      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3" />
-      <feColorMatrix type="saturate" values="0" />
-    </filter>
-    <rect width="100%" height="100%" filter={`url(#fiber-${id})`} />
-  </svg>
-);
+/** 종이 질감(섬유 + 아주 옅은 얼룩) — 미리 만든 노이즈 타일(SVG feTurbulence 보다 훨씬 싸다, lib/noise.ts) */
+export const PaperFiber: React.FC<{id: string; opacity?: number}> = ({opacity = 0.16}) => {
+  const tile = useNoiseTile(3, 0.42, 0.5);
+  return (
+    <div style={{position: 'absolute', inset: 0, pointerEvents: 'none', opacity, mixBlendMode: 'multiply',
+      backgroundImage: `url(${tile})`, backgroundSize: '256px 256px'}} />
+  );
+};
 
 /** 테이프 한 조각(시그널색, 반투명, 옅은 줄무늬) */
 export const Tape: React.FC<{x: number; y: number; w?: number; h?: number; rotate?: number; color: string;
@@ -148,21 +146,19 @@ export const SectionBar: React.FC<{text: string; frame: number; dur: number; W: 
   );
 };
 
-/** 아카이브 사진·스톡 위 필름 룩: 비네팅 + 미세 입자(프레임마다 조금씩 다른 노이즈) */
-export const FilmLook: React.FC<{frame: number; strength?: number; id: string}> = ({frame, strength = 1, id}) => (
-  <div style={{position: 'absolute', inset: 0, pointerEvents: 'none'}}>
-    <div style={{position: 'absolute', inset: 0, background:
-      `radial-gradient(120% 100% at 50% 48%, rgba(0,0,0,0) 48%, rgba(0,0,0,${0.42 * strength}) 100%)`}} />
-    <svg width="100%" height="100%" style={{position: 'absolute', inset: 0, opacity: 0.16 * strength,
-      mixBlendMode: 'overlay'}}>
-      <filter id={`grain-${id}`}>
-        <feTurbulence type="fractalNoise" baseFrequency="0.95" numOctaves="1" seed={1 + (frame % 6)} />
-        <feColorMatrix type="saturate" values="0" />
-      </filter>
-      <rect width="100%" height="100%" filter={`url(#grain-${id})`} />
-    </svg>
-  </div>
-);
+/** 아카이브 사진·스톡 위 필름 룩: 비네팅 + 미세 입자(노이즈 타일을 프레임마다 옮김 — 예전 feTurbulence 는 사진 구간
+ *  렌더를 두 배 느리게 했다) */
+export const FilmLook: React.FC<{frame: number; strength?: number; id: string}> = ({frame, strength = 1}) => {
+  const tile = useNoiseTile(1);
+  return (
+    <div style={{position: 'absolute', inset: 0, pointerEvents: 'none'}}>
+      <div style={{position: 'absolute', inset: 0, background:
+        `radial-gradient(120% 100% at 50% 48%, rgba(0,0,0,0) 48%, rgba(0,0,0,${0.42 * strength}) 100%)`}} />
+      <div style={{position: 'absolute', inset: 0, opacity: 0.16 * strength, mixBlendMode: 'overlay',
+        backgroundImage: `url(${tile})`, backgroundSize: '256px 256px', backgroundPosition: grainOffset(frame)}} />
+    </div>
+  );
+};
 
 /**
  * 키워드 슬램(레퍼런스: 같은 사진이 이어진 채 어두워지며 큰 흰 키워드 + 'A → B'): f = 슬램 시작 기준 프레임.

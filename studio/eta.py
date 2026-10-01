@@ -6,6 +6,7 @@
   2) 지금 단계는 계획 시간과 실측 속도 중 큰 쪽에서 시작해, 진행될수록 실측 쪽을 믿고
   3) 먼저 끝난 같은 종류 단계의 실제/예상 비율로 남은 단계를 조정하고(늘리기는 2배까지, 줄이기는 25%까지만)
   4) 끝난 단계의 실제/기본 비율을 user/eta_history.json 에 남겨 다음 작업부터 이 PC 속도로 잡는다.
+  5) 서로 기다리지 않는 단계는 동시에 돈다(pipeline.SCHEDULE) — 남은 시간은 칸마다 가장 오래 걸리는 줄의 합.
 """
 from __future__ import annotations
 
@@ -70,15 +71,13 @@ class Eta:
         self._history_path = history
         self._hist: dict[str, list[float]] = (read_json(history, {}).get("factors", {}) if history else {}) or {}
         self._t0: Optional[float] = None
-        self._order: list[str] = []            # 남은 단계 순서
+        self._steps: list[list[list[str]]] = []  # 차례로 도는 칸 → 칸 안에서 동시에 도는 줄 → 줄 안의 단계(차례로)
         self._cost: dict[str, float] = {}      # 단계 → 예상 초(학습·보정 반영)
         self._base: dict[str, float] = {}      # 단계 → 기본 초(학습 기록용)
         self._variant: dict[str, str] = {}     # 단계 → 기록 키(asr@gpu 등)
         self._group: dict[str, list[float]] = {}   # 묶음 → [실제 초 합, 예상 초 합]
         self._done: set[str] = set()
-        self._cur: Optional[str] = None
-        self._cur_t = 0.0
-        self._frac = 0.0
+        self._run: dict[str, list[float]] = {}   # 도는 중인 단계 → [시작 시각, 진행률]
 
     # ---- 계획 ----
     def begin(self) -> None:
@@ -89,11 +88,13 @@ class Eta:
         xs = [x for x in self._hist.get(variant, []) if x > 0][-3:]
         return min(6.0, max(0.25, max(xs) * LEARN_MARGIN)) if xs else 1.0
 
-    def plan(self, stages: list[str], variants: dict[str, str], feats: dict) -> None:
-        """stages: 앞으로 돌 단계(순서대로). variants: 단계 → DEFAULTS 키. 이미 끝난 단계는 건너뜀."""
+    def plan(self, stages: list[str], variants: dict[str, str], feats: dict, *,
+             steps: Optional[list[list[list[str]]]] = None) -> None:
+        """stages: 앞으로 돌 단계(순서대로). variants: 단계 → DEFAULTS 키. 이미 끝난 단계는 건너뜀.
+        steps: 동시에 도는 단계가 있을 때의 일정(칸 → 줄 → 단계). 없으면 stages 를 하나씩 차례로."""
         with self._lock:
-            self._order = list(stages)
-            for key in stages:
+            self._steps = [[list(lane) for lane in st if lane] for st in steps] if steps else [[[k]] for k in stages]
+            for key in [k for st in self._steps for lane in st for k in lane]:
                 if key in self._done:
                     continue
                 self._set_cost(key, variants.get(key, key), feats)
@@ -101,7 +102,7 @@ class Eta:
     def refine(self, key: str, feats: dict) -> None:
         """출력 길이가 확정되면 아직 시작 안 한 단계(렌더·믹스)를 다시 잡는다."""
         with self._lock:
-            if key in self._cost and key not in self._done and key != self._cur:
+            if key in self._cost and key not in self._done and key not in self._run:
                 self._set_cost(key, self._variant.get(key, key), feats)
 
     def _set_cost(self, key: str, variant: str, feats: dict) -> None:
@@ -114,20 +115,21 @@ class Eta:
     # ---- 진행 ----
     def start(self, key: str) -> None:
         with self._lock:
-            self._cur, self._cur_t, self._frac = key, self._clock(), 0.0
+            self._run[key] = [self._clock(), 0.0]
 
     def update(self, key: str, frac: float) -> None:
         with self._lock:
-            if key == self._cur:
-                self._frac = max(self._frac, min(1.0, max(0.0, frac)))
+            run = self._run.get(key)
+            if run is not None:
+                run[1] = max(run[1], min(1.0, max(0.0, frac)))
 
     def finish(self, key: str) -> None:
         with self._lock:
-            if key != self._cur:
+            run = self._run.pop(key, None)
+            if run is None:
                 return
-            took = self._clock() - self._cur_t
+            took = self._clock() - run[0]
             self._done.add(key)
-            self._cur = None
             if took < CACHED_S or key not in self._cost:
                 return
             group = GROUPS.get(key)
@@ -153,26 +155,29 @@ class Eta:
     def _expected(self, key: str) -> float:
         return self._cost.get(key, 0.0) * self._factor(key)
 
+    def _left(self, key: str, now: float) -> float:
+        if key in self._done:
+            return 0.0
+        exp = self._expected(key)
+        run = self._run.get(key)
+        if run is None:
+            return exp
+        t_in, f = now - run[0], run[1]
+        plan_left = max(0.0, exp - t_in)
+        if f >= 0.03 and t_in >= 5.0:
+            measured = t_in * (1 - f) / f * LEARN_MARGIN
+            w = min(1.0, (f - 0.03) / (TRUST_AT - 0.03))
+            return (1 - w) * max(plan_left, measured) + w * measured
+        return max(plan_left, min(30.0, 0.1 * exp))
+
     def remaining(self) -> Optional[float]:
-        """남은 초. 계획 전이면 None."""
+        """남은 초. 계획 전이면 None. 동시에 도는 줄은 가장 오래 걸리는 줄만 센다."""
         with self._lock:
             if not self._cost:
                 return None
             now = self._clock()
-            rest = sum(self._expected(k) for k in self._order if k not in self._done and k != self._cur)
-            if self._cur is None or self._cur not in self._cost:
-                return rest
-            exp = self._expected(self._cur)
-            t_in = now - self._cur_t
-            f = self._frac
-            plan_left = max(0.0, exp - t_in)
-            if f >= 0.03 and t_in >= 5.0:
-                measured = t_in * (1 - f) / f * LEARN_MARGIN
-                w = min(1.0, (f - 0.03) / (TRUST_AT - 0.03))
-                cur = (1 - w) * max(plan_left, measured) + w * measured
-            else:
-                cur = max(plan_left, min(30.0, 0.1 * exp))
-            return rest + cur
+            return sum(max((sum(self._left(k, now) for k in lane if k in self._cost) for lane in st), default=0.0)
+                       for st in self._steps)
 
     def fraction(self) -> Optional[float]:
         """시간 기준 진행률(경과 / (경과 + 남은 시간))."""

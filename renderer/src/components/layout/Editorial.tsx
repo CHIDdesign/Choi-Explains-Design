@@ -114,12 +114,16 @@ export const DrawRule: React.FC<{frame: number; delay?: number; color: string; w
   return <div style={{width, height: thick, background: color, transformOrigin: 'left center', scale: `${p} 1`}} />;
 };
 
-/** 분필 질감 SVG 필터(칠판 표면 도식의 선을 살짝 거칠게) */
+/** 분필 질감 SVG 필터(칠판 표면 도식의 선을 살짝 거칠게, 최대 ±1.2px).
+ *  노이즈는 필터 영역 왼쪽 위 96×96 조각만 계산하고(feTurbulence 의 x·y 를 비우면 필터 영역 원점) feTile 로 깐다 — 예전엔
+ *  도식 전체 넓이의 펄린 노이즈를 매 프레임 다시 계산해 도식 화면 렌더가 두 배 이상 느렸다. 결정적이고 모양은 같다. */
 export const ChalkFilter: React.FC<{id: string; on: boolean}> = ({id, on}) =>
   on ? (
     <defs>
       <filter id={id} x="-5%" y="-5%" width="110%" height="110%">
-        <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="n" />
+        <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" width="96" height="96"
+          stitchTiles="stitch" result="t" />
+        <feTile in="t" result="n" />
         <feDisplacementMap in="SourceGraphic" in2="n" scale="2.4" xChannelSelector="R" yChannelSelector="G" />
       </filter>
     </defs>

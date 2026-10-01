@@ -307,22 +307,40 @@ export const TitleCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
 // ---------------------------------------------------------------------------
 // 로어서드 — 화자 소개
 // ---------------------------------------------------------------------------
-export const LowerThird: React.FC<TemplateProps> = ({frame, dur, brand, theme}) => {
+export const LowerThird: React.FC<TemplateProps> = ({frame, dur, brand, theme, data}) => {
   const out = exit(frame, dur, 12);
+  // '오늘의 주제' 태그(셜록현준 레퍼런스: 타이틀 뒤 5~6초 동안 이 영상의 질문을 한 줄로) — 파이프라인이 data.title 을 줄 때만
+  const topic = String(data?.title || '').trim();
+  const topicSize = topic ? fitSize(topic, 980, 54, 34, -0.01) : 0;
   return (
     <div style={{position: 'absolute', left: 96, bottom: 190, opacity: out}}>
+      {topic ? (
+        <div style={{marginBottom: 34}}>
+          <MaskLine frame={frame} delay={0}>
+            <span style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: 700, fontSize: 22, lineHeight: 1.2,
+              color: '#111111', background: theme.accent, borderRadius: 5, padding: '4px 11px 5px'}}>
+              {String(data?.subtitle || '오늘의 주제')}
+            </span>
+          </MaskLine>
+          <MaskLine frame={frame} delay={5}>
+            <div style={{marginTop: 12, maxWidth: 980, fontFamily: FONT.round, fontSize: topicSize, lineHeight: 1.18,
+              letterSpacing: '-0.01em', color: '#fff', whiteSpace: 'nowrap',
+              textShadow: '0 2px 14px rgba(0,0,0,0.55)'}}>{topic}</div>
+          </MaskLine>
+        </div>
+      ) : null}
       <div style={{width: 360}}>
-        <DrawRule frame={frame} delay={0} color="rgba(255,255,255,0.7)" />
+        <DrawRule frame={frame} delay={topic ? 10 : 0} color="rgba(255,255,255,0.7)" />
       </div>
       <div style={{height: 16}} />
-      <MaskLine frame={frame} delay={4}>
+      <MaskLine frame={frame} delay={topic ? 14 : 4}>
         <div style={{display: 'flex', alignItems: 'center', gap: 14}}>
           <span style={{width: 14, height: 14, background: theme.accent, display: 'inline-block'}} />
           <span style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: 40, color: '#fff',
             textShadow: '0 2px 12px rgba(0,0,0,0.45)'}}>{brand.presenter}</span>
         </div>
       </MaskLine>
-      <MaskLine frame={frame} delay={8}>
+      <MaskLine frame={frame} delay={topic ? 18 : 8}>
         <div style={{marginTop: 8, fontFamily: FONT.sans, fontWeight: 500, fontSize: 24, color: 'rgba(255,255,255,0.86)',
           textShadow: '0 2px 10px rgba(0,0,0,0.5)'}}>{brand.presenterTitle}</div>
       </MaskLine>

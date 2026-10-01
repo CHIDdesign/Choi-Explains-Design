@@ -257,6 +257,59 @@ def test_transcribe_passes_array_and_drops_unknown_options(tmp_path, monkeypatch
         tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8")
 
 
+def test_transcribe_batched_and_memory_fallback(tmp_path, monkeypatch):
+    """배치 추론을 쓰고(배치 크기 전달), GPU 메모리가 모자라면 배치를 줄였다가 순차로 다시 한다. 결과는 시간순."""
+    import types
+
+    import numpy as np
+    from studio.asr import transcribe as tr
+
+    calls: list = []
+
+    def seg(t, text):
+        w = types.SimpleNamespace(word=" " + text, start=t + 0.1, end=t + 0.5, probability=0.9)
+        return types.SimpleNamespace(start=t, end=t + 1.0, text=" " + text, words=[w], avg_logprob=-0.2,
+                                     no_speech_prob=0.0)
+
+    class FakeModel:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def transcribe(self, audio, language=None, word_timestamps=False, initial_prompt=None):
+            calls.append(("seq", None))
+            return iter([seg(0.0, "하나"), seg(1.0, "둘")]), types.SimpleNamespace(duration=2.0, language="ko")
+
+    class FakeBatched:
+        def __init__(self, model):
+            self.model = model
+
+        def transcribe(self, audio, language=None, word_timestamps=False, initial_prompt=None, batch_size=16):
+            calls.append(("batch", batch_size))
+            if batch_size > 2:
+                def boom():
+                    raise RuntimeError("CUDA failed with error out of memory")
+                    yield  # noqa
+                return boom(), types.SimpleNamespace(duration=2.0, language="ko")
+            # 섞여 와도 시간순으로 맞춘다
+            return iter([seg(1.0, "둘"), seg(0.0, "하나")]), types.SimpleNamespace(duration=2.0, language="ko")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper",
+                        types.SimpleNamespace(WhisperModel=FakeModel, BatchedInferencePipeline=FakeBatched))
+    tr._MODELS.clear()
+    _write_wav(tmp_path / "asr16k.wav", np.zeros(16000), 16000)
+    logs: list[str] = []
+    res = tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8", batch_size=8,
+                        log=logs.append)
+    assert calls == [("batch", 8), ("batch", 4), ("batch", 2)]
+    assert [w["text"] for w in res["words"]] == ["하나", "둘"] and res["info"]["batch"] == 2
+    assert any("메모리 부족" in m for m in logs)
+    calls.clear()
+    tr._MODELS.clear()
+    tr.transcribe(tmp_path / "asr16k.wav", model_name="tiny", device="cpu", compute_type="int8", batch_size=1)
+    assert calls == [("seq", None)]
+    tr._MODELS.clear()
+
+
 def test_gpu_expected_follows_explicit_setting():
     from studio.asr.transcribe import gpu_expected
     assert gpu_expected("cuda") is True and gpu_expected("cpu") is False

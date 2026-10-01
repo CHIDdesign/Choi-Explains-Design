@@ -95,6 +95,8 @@ export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
   return f;
 };
 
+const COVER_PAD = 1.0; // 전체화면 그래픽 앞뒤로 화자 영상을 계속 그리는 여유(초) — 등장·퇴장·전환이 이 안에서 끝난다
+
 const GraphicSeq: React.FC<{
   g: Graphic;
   dur: number;
@@ -237,6 +239,12 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     );
   };
 
+  // 화자를 완전히 덮는 전체화면 그래픽(롱폼 무대의 리포트 페이지·사진·스톡·챕터 카드·자유 카드 — 모두 불투명 바탕)의
+  // 가운데 동안은 화자 영상을 그리지 않는다: 보이지 않는 프레임을 뽑고 합성하던 비용(사진 구간 렌더 1.8 → 3.0fps 실측).
+  // 들어오고 나가는 애니메이션·전환이 걸리는 앞뒤 1초는 그대로 그린다. 종이 모양 그래픽은 경로가 여럿이라 건드리지 않는다
+  const faceCovered = props.graphics.some((g) => g.layout === 'fullscreen' && g.template !== 'title'
+    && g.template !== 'lower_third' && (g.template === 'card' || lookOf(g) !== 'paper')
+    && g.end - g.start > 2 * COVER_PAD + 0.2 && t >= g.start + COVER_PAD && t < g.end - COVER_PAD);
   const endStart = props.endcard ? toFrame(props.endcard.start, fps) : Infinity;
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
@@ -254,7 +262,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
             ) : null}
           </>
         ) : null}
-        {frame < endStart ? (
+        {frame < endStart && !faceCovered ? (
           <TalkingHead clips={props.clips} fps={fps} region={region} box={box} radius={radius} border={border}
             shadow={radius > 0} />
         ) : null}
