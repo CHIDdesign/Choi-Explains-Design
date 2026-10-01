@@ -1949,7 +1949,10 @@ class Pipeline:
                                          {"title": c["title"], "number": c["number"], "subtitle": c.get("claim", "")},
                                          priority=11, source="auto"))
         graphics = time_graphics(self.plan_long["graphics"], self.utts, tm, total=total, reserved=reserved)
-        lower = self._lower_third(graphics, after=min(total, t_title + 3.4), total=total)
+        # 편집 감독이 콜아웃을 붙인 강조 순간은 '오늘의 주제'보다 우선 — 그 자리를 비워 둔다(같은 빈 자리를 다툰다)
+        callouts = [(m.t - 0.5, m.end + 0.5) for m in self._moments(tm)
+                    if m.callout and m.intensity >= 2]
+        lower = self._lower_third(graphics, after=min(total, t_title + 3.4), total=total, avoid=callouts)
         if lower is not None:
             graphics = sorted(graphics + [lower], key=lambda g: g.start)
         kept: list[TimedGraphic] = []
@@ -1959,14 +1962,16 @@ class Pipeline:
                 kept.append(g)
         return kept, chapters
 
-    def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float) -> Optional[TimedGraphic]:
+    def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float,
+                     avoid: Optional[list[tuple[float, float]]] = None) -> Optional[TimedGraphic]:
         """타이틀 뒤 화자 이름 + '오늘의 주제'(셜록현준 레퍼런스: 이 영상이 답할 질문을 5~6초 한 줄로 — 총괄 감독의 논지).
         얼굴만 보이는 첫 빈 자리(타이틀 뒤 60초 안, 4초 이상)에 둔다 — 예전엔 자리를 미리 잡아 두었다가 바로 뒤 그래픽에 밀려
-        대개 빠졌다. 말에 맞춘 그래픽을 밀어내지 않으므로 그래픽이 아주 촘촘하면(빈 자리가 없으면) 넣지 않는다."""
+        대개 빠졌다. 말에 맞춘 그래픽과 콜아웃 강조 순간(avoid)을 밀어내지 않으므로 빈 자리가 없으면 넣지 않는다."""
         topic = topic_line(self.plan_long.get("summary", ""))
         want, need = (5.6, 4.0) if topic else (4.5, 3.0)
         t = after + 0.8
-        for a, b in sorted([(g.start, g.end) for g in graphics if g.end > after] + [(total - 0.3, total)]):
+        for a, b in sorted([(g.start, g.end) for g in graphics if g.end > after] + [(total - 0.3, total)]
+                           + [(x, y) for x, y in (avoid or []) if y > after]):
             if t > after + 60.0:
                 return None
             if a - 0.3 - t >= need:

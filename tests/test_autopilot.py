@@ -703,6 +703,9 @@ def test_topic_tag_goes_to_first_face_only_window():
     assert lt is not None and lt.start >= 15.9 and lt.end - lt.start >= 4.0
     assert lt.data == {"subtitle": "오늘의 주제", "title": "좋은 디자인은 해결책이 아니라 질문에서 시작한다"}
     assert p._lower_third(gs[:1], after=4.7, total=60.0).start == pytest.approx(5.5)   # 비어 있으면 타이틀 바로 뒤
+    # 편집 감독이 콜아웃을 붙인 강조 순간(16.5~19초)은 비워 두고 그 뒤로
+    lt2 = p._lower_third(gs, after=4.7, total=60.0, avoid=[(16.0, 19.5)])
+    assert lt2 is not None and lt2.start >= 19.5
     assert pl.topic_line("디자인 과정에서 가장 많이 건너뛰는 단계가 사실은 가장 중요하다") == "디자인 과정에서 가장 많이 건너뛰는 단계가 사실은…"
     assert pl.topic_line("짧다") == ""
 
