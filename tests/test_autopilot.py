@@ -217,7 +217,7 @@ def _auto_grade(parts, face_rgb, face_luma):
     st = G.analyze([(0.0, img)], [None])
     st["face_rgb"], st["face_luma"] = list(face_rgb), face_luma
     c = G.correction_from_stats(st)
-    out = G.grade(img, c, G.plan_choice([img], c, "warm_rich"))
+    out = G.grade(img, c, G.plan_choice([img], c, "warm_rich", skin_rgb=st["face_rgb"]))
     return [out[:, i * 40:(i + 1) * 40] for i in range(len(parts))], c
 
 
@@ -652,3 +652,29 @@ def test_topic_tag_goes_to_first_face_only_window():
     assert p._lower_third(gs[:1], after=4.7, total=60.0).start == pytest.approx(5.5)   # 비어 있으면 타이틀 바로 뒤
     assert pl.topic_line("디자인 과정에서 가장 많이 건너뛰는 단계가 사실은 가장 중요하다") == "디자인 과정에서 가장 많이 건너뛰는 단계가 사실은…"
     assert pl.topic_line("짧다") == ""
+
+
+def test_beige_wall_does_not_blotch_or_turn_pink():
+    """실제 사례: 노란 베이지 벽(색상 88°)이 피부 보호에 잡혀 픽셀마다 다르게 32~60° 로 옮겨지며 분홍·연두 얼룩이 됐다.
+    얼굴이 이미 피부 범위면 벽은 옮기지 않고, 압축된 색 잡음(2×2 덩어리)을 얼룩으로 키우지 않는다."""
+    from studio.grade import auto as G
+    rng = np.random.default_rng(7)
+    n = 64
+    L = np.full((n, n), 70.0) + rng.normal(0, 0.8, (n, n))
+    a = 0.5 + np.kron(rng.normal(0, 1.6, (n // 2, n // 2)), np.ones((2, 2)))
+    b = 21.0 + np.kron(rng.normal(0, 1.6, (n // 2, n // 2)), np.ones((2, 2)))
+    wall = np.clip(G.lab_to_srgb(L, a, b), 0, 1).astype(np.float32)
+    face_rgb = [0.72, 0.55, 0.45]                                   # 색상 약 50° — 이미 피부 범위
+    face = np.clip(_patch(face_rgb, rng, n=n, noise=0.01), 0, 1)
+    img = np.concatenate([wall, face], axis=1)
+    st = G.analyze([(0.0, img)], [None])
+    st["face_rgb"], st["face_luma"] = face_rgb, 0.6
+    c = G.correction_from_stats(st)
+    out = G.grade(img, c, G.plan_choice([img], c, "warm_rich", skin_rgb=face_rgb))[:, :n]
+
+    def noise(x):
+        _, aa, bb = G.srgb_to_lab(x.reshape(-1, 3))
+        return float(np.hypot(aa - aa.mean(), bb - bb.mean()).mean())
+    assert noise(out) <= 1.6 * noise(wall), (noise(wall), noise(out))   # 예전 3.4배
+    _, _, _, _, hw = _lab(out)
+    assert hw >= 75, hw                                               # 분홍(60° 쪽)으로 끌려가지 않는다

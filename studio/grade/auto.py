@@ -9,7 +9,10 @@
    예전엔 평균을 레퍼런스(b +14.5)에 맞추느라 파란 조명의 방을 통째로 주황·노랑으로 만들었다(얼굴이 오렌지).
 4) 룩(Look) 5가지 — 웜 리치(기본) · 내추럴 · 웜 필름 · 클린 브라이트 · 시네마틱 — 를 같은 프레임에 입혀 비교 시트를
    만들고 🎨 컬러리스트(Claude 비전)가 고른다. Claude 가 없으면 '웜 리치'.
-5) 피부 보호(skin_guard) — 마지막에 피부만 점검: 색상 32~60°, 채도 30 이하(넘으면 되돌림). 주황·노랑·초록 피부 금지.
+5) 피부 보호(skin_guard) — 마지막에 **이 영상의 얼굴색**을 점검: 색상 32~60°, 채도 30 이하를 벗어난 만큼만, 얼굴색 근처
+   색에 부드럽게(가우시안) 되돌린다. 얼굴이 이미 범위 안이면 아무것도 안 한다. 주황·노랑·초록 피부 금지.
+   ※ 모든 색 연산은 경계가 완만해야 한다 — 압축 영상의 작은 색 잡음이 경계를 오가며 얼룩(분홍·연두 패치)이 된다
+     (예전 피부 보호는 색상 12~100° 를 피부로 보고 32~60° 로 '스냅'해 베이지 벽이 얼룩졌다: 국소 색 잡음 최대 3.4배).
 6) 전부를 LUT 하나로 구워 FFmpeg lut3d 로 프록시에 적용 → 롱폼·숏폼·썸네일이 같은 색.
 
 모든 연산은 감마 인코딩된 RGB(0~1) 기준이며, 화이트밸런스만 선형광에서 한다.
@@ -102,6 +105,7 @@ class GradeChoice:
     saturation: float = 1.0        # (0.85~1.15)
     reason: str = ""
     by: str = "rule"
+    skin: tuple = ()               # 이 영상의 얼굴 평균색(원본 sRGB 0~1) — 피부 보호가 이 색 근처만 필요한 만큼 고친다
 
     def clamp(self) -> "GradeChoice":
         c = replace(self)
@@ -149,6 +153,22 @@ def skin_mask(x: np.ndarray) -> np.ndarray:
     return hue_w * sat_w * np.clip((lum - 0.12) / 0.1, 0, 1)
 
 
+def _smooth(t: np.ndarray) -> np.ndarray:
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def skin_weight(x: np.ndarray) -> np.ndarray:
+    """색보정 연산용 피부 가중치 0~1 — 분석용 skin_mask 와 같은 색 범위지만 경계가 완만하다(채도 0.06~0.30 에 걸쳐 차오름).
+    가중치가 픽셀마다 크게 바뀌면 같은 벽의 이웃 픽셀이 서로 다른 보정(온기·채도)을 받아 얼룩이 된다."""
+    h, s = _hue_sat(x)
+    lum = _luma(x)
+    d = np.abs(((h - 22.0 + 180.0) % 360.0) - 180.0)
+    hue_w = _smooth(1 - d / 30.0)
+    sat_w = _smooth((s - 0.06) / 0.24) * _smooth((0.85 - s) / 0.2)
+    return hue_w * sat_w * _smooth((lum - 0.08) / 0.2)
+
+
 def _scurve(x: np.ndarray, amount: float) -> np.ndarray:
     s = x * x * (3 - 2 * x)
     return x + amount * (s - x)
@@ -181,7 +201,7 @@ def apply_look(x: np.ndarray, look: Look, strength: float = 1.0, *, exposure: fl
     if strength <= 0 and not exposure and not warmth and saturation == 1.0:
         return x
     k = strength
-    skin = skin_mask(x)[..., None]
+    skin = skin_weight(x)[..., None]
     y = x
     if abs(warmth) > 1e-4:          # 컬러리스트 미세 조정(선형광 색온도)
         lin = _to_linear(y) * np.array([1 + 0.06 * warmth, 1.0, 1 - 0.06 * warmth], dtype=np.float32)
@@ -278,6 +298,8 @@ def measure(frames: list[np.ndarray]) -> dict[str, float]:
         "skin_hue": float(_lab_hue(np.array(a[sk].mean()), np.array(b[sk].mean()))) if sk.sum() > 200 else -1.0,
         "neutral_b": float(np.median(b[neutral])) if neutral.sum() > 200 else float(np.median(b[mid])) if mid.sum() else 0.0,
         "mean_b": float(b.mean()),
+        # 화면을 차지하는 색(피부 아닌 중간톤 — 벽·배경)의 온기: 이미 노란 벽·백열등 방이면 온기를 덜 더한다
+        "mid_b": float(np.median(b[non_skin_mid])) if non_skin_mid.sum() > 200 else float(np.median(b[mid])) if mid.sum() else 0.0,
     }
     # 레시피의 대비 계산용: 밝기 표본(2000개)
     m["_lum"] = np.sort(lum)[:: max(1, len(lum) // 2000)].astype(np.float32)
@@ -324,7 +346,12 @@ def plan_recipe(m: dict, look: Look, ref: tuple = ()) -> dict[str, Any]:
     why.append(f"채도 {m['chroma_mid']:.0f}→×{chroma_gain:.2f}(피부 ×{skin_gain:.2f})")
     # 4) 온기: 무채색 중간톤의 b* → 목표(더할 뿐, 빼지 않는다; 상한)
     warmth = float(np.clip(target_b - m["neutral_b"], 0.0, WARMTH_MAX_B))
-    why.append(f"온기 b {m['neutral_b']:+.0f}→+{warmth:.1f}")
+    # 이미 따뜻한 장면(벽·배경 b* 10 넘음 — 노란 벽·백열등 방)은 덜 더한다: b* 20 이상이면 0. 무채색 픽셀이 적은 화면에서
+    # neutral_b 만 보면 노란 벽에 온기를 최대(+9)로 얹어 벽이 진한 노랑(b 21 → 35)이 됐다
+    mid_b = float(m.get("mid_b", m["neutral_b"]))
+    if mid_b > 10.0 and warmth > 0:
+        warmth *= float(np.clip((20.0 - mid_b) / 10.0, 0.0, 1.0))
+    why.append(f"온기 b {m['neutral_b']:+.0f}→+{warmth:.1f}" + (f"(배경이 이미 따뜻함 b {mid_b:.0f})" if mid_b > 10.0 else ""))
     return {"contrast": round(contrast, 4), "black": round(black, 4), "chroma_gain": round(chroma_gain, 3),
             "skin_gain": round(skin_gain, 3), "warmth": round(warmth, 2), "why": why,
             "measured": {k: round(v, 3) for k, v in m.items() if not k.startswith("_")}}
@@ -352,7 +379,7 @@ def enrich(x: np.ndarray, recipe: dict, k: float = 1.0) -> np.ndarray:
     L, a, b = srgb_to_lab(x)
     C = np.hypot(a, b)
     h = _lab_hue(a, b)
-    skin = skin_mask(x)
+    skin = skin_weight(x)
     w = np.clip(L / 100, 0, 1)
     mid = 4 * w * (1 - w)
     # 채도
@@ -380,34 +407,53 @@ def enrich(x: np.ndarray, recipe: dict, k: float = 1.0) -> np.ndarray:
     return lab_to_srgb(100 * t, a2, b2)
 
 
-def _skin_qualifier(L: np.ndarray, C: np.ndarray, h: np.ndarray) -> np.ndarray:
-    """피부 보호용 넓은 판정(CIELAB): 색상 12~100°, 채도 8~78, 밝기 22~95. 컬러리스트의 HSL 보조 키어와 같은 역할 —
-    이미 노랗거나 붉어진 얼굴도 잡아야 하므로 skin_mask 보다 넓다. 벽·나무처럼 비슷한 색도 조금 잡히지만
-    되돌리는 방향(피부색 선·채도 30)이 그런 것에도 해롭지 않다."""
-    hue_w = np.clip((h - 12) / 12, 0, 1) * np.clip((100 - h) / 12, 0, 1)
-    c_w = np.clip((C - 8) / 6, 0, 1) * np.clip((78 - C) / 14, 0, 1)
-    l_w = np.clip((L - 22) / 8, 0, 1) * np.clip((95 - L) / 7, 0, 1)      # 밝은 피부·하이라이트(L 85~90)도 잡는다
-    return hue_w * c_w * l_w
+SKIN_GUARD_SIGMA_H = 18.0      # 얼굴색 근처로 보는 색상 폭(도, 가우시안)
 
 
-def skin_guard(x: np.ndarray) -> np.ndarray:
-    """마지막 점검 — 피부 픽셀만: 색상을 32~60° 안으로(넘친 만큼 되돌림), 채도 30 이상은 눌러서 주황이 되지 않게.
-    피부가 아닌 곳은 그대로(배경은 장면의 조명을 지킨다)."""
+def _wrap(d: np.ndarray | float) -> np.ndarray | float:
+    """각도 차이를 −180~180 으로."""
+    return (d + 180.0) % 360.0 - 180.0
+
+
+def skin_fix(face_rgb) -> tuple[float, float, float, float]:
+    """얼굴색(보정 직전 sRGB) → (L, C, h, 색상 이동량). 범위(32~60°) 안이면 이동 0."""
+    L, a, b = srgb_to_lab(np.asarray(face_rgb, np.float32).reshape(1, 3))
+    Lf, af, bf = float(L[0]), float(a[0]), float(b[0])
+    Cf = float(math.hypot(af, bf))
+    hf = float(math.degrees(math.atan2(bf, af)) % 360.0)
+    lo, hi = SKIN_HUE
+    if lo <= hf <= hi or Cf < 4.0:
+        return Lf, Cf, hf, 0.0
+    # 가까운 경계로(원 위의 최단 방향) — 경계 가까이(0~6°)는 70~100%(피부의 자연스러운 편차는 남긴다)
+    d_lo, d_hi = float(_wrap(lo - hf)), float(_wrap(hi - hf))
+    dh = d_lo if abs(d_lo) < abs(d_hi) else d_hi
+    return Lf, Cf, hf, dh * min(1.0, 0.7 + 0.3 * min(abs(dh), 60.0) / 6.0)
+
+
+def skin_guard(x: np.ndarray, face_rgb=None) -> np.ndarray:
+    """마지막 점검 — 이 영상의 얼굴색(face_rgb: 보정 직전 sRGB) 기준.
+    · 색상: 얼굴이 피부 범위(32~60°)를 벗어났으면 벗어난 만큼만, 얼굴색 근처 색(색상 ±18° · 채도 가우시안)을 부드럽게 옮긴다.
+      얼굴이 범위 안이면 옮기지 않는다.
+    · 채도: 얼굴 색상 근처에서 30 을 넘는 진한 색만 무릎(30 + 넘친 양 × 0.1)으로 누른다(주황 피부 금지).
+    얼굴을 모르면 그대로. 예전처럼 넓은 범위(12~100°)를 경계로 '스냅'하지 않는다 — 베이지 벽·나무처럼 피부 비슷한 색이
+    픽셀마다 다르게 옮겨져 얼룩(분홍·연두 패치)이 되던 원인이었다."""
+    if face_rgb is None or len(face_rgb) != 3:
+        return x
+    Lf, Cf, hf, dh = skin_fix(face_rgb)
     L, a, b = srgb_to_lab(x)
     C = np.hypot(a, b)
-    h = _lab_hue(a, b)
-    skin = _skin_qualifier(L, C, h)
-    if float(skin.max()) < 0.05:
+    if abs(dh) < 0.5 and float(C.max(initial=0.0)) <= SKIN_CHROMA_MAX:
         return x
-    lo, hi = SKIN_HUE
-    target = np.where(h < lo, lo, np.where(h > hi, hi, h))
-    # 범위 밖이면 경계로 — 6° 넘게 벗어난 픽셀은 완전히, 경계 가까이(0~6°)는 70~100%(피부의 자연스러운 편차는 남긴다).
-    # 범위 안은 그대로
-    off = np.minimum(np.abs(h - target), 60.0) / 6.0
-    rot = skin * np.clip(0.7 + 0.3 * off, 0, 1) * (h != target)
-    h2 = h + (target - h) * rot
-    C2 = np.where(C > SKIN_CHROMA_MAX, SKIN_CHROMA_MAX + (C - SKIN_CHROMA_MAX) * 0.1, C)
-    C2 = C + (C2 - C) * skin
+    h = _lab_hue(a, b)
+    w_l = _smooth((L - 15.0) / 15.0) * _smooth((98.0 - L) / 8.0)
+    w_h = np.exp(-0.5 * (_wrap(h - hf) / SKIN_GUARD_SIGMA_H) ** 2) * w_l
+    h2 = h
+    if abs(dh) >= 0.5:
+        sig_c = max(8.0, 0.45 * Cf)
+        w = w_h * np.exp(-0.5 * ((C - Cf) / sig_c) ** 2) * _smooth((C - 3.0) / 6.0)
+        h2 = h + w * dh
+    knee = np.where(C > SKIN_CHROMA_MAX, SKIN_CHROMA_MAX + (C - SKIN_CHROMA_MAX) * 0.1, C)
+    C2 = C + (knee - C) * w_h
     rad = np.radians(h2)
     return lab_to_srgb(L, C2 * np.cos(rad), C2 * np.sin(rad))
 
@@ -415,18 +461,23 @@ def skin_guard(x: np.ndarray) -> np.ndarray:
 def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
     """교정 → 레시피(이 영상에 맞춘 대비·채도·온기) → 룩의 캐릭터 → 피부 보호. 픽셀마다 독립이라 LUT 으로 구울 수 있다."""
     ch = choice.clamp()
-    y = apply_correction(x, c)
-    if ch.match > 0:
-        recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
-        y = enrich(y, recipe, ch.strength if ch.recipe else min(1.0, ch.match))
-    y = apply_look(y, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
-                   saturation=ch.saturation)
-    return skin_guard(y)
+
+    def before_guard(v: np.ndarray) -> np.ndarray:
+        v = apply_correction(v, c)
+        if ch.match > 0:
+            recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
+            v = enrich(v, recipe, ch.strength if ch.recipe else min(1.0, ch.match))
+        return apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
+                          saturation=ch.saturation)
+    face = before_guard(np.asarray(ch.skin, np.float32).reshape(1, 3))[0] if len(ch.skin) == 3 else None
+    return skin_guard(before_guard(x), face)
 
 
 def plan_choice(frames: list[np.ndarray], c: Correction, look: str = "warm_rich", ref: tuple = (),
-                **kw: Any) -> GradeChoice:
-    """교정된 프레임을 재서 그 영상에 맞춘 GradeChoice(레시피 포함)를 만든다."""
+                skin_rgb=None, **kw: Any) -> GradeChoice:
+    """교정된 프레임을 재서 그 영상에 맞춘 GradeChoice(레시피 포함)를 만든다. skin_rgb: 얼굴 평균색(analyze 의 face_rgb)."""
+    if skin_rgb is not None and len(skin_rgb) == 3:
+        kw["skin"] = tuple(round(float(v), 5) for v in skin_rgb)
     corrected = [apply_correction(f, c) for f in frames]
     m = measure(corrected)
     src = lab_stats(np.concatenate([f.reshape(-1, 3) for f in corrected]))
@@ -669,7 +720,7 @@ def _to_img(x: np.ndarray):
 
 
 def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360, src_lab: tuple = (),
-                     ref_lab: tuple = ()) -> bytes:
+                     ref_lab: tuple = (), skin_rgb=None) -> bytes:
     """행 = 프레임, 열 = 원본 + 룩들(각 룩의 목표에 맞춰 이 영상용 레시피를 따로 계산). 🎨 컬러리스트가 고를 비교 시트."""
     from PIL import Image, ImageDraw
     cols = [("0 원본", None)] + [(f"{i + 1} {l.label}", l.name) for i, l in enumerate(LOOKS.values())]
@@ -678,7 +729,7 @@ def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 3
     sheet = Image.new("RGB", (len(cols) * (cell_w + pad) + pad, head + len(frames) * (ch + pad) + pad), (18, 18, 18))
     d = ImageDraw.Draw(sheet)
     font = _font(20)
-    choices = {name: plan_choice(frames, c, name, ref_lab) for _, name in cols if name}
+    choices = {name: plan_choice(frames, c, name, ref_lab, skin_rgb=skin_rgb) for _, name in cols if name}
     for j, (label, name) in enumerate(cols):
         d.text((pad + j * (cell_w + pad) + 4, 6), label, fill=(240, 240, 240), font=font)
         for i, f in enumerate(frames):

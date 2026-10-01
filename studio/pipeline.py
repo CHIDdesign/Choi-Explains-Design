@@ -654,7 +654,7 @@ class Pipeline:
         times = {c.idx: self._grade_times(c, vt) for c in cams}
         ref_lab = grade.reference_lab(USER_DIR / "reference_frames")
         key = text_hash([(file_fingerprint(c.path), [round(t, 1) for t in times[c.idx]]) for c in cams], self._use_api(),
-                        [round(v, 1) for v in ref_lab], "grade-v3")
+                        [round(v, 1) for v in ref_lab], "grade-v4")
         cached = read_json(self.work / "grade.json", {})
         if cached.get("key") == key and all(self._cube(c.idx).exists() for c in cams):
             self.grade_info = cached
@@ -694,22 +694,25 @@ class Pipeline:
                 break
         picks = sorted(picks or [0])
         raw_frames = [f for _, f in frames]
+        skin_rgb = stats.get("face_rgb")      # 피부 보호는 이 카메라의 얼굴색 근처만, 벗어난 만큼만 고친다
         if base is not None:          # 두 번째 카메라부터: 같은 룩·세기, 레시피는 이 카메라의 상태로 다시
-            choice = replace(grade.plan_choice(raw_frames, corr, base.look, ref_lab), strength=base.strength,
+            choice = replace(grade.plan_choice(raw_frames, corr, base.look, ref_lab, skin_rgb=skin_rgb),
+                             strength=base.strength,
                              exposure=base.exposure, warmth=base.warmth, saturation=base.saturation, reason=base.reason,
                              by=base.by)
         else:
-            choice = grade.plan_choice(raw_frames, corr, "warm_rich", ref_lab)
+            choice = grade.plan_choice(raw_frames, corr, "warm_rich", ref_lab, skin_rgb=skin_rgb)
             studio = self._ensure_studio()
             if studio is not None:
-                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab)
+                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab,
+                                               skin_rgb=skin_rgb)
                 (self.work / "grade_sheet.jpg").write_bytes(sheet)
                 try:
                     notes = (" · ".join(corr.notes) or "교정 필요 적음") + " / 이 영상 레시피(웜 리치 기준): " + \
                         grade.recipe_summary(choice.recipe)
                     r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
                     choice = grade.plan_choice(raw_frames, corr, str(r.get("look", "warm_rich")), ref_lab,
-                                               strength=float(r.get("strength", 0.9) or 0.9),
+                                               skin_rgb=skin_rgb, strength=float(r.get("strength", 0.9) or 0.9),
                                                exposure=float(r.get("exposure", 0) or 0),
                                                warmth=float(r.get("warmth", 0) or 0),
                                                saturation=float(r.get("saturation", 1) or 1),
@@ -719,7 +722,12 @@ class Pipeline:
         grade.write_cube(self._cube(cam.idx), corr, choice)
         filters = grade.cleanup_filters(stats)
         if first:
-            grade.before_after(frames[picks[0]][1], corr, choice, self.extras / "색보정_전후.jpg")
+            # 전후 비교는 분석용 480px 프레임을 키우지 않고 1280px 로 다시 뽑아서(예전엔 흐릿해 보정이 화질을 낮춘 것처럼 보였다)
+            try:
+                big = grade.sample_frames(self.ff, cam.path, [frames[picks[0]][0]], self.infos[cam.idx], width=1280)[0][1]
+            except Exception:  # noqa: BLE001 - 미리보기용 — 못 뽑으면 분석 프레임으로
+                big = frames[picks[0]][1]
+            grade.before_after(big, corr, choice, self.extras / "색보정_전후.jpg")
         after = grade.lab_stats(np.concatenate([grade.grade(f, corr, choice).reshape(-1, 3) for _, f in frames[:6]]))
         who = f"[{Path(cam.path).name}] " if not self.smap.single else ""
         self.log(f"🎨 {who}색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → "
