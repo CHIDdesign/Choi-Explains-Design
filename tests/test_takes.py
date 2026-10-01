@@ -221,3 +221,34 @@ def test_captions_keep_adjective_modifiers_with_their_noun():
     texts = [" ".join(w["text"] for w in c["lines"][0])
              for c in build_phrase_cues([say("가장 중요한 것은 문제를 정의하는 일입니다.")])]
     assert texts[0] == "가장 중요한 것은", texts
+
+
+def test_consecutive_sentences_with_the_same_opening_are_both_kept():
+    """설명하는 대본은 같은 주어로 연달아 시작한다 — 앞 문장이 끝까지 말해졌으면(…다/요) 되풀이가 아니다.
+    예전엔 꼬리의 마지막 어절(문장 끝)을 보지 않아 앞 문장이 통째로 지워졌다(채널 주인: '내용을 잘라먹었다')."""
+    cases = [
+        ("디자인 씽킹은 공감에서 시작합니다.", "디자인 씽킹은 다섯 단계로 이루어집니다."),
+        ("좋은 디자인은 단순합니다.", "좋은 디자인은 정직합니다."),
+        ("이 원칙은 건축에서 시작됐습니다.", "이 원칙은 지금도 유효합니다."),
+        ("좋은 디자인은 사용자를 배려합니다.", "좋은 디자인은 사용자를 설득합니다."),
+    ]
+    for a, b in cases:
+        for strict in (False, True):
+            kept, rem = clean_words(say(a, 0.6, b), strict=strict)
+            assert text(kept) == f"{a} {b}", (a, b, strict, rem)
+
+
+def test_same_ending_a_few_sentences_later_is_not_a_repeat():
+    """다음 시도의 그 문장 안에서만 끝말을 찾는다 — 몇 문장 뒤의 같은 끝말('시작합니다')을 반복으로 보지 않는다."""
+    kept, _ = clean_words(say("디자인 씽킹은 공감에서 시작합니다.", 0.6, "디자인 씽킹은 다섯 단계입니다.", 0.5,
+                              "모든 단계는 질문에서 시작합니다."))
+    assert text(kept).startswith("디자인 씽킹은 공감에서 시작합니다.")
+
+
+def test_whole_sentence_said_twice_and_cut_off_attempts_still_go():
+    kept, _ = clean_words(say("좋은 디자인은 단순합니다.", 1.0, "좋은 디자인은 단순합니다."))
+    assert text(kept) == "좋은 디자인은 단순합니다."
+    # 위스퍼는 끊긴 시도에도 마침표를 찍는다 — 맺는 어미가 아니면 끊긴 시도
+    kept, _ = clean_words(say("오늘은 좋은 디자인이 어디서 시작하는지.", 1.2,
+                              "오늘은 좋은 디자인이 어디에서 시작하는지 이야기해 볼게요."))
+    assert text(kept) == "오늘은 좋은 디자인이 어디에서 시작하는지 이야기해 볼게요."

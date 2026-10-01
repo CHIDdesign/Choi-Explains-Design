@@ -299,8 +299,8 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             seen.add(c["seg"])
             chapters.append(c)
     plan["chapters"] = chapters
-    # 너무 많이 버리지 않도록(디렉터 삭제는 전체의 15% 까지만)
-    max_drop = max(1, int(len(kept) * 0.15))
+    # 너무 많이 버리지 않도록(디렉터 삭제는 전체의 5% 까지만 — 대본 문장은 파이프라인이 따로 거절한다)
+    max_drop = max(1, int(len(kept) * 0.05))
     plan["drop"] = plan["drop"][:max_drop]
     return plan
 

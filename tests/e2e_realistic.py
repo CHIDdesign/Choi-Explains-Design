@@ -8,6 +8,7 @@ gTTS 로 '실수 섞인 녹화'(되풀이·잠깐만요·추임새·긴 무음·
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -26,6 +27,7 @@ SCRIPT = """# 들어가며
 먼저 넓게 펼쳐서 관찰하고, 그 다음에 좁혀서 진짜 문제를 고릅니다.
 두 번째 다이아몬드는 해결책을 만들고 전달하는 단계입니다.
 # 마무리
+좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.
 결국 문제를 잘 정의하면 해결책은 따라옵니다.
 다음 영상에서는 문제를 정의하는 방법을 더 자세히 알아볼게요.
 """
@@ -44,6 +46,8 @@ TAKES = [
     ("keep", "먼저 넓게 펼쳐서 관찰하고, 그 다음에 좁혀서 진짜 문제를 고릅니다."), ("pause", 0.6),
     ("ng", "어"), ("pause", 2.0),
     ("keep", "두 번째 다이아몬드는 해결책을 만들고 전달하는 단계입니다."), ("pause", 0.7),
+    # 같은 말로 시작하는 연속 문장(예전엔 앞 문장이 '다시 말한 앞부분'으로 통째로 지워졌다)
+    ("keep", "좋은 디자인은 단순합니다."), ("pause", 0.6), ("keep", "좋은 디자인은 정직합니다."), ("pause", 0.7),
     ("keep", "결국 문제를 잘 정의하면 해결책은 따라옵니다."), ("pause", 1.0),
     ("keep", "다음 영상에서는 문제를 정의하는 방법을 더 자세히 알아볼게요."), ("pause", 1.2),
 ]
@@ -67,7 +71,9 @@ def make(out: Path, face: str) -> tuple[Path, list[dict]]:
             parts.append(f)
             t += float(val)
             continue
-        mp3, wav = out / f"s{i}.mp3", out / f"s{i}.wav"
+        # 캐시는 문장 내용으로(순서로 하면 문장을 끼워 넣었을 때 다른 문장의 음성을 다시 써 버린다)
+        key = hashlib.sha1(val.encode("utf-8")).hexdigest()[:10]
+        mp3, wav = out / f"s_{key}.mp3", out / f"s{i}.wav"
         if not mp3.exists():
             gTTS(val, lang="ko").save(str(mp3))
         run("ffmpeg", "-y", "-i", mp3, "-af",
@@ -137,8 +143,11 @@ def main() -> int:
     audio = load_audio_16k(out16)
     from studio.asr.transcribe import speech_regions
     vad = speech_regions(audio)
-    gaps = [round(b[0] - a[1], 2) for a, b in zip(vad, vad[1:]) if b[0] - a[1] > 0.8]
-    print(f"  0.8초 넘는 무음: {gaps}")
+    # 차분한 페이스(calm)는 문장 사이 쉼을 0.8초 남기도록 설계됐다(말소리 감지로 재면 0.9초 안팎) — 그 페이스의 상한
+    # (max_silence 1.0초)을 넘는 무음만 실패
+    limit = pl.PACES["calm"].max_silence
+    gaps = [round(b[0] - a[1], 2) for a, b in zip(vad, vad[1:]) if b[0] - a[1] > limit]
+    print(f"  {limit:.1f}초 넘는 무음: {gaps}")
     ok &= not gaps
     src_len = segs[-1]["end"] + 1.2
     print(f"  길이 {src_len:.1f}s → {p.timemap.duration:.1f}s")

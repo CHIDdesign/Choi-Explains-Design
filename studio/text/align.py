@@ -267,7 +267,9 @@ class ScriptAligner:
                 if ui.script_span and uj.script_span:
                     continue  # 대본 기준 판정이 이미 처리
                 short, long_ = (ni, nj) if len(ni) <= len(nj) else (nj, ni)
-                if fuzz.partial_ratio(short, long_) >= 82 and len(short) >= 0.3 * len(long_):
+                # 거의 같은 말일 때만(예전 82·30% 는 '디자인은 문제를 정의한다'와 '디자인은 문제를 해결한다' 같은
+                # 다른 문장을 같은 말로 묶어 하나를 지웠다)
+                if fuzz.partial_ratio(short, long_) >= 88 and len(short) >= 0.5 * len(long_):
                     groups.union(i, j)
         for members in groups.clusters():
             if len(members) > 1:

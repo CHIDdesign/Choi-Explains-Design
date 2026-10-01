@@ -154,6 +154,10 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             # 예) '좋은 질문에는 … 있습니다. 결국 좋은 디자인은 / 좋은 질문에서' — 짧은 꼬리여도 지우지 않는다
             ng_tail = any(k_ in "".join(toks[x] for x in tail) for k_ in NG_WORDS)
             open_final = any(is_final(words[x]) and not _covered(toks, live, x, ki, kj) for x in tail[:-1])
+            # 꼬리의 마지막 어절도 본다 — 다만 문장을 맺는 어미(…다·요·죠·까)로 끝날 때만(위스퍼는 끊긴 시도에도 마침표를
+            # 찍는다). 예전엔 빠뜨려서 '좋은 디자인은 단순합니다. / 좋은 디자인은 정직합니다.'의 앞 문장이 통째로 지워졌다
+            if tail and not open_final and FINAL_RE.search(toks[tail[-1]]) and not _covered(toks, live, tail[-1], ki, kj):
+                open_final = True
             if (open_final and not ng_tail) or len(tail) > MAX_TAIL_OPEN:
                 continue
             if strict and not (strong or ng_tail):
@@ -175,9 +179,15 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
 
 
 def _covered(toks: list[str], live: list[int], x: int, ki: int, kj: int) -> bool:
-    """문장 끝 어절 x 가 다음 시도 안에서도 다시 나오는가(같은 문장을 반복한 경우)."""
+    """문장 끝 어절 x 가 다음 시도의 **그 문장 안에서** 다시 나오는가(같은 문장을 반복한 경우). 다음 시도의 문장이 끝나면
+    더 보지 않는다 — 몇 문장 뒤의 같은 끝말('…시작합니다')을 반복으로 보면 완성된 앞 문장을 지운다."""
     t = toks[x]
-    return any(same_word(t, toks[live[y]]) for y in range(kj, min(len(live), kj + 40)))
+    for y in range(kj, min(len(live), kj + 40)):
+        if same_word(t, toks[live[y]]):
+            return True
+        if FINAL_RE.search(toks[live[y]]) and y > kj:
+            return False
+    return False
 
 
 def _spans(words: list[Word], drop: list[bool], reason: dict[int, str]) -> list[Removal]:

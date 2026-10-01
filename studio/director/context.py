@@ -56,7 +56,9 @@ def transcript_block(utts: list[Utterance], tags: list[Tag], timemap: TimeMap | 
             e = timemap.src_to_edit(u.start)
             if e is not None:
                 edit = f" | 편집 {fmt_ts(e, True)}"
-        lines.append(f"[S{u.id} | 원본 {fmt_ts(u.start, True)}{edit} | {u.end - u.start:.1f}s] {u.text}")
+        # 대본 문장 표시 — 편집 감독이 대본 문장을 '의미 없는 반복'으로 오인해 빼지 않게(대본대로)
+        mark = " | 대본" if u.script_span else ""
+        lines.append(f"[S{u.id} | 원본 {fmt_ts(u.start, True)}{edit} | {u.end - u.start:.1f}s{mark}] {u.text}")
         for t in by_utt.get(u.id, []):
             lines.append(f"    ↳ 대본 태그: {_tag_str(t)}")
     return "\n".join(lines)
@@ -82,7 +84,7 @@ def shared_context(brief: JobBrief, utts: list[Utterance], tags: list[Tag], time
         parts.append("- 로컬 이미지 없음 → photo 템플릿의 image 에는 위키미디어 검색용 영어 검색어를 적는다")
     parts.append("\n# 화자의 메모(주제·주요 장면·의도)\n")
     parts.append(brief.notes.strip() or "(없음)")
-    parts.append("\n# 전사본 (S번호 = 발화 ID. 이미 NG/리테이크/무음은 제거된 상태)\n")
+    parts.append("\n# 전사본 (S번호 = 발화 ID. 이미 NG/리테이크/무음은 제거된 상태. '대본' = 대본에 있는 문장 — 절대 빼지 않는다)\n")
     parts.append(transcript_block(utts, tags, timemap))
     return "\n".join(parts)
 

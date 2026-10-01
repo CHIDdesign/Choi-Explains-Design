@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import numpy as np
+from rapidfuzz import fuzz
 
 from . import diag
 from .agents.studio import Studio
@@ -50,7 +51,7 @@ from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
 from .edit.grammar import PARAMS, EditDecisions, Moment, build_long_edit, build_short_edit
 from .edit.style import LookPlan, apply_looks, choose_looks
-from .edit.verify import find_issues, subtract, to_source
+from .edit.verify import find_issues, merge, subtract, to_source
 from .eta import Eta, features
 from .export.premiere import export_xml
 from .export.report import edit_report, write_text, youtube_text
@@ -75,6 +76,7 @@ from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
 from .stock.research import StockResearcher, contact_sheet, strip_stock_images
 from .text.align import ScriptAligner, build_utterances, norm
+from .text import fidelity
 from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
 from .text.script import glossary_terms, parse_script
@@ -925,12 +927,17 @@ class Pipeline:
         self._plan_key = key
         self._save_plan()
         write_json(self.work / "plan_raw.json", {"long": raw_long, "shorts": raw_shorts})
-        # ✂️ 편집 감독의 drop — 대본에 있는 문장은 절대 빼지 않는다(대본 충실). 대본 밖 애드리브·혼잣말만 뺀다
+        # ✂️ 편집 감독의 drop — 대본에 있는 문장은 절대 빼지 않는다(대본 충실). 대본 밖 애드리브·혼잣말만 뺀다.
+        # 예전엔 대본 일치 점수 80 이상만 지켜서, 인식이 틀려 점수가 낮은 대본 문장이 '애드리브'로 빠졌다
         drop_ids = {d["seg"] for d in self.plan_long.get("drop", [])}
         refused: list[str] = []
+        script_n = norm(parse_script(self.spec.script).clean)
         for u in self.utts:
             if u.id in drop_ids and u.kept:
-                if u.script_span and u.score >= 80:
+                un = norm(u.text)
+                in_script = bool(script_n) and (u.script_span is not None or (
+                    len(un) >= 6 and len(un) <= len(script_n) and fuzz.partial_ratio(un, script_n) >= 70))
+                if in_script:
                     refused.append(f"S{u.id} 「{u.text[:30]}」")
                     continue
                 u.status = "director_drop"
@@ -1092,6 +1099,7 @@ class Pipeline:
     def _make_edit(self) -> None:
         """기획(편집 감독의 drop · 숏폼 · 하이라이트)으로 keep 구간과 컷 목소리를 만든다."""
         assert self.info
+        self._ensure_script_utts()
         self.base_keeps = self.smap.clamp_keeps(
             build_keeps(self.utts, pace=self._pace(), vad=self.vad, media_duration=self.info.duration, fps=self.fps,
                         exclude=self._removed_spans()), self.fps)
@@ -1101,6 +1109,203 @@ class Pipeline:
         self._make_cuts()
         if self.smap.multicam:
             self.log("🎥 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
+
+    # ------------------------------------------------------------------
+    # 📜 대본 충실 보증 — 대본 문장은 하나도 빠지지 않는다(studio/text/fidelity.py)
+    def _script_sents(self) -> list["fidelity.Sentence"]:
+        if getattr(self, "_fid_sents", None) is None:
+            parsed = parse_script(self.spec.script)
+            self._fid_sents = fidelity.sentences_of(parsed.sentences) if parsed.has_text else []
+        return self._fid_sents
+
+    def _raw_words(self) -> list[Word]:
+        """단어 정리 전 인식 결과 전부(지운 되풀이·추임새 포함) — 무엇이 지워졌든 되살릴 수 있게."""
+        if getattr(self, "_raw", None) is None:
+            self._raw = [Word.from_dict(w) for w in read_json(self.work / "transcript.json", {}).get("words", [])]
+        return self._raw
+
+    def _ensure_script_utts(self) -> None:
+        """1단계(발화): 대본 문장이 남긴 발화 어디에도 거의 없으면(들리는 비율 35% 미만) 그 문장을 담은 버린 발화
+        (다른 테이크로 오인·편집 감독 drop·NG 오인)를 되살린다 — 그 문장 부분만 남겨서."""
+        sents = self._script_sents()
+        if not sents:
+            return
+        order = sorted(self.utts, key=lambda u: u.start)
+        restored: list[str] = []
+        for _ in range(3):
+            kept_words = [w for u in order if u.kept for w in u.words]
+            cov = fidelity.coverage(sents, kept_words)
+            times = fidelity.sentence_times(sents, kept_words)
+            cands = [u for u in order if not u.kept and u.status in ("retake", "director_drop", "meta") and u.words]
+            if not cands:
+                break
+            owner = {id(w): u for u in cands for w in u.words}
+            runs = fidelity.runs_of([u.words for u in cands])
+            changed = False
+            for i, s in enumerate(sents):
+                if cov[i] >= 0.35:
+                    continue
+                after, before = fidelity.neighbors(i, cov, times)
+                r = fidelity.find_restore(s, runs, in_edit=lambda w: False, after=after, before=before)
+                if r is None or r.ratio - cov[i] < fidelity.MIN_GAIN:
+                    continue
+                for u in {id(owner[id(w)]): owner[id(w)] for w in r.words if id(w) in owner}.values():
+                    ws = [w for w in u.words if any(w is x for x in r.words)]
+                    if not ws or u.kept:
+                        continue
+                    if len(ws) < len(u.words):          # 그 문장 부분만(나머지는 다른 테이크가 담고 있다)
+                        u.words = ws
+                        u.start, u.end = ws[0].start, ws[-1].end
+                        u.text = u.asr_text = " ".join(w.text for w in ws)
+                    u.note = f"대본 문장 복원(예전 판정: {u.status} {u.note[:40]})".strip()
+                    u.status = "keep"
+                    changed = True
+                restored.append(s.text)
+                cov[i] = 1.0
+            if not changed:
+                break
+        if restored:
+            self.align_report.setdefault("fidelity_restored", [])
+            self.align_report["fidelity_restored"] = list(dict.fromkeys(self.align_report["fidelity_restored"] + restored))
+            self.log(f"📜 대본 충실: 빠질 뻔한 대본 문장 {len(restored)}개를 되살렸습니다 — "
+                     + " · ".join(f"「{t[:24]}」" for t in restored[:5]))
+
+    def _ensure_script_keeps(self, keeps: list[Span]) -> list[Span]:
+        """2단계(최종 편집본): 남긴 구간을 원본 인식 단어로 다시 읽어 대본 문장마다 들리는 비율을 재고, 60% 아래면 원본
+        녹음에서 그 문장을 말한 곳(가장 잘 맞고 앞뒤 문장 사이·이미 일부 남은 테이크 우선)을 다시 넣는다 — 단어 정리·
+        편집 검사·말 사이 다듬기가 지운 대본 단어까지. 결과는 리포트(대본 충실)에 남는다."""
+        from bisect import bisect_right
+
+        from .edit.cuts import quantize
+        sents = self._script_sents()
+        raw = self._raw_words()
+        if not sents or not raw or not keeps:
+            return keeps
+        starts = [k.start for k in keeps]
+
+        def in_edit(w: Word, ks=keeps, st=starts) -> bool:
+            m = (w.start + w.end) / 2
+            i = bisect_right(st, m) - 1
+            return i >= 0 and ks[i].start <= m < ks[i].end
+
+        # 편집본 글: 남긴 발화의 단어(대본으로 고친 글자 — '반영하세요'가 아니라 '안녕하세요') + 발화에 없는 인식 단어
+        utt_words = sorted((w for u in self.utts if u.kept for w in u.words), key=lambda w: w.start)
+        mids = [(w.start + w.end) / 2 for w in utt_words]
+
+        def has_utt_word(w: Word) -> bool:
+            j = bisect_right(mids, w.start - 0.05)
+            return j < len(mids) and mids[j] <= w.end + 0.05
+
+        edit_words = sorted([w for w in utt_words if in_edit(w)] + [w for w in raw if in_edit(w) and not has_utt_word(w)],
+                            key=lambda w: w.start)
+        cov = fidelity.coverage(sents, edit_words)
+        times = fidelity.sentence_times(sents, edit_words)
+        runs = fidelity.runs_of([u.words for u in build_utterances(raw)])
+        adds: list[Span] = []
+        restores: list[fidelity.Restore] = []
+        for i, s in enumerate(sents):
+            if cov[i] >= fidelity.COVERED:
+                continue
+            after, before = fidelity.neighbors(i, cov, times)
+            r = fidelity.find_restore(s, runs, in_edit=in_edit, after=after, before=before)
+            if r is None or r.ratio - cov[i] < fidelity.MIN_GAIN:
+                continue
+            adds.append(Span(max(0.0, r.start - 0.06), min(self.info.duration, r.end + 0.12)))
+            restores.append(r)
+        # 인식기가 받아 적지 못한 말(작게 말함·위스퍼가 건너뛰거나 다른 문장으로 잘못 받아 적음): 빠진 대본 문장(연달아
+        # 빠졌으면 묶어서)의 앞뒤 문장이 편집본에 있고, 그 사이 원본에 편집본에 없는 말소리(VAD)가 그 문장들을 말할 만한
+        # 길이로 있으면 그 말소리를 넣고 자막은 대본 문장으로
+        rate = sum(len(norm(w.text)) for w in edit_words) / max(1.0, sum(w.end - w.start for w in edit_words))
+        lost = [i for i, s in enumerate(sents) if cov[i] < fidelity.COVERED
+                and not any(r.sentence == s.idx for r in restores)]
+        groups: list[list[int]] = []
+        for i in lost:
+            if groups and groups[-1][-1] == i - 1:
+                groups[-1].append(i)
+            else:
+                groups.append([i])
+        for g in groups:
+            after, _ = fidelity.neighbors(g[0], cov, times)
+            _, before = fidelity.neighbors(g[-1], cov, times)
+            if after < 0 or before >= 1e17 or before - after < 0.6:
+                continue
+            regions = [(max(a, after + 0.05), min(b, before - 0.05)) for a, b in (self.vad or [])
+                       if b > after + 0.05 and a < before - 0.05]
+            # 인식된 단어가 하나도 없는 말소리 덩어리만 — 일부라도 받아 적힌 덩어리(다른 문장의 다시 말하기 등)를 넣으면
+            # 같은 말이 두 번 나온다
+            regions = [(a, b) for a, b in regions if b - a >= 0.3 and _minus(a, b, raw) == [(a, b)]]
+            regions = [(a, b) for a, b in regions if not in_edit(Word("", a, b, 1.0))]
+            d = sum(b - a for a, b in regions)
+            chars = sum(len(sents[i].n) for i in g)
+            expected = chars / max(3.0, rate)
+            if not regions or not (0.5 * expected <= d <= 2.2 * expected) or d < 0.6:
+                continue
+            adds += [Span(max(0.0, a - 0.06), min(self.info.duration, b + 0.12)) for a, b in regions]
+            # 자막: 문장마다 글자 수만큼 말소리 시간을 나눠 대본 문장의 어절을 고르게 놓는다
+            a0, b0 = regions[0][0], regions[-1][1]
+            t = a0
+            for i in g:
+                dur = (b0 - a0) * len(sents[i].n) / max(1, chars)
+                toks = sents[i].text.split()
+                step = dur / max(1, len(toks))
+                ws = [Word(tok, t + k * step, t + (k + 0.9) * step, 0.5) for k, tok in enumerate(toks)]
+                restores.append(fidelity.Restore(sents[i].idx, sents[i].text, t, t + dur, ws, 0.0))
+                t += dur
+            self.log(f"📜 인식기가 받아 적지 못한 말소리 {d:.1f}초를 대본 문장 "
+                     + " · ".join(f"「{sents[i].text[:20]}」" for i in g) + " 자리로 넣습니다")
+        unresolved = [(i, s) for i, s in enumerate(sents) if cov[i] < fidelity.COVERED
+                      and not any(r.sentence == s.idx for r in restores)]
+        # 그 문장 자리(앞뒤 문장 사이)의 편집본 발화가 문장을 절반 넘게 담으면 '인식이 달라 확인 못 함'(소리는 들어 있다)
+        uncertain = [s.text for i, s in unresolved
+                     if fidelity.present_ratio(s, runs, in_edit=in_edit, after=fidelity.neighbors(i, cov, times)[0],
+                                               before=fidelity.neighbors(i, cov, times)[1]) >= 0.5]
+        unresolved = [s for _, s in unresolved]
+        missing = [s.text for s in unresolved if s.text not in uncertain]
+        self.fidelity = {"sentences": len(sents), "restored": [r.text for r in restores], "missing": missing,
+                         "uncertain": uncertain,
+                         "coverage": round(sum(min(1.0, c) for c in cov) / max(1, len(cov)), 3)}
+        self.align_report["fidelity"] = self.fidelity
+        if missing and not getattr(self, "_fid_logged", False):
+            self._fid_logged = True
+            self.log(f"📜 녹음에서 찾지 못한 대본 문장 {len(missing)}개(말하지 않았거나 인식 실패 — 편집리포트 참고): "
+                     + " · ".join(f"「{t[:20]}」" for t in missing[:4]))
+        if not adds:
+            return keeps
+        out = quantize(merge(list(keeps) + adds), self.fps, self.info.duration)
+        out = self.smap.clamp_keeps(out, self.fps)
+        self._caption_restored(restores)
+        self.log(f"📜 대본 충실(최종 확인): 편집본에서 빠진 대본 문장 {len(restores)}개를 원본에서 다시 넣었습니다 — "
+                 + " · ".join(f"「{r.text[:24]}」" for r in restores[:5]))
+        return out
+
+    def _caption_restored(self, restores: list["fidelity.Restore"]) -> None:
+        """되살린 단어가 자막에 보이게: 그 시각에 남긴 발화가 있으면 거기에 끼워 넣고, 없으면 그 시각의 버린 발화를
+        되살리거나 새 발화로 만든다(인식 못 한 말소리는 대본 문장을 자막으로)."""
+        def kept_sorted() -> list[Utterance]:
+            return sorted((u for u in self.utts if u.kept and u.words), key=lambda u: u.start)
+
+        for r in restores:
+            kept = kept_sorted()
+            # 이미 자막에 있는 단어(같은 시각의 발화 단어 — 대본으로 고친 글자일 수 있다)는 다시 넣지 않는다
+            new = [w for w in r.words
+                   if not any(x.start < w.end - 0.02 and w.start < x.end - 0.02 for u in kept for x in u.words)]
+            if not new:
+                continue
+            host = next((u for u in kept if u.start - 0.3 <= r.start <= u.end + 0.3 or u.start - 0.3 <= r.end <= u.end + 0.3),
+                        None)
+            if host is not None:
+                host.words = sorted(host.words + new, key=lambda x: x.start)
+                host.start, host.end = host.words[0].start, host.words[-1].end
+                continue
+            other = next((u for u in self.utts if not u.kept and u.start - 0.3 <= r.start <= u.end + 0.3), None)
+            if other is None:
+                other = Utterance(max((u.id for u in self.utts), default=0) + 1, r.start, r.end, r.text, r.text)
+                self.utts.append(other)
+                self.utts.sort(key=lambda u: u.start)
+            other.status, other.note = "keep", "대본 문장 복원(최종 확인)"
+            other.words = sorted(new, key=lambda x: x.start)
+            other.start, other.end = other.words[0].start, other.words[-1].end
+            other.text = other.asr_text = " ".join(w.text for w in other.words)
 
     def _removed_spans(self) -> list[Span]:
         """단어 정리에서 지운 되풀이·추임새(원본 시간)."""
@@ -1117,6 +1322,7 @@ class Pipeline:
         from .edit.cuts import quantize
         drops = getattr(self, "edit_drops", [])
         keeps = quantize(subtract(self.base_keeps, drops), self.fps, self.info.duration) if drops else self.base_keeps
+        keeps = self._ensure_script_keeps(keeps)
         self.timemap = TimeMap(keeps)
         write_json(self.work / "keeps_long.json", self.timemap.to_list())
         starts = sorted(u.start for u in self.utts if u.kept)
@@ -2236,6 +2442,18 @@ class Pipeline:
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
+
+
+def _minus(a: float, b: float, words: list[Word], pad: float = 0.08) -> list[tuple[float, float]]:
+    """[a, b) 에서 인식된 단어가 차지한 시간을 뺀 조각들."""
+    out, t = [], a
+    for w in sorted((w for w in words if w.end + pad > a and w.start - pad < b), key=lambda w: w.start):
+        if w.start - pad > t:
+            out.append((t, min(b, w.start - pad)))
+        t = max(t, w.end + pad)
+    if t < b:
+        out.append((t, b))
+    return out
 
 
 def topic_line(text: str, limit: int = 28) -> str:

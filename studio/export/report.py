@@ -49,7 +49,9 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
              f"({(1 - long_duration / max(1e-6, source_duration)) * 100:.0f}% 단축)",
              f"- 대본 일치 발화 {align_report.get('matched', 0)}개 · 리테이크 제거 {align_report.get('retakes', 0)}개 · "
              f"NG/추임새 제거 {align_report.get('meta', 0)}개 · 대본 밖 애드리브 {align_report.get('unmatched', 0)}개",
-             f"- 대본 커버리지 {align_report.get('script_coverage', 0) * 100:.0f}%", ""]
+             f"- 대본 커버리지 {align_report.get('script_coverage', 0) * 100:.0f}%"
+             + (f" · **최종 편집본 대본 문장 {fid.get('sentences', 0) - len(fid.get('missing') or [])}/"
+                f"{fid.get('sentences', 0)}개 들어감**" if (fid := align_report.get("fidelity") or {}) else ""), ""]
     if studio:
         lines += ["## 🎬 AI 스튜디오 브리프", "",
                   f"- 로그라인: {studio.get('logline', '')}",
@@ -80,10 +82,18 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
               f"편집 감독의 삭제 요청 중 대본 문장이라 거절 {len(align_report.get('director_drop_refused') or [])}개"]
     for t in align_report.get("restored") or []:
         lines.append(f"- 되살림: {t}")
+    for t in align_report.get("fidelity_restored") or []:
+        lines.append(f"- 되살림(빠질 뻔한 대본 문장): {t}")
+    for t in (align_report.get("fidelity") or {}).get("restored") or []:
+        lines.append(f"- 되살림(최종 확인 — 편집본에서 빠져 원본에서 다시 넣음): {t}")
     for t in align_report.get("director_drop_refused") or []:
         lines.append(f"- 삭제 거절: {t}")
     lines.append("")
-    missing = align_report.get("missing_sentences") or []
+    fid = align_report.get("fidelity") or {}
+    missing = fid.get("missing") if fid else (align_report.get("missing_sentences") or [])
+    if fid.get("uncertain"):
+        lines += ["## 편집본에 들어 있지만 인식이 대본과 달라 확인하지 못한 문장(소리는 들어 있음 — 귀로 확인)", ""] + \
+            [f"- {m}" for m in fid["uncertain"]] + [""]
     if missing:
         lines += ["## 영상에서 찾지 못한 대본 문장(말하지 않았거나 인식 실패)", ""] + [f"- {m}" for m in missing] + [""]
     if removed:
