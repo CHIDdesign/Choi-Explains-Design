@@ -19,16 +19,32 @@ from .base import StockCandidate, StockError, StockProvider
 
 STOP = {"a", "an", "the", "of", "on", "in", "with", "and", "for", "to", "at", "by", "from", "into", "over",
         "under", "while", "is", "are", "its", "their", "his", "her", "very", "some"}
+# 줄일 때 먼저 버리는 뜻 없는 동사 — 'designer working on laptop' 을 줄이면 'designer working' 이 아니라
+# 'designer laptop' 이어야 한다(무엇이 보여야 하는지는 명사가 말한다)
+VAGUE = {"working", "using", "doing", "making", "having", "getting", "looking", "showing", "being", "taking"}
 MIN_HITS = 3
+# 한국어 검색(제공처의 자체 번역)에서 다른 뜻으로 번역되는 낱말 — 문맥상 흔한 뜻으로 풀어 쓴다
+KO_AMBIGUOUS = {"노트북": "노트북 컴퓨터", "마우스": "컴퓨터 마우스", "모니터": "컴퓨터 모니터", "패드": "태블릿",
+                "태블릿": "태블릿 컴퓨터", "폰": "스마트폰", "앱": "스마트폰 앱", "키보드": "컴퓨터 키보드",
+                "프린터": "사무용 프린터", "펜": "필기용 펜"}
+
+
+def ko_query(q: str) -> str:
+    """한국어 대체 검색어의 동음이의어를 풀어 쓴다('노트북' → '노트북 컴퓨터'). 이미 풀어 쓴 것은 그대로."""
+    q = re.sub(r"\s+", " ", (q or "").strip())
+    return KO_AMBIGUOUS.get(q, q)
 
 
 def query_variants(q: str) -> list[str]:
     """스톡 검색은 단어를 모두 포함해야 걸린다(AND). 긴 묘사형 검색어는 결과가 0~1개라서 점점 줄여 본다.
-    예: 'designer sketching wireframes on paper notebook'(1건) → 'designer sketching wireframes'(123건)."""
+    예: 'designer sketching wireframes on paper notebook'(1건) → 'designer sketching wireframes'(123건).
+    줄일 때 뜻 없는 동사(working·using …)를 먼저 버려 보여야 할 명사가 남게 한다."""
     q = re.sub(r"\s+", " ", (q or "").strip())
     if not q:
         return []
     core = [w for w in re.split(r"[\s,/]+", q) if w and w.lower() not in STOP]
+    if len([w for w in core if w.lower() not in VAGUE]) >= 2:
+        core = [w for w in core if w.lower() not in VAGUE]
     out = [q, " ".join(core), " ".join(core[:3]), " ".join(core[:2]), " ".join(core[-2:]), core[0] if core else ""]
     seen: list[str] = []
     for v in out:
@@ -138,6 +154,7 @@ class StockHub:
                     break
             if len(out) < MIN_HITS and qk:
                 ko = [p for p in provs if p.korean]
+                qk = ko_query(qk)
                 groups = [self._call(p, method, qk, per_page=n, locale="ko-KR") for p in ko]
                 if ko:
                     trace.append(f"{kind} '{qk}'(ko): " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(ko, groups)))

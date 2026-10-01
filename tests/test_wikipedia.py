@@ -173,3 +173,164 @@ def test_merge_plan_and_clean_keep_wiki_flag():
     cleaned = _clean_graphic(photos[0], [4, 5])
     assert cleaned and cleaned.get("wiki") is True and cleaned["layout"] == "pip"
     assert "photos" in S.STOCK["properties"] and "person" in S.PHOTO_KINDS
+
+
+# ---------------------------------------------------------------------------
+# 브랜드 → 로고, 사람 → 가장 품위 있는 초상
+# ---------------------------------------------------------------------------
+
+SI_DATA = [{"title": "Pinterest", "slug": "pinterest", "hex": "BD081C", "source": "https://business.pinterest.com"},
+           {"title": "Kakao", "slug": "kakao", "hex": "FFCD00", "source": "https://www.kakaocorp.com",
+            "aliases": {"loc": {"ko-KR": "카카오"}}},
+           {"title": "Apple Music", "slug": "applemusic", "hex": "FA243C", "source": "x"}]
+SI_SVG = '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>P</title><path d="M12 0C5 0 0 5 0 12z"/></svg>'
+
+
+def _fake_si(monkeypatch, calls: list[str]):
+    def request(url, *, params=None, headers=None, timeout=30.0, dst=None, rounds=3):
+        calls.append(url)
+        if url.endswith("simple-icons.json"):
+            return _resp(200, SI_DATA)
+        if url.endswith("/icons/pinterest.svg") or url.endswith("/icons/kakao.svg"):
+            return net.Response(200, SI_SVG.encode())
+        return _resp(404)
+    monkeypatch.setattr(net, "request", request)
+
+
+def test_simple_icons_logo_card(monkeypatch, tmp_path):
+    from studio.broll.logos import PAPER, SimpleIcons, contrast
+    calls: list[str] = []
+    _fake_si(monkeypatch, calls)
+    si = SimpleIcons(tmp_path / "cache")
+    assert si.find(["핀터레스트", "Pinterest Inc."])["slug"] == "pinterest"     # 법인 꼬리 무시
+    assert si.find(["Apple"]) is None                                           # 비슷한 이름(Apple Music) 금지
+    assert si.find(["카카오"])["slug"] == "kakao"                                # 한국어 별칭
+    res = si.fetch(["Pinterest"], tmp_path / "images")
+    svg = res.path.read_text(encoding="utf-8")
+    assert res.origin == "logo" and res.path.suffix == ".svg" and "CC0" in res.credit
+    assert f'fill="{PAPER}"' in svg and 'fill="#BD081C"' in svg and "M12 0C5" in svg
+    kakao = si.fetch(["Kakao"], tmp_path / "images").path.read_text(encoding="utf-8")
+    assert contrast("#FFCD00", PAPER) < 2.2 and 'rx=' in kakao and 'fill="#26211E"' in kakao   # 노랑은 타일 위 잉크 마크
+    n = len(calls)
+    SimpleIcons(tmp_path / "cache").find(["Pinterest"])                          # 목록은 디스크 캐시
+    assert len(calls) == n
+
+
+class _FakeWP:
+    ua = "test"
+
+    def __init__(self, info, cands=(), lead=None):
+        self.info, self.cands, self.lead = info, list(cands), lead
+        self.fetched: list[str] = []
+
+    def entity(self, term, names=()):
+        return self.info
+
+    def portrait_candidates(self, info, limit=8):
+        return self.cands
+
+    def logo_meta(self, info):
+        return None
+
+    def fetch(self, term, dst_dir):
+        self.fetched.append(term)
+        return self.lead
+
+
+def test_brand_never_falls_back_to_executive_photo(tmp_path):
+    """'핀터레스트를 참고해서 디자인한다' — 위키백과 대표 이미지(창업자의 SXSW 사진)로 넘어가지 않는다."""
+    from studio.broll.resolve import MediaResolver
+    lead = ImageResult(tmp_path / "Silbermann_at_SXSW.jpg", "Anya · CC BY 2.0")
+    wp = _FakeWP({"human": False, "logos": [], "lead": "Silbermann_at_SXSW.jpg", "title": "핀터레스트"}, lead=lead)
+    r = MediaResolver(local=[], dst_dir=tmp_path / "img", work_dir=tmp_path, wikimedia=None, wikipedia=wp, logos=None)
+    p = r.plan("핀터레스트", "brand", ("Pinterest",))
+    assert p.kind == "brand" and p.result is None and wp.fetched == []
+    # 규칙 경로(종류 모름)라도 위키데이터에 로고가 있는 사람 아닌 항목이면 브랜드
+    wp2 = _FakeWP({"human": False, "logos": ["Pinterest Logo.svg"], "lead": "x.jpg", "title": "Pinterest"}, lead=lead)
+    p2 = MediaResolver(local=[], dst_dir=tmp_path / "img", work_dir=tmp_path, wikimedia=None, wikipedia=wp2,
+                       logos=None).plan("Pinterest", "", ())
+    assert p2.kind == "brand" and wp2.fetched == []
+    # AI 가 brand 라고 해도 위키데이터가 사람이면 사람
+    wp3 = _FakeWP({"human": True, "logos": [], "title": "Ben Silbermann"}, cands=[{"name": "a.jpg"}])
+    p3 = MediaResolver(local=[], dst_dir=tmp_path / "img", work_dir=tmp_path, wikimedia=None, wikipedia=wp3,
+                       logos=None).plan("Ben Silbermann", "brand", ())
+    assert p3.kind == "person" and p3.candidates
+
+
+def test_portrait_rules_prefer_composed_portraits_over_event_shots():
+    from studio.broll.resolve import meta_score
+    event = {"name": "Silbermann at SXSW 2012.jpg", "src": "lead", "width": 5184, "height": 3456}
+    panel = {"name": "Dieter Rams speaking with students.jpg", "src": "category", "width": 2000, "height": 1300}
+    portrait = {"name": "Dieter Rams portrait (cropped).jpg", "src": "category", "width": 1200, "height": 1500}
+    curated = {"name": "Dieter Rams 2010.jpg", "src": "wikidata", "width": 1600, "height": 1900}
+    s = {k: meta_score(m)[0] for k, m in {"event": event, "panel": panel, "portrait": portrait, "curated": curated}.items()}
+    assert s["portrait"] > s["event"] and s["portrait"] > s["panel"] and s["curated"] > s["panel"]
+    assert "행사·인터뷰·단체 사진" in meta_score(event)[1]
+
+
+def test_portrait_and_logo_license_rules():
+    from studio.broll.wikipedia import logo_license_ok, portrait_license_ok
+    assert logo_license_ok({"license": "Public domain", "restrictions": "trademarked"})
+    assert not logo_license_ok({"license": "Fair use", "restrictions": "trademarked"})
+    assert not logo_license_ok({"license": "CC BY-SA 4.0", "restrictions": "trademarked|personality"})
+    assert portrait_license_ok({"license": "CC BY 2.0", "restrictions": "personality"})
+    assert not portrait_license_ok({"license": "CC BY 2.0", "restrictions": "trademarked"})
+    assert not WikipediaImages.license_ok({"license": "CC BY 2.0", "restrictions": "personality"})   # 일반 경로는 그대로
+
+
+def test_merge_plan_keeps_entity_kind_for_logo_and_portrait():
+    raw_long, _ = merge_plan({"stock": {"photos": [
+        {"start_seg": 2, "start_word": "핀터레스트", "name_ko": "핀터레스트", "name_en": "Pinterest", "kind": "brand",
+         "layout": "pip", "reason": "참고 서비스"}]}})
+    g = raw_long["graphics"][0]
+    assert g["entity"] == "brand" and g["name_en"] == "Pinterest" and g["body"] == "브랜드"   # 화면에 'brand' 영어 금지
+    clean = _clean_graphic({**g, "logo": True}, {2})
+    assert clean["entity"] == "brand" and clean["name_en"] == "Pinterest" and clean["logo"] is True
+
+
+def _jpeg(path: Path, color=(180, 150, 130)) -> None:
+    from PIL import Image
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (400, 500), color).save(path, "JPEG")
+
+
+def test_pick_portraits_uses_vision_then_rules(monkeypatch, tmp_path):
+    """후보 썸네일 → 규칙 점수 → AI 비전 선택(있으면) → 1920px 받기. AI 가 없으면 규칙 점수 1위(행사 사진이 아닌 것)."""
+    from types import SimpleNamespace
+
+    from studio.broll.resolve import MediaPlan, MediaResolver
+    from studio.pipeline import Pipeline
+
+    def download(url, dst: Path, *, timeout=180.0, headers=None, rounds=3):
+        _jpeg(dst)
+        return dst
+    monkeypatch.setattr(net, "download", download)
+    cands = [{"name": "Rams at Design Conference 2015.jpg", "src": "lead", "width": 3000, "height": 2000,
+              "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/x.jpg/1920px-x.jpg",
+              "license": "CC BY 2.0", "artist": "A", "mime": "image/jpeg"},
+             {"name": "Dieter Rams portrait.jpg", "src": "category", "width": 1200, "height": 1500,
+              "url": "https://upload.wikimedia.org/wikipedia/commons/c/cd/y.jpg", "license": "CC BY-SA 4.0",
+              "artist": "B", "mime": "image/jpeg"}]
+    wp = _FakeWP({"human": True, "title": "디터 람스"})
+    r = MediaResolver(local=[], dst_dir=tmp_path / "img", work_dir=tmp_path / "work", wikimedia=None, wikipedia=wp,
+                      logos=None)
+    logs: list[str] = []
+    asked: list[str] = []
+
+    class Studio:
+        def pick_portrait(self, ctx, text, sheets):
+            asked.append(text)
+            assert sheets and sheets[0][0] == "R1" and sheets[0][1][:2] == b"\xff\xd8"
+            return [{"request": 1, "candidate": 1, "reason": "단정한 표정"}]
+
+    # AI 있음: 비전이 C1 을 고르면 규칙 점수와 달라도 C1
+    p = MediaPlan("디터 람스", "person", candidates=[dict(c) for c in cands], info=wp.info)
+    me = SimpleNamespace(_ensure_studio=lambda: Studio(), ctx="", log=logs.append)
+    Pipeline._pick_portraits(me, r, [p])
+    assert asked and "R1 디터 람스" in asked[0] and "규칙 점수" in asked[0]
+    assert p.result is not None and p.result.path.exists() and "Rams_at_Design" in p.result.path.name
+    assert "A · CC BY 2.0 · Wikimedia Commons (디터 람스)" == p.result.credit
+    # AI 없음: 규칙 점수 1위 = 행사 사진이 아닌 초상
+    p2 = MediaPlan("디터 람스", "person", candidates=[dict(c) for c in cands], info=wp.info)
+    Pipeline._pick_portraits(SimpleNamespace(_ensure_studio=lambda: None, ctx="", log=logs.append), r, [p2])
+    assert p2.result is not None and "portrait" in p2.result.path.name

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Img, interpolate, staticFile} from 'remotion';
 import {enter, exit} from '../../lib/anim';
-import {FONT} from '../../design/tokens';
+import {FONT, NOTE} from '../../design/tokens';
 import {Credit, MaskLine} from '../layout/Editorial';
 import type {TemplateProps} from './common';
 import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
@@ -15,6 +15,30 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
   const p = enter(frame, 0, 14);
   const out = exit(frame, dur, 10);
   if (layout === 'fullscreen' || layout === 'pip') {
+    // 브랜드 로고 카드: 크림 종이 위 로고 — 사진용 어둠·필름 입자 없이 아주 느린 푸시, 이름은 잉크색 가운데 아래
+    if (data.logo) {
+      return (
+        <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: NOTE.paper}}>
+          <Img src={src} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+            scale: `${interpolate(frame, [0, dur], [0.98, 1.02])}`, translate: '0 -6%', opacity: p}} />
+          {data.title ? (
+            <div style={{position: 'absolute', left: 0, right: 0, bottom: 196, display: 'flex',
+              flexDirection: 'column', alignItems: 'center', gap: 8}}>
+              <MaskLine frame={frame} delay={8}>
+                <div style={{fontFamily: FONT.display, fontWeight: 800, fontSize: 44, color: NOTE.ink,
+                  letterSpacing: '-0.02em'}}>{data.title}</div>
+              </MaskLine>
+              {data.body ? (
+                <MaskLine frame={frame} delay={12}>
+                  <div style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 26, color: NOTE.inkSoft}}>{data.body}</div>
+                </MaskLine>
+              ) : null}
+            </div>
+          ) : null}
+          <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} />
+        </div>
+      );
+    }
     return (
       <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: '#0B0B0B'}}>
         <Img src={src} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',

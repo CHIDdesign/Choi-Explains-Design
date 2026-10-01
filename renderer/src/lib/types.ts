@@ -43,6 +43,7 @@ export type GraphicData = {
   card?: CardSpec; // card
   scene?: string; // motion: 코드 생성 장면 id(실험적)
   kind?: 'video' | 'photo'; // broll
+  logo?: boolean; // photo: 브랜드 로고 카드(크림 종이 위 로고 SVG) — 어두운 그라데이션·필름 룩 없이, 글은 잉크색
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
   accent?: string; // 개념 카드·사진 액자 글(두 스킨): 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)

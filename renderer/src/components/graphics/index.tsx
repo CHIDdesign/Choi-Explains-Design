@@ -138,14 +138,17 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const clip = frame < dur / 2 ? clipIn : clipOut;
   // 카드는 자기 캔버스(1920×1080)를 통째로 그린다 — 머리글·여백 없이
   const noHeader = g.template === 'photo' || g.template === 'broll' || g.template === 'card';
+  // 모션 장면은 '모션 그래픽만의 장면' — 리포트 페이지(러닝 헤더·출처 줄) 없이 화면 전체가 모션의 무대.
+  // 얼굴은 나오지 않는다(채널 주인: 모션이 주인공인 장면은 모션만으로 충분하다). 아래 170px 는 자막 자리로 비운다
+  const stage = g.template === 'motion';
   const m = GRID.margin + 24;
-  const top = noHeader ? 0 : headerH + 64;
+  const top = noHeader ? 0 : stage ? 72 : headerH + 64;
   const bottom = noHeader ? 0 : 170;
   const innerW = noHeader ? W : W - m * 2;
   const innerH = H - top - bottom;
   return (
     <AbsoluteFill style={{clipPath: clip, background: s.bg}}>
-      {!noHeader ? (
+      {!noHeader && !stage ? (
         <RunningHeader surface={s} frame={frame} width={W}
           cells={[brand.name, episode.title, brand.year, pageLabel || TEMPLATE_LABEL[g.template]]} />
       ) : null}

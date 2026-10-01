@@ -210,3 +210,14 @@ def test_motion_scene_pixabay_images_are_downloaded_and_rewritten(tmp_path):
     el = spec["elements"][0]
     assert el["src"].startswith("broll/img_") and el["src"].endswith(".png")      # 투명 PNG 는 PNG 로
     assert (tmp_path / "public" / el["src"]).exists() and res.credits[0]["origin"] == "Pixabay"
+
+
+def test_query_shortening_keeps_what_must_be_seen():
+    """'노트북으로 작업하는 디자이너' — 줄여도 'designer working' 이 아니라 'designer laptop'(보여야 할 물건이 남는다),
+    한국어 대체 검색은 동음이의어를 풀어 쓴다(제공처 번역이 '노트북' → notebook 으로 가지 않게)."""
+    from studio.stock.providers import ko_query, query_variants
+    v = query_variants("designer working on laptop")
+    assert v[0] == "designer working on laptop" and "designer laptop" in v
+    assert "designer working" not in v and all(x.lower() != "working" for x in v)
+    assert ko_query("노트북") == "노트북 컴퓨터" and ko_query("노트북 컴퓨터") == "노트북 컴퓨터"
+    assert ko_query("스케치하는 학생") == "스케치하는 학생"

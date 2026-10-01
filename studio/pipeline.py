@@ -32,7 +32,9 @@ from . import diag
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
 from .broll.entities import find_entities
-from .broll.images import Wikimedia, list_local_images, resolve_image
+from .broll.images import Wikimedia, list_local_images
+from .broll.logos import SimpleIcons
+from .broll.resolve import MediaPlan, MediaResolver, contact_rows
 from .broll.wikipedia import WikipediaImages
 from .director import fallback
 from .director.catalog import TEMPLATES
@@ -53,6 +55,7 @@ from .eta import Eta, features
 from .export.premiere import export_xml
 from .export.report import edit_report, write_text, youtube_text
 from .grade import auto as grade
+from .grade import scopes
 from .media.audio import build_voice_track
 from .media.ffmpeg import FFmpeg, MediaInfo, hdr_to_sdr_filter, pick_output_fps
 from .media.mix import BgmPlan, SfxCue, mix, mux_final
@@ -70,7 +73,7 @@ from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
-from .stock.research import StockResearcher, strip_stock_images
+from .stock.research import StockResearcher, contact_sheet, strip_stock_images
 from .text.align import ScriptAligner, build_utterances, norm
 from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
@@ -654,22 +657,27 @@ class Pipeline:
         times = {c.idx: self._grade_times(c, vt) for c in cams}
         ref_lab = grade.reference_lab(USER_DIR / "reference_frames")
         key = text_hash([(file_fingerprint(c.path), [round(t, 1) for t in times[c.idx]]) for c in cams], self._use_api(),
-                        [round(v, 1) for v in ref_lab], "grade-v4")
+                        [round(v, 1) for v in ref_lab], "grade-v5")
         cached = read_json(self.work / "grade.json", {})
-        if cached.get("key") == key and all(self._cube(c.idx).exists() for c in cams):
+        luts = cached.get("luts") or {}
+        if cached.get("key") == key and all(not luts.get(str(c.idx), True) or self._cube(c.idx).exists() for c in cams):
             self.grade_info = cached
-            self.log(f"🎨 색보정: 캐시 사용({grade.LOOKS[cached['choice']['look']].label})")
+            self.log("🎨 색보정: 캐시 사용(" + ("원본 그대로" if not any(luts.values()) else
+                                             grade.LOOKS[cached['choice']['look']].label) + ")")
             return
         base: Optional[grade.GradeChoice] = None
         per_cam: dict[str, dict] = {}
+        luts = {}
         for n, cam in enumerate(cams):
             plan, choice = self._grade_cam(cam, times[cam.idx], ref_lab, base, first=(n == 0))
             if n == 0:
                 base = choice
                 self.grade_info = {"key": key, **plan}
-            per_cam[str(cam.idx)] = {"filters": plan.get("filters", []),
+            luts[str(cam.idx)] = bool(plan.get("lut"))
+            per_cam[str(cam.idx)] = {"filters": plan.get("filters", []), "lut": bool(plan.get("lut")),
                                      "notes": plan.get("correction", {}).get("notes", [])}
             self._stage("grade", (n + 1) / len(cams))
+        self.grade_info["luts"] = luts
         if len(cams) > 1:
             self.grade_info["cams"] = per_cam
         write_json(self.work / "grade.json", self.grade_info)
@@ -681,7 +689,12 @@ class Pipeline:
         track = self.face_cams.get(cam.idx) or []
         faces = [min(track, key=lambda s: abs(s["t"] - t)) if track else None for t, _ in frames]
         stats = grade.analyze(frames, faces)
-        corr = grade.correction_from_stats(stats)
+        raw_frames = [f for _, f in frames]
+        # 스코프(파형·벡터스코프 수치)로 먼저 판정 — 모든 항목이 정상 범위면 원본 그대로(LUT 도 걸지 않는다)
+        before = scopes.metrics(raw_frames, faces)
+        checks = scopes.assess(before)
+        untouched = scopes.all_ok(checks)
+        corr = grade.Correction(notes=["원본 정상 범위 — 보정 없음"]) if untouched else grade.correction_from_stats(stats)
         # 교정 후 평균색 → 레퍼런스(사용자가 좋아하는 따뜻하고 풍부한 색) 쪽으로 옮길 기준
         src_lab = grade.lab_stats(np.concatenate([grade.apply_correction(f, corr).reshape(-1, 3) for _, f in frames]))
         # 비교용 3프레임: 얼굴이 크고 서로 떨어진 순간
@@ -693,33 +706,52 @@ class Pipeline:
             if len(picks) == 3:
                 break
         picks = sorted(picks or [0])
-        raw_frames = [f for _, f in frames]
         skin_rgb = stats.get("face_rgb")      # 피부 보호는 이 카메라의 얼굴색 근처만, 벗어난 만큼만 고친다
-        if base is not None:          # 두 번째 카메라부터: 같은 룩·세기, 레시피는 이 카메라의 상태로 다시
+        who = f"[{Path(cam.path).name}] " if not self.smap.single else ""
+        self.log(f"🎨 {who}스코프: " + scopes.summary(checks))
+        if untouched:
+            choice = grade.untouched_choice()
+        elif base is not None:        # 두 번째 카메라부터: 같은 룩·세기, 레시피는 이 카메라의 상태로 다시
             choice = replace(grade.plan_choice(raw_frames, corr, base.look, ref_lab, skin_rgb=skin_rgb),
                              strength=base.strength,
                              exposure=base.exposure, warmth=base.warmth, saturation=base.saturation, reason=base.reason,
                              by=base.by)
         else:
-            choice = grade.plan_choice(raw_frames, corr, "warm_rich", ref_lab, skin_rgb=skin_rgb)
+            # 규칙 기본: 벗어난 것만 고치는 레시피 + 내추럴 룩을 약하게(원본의 인상을 지킨다)
+            choice = grade.plan_choice(raw_frames, corr, "natural", ref_lab, skin_rgb=skin_rgb, strength=0.5)
             studio = self._ensure_studio()
             if studio is not None:
                 sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab,
                                                skin_rgb=skin_rgb)
                 (self.work / "grade_sheet.jpg").write_bytes(sheet)
+                scope_sheet = scopes.draw([("원본", [raw_frames[i] for i in picks])])
                 try:
-                    notes = (" · ".join(corr.notes) or "교정 필요 적음") + " / 이 영상 레시피(웜 리치 기준): " + \
-                        grade.recipe_summary(choice.recipe)
-                    r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"))
-                    choice = grade.plan_choice(raw_frames, corr, str(r.get("look", "warm_rich")), ref_lab,
-                                               skin_rgb=skin_rgb, strength=float(r.get("strength", 0.9) or 0.9),
+                    notes = ("스코프(정상 범위 밖만): " + scopes.summary(checks) + " / 교정: "
+                             + (" · ".join(corr.notes) or "교정 필요 적음") + " / 이 영상 레시피(웜 리치 기준): "
+                             + grade.recipe_summary(choice.recipe))
+                    r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"),
+                                     ("scopes", scope_sheet, "image/jpeg"))
+                    choice = grade.plan_choice(raw_frames, corr, str(r.get("look", "natural")), ref_lab,
+                                               skin_rgb=skin_rgb, strength=float(r.get("strength", 0.6) or 0.0),
                                                exposure=float(r.get("exposure", 0) or 0),
                                                warmth=float(r.get("warmth", 0) or 0),
                                                saturation=float(r.get("saturation", 1) or 1),
                                                reason=str(r.get("reason", "")), by="ai").clamp()
                 except (DirectorError, ValueError, TypeError) as e:
-                    self.log(f"🎨 컬러리스트 실패 → 웜 리치: {e}")
-        grade.write_cube(self._cube(cam.idx), corr, choice)
+                    self.log(f"🎨 컬러리스트 실패 → 규칙(내추럴 약하게): {e}")
+        qc: dict[str, Any] = {"noise_gain": 1.0, "backoff": []}
+        identity = untouched or grade.is_identity(corr, choice)
+        cube = self._cube(cam.idx)
+        if identity:
+            cube.unlink(missing_ok=True)      # 예전 실행의 LUT 이 남아 프록시에 걸리지 않게
+        else:
+            # 보정 뒤 검사: 압축 색 잡음을 1.5배 넘게 키우면(얼룩) 세기·채도를 줄인다
+            choice, qc = grade.qc_backoff(raw_frames, corr, choice)
+            for line in qc["backoff"]:
+                self.log(f"🎨 {who}검사: {line}")
+            grade.write_cube(cube, corr, choice)
+        graded = raw_frames if identity else [grade.grade(f, corr, choice) for f in raw_frames]
+        after_checks = scopes.assess(scopes.metrics(graded, faces))
         filters = grade.cleanup_filters(stats)
         if first:
             # 전후 비교는 분석용 480px 프레임을 키우지 않고 1280px 로 다시 뽑아서(예전엔 흐릿해 보정이 화질을 낮춘 것처럼 보였다)
@@ -727,16 +759,28 @@ class Pipeline:
                 big = grade.sample_frames(self.ff, cam.path, [frames[picks[0]][0]], self.infos[cam.idx], width=1280)[0][1]
             except Exception:  # noqa: BLE001 - 미리보기용 — 못 뽑으면 분석 프레임으로
                 big = frames[picks[0]][1]
-            grade.before_after(big, corr, choice, self.extras / "색보정_전후.jpg")
-        after = grade.lab_stats(np.concatenate([grade.grade(f, corr, choice).reshape(-1, 3) for _, f in frames[:6]]))
-        who = f"[{Path(cam.path).name}] " if not self.smap.single else ""
-        self.log(f"🎨 {who}색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → "
-                 f"{after[3]:.1f} (레퍼런스 b {ref_lab[2]:+.1f} · C {ref_lab[3]:.1f})")
-        self.log(f"🎨 {who}색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
-                 f"(세기 {choice.strength:.1f}{', AI 선택' if choice.by == 'ai' else ''})"
-                 + (f" — {choice.reason}" if choice.reason and first else ""))
-        self.log(f"🎨 {who}이 영상에 맞춘 양: {grade.recipe_summary(choice.recipe)}")
-        return grade.plan_to_dict(stats, corr, choice, filters), choice
+            grade.before_after(big, corr, choice, self.extras / "색보정_전후.jpg",
+                               label="보정 없음 — 원본이 정상 범위" if identity else "")
+            rows = [("원본 — " + scopes.summary(checks), [raw_frames[i] for i in picks])]
+            if not identity:
+                rows.append(("보정 — " + scopes.summary(after_checks), [graded[i] for i in picks]))
+            (self.extras / "색보정_스코프.jpg").write_bytes(scopes.draw(rows))
+        if identity:
+            self.log(f"🎨 {who}색보정: 원본이 정상 범위 → 그대로 둠(LUT 없음"
+                     + (", 디노이즈/샤픈만" if filters else "") + ")")
+        else:
+            after = grade.lab_stats(np.concatenate([g.reshape(-1, 3) for g in graded[:6]]))
+            self.log(f"🎨 {who}색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → "
+                     f"{after[3]:.1f}")
+            self.log(f"🎨 {who}색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
+                     f"(세기 {choice.strength:.1f}{', AI 선택' if choice.by == 'ai' else ''})"
+                     + (f" — {choice.reason}" if choice.reason and first else ""))
+            self.log(f"🎨 {who}이 영상에 맞춘 양: {grade.recipe_summary(choice.recipe)} · 보정 뒤 스코프: "
+                     + scopes.summary(after_checks) + f" · 색 잡음 ×{qc['noise_gain']:.2f}")
+        plan = grade.plan_to_dict(stats, corr, choice, filters)
+        plan.update(lut=not identity, scopes={"before": [c.to_dict() for c in checks],
+                                              "after": [c.to_dict() for c in after_checks], **qc})
+        return plan, choice
 
     # ------------------------------------------------------------------
     def _brief(self) -> JobBrief:
@@ -810,7 +854,7 @@ class Pipeline:
         mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
                         self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
-                        self._stock_enabled(), self.spec.motion_scenes, "plan-v3")
+                        self._stock_enabled(), self.spec.motion_scenes, "plan-v4")
         saved = read_json(self.work / "plan.json", {})
         use_api = self._use_api()
         studio = self._ensure_studio()
@@ -1198,17 +1242,35 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_broll(self) -> None:
+        """📷 자료 사진: 고유명사는 무엇인지(사람·브랜드·그 밖)를 먼저 알고 — 브랜드는 로고, 사람은 후보 중 가장 품위 있게
+        나온 초상(비전 선택, 없으면 규칙 점수), 그 밖은 문서 대표 이미지 → 커먼즈 검색(studio/broll/resolve.py)."""
         local = list_local_images(self.spec.images_dir)
-        wm = Wikimedia(self.settings.wikimedia_contact, log=self.log, cache_dir=self.work / "wm_cache") \
-            if self.spec.fetch_broll else None
-        # 고유명사(인물·종교·사물·브랜드·작품)는 위키백과 문서의 대표 이미지가 커먼즈 검색·스톡보다 정확하다
+        online = self.spec.fetch_broll
+        wm = Wikimedia(self.settings.wikimedia_contact, log=self.log, cache_dir=self.work / "wm_cache") if online else None
         wp = WikipediaImages(self.settings.wikimedia_contact, log=self.log, cache_dir=self.work / "wm_cache") \
-            if self.spec.fetch_broll else None
+            if online else None
+        logos = SimpleIcons(USER_DIR / "cache", log=self.log) if online else None
         img_dir = self.public / "images"
+        resolver = MediaResolver(local=local, dst_dir=img_dir, work_dir=self.work / "wm_cache", wikimedia=wm,
+                                 wikipedia=wp, logos=logos, log=self.log)
         graphic_lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
-        total = sum(1 for gl in graphic_lists for g in gl if g["template"] == "photo") or 1
-        n = 0
-        cache: dict[str, Any] = {}
+        photos = [g for gl in graphic_lists for g in gl if g["template"] == "photo"]
+        total = len(photos) or 1
+        plans: dict[str, MediaPlan] = {}
+        for n, g in enumerate(photos):
+            q = g.get("image", "").strip()
+            if q in plans:
+                continue
+            kind = g.get("entity") or ""
+            names = tuple(x for x in (g.get("name_en"), g.get("subtitle") if g.get("wiki") else "") if x)
+            plans[q] = resolver.plan(q, kind, names)
+            self._stage("broll", 0.7 * (n + 1) / total)
+        self._pick_portraits(resolver, [p for p in plans.values() if p.candidates and p.result is None])
+        for q, pl in plans.items():
+            res = pl.result
+            self.broll_log.append({"query": q, "kind": pl.kind, **(res.to_dict() if res else {"origin": "없음"})})
+            if res is not None:
+                self._preview(res.path, f"자료 사진 · {q}" + (" (로고)" if res.origin == "logo" else ""))
         for gl in graphic_lists:
             keep = []
             for g in gl:
@@ -1216,33 +1278,75 @@ class Pipeline:
                     keep.append(g)
                     continue
                 q = g.get("image", "").strip()
-                if q not in cache:
-                    cache[q] = resolve_image(q, local=local, dst_dir=img_dir, wikimedia=wm, wikipedia=wp, log=self.log)
-                    res = cache[q]
-                    self.broll_log.append({"query": q, **(res.to_dict() if res else {"origin": "없음"})})
-                    if res is not None:
-                        self._preview(res.path, f"자료 사진 · {q}")
-                res = cache[q]
-                n += 1
-                self._stage("broll", n / total)
+                pl = plans.get(q) or MediaPlan(q)
+                res = pl.result
                 if res is None:
-                    if g.get("wiki"):
-                        # 위키백과 전용(고유명사): 문서·자유 이미지가 없으면 스톡으로 넘기지 않는다 — 틀린 사진보다 없는 게 낫다
-                        self.log(f"자료 사진: '{q}' 는 위키백과에 쓸 수 있는 이미지가 없어 뺍니다")
+                    if g.get("wiki") or pl.kind == "brand":
+                        # 고유명사·브랜드: 쓸 수 있는 이미지가 없으면 스톡으로 넘기지 않는다 — 틀린 사진보다 없는 게 낫다
+                        self.log(f"자료 사진: '{q}' 는 쓸 수 있는 이미지가 없어 뺍니다")
                         continue
                     # 위키미디어·내 폴더에 없으면 버리지 않고 스톡 사진(Pixabay 등) 요청으로 넘긴다 — 다음 단계가 찾는다
                     if q and self._stock_enabled():
                         g = copy.deepcopy(g)
                         g["template"] = "broll"
                         g["stock"] = {"kind": "photo", "query_en": q, "query_ko": g.get("title", ""),
-                                      "purpose": g.get("body", ""), "must_show": ""}
+                                      "purpose": g.get("body", ""), "must_show": "",
+                                      "context": self._seg_text(g.get("start_seg"))}
                         keep.append(g)
                     continue
                 g = copy.deepcopy(g)
                 g["image"] = f"images/{res.path.name}"
                 g["credit"] = res.credit
+                if res.origin == "logo":
+                    g["logo"] = True
+                    g["body"] = g.get("body") or "브랜드"
+                elif pl.kind == "person" and pl.info and pl.info.get("description") and g.get("body") in ("", "인물"):
+                    g["body"] = str(pl.info["description"])[:24]
                 keep.append(g)
             gl[:] = keep
+        self._stage("broll", 1.0)
+
+    def _seg_text(self, seg: Any) -> str:
+        """그 그래픽이 붙은 발화(문맥) — 스톡 검색어·후보 선택이 낱말이 아니라 문장의 뜻을 보게."""
+        u = next((u for u in self.utts if u.id == seg), None)
+        return u.text.strip()[:160] if u else ""
+
+    def _pick_portraits(self, resolver: MediaResolver, pending: list[MediaPlan]) -> None:
+        """인물마다 후보 썸네일 → 규칙 점수 → (AI 가 있으면) 비전으로 '가장 품위 있게 나온 사진' 선택."""
+        if not pending:
+            return
+        for p in pending:
+            resolver.score_candidates(p)
+        pending = [p for p in pending if p.candidates]
+        if not pending:
+            return
+        choice = {id(p): resolver.best_by_rule(p) for p in pending}
+        studio = self._ensure_studio()
+        multi = [p for p in pending if len(p.candidates) > 1]
+        if studio is not None and multi:
+            sheets, lines = [], []
+            for r, p in enumerate(multi, start=1):
+                sheets.append((f"R{r}", contact_sheet(contact_rows(p), cell=(300, 380), contain=True), "image/jpeg"))
+                lines.append(f"- R{r} {p.query}" + (f" ({p.info.get('title')})" if p.info else "") + " · 규칙 점수: "
+                             + ", ".join(f"C{j} {c['score']:+.2f}" for j, c in enumerate(p.candidates, start=1)))
+            try:
+                picks = studio.pick_portrait(self.ctx, "\n".join(lines), sheets)
+                for pk in picks:
+                    r, c = int(pk.get("request", 0)), int(pk.get("candidate", 0))
+                    if 1 <= r <= len(multi):
+                        p = multi[r - 1]
+                        choice[id(p)] = c - 1 if 1 <= c <= len(p.candidates) else -1
+                        if pk.get("reason"):
+                            self.log(f"📷 {p.query}: C{c} — {pk['reason']}")
+            except (DirectorError, ValueError, TypeError) as e:
+                self.log(f"📷 인물 사진 비전 선택 실패 → 규칙 점수: {e}")
+        for p in pending:
+            idx = choice[id(p)]
+            if idx >= 0:
+                c = p.candidates[idx]
+                self.log(f"📷 인물 사진 '{p.query}': 후보 {len(p.candidates)}장 중 {c['name']}"
+                         f"(점수 {c['score']:+.2f}" + (f" · {', '.join(c['why'][:3])}" if c.get("why") else "") + ")")
+            p.result = resolver.finish(p, idx)
 
     def stage_stock(self) -> None:
         """🎞 B-roll 요청 → 무료 스톡 검색(Pixabay 등 + 키 없는 Openverse) → (Claude 비전으로) 선택 → 정리.
@@ -1264,6 +1368,12 @@ class Pipeline:
             return
         hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
         self.log("🎞 검색처: " + (", ".join(hub.names) or "없음") + " · " + hub.check())
+        # 후보를 고를 때 검색어 낱말이 아니라 그 장면에서 하는 말(문맥)을 보게 한다 — '노트북으로 작업하는 디자이너'에
+        # 종이 노트가 뽑히지 않게
+        for gl in lists:
+            for g in gl:
+                if g["template"] == "broll" and isinstance(g.get("stock"), dict) and not g["stock"].get("context"):
+                    g["stock"]["context"] = self._seg_text(g.get("start_seg"))
         studio = self._ensure_studio()
         pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
         res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
@@ -1392,6 +1502,8 @@ class Pipeline:
                 content = f"{d.get('title') or ''} (HTML 카드 · {d['card'].get('style') or 'card'}): {card_text(d['card'])[:90]}"
             if g.template == "broll":
                 content = f"스톡 {d.get('kind', '')}: {d.get('title', '')}"
+            if g.template == "photo" and d.get("logo"):
+                content = f"브랜드 로고: {d.get('title', '')}"
             spoken = " ".join(w["text"] for c in lp.get("captions", []) for line in c["lines"] for w in line
                               if g.start - 0.3 <= w["start"] <= g.end)
             lines.append(f"- {g.id} · {g.template} · {g.layout} · {g.end - g.start:.1f}초 · 내용: {content[:120]}"
@@ -2106,9 +2218,17 @@ class Pipeline:
         g = self.grade_info or {}
         if g:
             ch = g.get("choice", {})
-            lines.append(f"- 색보정: {', '.join(g.get('correction', {}).get('notes', [])) or '교정 거의 없음'} → 룩 "
-                         f"{grade.LOOKS.get(ch.get('look', 'natural'), grade.LOOKS['natural']).label}"
-                         f"(세기 {ch.get('strength', 1):.1f}) {ch.get('reason', '')}")
+            sc = g.get("scopes") or {}
+            bad = [c for c in sc.get("before", []) if not c.get("ok")]
+            scope_txt = ("스코프 모두 정상" if not bad else "범위 밖: " + ", ".join(
+                f"{c['label']} {c['value']:.1f}" for c in bad))
+            if not g.get("lut", True):
+                lines.append(f"- 색보정: {scope_txt} → 원본 그대로(LUT 없음)")
+            else:
+                lines.append(f"- 색보정: {scope_txt} → {', '.join(g.get('correction', {}).get('notes', [])) or '교정 거의 없음'}"
+                             f" → 룩 {grade.LOOKS.get(ch.get('look', 'natural'), grade.LOOKS['natural']).label}"
+                             f"(세기 {ch.get('strength', 1):.1f}) · 색 잡음 ×{sc.get('noise_gain', 1.0):.2f} "
+                             f"{ch.get('reason', '')}")
         for m in self.masters:
             st = m["edit"].stats
             lines.append(f"- {m['name']}: " + " · ".join(f"{k} {v}" for k, v in st.items())

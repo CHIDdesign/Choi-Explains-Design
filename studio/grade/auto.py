@@ -318,40 +318,55 @@ def reference_targets(look: Look, ref: tuple) -> tuple[float, float]:
 
 
 def plan_recipe(m: dict, look: Look, ref: tuple = ()) -> dict[str, Any]:
-    """이 영상에 맞춘 양: 목표(룩) − 지금(measure). 같은 룩이라도 평평한 로그 소스엔 대비를 많이, 이미 또렷한 영상엔 거의
-    안 주고, 채도 낮은 영상엔 채도를 많이, 파란 방엔 온기를 조금만(상한) 준다."""
+    """이 영상에 필요한 양만: 정상 범위(scopes.OK)를 벗어난 것만 룩의 목표 쪽으로. 대비는 평평한(로그) 소스만, 채도는 회색
+    소스만, 피부는 창백하거나 너무 진할 때만, 온기는 회색이면서 차가운 소스만 — 원본이 괜찮으면 레시피는 비어 있다(0·1·0)."""
+    from .scopes import OK
     target_c, target_b = reference_targets(look, ref)
     why: list[str] = []
-    # 1) 대비: S-커브 세기를 이분 탐색으로 — 밝기 스프레드가 목표에 닿을 만큼만(최소 0.04: '살짝'은 늘)
+    # 1) 대비: 밝기 스프레드가 0.40 아래(평평한 소스)일 때만, 정상 하한까지 S-커브
     lum = m.get("_lum")
-    contrast = 0.04
-    if lum is not None and len(lum) > 50 and m["spread"] < look.target_contrast:
+    contrast = 0.0
+    low = OK["spread"][0]
+    if lum is not None and len(lum) > 50 and m["spread"] < low:
         lo, hi = 0.0, CONTRAST_MAX
         for _ in range(14):
             mid_a = (lo + hi) / 2
             y = _scurve(lum, mid_a)
-            if float(np.percentile(y, 90) - np.percentile(y, 10)) < look.target_contrast:
+            if float(np.percentile(y, 90) - np.percentile(y, 10)) < low + 0.03:
                 lo = mid_a
             else:
                 hi = mid_a
-        contrast = max(0.04, min(CONTRAST_MAX, (lo + hi) / 2))
-    why.append(f"명암 {m['spread']:.2f}→S커브 {contrast:.2f}")
-    # 2) 암부 깊이: 교정 뒤에도 떠 있는 블랙(0.5% 지점)을 목표 0.012 로
-    black = float(np.clip(m["p005"] - 0.012, 0.0, 0.035))
+        contrast = min(CONTRAST_MAX, (lo + hi) / 2)
+        why.append(f"평평한 소스: 명암 {m['spread']:.2f}→S커브 {contrast:.2f}")
+    # 2) 암부 깊이: 교정 뒤에도 블랙이 떠 있을 때만(0.5% 지점 5% 넘음)
+    black = float(np.clip(m["p005"] - 0.05, 0.0, 0.035))
     if black > 0.004:
         why.append(f"암부 −{black:.3f}")
-    # 3) 채도: 피부 아닌 중간톤 채도 → 목표(이득 1~1.8배), 피부는 따로(0.9~1.3배, 위에서 30 이하로 막힘)
-    chroma_gain = float(np.clip(target_c / max(4.0, m["chroma_mid"]), 1.0, CHROMA_GAIN_MAX))
-    skin_gain = float(np.clip(look.target_skin_chroma / max(6.0, m["skin_chroma"]), 0.9, 1.3)) if m.get("skin_chroma") else 1.05
-    why.append(f"채도 {m['chroma_mid']:.0f}→×{chroma_gain:.2f}(피부 ×{skin_gain:.2f})")
-    # 4) 온기: 무채색 중간톤의 b* → 목표(더할 뿐, 빼지 않는다; 상한)
-    warmth = float(np.clip(target_b - m["neutral_b"], 0.0, WARMTH_MAX_B))
-    # 이미 따뜻한 장면(벽·배경 b* 10 넘음 — 노란 벽·백열등 방)은 덜 더한다: b* 20 이상이면 0. 무채색 픽셀이 적은 화면에서
-    # neutral_b 만 보면 노란 벽에 온기를 최대(+9)로 얹어 벽이 진한 노랑(b 21 → 35)이 됐다
+    # 3) 채도: 피부 아닌 중간톤이 회색(8 아래)일 때만 목표 쪽으로(최대 1.5배). 피부는 창백할 때(12 아래)만
+    chroma_gain = 1.0
+    if m["chroma_mid"] < OK["chroma_mid"][0]:
+        chroma_gain = float(np.clip(min(target_c, OK["chroma_mid"][0] + 4) / max(4.0, m["chroma_mid"]), 1.0, 1.5))
+        why.append(f"회색 소스: 채도 {m['chroma_mid']:.0f}→×{chroma_gain:.2f}")
+    skin_gain = 1.0
+    sc = float(m.get("skin_chroma") or 0.0)
+    if 0 < sc < 12.0:
+        # 창백한 피부 — 색 범위로 찾은 피부일 때만(얼굴 평균색으로 올리면 그 색 범위에 걸린 흰 벽의 잡음까지 진해진다.
+        # 그런 얼굴은 skin_guard 가 얼굴색 근처만 올린다)
+        skin_gain = float(np.clip(14.0 / max(6.0, sc), 1.0, 1.25))
+        why.append(f"창백한 피부 ×{skin_gain:.2f}")
+    sc = max(sc, float(m.get("face_chroma") or 0.0))
+    if sc > OK["skin_chroma"][1]:
+        # 진한(주황·노란) 피부는 범위 안(27)까지 낮춘다
+        skin_gain = float(np.clip(27.0 / sc, 0.5, 1.0))
+        why.append(f"진한 피부 {sc:.0f}→×{skin_gain:.2f}")
+    # 4) 온기: 회색이면서 차가운 소스(무채색 b* < −3, 배경 b* < 6)만 −3 까지. 장면의 조명(따뜻한 방·푸른 창가)은 지킨다
+    warmth = 0.0
     mid_b = float(m.get("mid_b", m["neutral_b"]))
-    if mid_b > 10.0 and warmth > 0:
-        warmth *= float(np.clip((20.0 - mid_b) / 10.0, 0.0, 1.0))
-    why.append(f"온기 b {m['neutral_b']:+.0f}→+{warmth:.1f}" + (f"(배경이 이미 따뜻함 b {mid_b:.0f})" if mid_b > 10.0 else ""))
+    if chroma_gain > 1.0 and m["neutral_b"] < -3.0 and mid_b < 6.0:
+        warmth = float(np.clip(-3.0 - m["neutral_b"], 0.0, min(WARMTH_MAX_B, max(0.0, target_b))))
+        why.append(f"차가운 회색: 온기 +{warmth:.1f}")
+    if not why:
+        why.append("레시피 없음(정상 범위)")
     return {"contrast": round(contrast, 4), "black": round(black, 4), "chroma_gain": round(chroma_gain, 3),
             "skin_gain": round(skin_gain, 3), "warmth": round(warmth, 2), "why": why,
             "measured": {k: round(v, 3) for k, v in m.items() if not k.startswith("_")}}
@@ -435,6 +450,7 @@ def skin_guard(x: np.ndarray, face_rgb=None) -> np.ndarray:
     · 색상: 얼굴이 피부 범위(32~60°)를 벗어났으면 벗어난 만큼만, 얼굴색 근처 색(색상 ±18° · 채도 가우시안)을 부드럽게 옮긴다.
       얼굴이 범위 안이면 옮기지 않는다.
     · 채도: 얼굴 색상 근처에서 30 을 넘는 진한 색만 무릎(30 + 넘친 양 × 0.1)으로 누른다(주황 피부 금지).
+      얼굴이 창백하면(채도 8 아래) 얼굴색 근처 색 덩어리를 채도 11 쪽으로 옮긴다(더해서 — 잡음을 키우지 않음).
     얼굴을 모르면 그대로. 예전처럼 넓은 범위(12~100°)를 경계로 '스냅'하지 않는다 — 베이지 벽·나무처럼 피부 비슷한 색이
     픽셀마다 다르게 옮겨져 얼룩(분홍·연두 패치)이 되던 원인이었다."""
     if face_rgb is None or len(face_rgb) != 3:
@@ -442,7 +458,7 @@ def skin_guard(x: np.ndarray, face_rgb=None) -> np.ndarray:
     Lf, Cf, hf, dh = skin_fix(face_rgb)
     L, a, b = srgb_to_lab(x)
     C = np.hypot(a, b)
-    if abs(dh) < 0.5 and float(C.max(initial=0.0)) <= SKIN_CHROMA_MAX:
+    if abs(dh) < 0.5 and Cf >= 8.0 and float(C.max(initial=0.0)) <= SKIN_CHROMA_MAX:
         return x
     h = _lab_hue(a, b)
     w_l = _smooth((L - 15.0) / 15.0) * _smooth((98.0 - L) / 8.0)
@@ -452,10 +468,22 @@ def skin_guard(x: np.ndarray, face_rgb=None) -> np.ndarray:
         sig_c = max(8.0, 0.45 * Cf)
         w = w_h * np.exp(-0.5 * ((C - Cf) / sig_c) ** 2) * _smooth((C - 3.0) / 6.0)
         h2 = h + w * dh
+    # 채도 무릎은 조금 더 넓게(색상 ±28°) — 노란·주황 조명 아래 얼굴은 픽셀마다 색상이 넓게 퍼진다. 무릎은 잡음을 줄이는
+    # 방향이라(기울기 ≤ 1) 넓혀도 얼룩이 생기지 않는다
+    w_k = np.exp(-0.5 * (_wrap(h - hf) / 28.0) ** 2) * w_l
     knee = np.where(C > SKIN_CHROMA_MAX, SKIN_CHROMA_MAX + (C - SKIN_CHROMA_MAX) * 0.1, C)
-    C2 = C + (knee - C) * w_h
+    C2 = C + (knee - C) * w_k
     rad = np.radians(h2)
-    return lab_to_srgb(L, C2 * np.cos(rad), C2 * np.sin(rad))
+    a2, b2 = C2 * np.cos(rad), C2 * np.sin(rad)
+    # 창백한(회색) 얼굴(보정 직전 채도 8 아래 — 모니터 불빛을 걷어 낸 얼굴 등): 회색 근처는 색상이 잡음에 흔들리므로
+    # a*b* 평면에서 얼굴색 가까운 색 덩어리를 통째로 피부색 쪽(채도 11)으로 '옮긴다' — 곱하지 않아 잡음이 커지지 않는다
+    if Cf < 8.0:
+        hr = math.radians(hf)
+        af, bf = Cf * math.cos(hr), Cf * math.sin(hr)
+        w_p = np.exp(-0.5 * (np.hypot(a - af, b - bf) / 5.0) ** 2) * w_l
+        a2 = a2 + w_p * (11.0 - Cf) * math.cos(hr)
+        b2 = b2 + w_p * (11.0 - Cf) * math.sin(hr)
+    return lab_to_srgb(L, a2, b2)
 
 
 def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
@@ -466,7 +494,8 @@ def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
         v = apply_correction(v, c)
         if ch.match > 0:
             recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
-            v = enrich(v, recipe, ch.strength if ch.recipe else min(1.0, ch.match))
+            # 레시피는 범위를 벗어난 만큼만 고치는 '교정'이라 룩 세기와 상관없이 다 적용한다(세기는 룩의 캐릭터에만)
+            v = enrich(v, recipe, 1.0 if ch.recipe else min(1.0, ch.match))
         return apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
                           saturation=ch.saturation)
     face = before_guard(np.asarray(ch.skin, np.float32).reshape(1, 3))[0] if len(ch.skin) == 3 else None
@@ -480,6 +509,10 @@ def plan_choice(frames: list[np.ndarray], c: Correction, look: str = "warm_rich"
         kw["skin"] = tuple(round(float(v), 5) for v in skin_rgb)
     corrected = [apply_correction(f, c) for f in frames]
     m = measure(corrected)
+    if "skin" in kw:
+        # 얼굴 위치를 아는 평균색 — 색 범위로 고른 피부는 노란·창백한 얼굴을 놓친다
+        L, a, b = srgb_to_lab(apply_correction(np.asarray(kw["skin"], np.float32).reshape(1, 3), c))
+        m["face_chroma"] = float(np.hypot(a, b)[0])
     src = lab_stats(np.concatenate([f.reshape(-1, 3) for f in corrected]))
     lk = LOOKS.get(look, LOOKS["warm_rich"])
     return GradeChoice(look=lk.name, src_lab=src, ref_lab=ref, recipe=plan_recipe(m, lk, ref), **kw)
@@ -601,87 +634,131 @@ def _skin_line_gains(face_rgb: np.ndarray, gains: np.ndarray, target: float = SK
 
 
 def correction_from_stats(st: dict[str, Any]) -> Correction:
+    """교정 — **정상 범위 밖인 항목만, 벗어난 만큼만**(scopes.OK 와 같은 기준). 원본이 괜찮으면 아무것도 바꾸지 않는다
+    (예전엔 늘 피부를 50° 에 놓고 블랙·화이트를 늘리고 채도를 바꿔, 괜찮은 따뜻한 방이 분홍·살구색으로 떴다)."""
+    from .scopes import OK
     c = Correction()
     notes = c.notes
-    # 1) 화이트밸런스 — 무채색 픽셀(없으면 전체 평균의 절반 세기), 75% 만 적용
-    ref = st.get("neutral_rgb_lin")
-    weight = 0.75
-    if ref is None:
-        ref = st["gray_world_lin"]
-        weight = 0.4
-    ref = np.array(ref) + 1e-6
-    gains = ref.mean() / ref
-    if gains[0] < gains[2]:      # 장면이 따뜻함(주황 조명) → 식히는 교정은 조금만(따뜻한 룩을 지우지 않게)
-        weight *= 0.35
-    gains = 1 + (gains - 1) * weight
-    gains = np.clip(gains, 0.8, 1.25)
-    # 피부 기준: 교정 후 피부의 CIELAB 색상이 피부색 선(약 50°) 근처여야 한다. 벗어나 있으면(모니터 불빛의 파란 얼굴,
-    # 형광등의 초록 얼굴, 백열등의 노란 얼굴) 게인을 풀어서 피부를 그 선에 놓는다 — 컬러리스트가 '교정'에서 하는 일.
-    # 따뜻한 장면은 절반만(방의 온기를 남긴다). 게인 0.7~1.4 (R/B 2:1 까지).
+    gains = np.ones(3)
+    # 1) 화이트밸런스 — 얼굴이 피부 범위(34~60°) 밖일 때만, 가까운 경계 안쪽 3° 까지(피부색 선 50° 까지 끌지 않는다)
     if "face_rgb" in st:
         face0 = np.array(st["face_rgb"], dtype=np.float32)
-        before = _lab_hue(*srgb_to_lab(_to_gamma(_to_linear(face0) * gains)[None, :])[1:])[0]
-        solved = _skin_line_gains(face0, gains)
-        wgt = 0.6 if gains[0] < gains[2] else 0.85
-        gains = np.clip(1 + (solved - 1) * wgt, 0.7, 1.4)
-        after = _lab_hue(*srgb_to_lab(_to_gamma(_to_linear(face0) * gains)[None, :])[1:])[0]
-        if abs(after - before) > 3:
-            cold = ((before - SKIN_HUE_TARGET + 180) % 360 - 180) > 0   # 피부색 선보다 노랑·초록·파랑 쪽
-            notes.append(f"피부톤을 피부색 선에 맞춤({'차가운' if cold else '붉은'} 얼굴 {before:.0f}° → {after:.0f}°)")
+        _, fa, fb = srgb_to_lab(face0[None, :])
+        before = float(_lab_hue(fa, fb)[0])
+        lo, hi = OK["skin_hue"]
+        if float(math.hypot(float(fa[0]), float(fb[0]))) >= 3.0 and not (lo <= before <= hi):
+            d_lo = ((lo + 3 - before + 180) % 360) - 180
+            d_hi = ((hi - 3 - before + 180) % 360) - 180
+            target = (lo + 3) if abs(d_lo) < abs(d_hi) else (hi - 3)
+            gains = np.clip(_skin_line_gains(face0, gains, target=target), 0.7, 1.4)
+            after = float(_lab_hue(*srgb_to_lab(_to_gamma(_to_linear(face0) * gains)[None, :])[1:])[0])
+            cold = ((before - SKIN_HUE_TARGET + 180) % 360 - 180) > 0
+            notes.append(f"피부톤이 범위 밖 → 경계까지({'차가운' if cold else '붉은'} 얼굴 {before:.0f}° → {after:.0f}°)")
+    elif st.get("neutral_rgb_lin") is not None:
+        # 얼굴이 없을 때: 흰 벽·회색이 확실히 물들었을 때만(색 틀어짐 > 8), 넘친 만큼의 절반
+        ref = np.array(st["neutral_rgb_lin"]) + 1e-6
+        _, na, nb = srgb_to_lab(_to_gamma(ref)[None, :].astype(np.float32))
+        cast = float(math.hypot(float(na[0]), float(nb[0])))
+        if cast > OK["cast"][1]:
+            full = ref.mean() / ref
+            gains = 1 + (full - 1) * 0.5 * (cast - OK["cast"][1]) / cast
+            notes.append(f"흰 것의 색 틀어짐 {cast:.0f} → 절반 보정")
+    gains = np.clip(gains, 0.7, 1.4)
     gains = gains / (gains @ np.array([0.2126, 0.7152, 0.0722]))  # 밝기 보존
     c.gains = tuple(float(round(g, 4)) for g in gains)  # type: ignore[assignment]
-    dev = float(np.max(np.abs(np.array(c.gains) - 1)))
-    if dev > 0.03:
-        notes.append(f"화이트밸런스 {'따뜻하게' if c.gains[2] < c.gains[0] else '차갑게'} 보정({dev * 100:.0f}%)")
-    # 2) 블랙/화이트 포인트 — 떠 있는 블랙은 60%만 내리고(밝은 하이키 화면 보호), 늘림은 최대 1.3배
-    black = min(0.08, max(0.0, (st["p005"] - 0.02) * 0.6))
-    white = max(0.8, min(1.0, st["p997"] + 0.015))
-    if white - black < 1 / 1.3:
-        mid = (white + black) / 2
-        black, white = max(0.0, mid - 0.5 / 1.3), min(1.0, mid + 0.5 / 1.3)
-    c.black, c.white = round(black, 4), round(white, 4)
-    if black > 0.02 or white < 0.97:
-        notes.append(f"명암 범위 정리({black:.2f}~{white:.2f})")
-    # 3) 노출 — 얼굴 밝기가 0.50~0.70(없으면 중간값 0.34~0.55) 밖일 때만 가까운 경계로, 감마 0.72~1.3
+    # 2) 블랙/화이트 — 떠 있는 블랙(7 IRE 넘음)만 넘친 양의 70% 를 내리고, 탁한 화이트(75 IRE 아래)만 늘린다(최대 1.25배)
+    black_ire, white_ire = st["p005"] * 100, st["p997"] * 100
+    black = 0.0
+    if black_ire > OK["black_ire"][1]:
+        black = round(min(0.08, (black_ire - OK["black_ire"][1] + 3) / 100 * 0.7), 4)
+    white = 1.0
+    if white_ire < OK["white_ire"][0]:
+        white = round(max(0.8, min(1.0, st["p997"] + 0.04)), 4)
+    if white - black < 0.8:
+        white = min(1.0, black + 0.8)
+    c.black, c.white = black, white
+    if black > 0 or white < 1:
+        notes.append(f"명암 범위({black_ire:.0f}~{white_ire:.0f} IRE) → {black:.2f}~{white:.2f}")
+    # 3) 노출 — 얼굴 밝기 45~75 IRE(없으면 중간 28~62) 밖일 때만 가까운 경계까지, 감마 0.72~1.3
     if "face_luma" in st:
-        cur, lo, hi = st["face_luma"], 0.50, 0.70   # 피부 60~70 IRE(어두운 피부톤도 있어 하한은 50)
+        cur, (lo, hi) = st["face_luma"], (v / 100 for v in OK["skin_ire"])
     else:
-        cur, lo, hi = st["p50"], 0.34, 0.55
+        cur, (lo, hi) = st["p50"], (v / 100 for v in OK["mid_ire"])
     cur = min(0.95, max(0.02, (cur - black) / max(1e-3, white - black)))
     target = min(hi, max(lo, cur))
-    g = math.log(target) / math.log(cur) if 0 < cur < 1 else 1.0
+    g = math.log(target) / math.log(cur) if 0 < cur < 1 and abs(target - cur) > 1e-4 else 1.0
     c.gamma = round(float(min(1.3, max(0.72, g))), 3)
-    if abs(c.gamma - 1) > 0.05:
-        notes.append(f"노출 {'올림' if c.gamma < 1 else '내림'}(감마 {c.gamma:.2f})")
-    # 4) 채도 — 밋밋한 로그/플랫 소스는 올리고, 과한 것은 살짝 내림.
-    #    단, 교정 후 피부 채도가 원본의 1.1배(최대 0.5)를 넘지 않게 한다(얼굴이 주황색이 되지 않도록).
+    if abs(c.gamma - 1) > 0.02:
+        notes.append(f"노출 {'올림' if c.gamma < 1 else '내림'}(얼굴 {cur * 100:.0f} → {target * 100:.0f} IRE)")
+    # 4) 채도 — 회색·로그 소스(평균 채도 0.10 아래)만 올린다. 그 밖은 그대로(피부 채도 과다는 피부 보호가 따로)
     sm = st["sat_mean"]
-    c.sat = round(float(min(1.25, max(0.9, 1 + (0.26 - sm) * 1.2))), 3)
-    if "face_rgb" in st:
+    c.sat = round(float(min(1.25, 1 + (0.10 - sm) * 2.5)), 3) if sm < 0.10 else 1.0
+    if c.sat > 1 and "face_rgb" in st:     # 얼굴이 주황이 되지 않게(원본 피부 채도의 1.1배, 최대 0.5)
         face0 = np.array(st["face_rgb"], dtype=np.float32)[None, :]
         _, s0 = _hue_sat(face0)
         for _ in range(8):
             _, s1 = _hue_sat(apply_correction(face0, c))
-            if s1[0] <= min(0.5, s0[0] * 1.1) + 1e-3 or c.sat <= 0.85:
+            if s1[0] <= min(0.5, s0[0] * 1.1) + 1e-3 or c.sat <= 1.0:
                 break
-            c.sat = round(c.sat - 0.03, 3)
-    if abs(c.sat - 1) > 0.05:
-        notes.append(f"채도 {'올림' if c.sat > 1 else '내림'}({c.sat:.2f})")
+            c.sat = round(max(1.0, c.sat - 0.03), 3)
+    if abs(c.sat - 1) > 0.02:
+        notes.append(f"채도 올림({c.sat:.2f}, 회색·로그 소스)")
     return c
 
 
+def is_identity_correction(c: Correction) -> bool:
+    return (max(abs(g - 1) for g in c.gains) < 0.004 and c.black < 0.002 and c.white > 0.998
+            and abs(c.gamma - 1) < 0.004 and abs(c.sat - 1) < 0.004)
+
+
+def is_identity(c: Correction, choice: "GradeChoice") -> bool:
+    """이 보정이 원본을 그대로 두는가(LUT 를 굽지도 프록시에 걸지도 않는다 — 8비트 양자화조차 없게)."""
+    ch = choice.clamp()
+    no_recipe = ch.match <= 0 or not ch.recipe or (
+        abs(ch.recipe.get("contrast", 0)) < 1e-3 and ch.recipe.get("black", 0) < 1e-3
+        and abs(ch.recipe.get("chroma_gain", 1) - 1) < 1e-3 and abs(ch.recipe.get("skin_gain", 1) - 1) < 1e-3
+        and ch.recipe.get("warmth", 0) < 1e-3)
+    no_look = ch.strength <= 0 and abs(ch.exposure) < 1e-4 and abs(ch.warmth) < 1e-4 and abs(ch.saturation - 1) < 1e-4
+    return is_identity_correction(c) and no_recipe and no_look
+
+
+def untouched_choice(reason: str = "원본이 정상 범위 — 보정하지 않음") -> GradeChoice:
+    """원본 그대로(룩·레시피 없음). is_identity() 가 참이 된다."""
+    return GradeChoice(look="natural", strength=0.0, match=0.0, reason=reason, by="rule")
+
+
+def qc_backoff(frames: list[np.ndarray], c: Correction, choice: GradeChoice, *, max_noise: float = 1.5,
+               tries: int = 3) -> tuple[GradeChoice, dict[str, Any]]:
+    """보정 뒤 검사 — 압축 색 잡음을 max_noise 배 넘게 키우면(얼룩) 룩 세기와 채도 이득을 줄여 다시 잰다.
+    반환: (고친 선택, {"noise_gain", "backoff": [단계 설명]})."""
+    from .scopes import chroma_noise_gain
+    sample = frames[:6]
+    steps: list[str] = []
+    ch = choice
+    gain = chroma_noise_gain(sample, [grade(f, c, ch) for f in sample])
+    for _ in range(tries):
+        if gain <= max_noise:
+            break
+        rec = dict(ch.recipe or {})
+        for k in ("chroma_gain", "skin_gain"):
+            if k in rec and rec[k] > 1.0:
+                rec[k] = round(1.0 + (rec[k] - 1.0) * 0.5, 3)
+        ch = replace(ch, strength=round(ch.strength * 0.6, 3), recipe=rec,
+                     saturation=1.0 + (ch.saturation - 1.0) * 0.5)
+        new = chroma_noise_gain(sample, [grade(f, c, ch) for f in sample])
+        steps.append(f"색 잡음 ×{gain:.2f} → 세기·채도 줄임(×{new:.2f})")
+        gain = new
+    return ch, {"noise_gain": round(gain, 3), "backoff": steps}
+
+
 def cleanup_filters(st: dict[str, Any]) -> list[str]:
-    """노이즈(암부 촬영) 정도에 맞춘 디노이즈 + 은은한 샤픈."""
+    """노이즈(암부 촬영) 정도에 맞춘 디노이즈 + 은은한 샤픈. 깨끗한 원본은 건드리지 않는다(필터 없음)."""
     noise = st.get("noise", 0.0)
-    out = []
     if noise > 0.02:
-        out.append("hqdn3d=3:2.5:6:5")
-    elif noise > 0.01:
-        out.append("hqdn3d=2:1.5:4:3")
-    else:
-        out.append("hqdn3d=1:1:3:3")
-    out.append("unsharp=5:5:0.35:5:5:0")
-    return out
+        return ["hqdn3d=3:2.5:6:5", "unsharp=5:5:0.35:5:5:0"]
+    if noise > 0.01:
+        return ["hqdn3d=2:1.5:4:3", "unsharp=5:5:0.3:5:5:0"]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +818,8 @@ def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 3
     return buf.getvalue()
 
 
-def before_after(frame: np.ndarray, c: Correction, choice: GradeChoice, path: Path, width: int = 1280) -> Path:
+def before_after(frame: np.ndarray, c: Correction, choice: GradeChoice, path: Path, width: int = 1280,
+                 label: str = "") -> Path:
     """사용자 확인용: 왼쪽 원본 | 오른쪽 보정."""
     from PIL import Image, ImageDraw
     h = int(round(width * frame.shape[0] / frame.shape[1]))
@@ -754,7 +832,7 @@ def before_after(frame: np.ndarray, c: Correction, choice: GradeChoice, path: Pa
     d.line([(width // 2, 0), (width // 2, h)], fill=(255, 255, 255), width=2)
     font = _font(26)
     d.text((20, 16), "원본", fill=(255, 255, 255), font=font)
-    d.text((width // 2 + 20, 16), f"자동 색보정 · {LOOKS[choice.look].label}", fill=(255, 255, 255), font=font)
+    d.text((width // 2 + 20, 16), label or f"자동 색보정 · {LOOKS[choice.look].label}", fill=(255, 255, 255), font=font)
     path.parent.mkdir(parents=True, exist_ok=True)
     out.save(path, "JPEG", quality=90)
     return path

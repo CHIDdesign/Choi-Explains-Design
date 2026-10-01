@@ -46,21 +46,28 @@ def request_key(st: dict[str, Any]) -> str:
     return text_hash(st.get("kind", ""), st.get("query_en", ""), st.get("query_ko", ""), "stock-v1")
 
 
-def contact_sheet(thumbs: list[tuple[str, Optional[bytes]]]) -> bytes:
-    """[(라벨, jpeg 바이트)] → 3열 격자 JPEG. 라벨은 ASCII 만(PIL 기본 폰트)."""
+def contact_sheet(thumbs: list[tuple[str, Optional[bytes]]], *, cell: tuple[int, int] = (0, 0),
+                  contain: bool = False) -> bytes:
+    """[(라벨, jpeg 바이트)] → 3열 격자 JPEG. 라벨은 ASCII 만(PIL 기본 폰트). contain: 자르지 않고 칸 안에 맞춤
+    (인물 사진 — 가운데를 잘라 내면 머리·턱이 잘려 표정을 볼 수 없다)."""
     from PIL import Image, ImageDraw, ImageOps
 
+    cw, ch = cell if cell[0] and cell[1] else (CELL_W, CELL_H)
     rows = max(1, (len(thumbs) + COLS - 1) // COLS)
-    sheet = Image.new("RGB", (CELL_W * COLS + 8 * (COLS + 1), CELL_H * rows + 8 * (rows + 1)), (24, 24, 24))
+    sheet = Image.new("RGB", (cw * COLS + 8 * (COLS + 1), ch * rows + 8 * (rows + 1)), (24, 24, 24))
     draw = ImageDraw.Draw(sheet)
     for i, (label, data) in enumerate(thumbs):
-        x = 8 + (i % COLS) * (CELL_W + 8)
-        y = 8 + (i // COLS) * (CELL_H + 8)
+        x = 8 + (i % COLS) * (cw + 8)
+        y = 8 + (i // COLS) * (ch + 8)
         if data:
             try:
                 im = Image.open(io.BytesIO(data)).convert("RGB")
-                im = ImageOps.fit(im, (CELL_W, CELL_H), Image.LANCZOS)
-                sheet.paste(im, (x, y))
+                if contain:
+                    im = ImageOps.contain(im, (cw, ch), Image.LANCZOS)
+                    sheet.paste(im, (x + (cw - im.width) // 2, y + (ch - im.height) // 2))
+                else:
+                    im = ImageOps.fit(im, (cw, ch), Image.LANCZOS)
+                    sheet.paste(im, (x, y))
             except Exception:  # noqa: BLE001 - 깨진 썸네일은 빈 칸
                 pass
         tw = 8 + 7 * len(label)
@@ -150,8 +157,11 @@ class StockResearcher:
                            self._thumb(c))
                           for j, c in enumerate(cands[k], 1)]
                 sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
+                # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그)
                 lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
-                             f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}")
+                             f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}"
+                             + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
+                             + "".join(f"\n  C{j}: {c.alt[:70]}" for j, c in enumerate(cands[k], 1) if c.alt))
             try:
                 picks = self.pick("\n".join(lines), sheets)
                 choice = {}

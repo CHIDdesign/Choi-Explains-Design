@@ -17,7 +17,7 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
-EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url")
+EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
@@ -168,7 +168,7 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
     if tn == "motion":
         # 🎨 모션 디자이너가 설계한 MotionSpec(장면 길이에 맞춘 최종 정리는 time_graphics 에서)
         spec = g.get("spec")
-        if not isinstance(spec, dict) or not clean_spec(spec, 12.0):
+        if not isinstance(spec, dict) or not clean_spec(spec, 16.0):
             return None
         out["spec"] = spec
     if tn == "card":
@@ -196,6 +196,13 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         out["credit"] = g["credit"]
     if tn == "photo" and g.get("wiki"):
         out["wiki"] = True   # 위키백과 전용(고유명사): 못 찾으면 스톡으로 넘기지 않고 뺀다
+    if tn == "photo":
+        # 고유명사의 종류(자료 리서처가 문맥으로 정함: person → 품위 있는 초상, brand → 로고)와 영어 이름(로고 찾기)
+        for k in ("entity", "name_en"):
+            if g.get(k):
+                out[k] = str(g[k])[:80]
+        if g.get("logo"):
+            out["logo"] = True
     if tn == "photo" and g.get("subtitle") and "image" in out and not out.get("image_en"):
         pass
     return out

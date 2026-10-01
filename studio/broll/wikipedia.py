@@ -20,6 +20,9 @@ from .images import OK_LICENSES, ImageResult, _strip_html
 REST = "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}"
 API = "https://{lang}.wikipedia.org/w/api.php"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
+WIKIDATA = "https://www.wikidata.org/w/api.php"
+HUMAN = "Q5"                 # 위키데이터 '사람'(P31 instance of)
+II_FILTER = "LicenseShortName|UsageTerms|Artist|Credit|Restrictions|NonFree|ImageDescription"
 DISAMBIG_HINT = ("동음이의", "disambiguation", "may refer to")
 NONFREE_HINT = ("non-free", "fair use", "비자유", "공정 이용")
 
@@ -202,6 +205,116 @@ class WikipediaImages:
             cache.write_text(json.dumps(found or {}, ensure_ascii=False), encoding="utf-8")
         return found
 
+    # --- 위키데이터: 무엇인가(사람·브랜드) · 로고 · 초상 후보 -------------------------------------------
+    def entity(self, term: str, names: tuple[str, ...] = ()) -> Optional[dict[str, Any]]:
+        """문서 → 위키데이터 항목: {qid, title, lang, page, lead(대표 이미지 URL), human, p18[], logos[], commons_cat,
+        label_en}. 문서·항목이 없으면 None. 캐시는 검색어 단위(wd_*.json)."""
+        cache = None
+        if self.cache_dir:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            cache = self.cache_dir / f"wd_{_safe(term, 60)}.json"
+            if cache.exists():
+                data = json.loads(cache.read_text(encoding="utf-8"))
+                return data or None
+        tries = [(term, lang) for lang in self.langs] + [(n, "en") for n in names if n and n != term]
+        s, lang = None, ""
+        for t, lg in tries:
+            try:
+                s = self.summary(t, lg)
+            except Exception as e:  # noqa: BLE001 - 네트워크 오류는 다음 후보로
+                self.log(f"위키백과({lg}) 조회 실패({t}): {e}")
+                s = None
+            if s and s.get("wikibase_item"):
+                lang = lg
+                break
+        if not s or not s.get("wikibase_item"):
+            if cache:
+                cache.write_text("{}", encoding="utf-8")
+            return None
+        qid = s["wikibase_item"]
+        data = self._get(WIKIDATA, {"action": "wbgetentities", "ids": qid, "props": "claims|labels",
+                                    "languages": "en|ko", "format": "json"}) or {}
+        ent = (data.get("entities") or {}).get(qid) or {}
+        claims = ent.get("claims") or {}
+
+        def vals(prop: str) -> list[str]:
+            out = []
+            for c in claims.get(prop) or []:
+                if c.get("rank") == "deprecated":
+                    continue
+                v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
+                if isinstance(v, dict) and v.get("id"):
+                    out.append(v["id"])
+                elif isinstance(v, str):
+                    out.append(v)
+            # 선호(preferred) 순위를 앞으로
+            pref = [((c.get("mainsnak") or {}).get("datavalue") or {}).get("value") for c in claims.get(prop) or []
+                    if c.get("rank") == "preferred"]
+            return sorted(out, key=lambda v: 0 if v in pref else 1)
+        info = {"qid": qid, "title": s.get("title", term), "lang": lang, "description": s.get("description", ""),
+                "page": ((s.get("content_urls") or {}).get("desktop") or {}).get("page", ""),
+                "lead": (s.get("originalimage") or s.get("thumbnail") or {}).get("source", ""),
+                "human": HUMAN in vals("P31"), "p18": vals("P18")[:3], "logos": vals("P154")[:3],
+                "commons_cat": (vals("P373") or [""])[0],
+                "label_en": (((ent.get("labels") or {}).get("en") or {}).get("value") or "")}
+        if cache:
+            cache.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        return info
+
+    def files_meta(self, names: list[str], width: int = 1920) -> list[dict[str, Any]]:
+        """커먼즈 파일 여러 개의 라이선스·크기·썸네일(한 번에 50개까지)."""
+        out: list[dict[str, Any]] = []
+        names = [n for n in dict.fromkeys(names) if n][:50]
+        if not names:
+            return out
+        data = self._get(COMMONS, {"action": "query", "titles": "|".join(f"File:{n}" for n in names),
+                                   "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata",
+                                   "iiurlwidth": str(width), "iiextmetadatafilter": II_FILTER,
+                                   "format": "json", "formatversion": "2"}) or {}
+        return [m for m in (_meta_of(p) for p in ((data.get("query") or {}).get("pages")) or []) if m]
+
+    def category_files(self, cat: str, limit: int = 30, width: int = 1920) -> list[dict[str, Any]]:
+        """커먼즈 분류(위키데이터 P373)의 사진들 — 인물 사진 후보."""
+        data = self._get(COMMONS, {"action": "query", "generator": "categorymembers",
+                                   "gcmtitle": f"Category:{cat}", "gcmtype": "file", "gcmlimit": str(limit),
+                                   "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata",
+                                   "iiurlwidth": str(width), "iiextmetadatafilter": II_FILTER,
+                                   "format": "json", "formatversion": "2"}) or {}
+        return [m for m in (_meta_of(p) for p in ((data.get("query") or {}).get("pages")) or []) if m]
+
+    def logo_meta(self, info: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """위키데이터 P154 로고 파일 중 쓸 수 있는 것(저작권 자유 — 상표 제한만 있는 것 허용)."""
+        for m in self.files_meta(info.get("logos") or [], width=1200):
+            if logo_license_ok(m):
+                return m
+        return None
+
+    def portrait_candidates(self, info: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
+        """인물 사진 후보: 위키데이터 대표 사진(P18) → 문서 대표 이미지 → 커먼즈 분류의 사진. 자유 라이선스·사진 파일·
+        600px 이상만. 각 후보에 src(wikidata|lead|category) 를 붙인다."""
+        first = [(n, "wikidata") for n in info.get("p18") or []]
+        if info.get("lead"):
+            first.append((_file_name_from_url(info["lead"]), "lead"))
+        metas = {m["name"]: m for m in self.files_meta([n for n, _ in first])}
+        out: list[dict[str, Any]] = []
+        for n, src in first:
+            if n in metas and n not in {m["name"] for m in out}:
+                out.append({**metas[n], "src": src})
+        if info.get("commons_cat"):
+            try:
+                more = self.category_files(info["commons_cat"])
+            except Exception as e:  # noqa: BLE001
+                self.log(f"커먼즈 분류 조회 실패({info['commons_cat']}): {e}")
+                more = []
+            more.sort(key=lambda m: -(m.get("width", 0) * m.get("height", 0)))
+            out += [{**m, "src": "category"} for m in more if m["name"] not in {o["name"] for o in out}]
+
+        def usable(m: dict[str, Any]) -> bool:
+            w, h = m.get("width") or 0, m.get("height") or 0
+            return (portrait_license_ok(m) and (m.get("mime") or "") in ("image/jpeg", "image/png", "image/webp")
+                    and min(w, h) >= 600 and 0.5 <= w / max(1, h) <= 2.0)
+        return [m for m in out if usable(m)][:limit]
+
     def fetch(self, term: str, dst_dir: Path) -> Optional[ImageResult]:
         found = self.lookup(term)
         if not found:
@@ -218,3 +331,34 @@ class WikipediaImages:
         artist = meta.get("artist") or "Unknown"
         credit = f"{artist} · {meta.get('license')} · Wikipedia ({found['title']})"
         return ImageResult(dst, credit, meta.get("license", ""), meta.get("page") or found.get("page", ""), "wikipedia")
+
+
+def _meta_of(p: dict[str, Any]) -> Optional[dict[str, Any]]:
+    if p.get("missing") or not p.get("imageinfo"):
+        return None
+    ii = p["imageinfo"][0]
+    meta = ii.get("extmetadata") or {}
+    val = lambda k: _strip_html((meta.get(k) or {}).get("value", ""))  # noqa: E731
+    name = str(p.get("title", "")).split(":", 1)[-1]
+    return {"name": name, "license": val("LicenseShortName"), "usage": val("UsageTerms"), "artist": val("Artist")[:80],
+            "restrictions": val("Restrictions"), "nonfree": val("NonFree"), "description": val("ImageDescription")[:300],
+            "url": ii.get("thumburl") or ii.get("url", ""), "orig_url": ii.get("url", ""), "mime": ii.get("mime", ""),
+            "width": ii.get("width", 0), "height": ii.get("height", 0), "page": ii.get("descriptionurl", ""),
+            "repo": "commons"}
+
+
+def logo_license_ok(meta: dict[str, Any]) -> bool:
+    """로고용: 저작권은 자유(PD·CC0·CC BY(-SA))여야 하고, 제한은 상표('trademarked')만 허용(지명 사용)."""
+    restr = {r.strip().lower() for r in re.split(r"[|,;]", meta.get("restrictions") or "") if r.strip()}
+    if restr - {"trademarked"}:
+        return False
+    return WikipediaImages.license_ok({**meta, "restrictions": ""})
+
+
+def portrait_license_ok(meta: dict[str, Any]) -> bool:
+    """인물 사진용: 자유 라이선스 + 제한은 초상권 경고('personality')만 허용 — 공인을 설명하는 교육 영상에서 그 사람의
+    사진을 보여 주는 것은 광고·보증이 아니다(커먼즈 인물 사진 대부분에 붙어 있다)."""
+    restr = {r.strip().lower() for r in re.split(r"[|,;]", meta.get("restrictions") or "") if r.strip()}
+    if restr - {"personality"}:
+        return False
+    return WikipediaImages.license_ok({**meta, "restrictions": ""})

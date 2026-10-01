@@ -44,6 +44,7 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("shorts", "📱 숏폼 PD", "shorts", S.SHORTS, "high", 32000),
     Agent("copy", "✍️ 카피라이터", "copy", S.COPY, "medium", 16000),
     Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick", S.STOCK_PICK, "low", 8000),
+    Agent("portrait_pick", "📷 자료 리서처(인물 사진)", "portrait_pick", S.STOCK_PICK, "low", 8000),
     Agent("art_director", "🧐 아트 디렉터", "art_director", S.QA, "high", 24000),
     Agent("motion_revise", "🎨 모션 디자이너(수정)", "motion_revise", S.MOTION_REVISE, "high", 24000),
     Agent("card_revise", "🃏 카드 디자이너(수정)", "card_revise", S.CARD_REVISE, "high", 32000),
@@ -51,6 +52,8 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
+# 자료 사진 아래 붙는 짧은 꼬리표(예전엔 'brand'·'person' 같은 영어가 화면에 그대로 나왔다)
+PHOTO_KIND_LABEL = {"person": "인물", "brand": "브랜드", "work": "작품", "place": "장소", "religion": "종교"}
 
 
 def studio_system_prompt() -> str:
@@ -190,10 +193,11 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         if not (name_ko or name_en):
             continue
         layout = ph.get("layout") if ph.get("layout") in ("pip", "split", "fullscreen") else "pip"
+        kind = str(ph.get("kind") or "")
         graphics.append(_g("photo", layout, ph.get("start_seg", -1), ph.get("start_seg", -1), ph.get("start_word", ""),
                            title=name_ko or name_en, image=name_ko or name_en, subtitle=name_en,
-                           body=str(ph.get("kind") or ""), reason="자료 리서처(위키백과): " + str(ph.get("reason", "")),
-                           wiki=True))
+                           body=PHOTO_KIND_LABEL.get(kind, ""), reason="자료 리서처(위키백과): " + str(ph.get("reason", "")),
+                           wiki=True, entity=kind, name_en=name_en))
     for r in stock.get("requests", []) or []:
         if not (r.get("query_en") or r.get("query_ko")):
             continue
@@ -353,10 +357,17 @@ class Studio:
         res = self.call("stock_pick", ctx, instr, images=sheets)
         return res.get("picks", []) or []
 
-    def grade(self, ctx: str, notes: str, sheet: tuple[str, bytes, str]) -> dict[str, Any]:
-        """🎨 컬러리스트: 원본 + 룩 5가지 비교 시트를 보고 룩·세기·미세 조정을 고른다."""
+    def pick_portrait(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
+        """📷 인물마다 후보 시트를 보고 가장 품위 있게 나온 사진을 고른다(스키마는 stock_pick 과 같다)."""
+        instr = load_prompt("agents/portrait_pick.md").replace("{{requests}}", requests_text)
+        res = self.call("portrait_pick", ctx, instr, images=sheets)
+        return res.get("picks", []) or []
+
+    def grade(self, ctx: str, notes: str, sheet: tuple[str, bytes, str],
+              scope_sheet: Optional[tuple[str, bytes, str]] = None) -> dict[str, Any]:
+        """🎨 컬러리스트: 원본 + 룩 5가지 비교 시트(와 원본 스코프)를 보고 룩·세기·미세 조정을 고른다."""
         instr = load_prompt("agents/colorist.md").replace("{{notes}}", notes)
-        return self.call("colorist", ctx, instr, images=[sheet])
+        return self.call("colorist", ctx, instr, images=[sheet] + ([scope_sheet] if scope_sheet else []))
 
     def review(self, ctx: str, graphics_text: str, stills: list[tuple[str, bytes, str]]) -> dict[str, Any]:
         instr = load_prompt("agents/art_director.md").replace("{{graphics}}", graphics_text)

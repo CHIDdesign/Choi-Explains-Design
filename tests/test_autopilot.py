@@ -222,13 +222,13 @@ def _auto_grade(parts, face_rgb, face_luma):
 
 
 def test_gray_warm_room_gets_richer_but_bounded():
-    """업로드본처럼 교정이 방의 온기를 지워 회색이 된 화면(벽 C 6.5): 진하고 조금 따뜻해지되(레퍼런스 b +14.5 로 '옮기지'
-    않고) 피부는 피부색 선에 채도 30 이하."""
+    """교정이 방의 온기를 지워 회색이 된 화면(배경 채도 8 아래 = 정상 범위 밖): 진해지되 색상은 원본 그대로(레퍼런스 쪽으로
+    '옮기지' 않는다), 피부는 피부색 범위에 채도 30 이하."""
     rng = np.random.default_rng(1)
     (wall, skin, dark), _ = _auto_grade([_patch([0.55, 0.53, 0.50], rng), _patch([0.70, 0.55, 0.47], rng),
                                          _patch([0.12, 0.11, 0.10], rng)], [0.70, 0.55, 0.47], 0.58)
     Lw, aw, bw, Cw, hw = _lab(wall)
-    assert 9 <= Cw <= 20 and 7 <= bw <= 16 and aw > 0 and hw <= 78   # 진해지고 크림·황금빛(초록·노랑 아님), 과하지 않게
+    assert 9 <= Cw <= 20 and 7 <= bw <= 16 and aw > 0 and abs(hw - 84.3) <= 6   # 진해지되 원래 크림색 그대로, 과하지 않게
     _, _, _, Cs, hs = _lab(skin)
     assert 40 <= hs <= 60 and Cs <= 31
     assert abs(_lab(dark)[2]) < 4                                   # 암부는 그대로
@@ -247,7 +247,8 @@ def test_blue_monitor_room_keeps_its_light_but_skin_and_whites_are_fixed():
     _, _, _, Cs, hs = _lab(skin)
     assert 32 <= hs <= 62 and 8 <= Cs <= 32, (hs, Cs)
     Lw, aw, bw, Cw, _ = _lab(white)
-    assert abs(bw) <= 6 and Cw <= 8 and Lw > 85                      # 흰 벽·모니터는 흰색
+    # 흰 벽·모니터는 거의 흰색(원본 C 14 → 9 이하). 최소 개입이라 얼굴을 범위 안쪽 경계까지만 옮기므로 완전한 중립은 아니다
+    assert abs(bw) <= 6 and Cw <= 9 and Lw > 85
     assert _lab(wall)[2] <= -10                                       # 파란 배경은 파란 채로(노랗게 되지 않음)
     assert any("피부" in n for n in c.notes)
 
@@ -275,6 +276,58 @@ def test_yellow_and_green_faces_are_brought_to_the_skin_line():
                                [0.62, 0.60, 0.44], 0.58)
     _, _, _, Cs, hs = _lab(skin)
     assert hs <= 64 and Cs <= 32, (hs, Cs)
+
+
+def _warm_room(rng, h=90, w=160):
+    """채널 주인이 '적당히 좋은 색감'이라고 한 장면을 흉내 낸 프레임: 스탠드 조명의 크림·베이지 벽, 자연스러운 피부,
+    깊은 암부, 밝은 램프."""
+    img = np.empty((h, w, 3), np.float32)
+    img[:] = [0.72, 0.62, 0.50]                       # 크림·베이지 벽
+    img[:, :30] = [0.05, 0.04, 0.035]                 # 어두운 구석
+    img[:20, 120:] = [0.97, 0.93, 0.84]               # 램프 빛
+    img[25:75, 60:100] = [0.80, 0.60, 0.50]           # 얼굴
+    return np.clip(img + rng.normal(0, 0.012, img.shape), 0, 1).astype(np.float32)
+
+
+def test_good_footage_is_left_untouched():
+    """첫 원칙: 원래 톤이 괜찮은 영상은 건드리지 않는다 — 스코프 모두 정상, 교정·레시피 없음, LUT 도 만들지 않는다."""
+    from studio.grade import auto as G
+    from studio.grade import scopes
+    rng = np.random.default_rng(7)
+    frames = [_warm_room(rng) for _ in range(3)]
+    face = {"t": 0, "x": 0.5, "y": 0.55, "s": 0.3}
+    checks = scopes.assess(scopes.metrics(frames, [face] * 3))
+    assert scopes.all_ok(checks), scopes.summary(checks)
+    st = G.analyze([(0.0, f) for f in frames], [face] * 3)
+    c = G.correction_from_stats(st)
+    assert G.is_identity_correction(c), c.notes
+    ch = G.plan_choice(frames, c, "natural", skin_rgb=st.get("face_rgb"))
+    assert ch.recipe["why"] == ["레시피 없음(정상 범위)"]
+    assert G.is_identity(c, G.untouched_choice())
+    assert G.cleanup_filters({"noise": 0.004}) == []                 # 깨끗하면 디노이즈·샤픈도 없음
+    sheet = scopes.draw([("원본", frames)])
+    assert sheet[:2] == b"\xff\xd8"
+
+
+def test_scopes_flag_only_what_is_out_of_range():
+    from studio.grade import scopes
+    rng = np.random.default_rng(8)
+    flat = np.clip(0.45 + rng.normal(0, 0.02, (90, 160, 3)), 0, 1).astype(np.float32)   # 회색·평평한 로그 소스
+    bad = {c.key for c in scopes.assess(scopes.metrics([flat])) if not c.ok}
+    assert {"spread", "chroma_mid", "black_ire", "white_ire"} <= bad
+    assert "clip_pct" not in bad
+
+
+def test_qc_backs_off_when_grade_amplifies_color_noise():
+    """보정 뒤 검사: 압축 색 잡음을 1.5배 넘게 키우는 선택(채도 이득 큼)은 세기·채도를 줄인다."""
+    from studio.grade import auto as G
+    rng = np.random.default_rng(9)
+    wall = np.clip(np.array([0.60, 0.57, 0.52], np.float32) + rng.normal(0, 0.02, (90, 160, 3)), 0, 1).astype(np.float32)
+    loud = G.GradeChoice(look="warm_rich", strength=1.0, saturation=1.15,
+                         recipe={"contrast": 0.0, "black": 0.0, "chroma_gain": 1.8, "skin_gain": 1.3, "warmth": 0.0})
+    ch, qc = G.qc_backoff([wall], G.Correction(), loud, max_noise=1.3)
+    assert qc["backoff"] and ch.strength < 1.0 and ch.recipe["chroma_gain"] < 1.8
+    assert qc["noise_gain"] < 1.6
 
 
 def test_enrich_never_shifts_the_whole_frame_and_can_be_switched_off():

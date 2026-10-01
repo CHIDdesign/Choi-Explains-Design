@@ -83,11 +83,12 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "image=로컬 이미지 파일명 또는 영어 검색어(예: 'Braun SK 4 radio'), title=대상 이름, body=짧은 캡션(연도·디자이너 등, 선택)",
              ("fullscreen", "split", "pip"), 3.0, 7.0, 6),
     Template("motion", "모션 장면(직접 설계)",
-             "템플릿으로 표현되지 않는 개념을 움직임으로 보여줄 때(게슈탈트 근접성, 시선 흐름, 비례 변화, 전후 비교 모핑 등). 모션 디자이너 전용.",
+             "템플릿으로 표현되지 않는 개념을 움직임으로 보여줄 때(게슈탈트 근접성, 시선 흐름, 비례 변화, 전후 비교 모핑 등). 모션 디자이너 전용."
+             " 기본은 fullscreen = 모션 그래픽만의 장면(얼굴 없이 화면 전체가 무대).",
              "spec_json=MotionSpec JSON(모션 DSL 참고)",
-             ("fullscreen", "split"), 4.0, 12.0, 8),
+             ("fullscreen", "split"), 4.0, 16.0, 8),
     Template("card", "자유 HTML 카드",
-             "챕터의 핵심 개념 1~2곳(전체 그래픽의 ⅓ 이하)을 템플릿보다 더 편집 디자인답게 보여줄 때 — 모션 디자이너가 `cards` 로만 낸다"
+             "챕터의 핵심 개념 1~3곳(전체 그래픽의 40% 이하)을 템플릿보다 더 편집 디자인답게 보여줄 때 — 모션 디자이너가 `cards` 로만 낸다"
              "(HyperFrames 카드 규약: HTML + 스코프 CSS + data-anim, 카드 DSL 참고). graphics 목록에는 쓰지 않는다.",
              "html=카드 조각(<div class=\"card\" data-card-id=…><style>…</style>…), style=editorial|academic|whiteboard|swiss|minimal|board",
              ("fullscreen", "split", "overlay"), 3.0, 12.0, 8),
