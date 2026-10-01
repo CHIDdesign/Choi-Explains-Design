@@ -47,18 +47,22 @@ def test_schedule_keeps_dependencies():
 def test_lanes_run_concurrently(tmp_path):
     p = _bare(tmp_path)
     seen: list[str] = []
+    span: dict[str, tuple[float, float]] = {}
     lock = threading.Lock()
 
     def work(name):
         def fn():
+            a = time.monotonic()
             time.sleep(0.4)
             with lock:
                 seen.append(name)
+                span[name] = (a, time.monotonic())
         return fn
-    t0 = time.time()
     p._run_step([["audio", "asr"], ["face"]], {"audio": work("audio"), "asr": work("asr"), "face": work("face")})
-    took = time.time() - t0
-    assert 0.75 < took < 1.15, took                         # 0.4 + 0.4 (얼굴 추적은 그 사이 같이)
+    # 시계 길이 대신 겹침으로 확인(기계가 바쁠 때 sleep 이 늘어나도 흔들리지 않게): 얼굴 추적은 목소리 → 인식과 동시에,
+    # 목소리 다듬기와 인식은 차례로
+    assert span["face"][0] < span["audio"][1] and span["audio"][0] < span["face"][1]
+    assert span["audio"][1] <= span["asr"][0] + 1e-3
     assert seen.index("audio") < seen.index("asr") and set(seen) == {"audio", "asr", "face"}
     assert {"audio", "asr", "face"} <= p.eta._done
 
