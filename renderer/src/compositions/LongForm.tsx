@@ -95,6 +95,7 @@ export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
   return f;
 };
 
+const SEQ_SKIP = 16; // 시퀀스 둘째 샷부터 건너뛸 등장 프레임(등장 14~16f 가 끝난 상태로 컷)
 const COVER_PAD = 1.0; // 전체화면 그래픽 앞뒤로 화자 영상을 계속 그리는 여유(초) — 등장·퇴장·전환이 이 안에서 끝난다
 
 const GraphicSeq: React.FC<{
@@ -106,10 +107,12 @@ const GraphicSeq: React.FC<{
   chapterTag: string;
   faceX: number;
 }> = ({g, dur, props, theme, pageLabel, chapterTag, faceX}) => {
-  const frame = useCurrentFrame();
+  // 시퀀스의 둘째 샷부터는 등장이 끝난 상태로 시작한다(같은 틀 안의 컷 — 샷마다 등장 애니메이션을 되풀이하지 않는다)
+  const skip = g.seq && g.seq.index > 0 ? SEQ_SKIP : 0;
+  const frame = useCurrentFrame() + skip;
   const {fps, width, height} = useVideoConfig();
   return (
-    <GraphicLayer g={g} frame={frame} dur={dur} fps={fps} theme={theme} brand={props.brand} episode={props.episode}
+    <GraphicLayer g={g} frame={frame} dur={dur + skip} fps={fps} theme={theme} brand={props.brand} episode={props.episode}
       W={width} H={height} panelSide={props.panelSide} pageLabel={pageLabel} skin={props.skin}
       paperTexture={props.paperTexture} chapterTag={chapterTag} faceX={faceX} />
   );

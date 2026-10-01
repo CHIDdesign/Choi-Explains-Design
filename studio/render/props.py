@@ -481,7 +481,7 @@ RECAP_SOURCES = ("keyword", "definition", "stat", "list", "compare", "quote", "p
                  "matrix", "timeline", "venn", "pyramid", "motion", "card")
 RECAP_MIN_CHAPTER = 45.0      # 이보다 짧은 챕터는 정리하지 않는다
 RECAP_DUR = (7.0, 5.0)        # 먼저 7초, 안 되면 5초
-RECAP_SEARCH = 20.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다(그래픽이 8~15초마다 있어 12초로는 자주 못 찾았다)
+RECAP_SEARCH = 20.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다(챕터 끝에 그래픽이 몰리면 12초로는 자주 못 찾았다)
 
 
 def _shorten(text: str, n: int = 26) -> str:
@@ -803,6 +803,48 @@ def _graphic_text(g: dict[str, Any]) -> str:
         from ..motion.card import card_text
         parts.append(card_text(card))
     return " ".join(p for p in parts if p)
+
+
+def mark_sequences(props: dict[str, Any], seq_types: Optional[dict[str, str]] = None) -> int:
+    """같은 시퀀스(data.seq_id)의 그래픽에 g.seq = {id, type, index, count} — 렌더러는 둘째 샷부터 등장 애니메이션 없이 컷한다.
+    반환: 시퀀스 수."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for g in props.get("graphics", []) or []:
+        sid = str((g.get("data") or {}).get("seq_id") or "")
+        if sid:
+            groups.setdefault(sid, []).append(g)
+    for sid, gs in groups.items():
+        gs.sort(key=lambda g: g["start"])
+        for i, g in enumerate(gs):
+            g["seq"] = {"id": sid, "type": (seq_types or {}).get(sid, ""), "index": i, "count": len(gs)}
+    return len(groups)
+
+
+HIGH_LOAD_SEQ = ("document_read", "detail_zoom")
+
+
+def high_load_spans(props: dict[str, Any], seq_types: Optional[dict[str, str]] = None) -> list[tuple[float, float]]:
+    """뜯어봐야 하는 화면(load: high — 단계 도식 walkthrough·문서 읽기·뜯어보기) 구간. 그 위에서는 자막을 숨긴다(눈이 화면에
+    있어야 한다 — docs/upgrade/05 6-4, 메이어의 중복 원칙). seq_types: 시퀀스 id → 유형."""
+    out = []
+    for g in props.get("graphics", []) or []:
+        d = g.get("data") or {}
+        st = (seq_types or {}).get(str(d.get("seq_id") or ""), "")
+        if d.get("stepAt") or st in HIGH_LOAD_SEQ:
+            if g.get("layout") in ("fullscreen", "split"):
+                out.append((float(g["start"]), float(g["end"])))
+    return out
+
+
+def hide_over(cues: list[dict[str, Any]], spans: list[tuple[float, float]], *, overlap: float = 0.5) -> int:
+    """구간과 절반 넘게 겹치는 자막을 화면에서만 숨긴다(SRT 에는 남는다)."""
+    n = 0
+    for c in cues:
+        dur = max(1e-3, c["end"] - c["start"])
+        if not c.get("hidden") and any(min(b, c["end"]) - max(a, c["start"]) >= overlap * dur for a, b in spans):
+            c["hidden"] = True
+            n += 1
+    return n
 
 
 def dedupe_captions(cues: list[dict[str, Any]], overlays: list[tuple[float, float, str]], *, share: float = 0.6,

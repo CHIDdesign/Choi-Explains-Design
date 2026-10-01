@@ -53,7 +53,6 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
-# 자료 사진 아래 붙는 짧은 꼬리표(예전엔 'brand'·'person' 같은 영어가 화면에 그대로 나왔다)
 
 
 def studio_system_prompt() -> str:
@@ -66,11 +65,16 @@ def studio_system_prompt() -> str:
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),
         "\n\n" + load_prompt("motion_dsl.md") + motion_examples_block(),
         "\n\n" + load_prompt("card_dsl.md") + card_examples_block(),
-        "\n\n# 디자인 스킬 노트(오픈소스 스킬에서 정리)\n\n" + load_prompt("skills/motion_principles.md"),
-        "\n\n" + load_prompt("skills/caption_design.md"),
-        "\n\n" + load_prompt("skills/editing_principles.md"),
+        "\n\n# 디자인 스킬 노트(오픈소스 스킬·편집 이론에서 정리)\n\n" + skills_block(),
     ]
     return "\n".join(p for p in parts if p.strip())
+
+
+def skills_block() -> str:
+    """prompts/skills/*.md 전부(이름순) — 새 스킬 노트는 파일을 넣기만 하면 모든 에이전트가 읽는다."""
+    from ..paths import PROMPTS_DIR
+    files = sorted((PROMPTS_DIR / "skills").glob("*.md"))
+    return "\n\n".join(f.read_text(encoding="utf-8").strip() for f in files)
 
 
 def playbook_block() -> str:
@@ -165,7 +169,8 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             continue
         graphics.append(_g("motion", sc.get("layout") or "fullscreen", sc.get("start_seg", -1),
                            sc.get("end_seg", sc.get("start_seg", -1)), sc.get("start_word", ""),
-                           title=sc.get("title", ""), reason="모션 디자이너: " + str(sc.get("reason", "")), spec=spec))
+                           title=sc.get("title", ""), reason="모션 디자이너: " + str(sc.get("reason", "")), spec=spec,
+                           sequence_id=str(sc.get("sequence_id") or "")))
         n_scene += 1
     n_card = 0
     for cd in motion.get("cards", []) or []:
@@ -182,7 +187,8 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             log(f"🃏 카드 '{cd.get('title', '')}' 정리: {', '.join(card['problems'][:4])}")
         graphics.append(_g("card", layout, cd.get("start_seg", -1), cd.get("end_seg", cd.get("start_seg", -1)),
                            cd.get("start_word", ""), title=cd.get("title", ""),
-                           reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card))
+                           reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card,
+                           sequence_id=str(cd.get("sequence_id") or "")))
         n_card += 1
     # 📷 고유명사 자료 사진 — 위키백과 문서의 대표 이미지(인물·작품·사물·브랜드·장소·종교). 없으면 스톡으로 넘기지 않는다
     for ph in stock.get("photos", []) or []:
@@ -227,6 +233,11 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "moments": moments,
         "energy_spans": [e for e in editor.get("energy_spans", []) or [] if isinstance(e, dict)],
         "holds": [h for h in editor.get("holds", []) or [] if isinstance(h, dict)],
+        "rhythm": [r for r in editor.get("rhythm", []) or [] if isinstance(r, dict)],
+        "peak_seg": editor.get("peak_seg", -1),
+        "sequences": [q for q in brief.get("sequences", []) or [] if isinstance(q, dict)],
+        "central_question": brief.get("central_question", ""),
+        "payoff_seg": brief.get("payoff_seg", -1),
         "highlights": [h for h in editor.get("highlights", []) or [] if isinstance(h, dict)],
         "bgm_mood": brief.get("bgm_mood", ""),
         "shorts_bgm_mood": brief.get("shorts_bgm_mood", ""),

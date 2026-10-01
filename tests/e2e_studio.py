@@ -112,6 +112,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     s_sketch = _seg_with(segs, "스케치가 가득")
     s_trip = _seg_with(segs, "방향 없는")
     s_ask = _seg_with(segs, "잘 묻지")     # 태그·다른 그래픽이 없는 문장 → 자유 HTML 카드 자리
+    s_hidden = _seg_with(segs, "숨어 있는")  # 얼굴 홀드(여운)
     if agent == "director":
         return {"title": "질문이 먼저다", "logline": "좋은 디자인은 좋은 질문에서 시작한다", "audience": "디자인 전공 1~2학년",
                 "thesis": "좋은 디자인은 해결책이 아니라 문제 정의에서 갈린다",
@@ -119,10 +120,18 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "structure": [{"title": "들어가며", "start_seg": first, "end_seg": s_wide, "purpose": "문제 제기", "claim": ""},
                               {"title": "문제를 다시 정의하기", "start_seg": s_skip, "end_seg": last, "purpose": "원리",
                                "claim": "해결책보다 질문이 먼저다"}],
-                "beats": [{"start_seg": s_dots, "end_seg": s_gestalt, "intent": "name_concept", "visual": "motion",
-                           "idea": "점들이 모이며 무리로 보임", "priority": 1},
-                          {"start_seg": s_sketch, "end_seg": s_sketch, "intent": "example", "visual": "stock_video",
-                           "idea": "스케치하는 손", "priority": 2}],
+                "beats": [{"start_seg": s_dots, "end_seg": s_gestalt, "intent": "name_concept", "show": "structure",
+                           "function": "name", "visual": "motion", "idea": "점들이 모이며 무리로 보임", "on_screen_text": "근접성",
+                           "sequence_id": "", "priority": 1},
+                          {"start_seg": s_sketch, "end_seg": s_sketch, "intent": "example", "show": "example",
+                           "function": "example", "visual": "stock_video", "idea": "스케치하는 손", "on_screen_text": "",
+                           "sequence_id": "q1", "priority": 2}],
+                "central_question": "좋은 디자인은 어디에서 시작할까", "payoff_seg": last,
+                "sequences": [{"id": "q1", "type": "evidence_stack", "start_seg": s_sketch, "end_seg": s_trip,
+                               "claim": "해결책부터 그리는 습관", "shots": [{"seg": s_sketch, "word": "스케치가", "show": "스케치"},
+                                                                     {"seg": s_trip, "word": "질문", "show": "물음표"}],
+                               "layout": "fullscreen", "audio": "bed", "enter": "on_word", "exit": "on_sentence",
+                               "fallback": "single", "priority": 2, "reason": "사례를 쌓는다"}],
                 "hook_segs": [first], "title_card_seg": ids[1], "shorts_ideas": [{"segments": ids[-5:], "angle": "통념 반박"}],
                 "caption_direction": "절제된 다큐멘터리 톤, 전문용어만 마커", "music": {"mood": "calm piano", "notes": ""},
                 "notes_for_team": "화자 중심, 도식은 크게"}
@@ -135,6 +144,12 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             {"seg": s_q, "word": "", "kind": "number", "intensity": 2, "callout": "", "label": ""}],
             # ⚡ 펀치 구간: 핵심 한 방 문장 하나만 — 그 안의 강조는 하드 펀치인(cut)이 된다
             "energy_spans": [{"start_seg": s_pencil, "end_seg": s_pencil, "reason": "핵심 한 방"}],
+            # 🙂 얼굴 홀드(여운 문장) · 리듬 · 정점(docs/upgrade/05)
+            "holds": [{"start_seg": s_hidden, "end_seg": s_hidden, "reason": "여운"}],
+            "rhythm": [{"start_seg": first, "end_seg": s_hidden, "level": "steady", "reason": "설명"},
+                       {"start_seg": s_sketch, "end_seg": s_trip, "level": "fast", "reason": "사례"},
+                       {"start_seg": s_pencil, "end_seg": last, "level": "slow", "reason": "결론"}],
+            "peak_seg": s_pencil,
             # 🎬 오프닝 하이라이트: 숫자 문장 + 결론 문장(첫 두 발화는 앱이 제외한다)
             "highlights": [{"seg": ids[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": s_q, "reason": "숫자"},
                            {"seg": last, "reason": "결론"}],
@@ -449,6 +464,11 @@ def main() -> int:
     hot = [p for p in lp["punches"] if p["style"] == "cut" and p["t"] >= hl_dur]
     assert len(hot) == 1 and hot[0]["amount"] >= 0.1 and hot[0]["end"] - hot[0]["t"] <= 2.3, lp["punches"]
     assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")
+    # 시퀀스·리듬·홀드가 계획에 남고(재정규화에도), 품질 게이트가 홀드 보호를 확인했다
+    assert plan["long"]["holds"] and plan["long"]["sequences"][0]["id"] == "q1" and plan["long"]["rhythm"], plan["long"].get("holds")
+    gate_json = json.loads((job / "work" / "gate.json").read_text(encoding="utf-8"))
+    by_gate = {r["id"]: r for r in gate_json["results"]}
+    assert gate_json["ok"] and by_gate["A14_hold_guard"]["ok"] and by_gate["B5_internal"]["ok"], gate_json
     covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
     assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]

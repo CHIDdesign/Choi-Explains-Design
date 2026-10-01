@@ -47,7 +47,7 @@ from .director.context import (JobBrief, load_prompt, long_instruction, shared_c
                                system_prompt)
 from .motion.card import card_settle_time, card_text
 from .motion.check import CheckError, check_cards, problem_lines
-from .director.plan import (TimedGraphic, blank_graphic, type_card, normalize_long, normalize_shorts, seg_edit_times,
+from .director.plan import (TimedGraphic, blank_graphic, merge_step_runs, type_card, normalize_long, normalize_shorts, seg_edit_times,
                             spec_settle_time, time_graphics, word_edit_time)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
@@ -69,7 +69,8 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .net import download as net_download, redact
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
-from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, face_safe_layouts, long_props,
+from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, hide_over, high_load_spans,
+                           mark_sequences, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
                            short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
                            fold_keywords_into_media)
@@ -1385,22 +1386,37 @@ class Pipeline:
         """게이트 A(화면): A6 그래픽 분포 · A7 맨얼굴 최장 · A8 얼굴 비율 · A9 타이틀 위치 — 본편(하이라이트 붙이기 전) 시각."""
         total = self.timemap.duration
         gs = lp.get("graphics", [])
+        holds = self._hold_spans()
         return [gate.a6_distribution(gs, total, ed.callouts),
                 gate.a7_face_run(gs, total, ed.callouts),
                 gate.a8_face_ratio(float(ed.stats.get("face_ratio", gate.face_ratio(gs, total)))),
-                gate.a9_title(gs)]
+                gate.a9_title(gs),
+                # 리듬(docs/upgrade/05 4-2): 빠른 묶음 · 그래픽 사슬 · 길이 분포 · 홀드 보호 · 단계 싱크 · 홀드의 존재 · 박자 단조
+                gate.a11_fast_runs(gs, total),
+                gate.a12_chain(gs),
+                gate.a13_duration_spread(gs),
+                gate.a14_hold_guard(gs, holds, ed.callouts, ed.sfx),
+                gate.a15_step_sync(gs),
+                gate.a16_hold_presence(gs, lp.get("chapters", []), total, ed.callouts),
+                gate.a17_monotony(gs)]
 
     def _gate_screen(self, lp: dict, ed: EditDecisions) -> tuple[dict, EditDecisions]:
         """렌더 props 확정 뒤: 그래픽 없는 칸·긴 맨얼굴은 그 자리의 핵심어 카드로 채우고, 늦은 타이틀은 앞으로 → props 다시."""
         res = self._screen_checks(lp, ed)
-        added, moved = 0, False
+        added, moved, trimmed, merged = 0, False, 0, 0
         if any(not r.ok and r.repair == "fill_gaps" for r in res):
             added = self._fill_gaps(lp, ed)
         if any(not r.ok and r.repair == "retime_title" for r in res):
             moved = self._retime_title()
-        if added or moved:
+        if any(not r.ok and r.repair == "trim_chain" for r in res):
+            trimmed = self._trim_chains(lp)
+        if any(not r.ok and r.repair == "merge_steps" for r in res):
+            merged = merge_step_runs(self.plan_long.get("graphics", []))
+        if added or moved or trimmed or merged:
             self.log(f"🚦 게이트 A 수리: " + " · ".join(x for x in [f"빈 구간에 핵심어 카드 {added}개" if added else "",
-                                                               "타이틀을 앞으로" if moved else ""] if x))
+                                                               "타이틀을 앞으로" if moved else "",
+                                                               f"이어 붙은 글자 카드 {trimmed}개 뺌" if trimmed else "",
+                                                               f"단계 그래픽 {merged}개 합침" if merged else ""] if x))
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
             lp, ed = self._final_long_props(graphics, chapters)
@@ -1468,6 +1484,25 @@ class Pipeline:
                 added += 1
                 break
         return added
+
+    def _trim_chains(self, lp: dict) -> int:
+        """A12 수리: 시퀀스가 아닌 그래픽이 1초 안 간격으로 4개 넘게 이어지면 그 사슬 가운데의 글자 카드(대본 태그 아님,
+        우선순위 낮은 것부터)를 계획에서 뺀다 — 사슬이 3개 이하가 될 때까지."""
+        plan_g = self.plan_long.get("graphics", []) or []
+        drop: list[int] = []
+        for chain in gate.graphic_chains(lp.get("graphics", [])):
+            extra = len(chain) - 3
+            if extra <= 0:
+                continue
+            cands = [g for g in chain[1:-1] if g.get("template") in gate.TEXT_TEMPLATES and g.get("source") != "tag"]
+            for g in sorted(cands, key=lambda g: g.get("priority", 5))[:extra]:
+                gid = str(g.get("id", ""))
+                if gid.startswith("g") and gid[1:].isdigit() and int(gid[1:]) < len(plan_g):
+                    drop.append(int(gid[1:]))
+        if drop:
+            keep = [g for i, g in enumerate(plan_g) if i not in set(drop)]
+            self.plan_long["graphics"] = keep
+        return len(set(drop))
 
     def _retime_title(self) -> bool:
         """A9 수리: 타이틀 카드를 본편 4초 뒤 첫 문장(훅 다음)으로."""
@@ -2292,6 +2327,15 @@ class Pipeline:
                 kept.append(g)
         return kept, chapters
 
+    def _rhythm_spans(self, seg_t: dict[int, tuple[float, float]]) -> list[tuple[float, float, str]]:
+        """편집 감독의 rhythm(발화 범위 → slow·steady·fast) → 편집 시각 구간."""
+        out = []
+        for r in self.plan_long.get("rhythm", []) or []:
+            ids = [i for i in seg_t if r["start_seg"] <= i <= r["end_seg"]]
+            if ids:
+                out.append((min(seg_t[i][0] for i in ids), max(seg_t[i][1] for i in ids), r["level"]))
+        return out
+
     def _hold_spans(self, tag_spans: Optional[list[tuple[float, float]]] = None) -> list[tuple[float, float]]:
         """🙂 편집 감독의 holds → 본편 편집 시각 구간(끝에 hold_pad 1.5초, 한 곳 최대 25초). 대본 태그 그래픽과 겹치면
         홀드를 그 태그 앞까지 줄인다(태그는 명령). docs/upgrade/05 4-3."""
@@ -2518,9 +2562,14 @@ class Pipeline:
                              face=lp.get("face"),
                              P=PARAMS if (self.spec.skin == "paper" or looks) else {**PARAMS, "framed_every": 0},
                              framed_ranges=looks.paper_ranges() if looks else None, angle_cuts=angle_cuts,
-                             punch_spans=punch_spans, holds=holds)
+                             punch_spans=punch_spans, holds=holds, rhythm=self._rhythm_spans(seg_t))
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
+        seq_types = {q["id"]: q["type"] for q in self.plan_long.get("sequences", []) or []}
+        hid += hide_over(lp["captions"], high_load_spans(lp, seq_types))
+        n_seq = mark_sequences(lp, seq_types)
+        if n_seq:
+            self.log(f"🎞 시퀀스 {n_seq}개 — 같은 틀 안의 컷으로(둘째 샷부터 등장 애니메이션 없음)")
         stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
         self.log(f"💬 자막: 한두 마디 {len(lp['captions'])}개 · 두 층 강조 {stacks}개"
                  + (f" · 화면 그래픽과 같은 말이라 숨김 {hid}개(SRT 에는 남김)" if hid else ""))

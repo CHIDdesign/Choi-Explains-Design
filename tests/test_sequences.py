@@ -132,3 +132,92 @@ def test_pipeline_drops_graphics_inside_holds_but_keeps_script_tags():
     [(a, b)] = p._hold_spans()
     assert a == 13.0 and b <= 22.0 - 0.3 + 1e-6
     assert any("얼굴 홀드" in m for m in logs)
+
+
+def test_normalize_long_keeps_sequences_rhythm_and_peak():
+    utts = _utts()
+    raw = {"graphics": [{"template": "photo", "layout": "fullscreen", "start_seg": 1, "end_seg": 1, "image": "a",
+                         "title": "", "sequence_id": "q1"}],
+           "sequences": [{"id": "q1", "type": "evidence_stack", "start_seg": 1, "end_seg": 2, "claim": "사례가 쌓인다",
+                          "shots": [{"seg": 1, "word": "먼저", "show": "스케치"}, {"seg": 2, "word": "결국", "show": "장표"}],
+                          "layout": "fullscreen", "audio": "bed", "enter": "on_word", "exit": "on_sentence",
+                          "fallback": "single", "priority": 1, "reason": ""},
+                         {"id": "", "type": "evidence_stack", "start_seg": 1, "end_seg": 1},      # id 없음 → 버림
+                         {"id": "q9", "type": "bogus", "start_seg": 1, "end_seg": 1}],            # 모르는 유형 → 버림
+           "rhythm": [{"start_seg": 3, "end_seg": 6, "level": "slow", "reason": "고백"},
+                      {"start_seg": 1, "end_seg": 2, "level": "warp"}],
+           "peak_seg": 5, "central_question": "왜 순서가 중요할까", "payoff_seg": 6,
+           "holds": [{"start_seg": 3, "end_seg": 5, "reason": "고백"}]}
+    plan = normalize_long(raw, utts, [])
+    assert [q["id"] for q in plan["sequences"]] == ["q1"] and len(plan["sequences"][0]["shots"]) == 2
+    assert plan["rhythm"] == [{"start_seg": 3, "end_seg": 6, "level": "slow", "reason": "고백"}]
+    assert plan["peak_seg"] == 5 and plan["payoff_seg"] == 6 and plan["central_question"] == "왜 순서가 중요할까"
+    assert plan["graphics"][0]["sequence_id"] == "q1" and plan["holds"][0]["end_seg"] == 5
+    # 재정규화(plan.json 다시 읽기)에도 그대로
+    again = normalize_long(plan, utts, [])
+    assert again["sequences"] == plan["sequences"] and again["graphics"][0]["sequence_id"] == "q1"
+
+
+def test_same_sequence_shots_cut_without_gap():
+    from studio.director.plan import resolve_overlaps
+    a = TimedGraphic("g1", "photo", "fullscreen", 10.0, 14.0, {"seq_id": "q1"}, 6)
+    b = TimedGraphic("g2", "photo", "fullscreen", 11.8, 15.0, {"seq_id": "q1"}, 6)
+    c = TimedGraphic("g3", "photo", "fullscreen", 13.6, 17.0, {"seq_id": "q1"}, 6)
+    out = resolve_overlaps([a, b, c], total=100.0)
+    assert [g.id for g in out] == ["g1", "g2", "g3"]
+    assert out[0].end == 11.8 and out[1].end == 13.6                     # 다음 샷이 자른다(간격 0)
+
+
+def test_sequence_marks_and_high_load_caption_hiding():
+    from studio.render.props import hide_over, high_load_spans, mark_sequences
+    props = {"graphics": [
+        {"id": "g1", "template": "photo", "layout": "fullscreen", "start": 10.0, "end": 11.8, "data": {"seq_id": "q1"}},
+        {"id": "g2", "template": "photo", "layout": "fullscreen", "start": 11.8, "end": 13.6, "data": {"seq_id": "q1"}},
+        {"id": "g3", "template": "process", "layout": "split", "start": 20.0, "end": 30.0,
+         "data": {"items": ["a", "b"], "stepAt": [{"t": 0.5, "index": 0}, {"t": 4.0, "index": 1}]}},
+        {"id": "g4", "template": "photo", "layout": "fullscreen", "start": 40.0, "end": 46.0, "data": {"seq_id": "q2"}}]}
+    assert mark_sequences(props, {"q1": "evidence_stack", "q2": "document_read"}) == 2
+    assert props["graphics"][1]["seq"] == {"id": "q1", "type": "evidence_stack", "index": 1, "count": 2}
+    spans = high_load_spans(props, {"q1": "evidence_stack", "q2": "document_read"})
+    assert spans == [(20.0, 30.0), (40.0, 46.0)]                          # 단계 도식 + 문서 읽기(증거 쌓기는 아님)
+    cues = [{"start": 21.0, "end": 23.0, "lines": []}, {"start": 12.0, "end": 13.0, "lines": []},
+            {"start": 45.5, "end": 47.5, "lines": []}]
+    assert hide_over(cues, spans) == 1 and cues[0]["hidden"] and not cues[1].get("hidden") and not cues[2].get("hidden")
+
+
+def test_brief_sequence_schema_is_strict():
+    from studio.agents import schemas as S
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False
+                assert set(node.get("required", [])) == set(node.get("properties", {}))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    for sch in (S.BRIEF, S.EDITOR, S.MOTION):
+        walk(sch)
+    beat = S.BRIEF["properties"]["beats"]["items"]["properties"]
+    assert {"show", "function", "on_screen_text", "sequence_id"} <= set(beat)
+    assert set(S.BRIEF["properties"]["sequences"]["items"]["properties"]["type"]["enum"]) == set(S.SEQ_TYPES)
+    assert {"holds", "rhythm", "peak_seg"} <= set(S.EDITOR["properties"])
+
+
+def test_rhythm_levels_cluster_emphasis_in_fast_spans():
+    """강조는 고르게 뿌리지 않고 fast 구간에 몰린다(6초 간격) — 선언이 없는 곳은 예전 간격(40초) 그대로."""
+    tm = TimeMap([Span(0.0, 200.0)])
+    moments = [Moment(t=t, end=t + 1.0, kind="punchline", intensity=2) for t in (20.0, 27.0, 34.0, 120.0, 130.0)]
+    cues = [{"start": t, "end": t + 1.9, "lines": [[{"text": "말", "start": t, "end": t + 0.5}]]}
+            for t in range(0, 200, 2)]
+    kw = dict(timemap=tm, total=200.0, speech_total=200.0, graphics=[], chapters=[], moments=moments, cues=cues,
+              sentence_starts=[0.0, 60.0, 120.0])
+    plain = build_long_edit(**kw)
+    fast = build_long_edit(**kw, rhythm=[(15.0, 40.0, "fast")])
+    t_plain = [p["t"] for p in plain.punches]
+    t_fast = [p["t"] for p in fast.punches]
+    assert 27.0 not in t_plain and 34.0 not in t_plain                    # 40초 간격
+    assert {20.0, 27.0, 34.0} <= set(t_fast)                             # fast 구간 안에서는 6초 간격
+    assert 130.0 not in t_fast                                           # 밖은 그대로

@@ -269,6 +269,175 @@ def a9_title(graphics: list[dict], *, limit: float = 40.0) -> GateResult:
 
 
 # ---------------------------------------------------------------------------
+# 게이트 A11~A17 — 리듬(docs/upgrade/05_편집_문법_v2.md 4-2). 시계가 아니라 내용이 박자를 정한다:
+# '모든 것이 중간'(빠른 묶음도 긴 홀드도 없음)을 잡는다
+# ---------------------------------------------------------------------------
+
+CONTENT_SKIP = ("title", "lower_third", "chapter", "recap")
+
+
+def _content(graphics: list[dict]) -> list[dict]:
+    return sorted((g for g in graphics if g.get("template") not in CONTENT_SKIP and g.get("end", 0) > g.get("start", 0)),
+                  key=lambda g: g["start"])
+
+
+def _seq_of(g: dict) -> str:
+    return str((g.get("data") or {}).get("seq_id") or g.get("sequence_id") or "")
+
+
+def a11_fast_runs(graphics: list[dict], total: float, *, fast_gap: float = 2.5, min_total: float = 180.0) -> GateResult:
+    """빠른 묶음: 3장 이상 시퀀스 안에서 2.5초 이하 간격이 2번 이상 이어지는 곳이 하나는 있어야 한다(3분 넘는 영상)."""
+    if total < min_total:
+        return _skip("A11_fast_runs", "repair", "3분 미만 — 건너뜀")
+    seqs: dict[str, list[dict]] = {}
+    for g in _content(graphics):
+        if _seq_of(g):
+            seqs.setdefault(_seq_of(g), []).append(g)
+    fast = []
+    for sid, gs in seqs.items():
+        starts = [g["start"] for g in gs]
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        if len(gs) >= 3 and sum(1 for x in gaps if x <= fast_gap) >= 2:
+            fast.append(sid)
+    m = {"sequences": len(seqs), "fast": fast}
+    if fast:
+        return _ok("A11_fast_runs", "repair", m, f"빠른 묶음 {len(fast)}곳")
+    return _bad("A11_fast_runs", "repair", m, f"빠른 묶음(시퀀스 안 2.5초 이하 컷)이 하나도 없음 — 시퀀스 {len(seqs)}개", "")
+
+
+def graphic_chains(graphics: list[dict], *, gap: float = 1.0) -> list[list[dict]]:
+    """시퀀스가 아닌 그래픽이 1초 미만 간격으로 이어진 사슬들."""
+    chains: list[list[dict]] = []
+    cur: list[dict] = []
+    for g in _content(graphics):
+        if _seq_of(g):
+            if len(cur) > 1:
+                chains.append(cur)
+            cur = []
+            continue
+        if cur and g["start"] - cur[-1]["end"] < gap:
+            cur.append(g)
+        else:
+            if len(cur) > 1:
+                chains.append(cur)
+            cur = [g]
+    if len(cur) > 1:
+        chains.append(cur)
+    return chains
+
+
+def a12_chain(graphics: list[dict], *, chain_max: int = 3) -> GateResult:
+    chains = [c for c in graphic_chains(graphics) if len(c) > chain_max]
+    longest = max((len(c) for c in graphic_chains(graphics)), default=1)
+    m = {"longest": longest, "chains": [[g.get("id") for g in c] for c in chains[:4]]}
+    if not chains:
+        return _ok("A12_chain", "repair", m, f"그래픽 사슬 최장 {longest}개")
+    c = chains[0]
+    return _bad("A12_chain", "repair", m, f"시퀀스가 아닌 그래픽 {len(c)}개가 1초 안 간격으로 이어짐({fmt_ts(c[0]['start'])}–"
+                f"{fmt_ts(c[-1]['end'])}) — 3개까지", "trim_chain")
+
+
+def a13_duration_spread(graphics: list[dict], *, spread_min: float = 4.0) -> GateResult:
+    durs = sorted(g["end"] - g["start"] for g in _content(graphics))
+    if len(durs) < 6:
+        return _skip("A13_spread", "warn", "그래픽이 적어 건너뜀")
+    p10 = durs[int(0.1 * (len(durs) - 1))]
+    p90 = durs[int(round(0.9 * (len(durs) - 1)))]
+    r = p90 / max(0.1, p10)
+    m = {"p10": round(p10, 2), "p90": round(p90, 2), "ratio": round(r, 2)}
+    if r >= spread_min:
+        return _ok("A13_spread", "warn", m, f"길이 분포 p90/p10 = {r:.1f}")
+    return _bad("A13_spread", "warn", m, f"그래픽 길이가 다 비슷함(p90/p10 = {r:.1f}, {spread_min:.0f} 이상 권장) — 빠른 묶음·긴 자료가 없다")
+
+
+def a14_hold_guard(graphics: list[dict], holds: list[tuple[float, float]], callouts: Optional[list[dict]] = None,
+                   sfx: Optional[list[dict]] = None) -> GateResult:
+    """홀드(뒤 여유 포함) 안에 그래픽·보드·콜아웃·효과음 0 — 대본 태그 그래픽은 명령이라 예외(홀드가 그 앞까지 줄어든다)."""
+    if not holds:
+        return _skip("A14_hold_guard", "block", "홀드 없음")
+    hits = []
+    for g in graphics:
+        if g.get("template") in ("title", "chapter") or g.get("source") == "tag":
+            continue
+        if any(g["start"] < b and g["end"] > a for a, b in holds):
+            hits.append({"what": g.get("template"), "id": g.get("id"), "at": round(g["start"], 1)})
+    for c in callouts or []:
+        if any(c["start"] < b and c["end"] > a for a, b in holds):
+            hits.append({"what": "callout", "at": round(c["start"], 1)})
+    for x in sfx or []:
+        if any(a <= x["t"] <= b for a, b in holds):
+            hits.append({"what": "sfx", "at": round(x["t"], 1)})
+    m = {"holds": len(holds), "hits": hits[:8]}
+    if not hits:
+        return _ok("A14_hold_guard", "block", m, f"얼굴 홀드 {len(holds)}곳 보호됨")
+    return _bad("A14_hold_guard", "block", m, f"얼굴 홀드 안에 {hits[0]['what']} 등 {len(hits)}개", "respect_holds")
+
+
+def step_runs(graphics: list[dict], *, gap: float = 2.0) -> list[list[dict]]:
+    """합쳐지지 않은 단계 강조 — 같은 도식(템플릿·항목)이 강조만 바꿔 2초 안 간격으로 이어진 묶음."""
+    runs: list[list[dict]] = []
+    cur: list[dict] = []
+    for g in _content(graphics):
+        d = g.get("data") or {}
+        key = (g.get("template"), tuple(d.get("items") or []))
+        if cur:
+            pd = cur[-1].get("data") or {}
+            pkey = (cur[-1].get("template"), tuple(pd.get("items") or []))
+            if key == pkey and key[1] and g["start"] - cur[-1]["end"] < gap and d.get("highlight") != pd.get("highlight"):
+                cur.append(g)
+                continue
+            if len(cur) > 1:
+                runs.append(cur)
+        cur = [g]
+    if len(cur) > 1:
+        runs.append(cur)
+    return runs
+
+
+def a15_step_sync(graphics: list[dict]) -> GateResult:
+    """단계 강조는 그 낱말에서(그래픽 하나 + stepAt) — 단계마다 그래픽을 새로 띄우면 강조가 말보다 4~6초 늦다."""
+    runs = step_runs(graphics)
+    stepped = sum(1 for g in graphics if (g.get("data") or {}).get("stepAt"))
+    m = {"stepped": stepped, "unmerged": [[g.get("id") for g in r] for r in runs[:4]]}
+    if not runs:
+        return _ok("A15_step_sync", "repair", m, f"단계 그래픽 {stepped}개(낱말에서 강조)")
+    return _bad("A15_step_sync", "repair", m, f"같은 도식을 단계마다 새로 띄운 곳 {len(runs)}곳 — 강조가 말보다 늦다", "merge_steps")
+
+
+def a16_hold_presence(graphics: list[dict], chapters: list[dict], total: float, callouts: Optional[list[dict]] = None,
+                      *, chapter_min: float = 60.0, hold_min: float = 12.0) -> GateResult:
+    """60초 넘는 챕터마다 12초 이상 얼굴만 이어지는 구간이 하나(고백·결론이 숨 쉴 자리)."""
+    bounds = [c["start"] for c in sorted(chapters, key=lambda c: c["start"])] + [total]
+    runs = face_only_spans(graphics, callouts, total)
+    short = []
+    for i in range(len(bounds) - 1):
+        a, b = bounds[i], bounds[i + 1]
+        if b - a <= chapter_min:
+            continue
+        longest = max((min(y, b) - max(x, a) for x, y in runs if x < b and y > a), default=0.0)
+        if longest < hold_min:
+            short.append({"chapter": i + 1, "longest": round(longest, 1)})
+    m = {"chapters_without_hold": short}
+    if not short:
+        return _ok("A16_hold_presence", "warn", m, "긴 챕터마다 얼굴로 머무는 자리 있음")
+    return _bad("A16_hold_presence", "warn", m, f"챕터 {short[0]['chapter']} 에 12초 넘게 얼굴로 머무는 자리가 없음"
+                f"(최장 {short[0]['longest']:.0f}초)")
+
+
+def a17_monotony(graphics: list[dict], *, cv_warn: float = 0.45) -> GateResult:
+    starts = [g["start"] for g in _content(graphics)]
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    if len(gaps) < 6:
+        return _skip("A17_monotony", "warn", "그래픽이 적어 건너뜀")
+    mean = sum(gaps) / len(gaps)
+    cv = (sum((x - mean) ** 2 for x in gaps) / len(gaps)) ** 0.5 / max(1e-6, mean)
+    m = {"gap_cv": round(cv, 2), "mean_gap": round(mean, 1)}
+    if cv >= cv_warn:
+        return _ok("A17_monotony", "warn", m, f"간격 변화 CV {cv:.2f}")
+    return _bad("A17_monotony", "warn", m, f"그래픽 간격이 시계처럼 고름(CV {cv:.2f}) — 내용이 박자를 정하게")
+
+
+# ---------------------------------------------------------------------------
 # 게이트 B — 화면 글자 위생(렌더 props 확정 뒤)
 # ---------------------------------------------------------------------------
 

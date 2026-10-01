@@ -12,6 +12,31 @@ MOMENT_KINDS = ["punchline", "reveal", "shift", "conclusion", "question", "numbe
 BGM_MOODS = ["minimal", "calm", "ambient", "lofi", "piano", "inspiring", "upbeat"]
 LOOKS = ["warm_rich", "natural", "warm_film", "clean_bright", "cinematic"]
 
+# 시퀀스와 리듬(docs/upgrade/05_편집_문법_v2.md 2·4·6장) — 화면을 바꾸는 이유는 시계가 아니라 문장의 내용(show)
+SHOWS = ["object", "example", "process", "comparison", "data", "structure", "source", "place_time",
+         "metaphor", "emotion", "none"]
+FUNCTIONS = ["evidence", "example", "process", "compare", "data", "name", "orient", "breathe", "none"]
+SEQ_TYPES = ["evidence_stack", "detail_zoom", "document_read", "walkthrough", "comparison", "montage"]
+SEQ_AUDIO = ["bed", "rest", "swell"]
+SEQ_ENTER = ["on_word", "voice_first", "picture_first"]
+SEQ_EXIT = ["on_sentence", "tail"]
+SEQ_FALLBACK = ["single", "template", "face"]
+RHYTHM = ["slow", "steady", "fast"]
+SEQUENCE = _obj({
+    "id": STR,                                           # "q1", "q2" …
+    "type": {"type": "string", "enum": SEQ_TYPES},
+    "start_seg": INT, "end_seg": INT,
+    "claim": STR,                                        # 이 묶음이 받치는 주장 한 줄(40자 이내)
+    "shots": {"type": "array", "items": _obj({"seg": INT, "word": STR, "show": STR})},
+    "layout": {"type": "string", "enum": ["fullscreen", "split", "pip"]},
+    "audio": {"type": "string", "enum": SEQ_AUDIO},
+    "enter": {"type": "string", "enum": SEQ_ENTER},
+    "exit": {"type": "string", "enum": SEQ_EXIT},
+    "fallback": {"type": "string", "enum": SEQ_FALLBACK},
+    "priority": INT,
+    "reason": STR,
+})
+
 # 🎬 총괄 감독 — 크리에이티브 브리프
 BRIEF = _obj({
     "title": STR,          # 화면 타이틀 카드·파일 이름에 쓰는 영상 제목(18자 이내)
@@ -25,10 +50,17 @@ BRIEF = _obj({
     "beats": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT,
         "intent": {"type": "string", "enum": INTENTS},
+        "show": {"type": "string", "enum": SHOWS},            # 이 문장이 보여야 할 것(emotion = 얼굴)
+        "function": {"type": "string", "enum": FUNCTIONS},    # 이 화면이 하는 일 — 못 고르면 none(화면 없음)
         "visual": {"type": "string", "enum": VISUALS},
         "idea": STR,
+        "on_screen_text": STR,                                # 화면에 나갈 글자(말을 옮기지 않는다, 없으면 "")
+        "sequence_id": STR,                                   # 속한 시퀀스(없으면 "")
         "priority": INT,
     })},
+    "central_question": STR,                                  # 훅이 여는 질문 한 문장
+    "payoff_seg": INT,                                        # 그 질문이 닫히는 발화(-1 = 없음)
+    "sequences": {"type": "array", "items": SEQUENCE},        # 한 주장을 받치는 연속 화면 묶음(플레이북 05_sequences)
     "hook_segs": INT_LIST,
     "title_card_seg": INT,
     "shorts_ideas": {"type": "array", "items": _obj({"segments": INT_LIST, "angle": STR})},
@@ -63,6 +95,10 @@ EDITOR = _obj({
     # 🙂 얼굴 홀드: 건드리지 않을 구간 — 그 안과 뒤 1.5초에 그래픽·정리 보드·콜아웃·전환·효과음이 없다(고백·결론·질문 뒤).
     # 영상당 4~8곳, 한 곳 6~25초(docs/upgrade/05 4-3)
     "holds": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
+    # 리듬(밀도) 수준 — slow(새 화면 사이 12초+) · steady(6~10초) · fast(시퀀스 안 1.2~2.5초). 이웃은 한 단계씩
+    "rhythm": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT,
+                                               "level": {"type": "string", "enum": RHYTHM}, "reason": STR})},
+    "peak_seg": INT,                                          # 영상에서 가장 큰 순간(-1 = 없음)
     # 🎬 오프닝 하이라이트(콜드 오픈): 본편 앞에 붙일 가장 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내).
     # 결론·반전·질문·숫자처럼 앞뒤 없이도 서는 문장. 첫 두 발화는 제외(바로 뒤에 다시 나온다)
     "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
@@ -90,6 +126,7 @@ MOTION = _obj({
         "layout": {"type": "string", "enum": ["fullscreen", "split"]},
         "title": STR,
         "spec_json": STR,
+        "sequence_id": STR,          # 감독 브리프의 시퀀스(없으면 "")
         "reason": STR,
     })},
     "cards": {"type": "array", "items": _obj({
@@ -98,6 +135,7 @@ MOTION = _obj({
         "style": {"type": "string", "enum": CARD_STYLES},
         "title": STR,
         "html": STR,
+        "sequence_id": STR,
         "reason": STR,
     })},
 })

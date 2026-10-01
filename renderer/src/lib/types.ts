@@ -148,6 +148,8 @@ export type Graphic = {
   data: GraphicData;
   skin?: Look; // 하이브리드: 이 그래픽을 종이 콜라주로 그릴지 기본 디자인으로 그릴지(없으면 props.skin)
   pip?: PipPlacement; // pip/overlay: 얼굴을 가리지 않는 자리(없으면 렌더러가 faceX 로 반대편)
+  // 시퀀스(한 주장을 받치는 연속 화면)의 몇 번째 샷인가 — 둘째 샷부터는 등장 애니메이션 없이 같은 틀 안의 컷(docs/upgrade/05 6-5)
+  seq?: {id: string; type: string; index: number; count: number};
 };
 
 // 강조 종류: keyword(핵심어 밑줄 스윕) · term(전문용어 형광 마커) · number(숫자 Anton) · contrast(대비어)

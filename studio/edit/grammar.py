@@ -41,6 +41,9 @@ PARAMS: dict[str, Any] = {
     # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다 — 셜록현준 리서치(20~40초마다 카메라
     # 변화, 얼굴만 25초가 절대 상한)의 가운데 값. 컷이 아니라 1.2초 글라이드(1.00↔1.06)라 젠틀함은 그대로(예전 60초)
     "max_shot": 30.0,
+    # 리듬 수준별 강조·콜아웃 최소 간격(편집 감독의 rhythm 이 있는 곳만 — 없으면 punch_min_gap·callout_min_gap 그대로).
+    # 고르게 뿌리지 않고 fast 구간에 몰아 쓴다(총량 punch_cap 은 그대로, docs/upgrade/05 4-1·6-3)
+    "rhythm_gap": {"slow": 40.0, "steady": 20.0, "fast": 6.0},
     "hold_pad": 1.5,          # 🙂 얼굴 홀드 뒤에 더 비우는 시간(감정이 닿는 데 시간이 걸린다 — docs/upgrade/05 4-3)
     "hold_max": 25.0,         # 홀드 한 곳의 최대 길이(게이트 A7 과 같은 값)
     "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
@@ -378,12 +381,19 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                     framed_ranges: Optional[list[tuple[float, float]]] = None,
                     angle_cuts: Optional[list[float]] = None,
                     punch_spans: Optional[list[tuple[float, float]]] = None, PU: dict = PUNCH,
-                    holds: Optional[list[tuple[float, float]]] = None) -> EditDecisions:
+                    holds: Optional[list[tuple[float, float]]] = None,
+                    rhythm: Optional[list[tuple[float, float, str]]] = None) -> EditDecisions:
     """punch_spans: ⚡ 펀치 구간(편집 시각). 그 안에서는 PU 의 값으로 하드 펀치인·단어 슬램·휩·임팩트를 허용한다.
     holds: 🙂 얼굴 홀드(편집 시각, 뒤 여유 포함) — 그 안에는 강조·콜아웃·전환·효과음이 없고 프레이밍도 움직이지 않는다
     (편집 감독이 '얼굴로' 지킨 고백·결론 — 10/1: 정리 보드가 S158–S160 을 덮었다). 홀드 앞에서 음악을 비운다."""
     ed = EditDecisions(soft_cut=P["soft_cut"])
     holds = [(a, b) for a, b in (holds or []) if b > a]
+    levels = [(a, b, lv) for a, b, lv in (rhythm or []) if b > a and lv in P["rhythm_gap"]]
+
+    def gap_at(t: float, default: float) -> float:
+        """그 시각의 리듬 수준이 정한 최소 간격(선언이 없으면 기존 값)."""
+        lv = next((x for a, b, x in levels if a <= t < b), None)
+        return P["rhythm_gap"][lv] if lv else default
 
     def in_hold(t: float, end: Optional[float] = None) -> bool:
         e = t if end is None else end
@@ -442,8 +452,13 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
                 or _inside(m.t, [(e["t"] - 0.5, e["t"] + 0.5) for e in tx]):
             continue
         # 간격: 같은 온도끼리는 각자의 규칙(젠틀 40초 · 펀치 6초), 펀치 구간과 젠틀 구간 사이는 6초만 띄우면 된다
-        gap = PU["punch_min_gap"] if hot else P["punch_min_gap"]
-        if any(abs(m.t - p["t"]) < (gap if p["hot"] == hot else PU["punch_min_gap"]) for p in punches):
+        gap = PU["punch_min_gap"] if hot else gap_at(m.t, P["punch_min_gap"])
+
+        def need(p: dict) -> float:
+            if p["hot"] != hot:
+                return PU["punch_min_gap"]
+            return gap if hot else min(gap, gap_at(p["t"], P["punch_min_gap"]))
+        if any(abs(m.t - p["t"]) < need(p) for p in punches):
             continue
         end = min(max(m.end + 0.15, m.t + 1.0), m.t + (PU["punch_max"] if hot else P["punch_max"]))
         nxt_cover = min([a for a, _, _ in covers if a > m.t] + [speech_total])
@@ -485,7 +500,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     for p in cands:
         m = by_t.get(p["t"])
         text = (m.callout if m else "").strip()
-        gap = PU["impact_min_gap"] if p.get("hot") else P["callout_min_gap"]
+        gap = PU["impact_min_gap"] if p.get("hot") else gap_at(p["t"], P["callout_min_gap"])
         if not text or p["t"] - last_callout < gap or _inside(p["t"], busy, pad=0.3):
             continue
         nxt = min([a for a, _, _ in covers if a > p["t"]] + [a for a, _, _ in busy if a > p["t"]] + [speech_total])

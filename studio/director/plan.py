@@ -53,6 +53,7 @@ def type_card(g: dict, description: str = "") -> Optional[dict]:
     return card
 
 
+SEQ_TYPES = ("evidence_stack", "detail_zoom", "document_read", "walkthrough", "comparison", "montage")
 STEP_TEMPLATES = ("process", "cycle", "double_diamond", "timeline", "pyramid", "list", "matrix", "venn")
 
 
@@ -272,6 +273,9 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
     steps = _clean_steps(g.get("steps"), len(out["items"]) or 8, valid)
     if steps:
         out["steps"] = steps
+    sid = str(g.get("sequence_id") or "").strip()[:16]
+    if sid:
+        out["sequence_id"] = sid
     # 템플릿별 최소 요건
     tn = out["template"]
     if tn in ("keyword", "chapter", "stat") and not out["title"].strip():
@@ -373,6 +377,11 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
         "highlights": [],                        # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 발화들
         "holds": [],                             # 🙂 얼굴 홀드(그래픽·보드·콜아웃·효과음 없이 얼굴만 — 고백·결론·질문 뒤)
+        "sequences": [],                         # 시퀀스(한 주장을 받치는 연속 화면 묶음) — docs/upgrade/05 2·6장
+        "rhythm": [],                            # 리듬 수준(slow · steady · fast) 발화 구간
+        "peak_seg": raw.get("peak_seg", -1) if raw.get("peak_seg", -1) in kept else -1,
+        "central_question": str(raw.get("central_question", "") or "")[:80],
+        "payoff_seg": raw.get("payoff_seg", -1) if raw.get("payoff_seg", -1) in kept else -1,
         "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
         "bgm_mood": str(raw.get("bgm_mood", "") or ""),
         "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
@@ -431,6 +440,33 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             a, b = b, a
         if not any(x["start_seg"] <= b and a <= x["end_seg"] for x in plan["holds"]):
             plan["holds"].append({"start_seg": a, "end_seg": b, "reason": str(h.get("reason", "") or "")[:60]})
+    for q in (raw.get("sequences", []) or [])[:24]:
+        if not isinstance(q, dict) or q.get("type") not in SEQ_TYPES or not str(q.get("id") or "").strip():
+            continue
+        a, b = _nearest(kept, q.get("start_seg")), _nearest(kept, q.get("end_seg", q.get("start_seg")))
+        if a is None or b is None:
+            continue
+        if b < a:
+            a, b = b, a
+        shots = [{"seg": _nearest(kept, x.get("seg")), "word": str(x.get("word", "") or "")[:24],
+                  "show": str(x.get("show", "") or "")[:24]} for x in (q.get("shots") or [])[:8] if isinstance(x, dict)]
+        plan["sequences"].append({
+            "id": str(q["id"]).strip()[:16], "type": q["type"], "start_seg": a, "end_seg": b,
+            "claim": str(q.get("claim", "") or "")[:60], "shots": [x for x in shots if x["seg"] is not None],
+            "layout": q.get("layout") if q.get("layout") in ("fullscreen", "split", "pip") else "fullscreen",
+            "audio": q.get("audio") if q.get("audio") in ("bed", "rest", "swell") else "bed",
+            "enter": q.get("enter") if q.get("enter") in ("on_word", "voice_first", "picture_first") else "on_word",
+            "exit": q.get("exit") if q.get("exit") in ("on_sentence", "tail") else "on_sentence",
+            "fallback": q.get("fallback") if q.get("fallback") in ("single", "template", "face") else "single",
+            "reason": str(q.get("reason", "") or "")[:60]})
+    for r in (raw.get("rhythm", []) or [])[:40]:
+        if not isinstance(r, dict) or r.get("level") not in ("slow", "steady", "fast"):
+            continue
+        a, b = _nearest(kept, r.get("start_seg")), _nearest(kept, r.get("end_seg", r.get("start_seg")))
+        if a is None or b is None:
+            continue
+        plan["rhythm"].append({"start_seg": min(a, b), "end_seg": max(a, b), "level": r["level"],
+                               "reason": str(r.get("reason", "") or "")[:60]})
     for h in raw.get("highlights", []) or []:
         seg = h.get("seg") if isinstance(h, dict) else h
         if seg in kept and seg not in kept[:2] and not any(x["seg"] == seg for x in plan["highlights"]):
@@ -771,17 +807,19 @@ def time_graphics(
                 k += 1
             end = max(end, seg_t[order[k]][1])
         end = min(end, start + t.max_dur, total - 0.3)
-        # 참고 채널 실측: 화면이 말보다 0.3~1.0초 먼저 도착한다(시청자가 들을 때 이미 보고 있음)
-        if g["template"] == "broll":
-            start = max(start - 0.3, min_start)
-        else:
-            start = max(start - 0.45, min_start)
+        # 진입·퇴장은 역할마다(docs/upgrade/05 3장 — 예전엔 모든 그래픽이 문장보다 0.45초 먼저): 얼굴 옆 자료는 그 낱말 −3f,
+        # 보드는 절 시작 −9f, 전면은 말이 먼저(화자가 문장을 얼굴로 시작하고 그 낱말에서 컷, −2f). 퇴장은 문장 끝 +6~8f
+        lead, tail = ENTER_EXIT.get(g.get("layout", ""), (0.3, 0.27))
+        start = max(start - lead, min_start)
+        end = min(end + tail, total - 0.3)
         if end - start < t.min_dur * 0.7:
             continue
         data = {k: g.get(k) for k in DATA_KEYS}
         for k in EXTRA_DATA_KEYS:
             if g.get(k):
                 data[k] = g[k]
+        if g.get("sequence_id"):
+            data["seq_id"] = g["sequence_id"]
         if g.get("steps"):
             # 단계 그래픽: 강조가 그 낱말에서 바뀐다(그래픽은 하나, 끝은 마지막 단계 문장의 끝)
             at = step_times(g, utts, timemap, start)
@@ -808,6 +846,8 @@ def time_graphics(
     return resolve_overlaps(timed + list(reserved or []), total=total)
 
 
+# (진입 선행, 퇴장 꼬리) 초 — 30fps 기준 pip −3f/+6f · split −9f/+8f · 전면 −2f/+8f
+ENTER_EXIT = {"pip": (0.10, 0.20), "overlay": (0.10, 0.20), "split": (0.30, 0.27), "fullscreen": (0.07, 0.27)}
 EVIDENCE = ("photo", "broll")      # 실물 자료(사진·스톡) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
 
 
@@ -846,6 +886,12 @@ def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optiona
             continue
         last = out[-1]
         min_last, min_g = min_dur(last), min_dur(g)
+        seq_g, seq_last = (g.data or {}).get("seq_id"), (last.data or {}).get("seq_id")
+        if seq_g and seq_g == seq_last and g.start - last.start >= 0.8:
+            # 같은 시퀀스: 다음 샷이 앞 샷을 자른다(간격 0, 같은 틀 안의 컷 — 밀거나 버리지 않는다)
+            last.end = g.start
+            out.append(g)
+            continue
         if g.priority > last.priority and g.start - last.start >= min_last * 0.8:
             last.end = g.start - gap
             out.append(g)

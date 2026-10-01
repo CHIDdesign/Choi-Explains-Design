@@ -448,6 +448,11 @@ def test_mix_and_master_hit_minus_14_lufs(tmp_path):
               bgm=BgmPlan(path=str(tmp_path / "bgm.wav"), switch_at=[6.0],
                           playlist=[(str(tmp_path / "bgm.wav"), None), (str(tmp_path / "bgm.wav"), None)]))
     assert rep["sfx"] == 1 and rep["bgm_tracks"] == 1
+    # 목소리 실측 기준 레벨(롱 −20 LU) + 곡(5초)이 끝나면 다음 앵커(5.8초)에서 다시 — 끝→처음으로 잇지 않음
+    rep2 = mix(ff, tmp_path / "voice.wav", tmp_path / "mix2.wav", total=12.0, sfx=[],
+               bgm=BgmPlan(path=str(tmp_path / "bgm.wav"), rel_lu=-20.0, restart_at=[5.8], end_at=10.0))
+    assert rep2["voice_lufs"] is not None and rep2["bgm_pieces"] == 2
+    assert rep2["bgm_under_db"] == pytest.approx(rep2["voice_lufs"] - 20.0 + 14.0, abs=0.05)
     import subprocess
     subprocess.run([ff.ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=160x90:d=12:r=30", "-c:v",
                     "libx264", "-pix_fmt", "yuv420p", str(tmp_path / "v.mp4")], check=True)

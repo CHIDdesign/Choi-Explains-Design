@@ -321,3 +321,63 @@ def test_pipeline_fills_face_only_stretches_with_sentence_keywords(tmp_path):
     seg_t = seg_edit_times(utts, p.timemap)
     timed = lp["graphics"] + [_g(seg_t[g["start_seg"]][0], seg_t[g["start_seg"]][0] + 4.0) for g in gs]
     assert gate.a6_distribution(timed, total).ok and gate.a7_face_run(timed, total).ok
+
+
+# ---------------------------------------------------------------------------
+# 리듬 게이트 A11~A17 — 10/1 후반부('모든 것이 중간': 빠른 묶음 0 · 사슬 10 · p90/p10 3.1 · 홀드 침범 · 단계 지연)
+# ---------------------------------------------------------------------------
+
+def _seq(gid, t0, t1, tpl="keyword", seq="", items=None, hl=-1, source="director"):
+    d = {"items": items or []}
+    if seq:
+        d["seq_id"] = seq
+    if hl >= 0:
+        d["highlight"] = hl
+    return {"id": gid, "template": tpl, "layout": "overlay", "start": t0, "end": t1, "data": d, "source": source,
+            "priority": 5}
+
+
+def test_rhythm_gates_fail_on_20261001_like_fixture():
+    total = 383.0
+    # 6초 간격으로 4~6초짜리 그래픽이 고르게 — 그중 10개는 0.5초 간격 사슬
+    gs = [_seq(f"g{i}", 10.0 + 6.0 * i, 10.0 + 6.0 * i + 5.5) for i in range(10)]
+    gs += [_seq(f"h{i}", 100.0 + 9.0 * i, 100.0 + 9.0 * i + 4.0 + (i % 3)) for i in range(20)]
+    # 같은 도식을 강조만 바꿔 셋(단계마다 그래픽)
+    dd = ["발견", "정의", "개발", "전달"]
+    gs += [_seq("d0", 300.0, 303.5, "double_diamond", items=dd, hl=0), _seq("d1", 304.0, 307.5, "double_diamond",
+                                                                          items=dd, hl=1),
+           _seq("d2", 308.0, 311.5, "double_diamond", items=dd, hl=2)]
+    a11 = gate.a11_fast_runs(gs, total)
+    assert not a11.ok and a11.measured["sequences"] == 0
+    a12 = gate.a12_chain(gs)
+    assert not a12.ok and a12.measured["longest"] == 10 and a12.repair == "trim_chain"
+    a13 = gate.a13_duration_spread(gs)
+    assert not a13.ok and a13.measured["ratio"] < 4
+    a14 = gate.a14_hold_guard(gs + [_seq("r1", 192.0, 197.0, "recap")], [(190.0, 205.0)])
+    assert not a14.ok and a14.blocking
+    a15 = gate.a15_step_sync(gs)
+    assert not a15.ok and a15.measured["unmerged"] == [["d0", "d1", "d2"]] and a15.repair == "merge_steps"
+    # 마지막 챕터(303초~)는 6초마다 그래픽 — 얼굴로 머무는 자리가 없다(10/1 챕터 3: 73초에 최장 5.6초)
+    dense = gs + [_seq(f"k{i}", 312.0 + 6.0 * i, 312.0 + 6.0 * i + 5.0) for i in range(12)]
+    chapters = [{"start": 0.0}, {"start": 230.0}, {"start": 303.0}]
+    a16 = gate.a16_hold_presence(dense, chapters, total)
+    assert not a16.ok and a16.measured["chapters_without_hold"][0]["chapter"] == 3
+
+
+def test_rhythm_gates_pass_with_sequences_and_holds():
+    total = 383.0
+    # 증거 쌓기(1.8초 간격 4장) + 단발 그래픽 + 긴 얼굴 구간 + 단계 그래픽 하나(stepAt)
+    gs = [_seq(f"q{i}", 40.0 + 1.8 * i, 40.0 + 1.8 * (i + 1), "photo", seq="q1") for i in range(4)]
+    gs += [_seq("s1", 60.0, 66.0), _seq("s2", 80.0, 95.0, "process"), _seq("s3", 130.0, 133.0),
+           _seq("s4", 200.0, 214.0, "motion"), _seq("s5", 260.0, 262.5), _seq("s6", 330.0, 340.0, "list")]
+    gs.append({"id": "w1", "template": "double_diamond", "layout": "split", "start": 150.0, "end": 160.0,
+               "data": {"items": ["a", "b", "c", "d"], "stepAt": [{"t": 0.5, "index": 0}, {"t": 4.0, "index": 1}]},
+               "source": "director", "priority": 5})
+    assert gate.a11_fast_runs(gs, total).ok
+    assert gate.a12_chain(gs).ok
+    assert gate.a13_duration_spread(gs).ok
+    assert gate.a14_hold_guard(gs, [(100.0, 125.0)]).ok
+    assert gate.a15_step_sync(gs).ok
+    assert gate.a16_hold_presence(gs, [{"start": 0.0}, {"start": 230.0}], total).ok
+    # 대본 태그 그래픽은 홀드 안이어도 명령(홀드가 그 앞까지 줄어든다)
+    assert gate.a14_hold_guard([_seq("t", 110.0, 115.0, source="tag")], [(100.0, 125.0)]).ok
