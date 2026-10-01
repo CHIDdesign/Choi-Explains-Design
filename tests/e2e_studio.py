@@ -393,7 +393,10 @@ def main() -> int:
     for a in ("director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
               "motion_revise", "colorist"):
         assert a in agents, f"{a} 호출 없음: {agents}"
-    assert agents[0] == "colorist" and agents[1] == "director", agents   # 색보정 → 기획
+    # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전
+    assert agents.index("director") < min(agents.index(a) for a in ("editor", "motion", "stock", "captions", "shorts",
+                                                                     "copy")), agents
+    assert agents.index("colorist") < agents.index("art_director"), agents
     assert next(c for c in CALLS if c["agent"] == "stock_pick")["images"] == 2
     assert next(c for c in CALLS if c["agent"] == "art_director")["images"] >= 2
     assert next(c for c in CALLS if c["agent"] == "copy")["effort"] == "low"

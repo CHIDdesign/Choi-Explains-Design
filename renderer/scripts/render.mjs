@@ -6,7 +6,8 @@
 //   "bundleDir": "<번들 출력 폴더(작업 폴더 안)>",
 //   "links": [{"src": "<큰 미디어 원본>", "dst": "media/proxy.mp4"}],   // 번들 public 안에 하드링크(실패 시 복사)
 //   "browserExecutable": "", "gl": "angle", "concurrency": 0,
-//   "reuseBundle": false,   // true 면 소스가 바뀌지 않았을 때 이전 번들을 재사용(검수 스틸 → 본 렌더)
+//   "reuseBundle": false,   // true 면 소스가 바뀌지 않았을 때 이전 번들을 재사용(미리 만든 번들 → 검수 스틸 → 본 렌더)
+//   renders 가 비어 있으면 번들만 만들고 끝낸다
 //   "renders": [{"kind": "video"|"still"|"frames", "composition": "LongForm", "props": "<props.json>",
 //                "muted": false,                               // true: 영상만(음향은 Python 이 따로 믹스)
 //                "output": "<out.mp4>", "scale": 1, "crf": 18, "x264Preset": "medium", "encoder": "auto",
@@ -110,6 +111,7 @@ const main = async () => {
     emit({type: 'bundle', progress: 1});
   } else {
     emit({type: 'stage', stage: 'bundle'});
+    fs.rmSync(stampFile, {force: true});   // 번들이 중간에 실패하면 다음 실행이 반쪽 번들을 재사용하지 않게
     serveUrl = await bundle({
       entryPoint,
       publicDir: job.publicDir,
@@ -117,6 +119,11 @@ const main = async () => {
       onProgress: (p) => emit({type: 'bundle', progress: p / 100}),
     });
     fs.writeFileSync(stampFile, stamp);
+  }
+
+  if (!(job.renders || []).length) {   // 번들만 미리 만들기(파이프라인이 편집 검사와 함께 돌림)
+    emit({type: 'finished'});
+    return;
   }
 
   // 큰 미디어는 번들 뒤에 하드링크(Windows 는 bundle 이 public 을 통째로 복사하므로)

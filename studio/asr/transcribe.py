@@ -145,11 +145,17 @@ def transcribe(
     hint_terms: Optional[list[str]] = None,
     initial_prompt: str = "",
     duration: float = 0.0,
+    batch_size: int = 8,
     log: LogFn = noop_log,
     progress: ProgressFn = noop_progress,
     cancel: Optional[CancelToken] = None,
 ) -> dict:
-    """faster-whisper 로 단어 단위 전사. 반환: {words:[...], segments:[...], info:{...}}"""
+    """faster-whisper 로 단어 단위 전사. 반환: {words:[...], segments:[...], info:{...}}
+
+    batch_size > 1 이면 배치 추론(BatchedInferencePipeline): VAD 로 나눈 30초 조각들을 한 번에 여러 개 디코딩한다 —
+    GPU 에서 약 3~4배, CPU 에서도 약 2배 빠르다. 조각마다 같은 프롬프트(추임새 말투)가 들어가므로 추임새·되풀이를 받아
+    적는 성질은 오히려 영상 끝까지 고르게 유지된다(순차 모드는 이전 문맥을 끄면 첫 창에만 프롬프트가 들어감).
+    GPU 메모리가 모자라면 배치를 반씩 줄이고, 그래도 안 되면 순차로 다시 한다."""
     _prepare_windows_cuda(log)
     from faster_whisper import WhisperModel  # 무거운 import 는 지연
 
@@ -201,39 +207,73 @@ def transcribe(
     if dropped:
         log(f"(이 faster-whisper 버전이 지원하지 않는 옵션 생략: {', '.join(dropped)})")
     audio = load_audio_16k(wav16k)   # 경로 대신 배열 — PyAV 디코딩을 거치지 않는다
-    segments, info = model.transcribe(audio, **kwargs)
-
+    batch = max(1, int(batch_size or 1))
+    while True:
+        try:
+            words, segs, info = _run(model, audio, kwargs, batch=batch, duration=duration, log=log,
+                                     progress=progress, cancel=cancel)
+            break
+        except RuntimeError as e:
+            low = str(e).lower()
+            if device == "cuda" and ("cublas" in low or "cudnn" in low):
+                raise RuntimeError(
+                    "CUDA 라이브러리(cuBLAS/cuDNN)를 찾지 못했습니다. setup_windows.bat 을 다시 실행하거나 "
+                    "설정에서 Whisper 장치를 'cpu' 로 바꿔주세요.\n원본 오류: " + str(e)) from e
+            if batch > 1 and "out of memory" in low:
+                batch = batch // 2 if batch > 2 else 1
+                log(f"(음성 인식 메모리 부족 → 배치 {batch}{'(순차)' if batch == 1 else ''}로 다시)")
+                continue
+            raise
     total = duration or float(getattr(info, "duration", 0.0) or 0.0)
-    words: list[dict] = []
-    segs: list[dict] = []
-    try:
-        for seg in segments:
-            if cancel:
-                cancel.check()
-            seg_words = []
-            for w in seg.words or []:
-                txt = (w.word or "").strip()
-                if not txt:
-                    continue
-                wd = Word(txt, float(w.start), float(w.end), float(getattr(w, "probability", 1.0)))
-                seg_words.append(wd.to_dict())
-            words.extend(seg_words)
-            segs.append({"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip(),
-                         "avg_logprob": float(getattr(seg, "avg_logprob", 0.0)),
-                         "no_speech_prob": float(getattr(seg, "no_speech_prob", 0.0))})
-            if total > 0:
-                progress(min(0.999, seg.end / total))
-            log(f"  [{seg.start:7.1f}s] {seg.text.strip()[:60]}")
-    except RuntimeError as e:
-        if device == "cuda" and ("cublas" in str(e).lower() or "cudnn" in str(e).lower()):
-            raise RuntimeError(
-                "CUDA 라이브러리(cuBLAS/cuDNN)를 찾지 못했습니다. setup_windows.bat 을 다시 실행하거나 "
-                "설정에서 Whisper 장치를 'cpu' 로 바꿔주세요.\n원본 오류: " + str(e)) from e
-        raise
     progress(1.0)
     return {
         "words": words,
         "segments": segs,
         "info": {"language": getattr(info, "language", language), "duration": total,
-                 "model": model_name, "device": device, "compute_type": compute_type},
+                 "model": model_name, "device": device, "compute_type": compute_type, "batch": batch},
     }
+
+
+def _run(model, audio: np.ndarray, kwargs: dict, *, batch: int, duration: float, log: LogFn, progress: ProgressFn,
+         cancel: Optional[CancelToken]) -> tuple[list[dict], list[dict], object]:
+    """한 번 전사(batch > 1 이면 배치 추론). 결과 단어·구간·info."""
+    kw = dict(kwargs)
+    pipe_cls = None
+    if batch > 1:
+        try:
+            from faster_whisper import BatchedInferencePipeline as pipe_cls
+        except ImportError:   # faster-whisper 1.1 미만: 순차로
+            pipe_cls = None
+    if pipe_cls is not None:
+        runner = pipe_cls(model=model)
+        try:
+            accepted = set(inspect.signature(runner.transcribe).parameters)
+        except (TypeError, ValueError):
+            accepted = set(kw)
+        kw = {k: v for k, v in kw.items() if k in accepted}
+        kw["batch_size"] = batch
+        segments, info = runner.transcribe(audio, **kw)
+    else:
+        segments, info = model.transcribe(audio, **kw)
+    total = duration or float(getattr(info, "duration", 0.0) or 0.0)
+    rows: list[tuple[dict, list[dict]]] = []
+    for seg in segments:
+        if cancel:
+            cancel.check()
+        seg_words = []
+        for w in seg.words or []:
+            txt = (w.word or "").strip()
+            if not txt:
+                continue
+            seg_words.append(Word(txt, float(w.start), float(w.end), float(getattr(w, "probability", 1.0))).to_dict())
+        rows.append(({"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip(),
+                      "avg_logprob": float(getattr(seg, "avg_logprob", 0.0)),
+                      "no_speech_prob": float(getattr(seg, "no_speech_prob", 0.0))}, seg_words))
+        if total > 0:
+            progress(min(0.999, seg.end / total))
+        log(f"  [{seg.start:7.1f}s] {seg.text.strip()[:60]}")
+    # 배치 추론도 조각 순서대로 돌려주지만, 뒤 단계(정렬·되풀이 찾기)는 시간순을 전제로 하므로 구간 단위로 한 번 더 맞춘다
+    rows.sort(key=lambda r: r[0]["start"])
+    segs = [g for g, _ in rows]
+    words = [w for _, ws in rows for w in ws]
+    return words, segs, info

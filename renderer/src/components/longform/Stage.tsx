@@ -18,7 +18,7 @@ export const STAGE = {
   speaker: 0.36,  // 화자 열 비율(보드가 열릴 때)
   edge: 40,       // 두 장의 판 바깥 여백
   cardTop: 84,    // 판 위 여백
-  cardBottom: 150, // 판 아래 여백 — 자막 띠(bottom 70)가 판을 덮지 않게
+  cardBottom: 150, // 판 아래 여백 — 자막 띠(bottom 56)가 판을 덮지 않게
   gap: 48,        // 화자 판 ↔ 보드 판
   radius: 22,
   pad: 56,        // 보드 안쪽 여백

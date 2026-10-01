@@ -128,3 +128,27 @@ def test_display_and_format():
     assert fmt_left(61) == "남은 시간 약 2분"
     assert fmt_left(3600) == "남은 시간 약 1시간"
     assert fmt_left(3700) == "남은 시간 약 1시간 2분"
+
+
+def test_parallel_lanes_count_the_slowest_lane_only():
+    clock = Clock()
+    eta = Eta(None, clock=clock)
+    eta.begin()
+    steps = [[["audio", "asr"], ["face"]], [["render"]]]
+    eta.plan(["audio", "asr", "face", "render"], VARIANTS, FEATS, steps=steps)
+    lane_a = eta._cost["audio"] + eta._cost["asr"]
+    assert abs(eta.remaining() - (max(lane_a, eta._cost["face"]) + eta._cost["render"])) < 1e-6
+    # 두 줄이 동시에 돈다: 얼굴 추적이 먼저 끝나도 남은 시간은 목소리 줄이 정한다
+    eta.start("audio")
+    eta.start("face")
+    clock.t += eta._cost["face"]        # 예상대로(같은 묶음 조정이 생기지 않게)
+    eta.update("face", 1.0)
+    eta.finish("face")
+    left = eta.remaining()
+    assert left >= eta._cost["asr"] + eta._cost["render"]
+    eta.update("audio", 1.0)
+    eta.finish("audio")
+    eta.start("asr")
+    clock.t += 50
+    eta.update("asr", 0.5)            # 절반을 50초에 → 남은 건 약 55초 + 렌더
+    assert abs(eta.remaining() - (55 + eta._cost["render"])) < 1

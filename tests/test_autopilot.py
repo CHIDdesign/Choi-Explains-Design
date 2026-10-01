@@ -110,6 +110,31 @@ def test_centered_speaker_is_reframed_for_callout():
     assert all(s["end"] - s["start"] >= 0.99 for s in ed.camera[:-1])
 
 
+def test_callouts_are_not_capped_by_punch_glides():
+    """콜아웃은 강조 글라이드(40초 간격)와 따로 20초 간격으로 — 레퍼런스의 얼굴+오버레이 비율(약 21%)에 가깝게.
+    글라이드가 없는 콜아웃은 등장에 작은 pop. 얼굴만 이어지는 가장 긴 구간을 통계로 남긴다."""
+    tm = TimeMap([Span(0, 120)])
+    moments = [Moment(t=float(t), end=t + 2.5, kind="punchline", intensity=2, word="핵심", callout=f"핵심 {t}")
+               for t in (10, 32, 54, 76, 98)]
+    face = [{"t": float(t), "x": 0.3, "y": 0.4, "s": 0.3} for t in range(120)]
+    ed = build_long_edit(timemap=tm, total=120.0, speech_total=120.0, graphics=[], chapters=[], moments=moments,
+                         cues=[], sentence_starts=list(range(0, 120, 8)), face=face)
+    assert len(ed.punches) == 3                                   # 글라이드는 40초 간격 그대로
+    starts = [round(c["start"] + 0.08) for c in ed.callouts]
+    assert starts == [10, 32, 54, 76, 98]                         # 콜아웃은 모두(20초 간격 이상)
+    no_glide = [t for t in starts if not any(abs(p["t"] - t) < 0.01 for p in ed.punches)]
+    assert no_glide and all(any(s["category"] == "pop" and abs(s["t"] - t) < 0.2 for s in ed.sfx) for t in no_glide)
+    assert ed.stats["callouts"] == 5 and 0 < ed.stats["max_face_run"] < 30
+
+
+def test_long_face_only_stretch_gets_a_gentle_framing_change():
+    """얼굴만 max_shot(30초) 넘게 이어지면 문장 시작에서 글라이드로 프레이밍을 한 번 바꾼다(컷 없음)."""
+    tm = TimeMap([Span(0, 70)])
+    shots = camera_plan(tm, 70.0, chapter_starts=[], covers=[], sentence_starts=list(range(0, 70, 5)))
+    assert len(shots) >= 2 and all(s["end"] - s["start"] <= PARAMS["max_shot"] + 1e-6 for s in shots)
+    assert all(s.get("glide", 0) > 0 for s in shots[1:])
+
+
 def test_camera_plan_merges_micro_shots():
     tm = TimeMap([Span(0, 4.6), Span(6.0, 15.4), Span(17.0, 17.2), Span(17.3, 30), Span(31, 40)])
     shots = camera_plan(tm, tm.duration, chapter_starts=[15.6], covers=[], sentence_starts=[2, 8, 12, 20, 25, 33])
@@ -610,3 +635,20 @@ def test_face_safe_puts_short_keywords_in_top_section_bar_when_head_is_low():
     gs = [_g("k", "keyword", 5, 9, "overlay", title="공원 속에 도로를 숨긴 방법")]
     st = face_safe_layouts(gs, tr(0.36, 0.3))                  # 머리가 위에 붙어 있음 → 옆 메모
     assert gs[0]["pip"]["side"] in ("left", "right") and st["top"] == 0
+
+
+def test_topic_tag_goes_to_first_face_only_window():
+    """'오늘의 주제'(논지 한 줄)는 타이틀 뒤 얼굴만 보이는 첫 빈 자리에 — 말에 맞춘 그래픽을 밀어내지 않는다."""
+    from studio import pipeline as pl
+    from studio.director.plan import TimedGraphic
+    p = object.__new__(pl.Pipeline)
+    p.plan_long = {"summary": "좋은 디자인은 해결책이 아니라 질문에서 시작한다. 그래서 오늘은"}
+    gs = [TimedGraphic("title", "title", "fullscreen", 1.3, 4.7, {}, 12, "auto"),
+          TimedGraphic("g0", "double_diamond", "fullscreen", 6.0, 11.1, {}, 6, "director"),
+          TimedGraphic("g1", "keyword", "split", 11.6, 15.9, {}, 5, "director")]
+    lt = p._lower_third(gs, after=4.7, total=60.0)
+    assert lt is not None and lt.start >= 15.9 and lt.end - lt.start >= 4.0
+    assert lt.data == {"subtitle": "오늘의 주제", "title": "좋은 디자인은 해결책이 아니라 질문에서 시작한다"}
+    assert p._lower_third(gs[:1], after=4.7, total=60.0).start == pytest.approx(5.5)   # 비어 있으면 타이틀 바로 뒤
+    assert pl.topic_line("디자인 과정에서 가장 많이 건너뛰는 단계가 사실은 가장 중요하다") == "디자인 과정에서 가장 많이 건너뛰는 단계가 사실은…"
+    assert pl.topic_line("짧다") == ""

@@ -18,8 +18,10 @@ import copy
 import datetime as dt
 import json
 import shutil
+import threading
 import time
 import traceback
+from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -73,7 +75,7 @@ from .text.align import ScriptAligner, build_utterances, norm
 from .text.takes import clean_words, vad_pause
 from .text.captions import cues_to_srt
 from .text.script import glossary_terms, parse_script
-from .util import (CancelToken, LogFn, file_fingerprint, fmt_ts, noop_log, read_json, slugify, text_hash,
+from .util import (CancelToken, Cancelled, LogFn, file_fingerprint, fmt_ts, noop_log, read_json, slugify, text_hash,
                    write_json)
 from .vision.face import track_faces
 
@@ -99,6 +101,38 @@ STAGES: list[tuple[str, str, float]] = [
 ]
 STAGE_LABEL = {k: v for k, v, _ in STAGES}
 EXTRAS = "부가자료"
+
+# 서로 기다릴 필요가 없는 단계는 동시에 돈다 — 칸(차례로) → 줄(동시에) → 단계(줄 안에서 차례로).
+#  · 얼굴 추적(영상 디코딩)은 목소리 다듬기 → 음성 인식(소리·GPU)과 함께
+#  · 🎬 AI 기획(네트워크)은 색보정 → 편집본 인코딩(GPU/CPU)과 함께 — 컷은 둘 다 끝난 뒤(_make_edit)
+#  · 🔎 편집 검사(Whisper)는 자료 사진 → 스톡(네트워크) · 효과음 준비 → 렌더 번들 미리 만들기와 함께
+#  · 렌더 중에 음향 믹스를 미리 만들어 두고(stage_render) 마스터링 단계는 합치기만 한다
+# STAGES 에 없는 키(bundle)는 화면·남은 시간에 나오지 않는 준비 작업이다(실패해도 작업은 계속).
+SCHEDULE: list[list[list[str]]] = [
+    [["probe"]],
+    [["audio", "asr"], ["face"]],
+    [["align"]],
+    [["director"], ["grade", "proxy"]],
+    [["verify"], ["broll", "stock"], ["sound", "bundle"]],
+    [["qa"]],
+    [["render"]],
+    [["master"]],
+    [["export"]],
+]
+PLAN_ONLY = ("probe", "audio", "asr", "face", "align", "grade", "director")
+
+
+def schedule_for(until: str = "all") -> list[list[list[str]]]:
+    """until='plan' 이면 기획까지만(편집본·렌더 없이)."""
+    if until != "plan":
+        return [[list(lane) for lane in st] for st in SCHEDULE]
+    out = []
+    for st in SCHEDULE:
+        lanes = [[k for k in lane if k in PLAN_ONLY] for lane in st]
+        lanes = [lane for lane in lanes if lane]
+        if lanes:
+            out.append(lanes)
+    return out
 
 
 @dataclass
@@ -249,6 +283,9 @@ class Pipeline:
         self.masters: list[dict] = []
         self.results: dict[str, Any] = {}
         self._render_prep: Optional[list[tuple[Path, str]]] = None
+        self._ai_lock = threading.RLock()       # 동시에 도는 단계가 AI 연결·스튜디오·효과음 라이브러리를 한 번만 만들게
+        self._sound_lock = threading.Lock()
+        self._mix_job: Optional[Future] = None  # 렌더 중에 미리 만드는 음향 믹스
 
     # ------------------------------------------------------------------
     def _log(self, msg: str) -> None:
@@ -295,14 +332,16 @@ class Pipeline:
                         thumbs=bool(self.spec.thumbnails),
                         video_s=sum(i.duration for i in self.infos.values()) or None)
 
-    def _eta_plan(self, keys: list[str]) -> None:
+    def _eta_plan(self, steps: list[list[list[str]]]) -> None:
+        steps = [[[k for k in lane if k in STAGE_LABEL] for lane in st] for st in steps]
+        keys = [k for st in steps for lane in st for k in lane]
         ai = self._use_api()
         gpu = gpu_expected(self.settings.whisper_device, self.log)
         variants = {"asr": "asr@gpu" if gpu else "asr@cpu", "verify": "verify@gpu" if gpu else "verify@cpu",
                     "director": "director@ai" if ai else "director@rule",
                     "qa": "qa@ai" if ai else "qa@rule",
                     "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
-        self.eta.plan(keys, variants, self._eta_features())
+        self.eta.plan(keys, variants, self._eta_features(), steps=steps)
 
     def _eta_refine(self) -> None:
         """편집본을 만든 뒤: 롱폼·숏폼 길이가 정해졌으니 렌더·믹스 시간을 다시 잡는다."""
@@ -317,41 +356,29 @@ class Pipeline:
         return lambda f: self._stage(key, f)
 
     def run(self, until: str = "all") -> dict[str, Any]:
-        """until='plan' 이면 기획까지만, 'all' 이면 렌더·마스터링·마무리까지."""
+        """until='plan' 이면 기획까지만, 'all' 이면 렌더·마스터링·마무리까지. 독립된 단계는 동시에(SCHEDULE)."""
         t0 = time.time()
         write_json(self.dir / "job.json", self.spec.to_dict())
-        steps: list[tuple[str, Callable[[], None]]] = [
-            ("probe", self.stage_probe), ("audio", self.stage_audio), ("face", self.stage_face),
-            ("asr", self.stage_asr), ("align", self.stage_align), ("grade", self.stage_grade),
-            ("director", self.stage_director),
-        ]
-        if until != "plan":
-            steps += [("proxy", self.stage_proxy), ("verify", self.stage_verify), ("broll", self.stage_broll),
-                      ("stock", self.stage_stock),
-                      ("sound", self.stage_sound), ("qa", self.stage_qa), ("render", self.stage_render),
-                      ("master", self.stage_master), ("export", self.stage_export)]
+        fns: dict[str, Callable[[], None]] = {k: getattr(self, f"stage_{k}") for k in STAGE_LABEL}
+        fns["proxy"] = self._encode_proxies          # 컷은 AI 기획과 편집본이 모두 끝난 뒤(_make_edit)
+        fns["bundle"] = self._prebundle
+        schedule = schedule_for(until)
         self.eta.begin()
         srcs = self.spec.sources()
         self.log(f"══ 작업 시작 {time.strftime('%Y-%m-%d %H:%M')} · 원본 {Path(srcs[0]).name}"
                  + (f" 외 {len(srcs) - 1}개" if len(srcs) > 1 else ""))
         try:
-            for key, fn in steps:
+            for step in schedule:
                 self.cancel.check()
-                self.log(f"━━ {STAGE_LABEL[key]}")
-                self.eta.start(key)
-                t_stage = time.time()
-                self._stage(key, 0.0)
-                fn()
-                self._stage(key, 1.0)
-                self.eta.finish(key)
-                self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
-                if key == "probe":
-                    self._eta_plan([k for k, _ in steps])
-                elif key == "proxy":
+                self._run_step(step, fns)
+                keys = {k for lane in step for k in lane}
+                if "probe" in keys:
+                    self._eta_plan(schedule)
+                elif "proxy" in keys:
+                    self._make_edit()
                     self._eta_refine()
-                elif key == "grade":
-                    self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
         except Exception as e:
+            self._drop_mix_job()
             tb = traceback.format_exc()
             self._log_file_only(tb)
             z = diag.write(self, error=f"{e}\n{tb}")
@@ -364,6 +391,62 @@ class Pipeline:
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}
         write_json(self.work / "result.json", res)
         return res
+
+    def _run_stage(self, key: str, fn: Callable[[], None]) -> None:
+        if key not in STAGE_LABEL:     # 보이지 않는 준비 작업: 실패해도 나중 단계가 다시 한다
+            try:
+                fn()
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                self._log_file_only(f"   (미리 준비 {key} 실패 — 나중에 다시 합니다: {e})")
+            return
+        self.cancel.check()
+        self.log(f"━━ {STAGE_LABEL[key]}")
+        self.eta.start(key)
+        t_stage = time.time()
+        self._stage(key, 0.0)
+        fn()
+        self._stage(key, 1.0)
+        self.eta.finish(key)
+        self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
+        if key == "grade":
+            self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
+
+    def _run_step(self, step: list[list[str]], fns: dict[str, Callable[[], None]]) -> None:
+        """한 칸: 줄이 하나면 그대로, 여럿이면 줄마다 스레드 하나(FFmpeg·Whisper·AI 호출은 GIL 밖에서 돈다).
+        한 줄이 실패하면 나머지 줄을 멈추고(취소 신호) 그 오류를 그대로 올린다."""
+        lanes = [lane for lane in step if lane]
+        if len(lanes) == 1:
+            for key in lanes[0]:
+                self._run_stage(key, fns[key])
+            return
+        shown = [" → ".join(STAGE_LABEL[k] for k in lane if k in STAGE_LABEL) for lane in lanes]
+        self._log_file_only("   (동시에: " + " ∥ ".join(x for x in shown if x) + ")")
+
+        first: list[BaseException] = []      # 먼저 난 오류(멈추게 한 뒤 다른 줄에서 따라 난 오류가 아니라 원인)
+        lock = threading.Lock()
+
+        def lane_fn(lane: list[str]) -> None:
+            try:
+                for key in lane:
+                    self._run_stage(key, fns[key])
+            except BaseException as e:
+                with lock:
+                    if not first and not (isinstance(e, Cancelled) or self.cancel.cancelled):
+                        first.append(e)
+                raise
+
+        with ThreadPoolExecutor(max_workers=len(lanes), thread_name_prefix="stage") as pool:
+            futs = [pool.submit(lane_fn, lane) for lane in lanes]
+            wait(futs, return_when=FIRST_EXCEPTION)
+            if first and not self.cancel.cancelled:
+                self.cancel.cancel()      # 함께 돌던 단계(인코딩·AI 호출 등)를 바로 멈춘다
+        errors = [f.exception() for f in futs if f.exception() is not None]
+        if first:
+            raise first[0]
+        if errors:
+            raise errors[0]
 
     # ------------------------------------------------------------------
     def stage_probe(self) -> None:
@@ -415,13 +498,14 @@ class Pipeline:
         write_json(self.work / "probe.json", {**asdict(self.info), "sources": self.smap.to_dict()})
 
     def _sound_lib(self, *, full: bool = True) -> SoundLibrary:
-        if self.sounds is None or (full and not getattr(self.sounds, "_full", False)):
-            lib = SoundLibrary(log=self.log)
-            lib.ensure(download=bool(getattr(self.settings, "download_sounds", True)), cancel=self.cancel,
-                       kinds=None if full else ("models",))
-            lib._full = full  # type: ignore[attr-defined]
-            self.sounds = lib
-        return self.sounds
+        with self._sound_lock:
+            if self.sounds is None or (full and not getattr(self.sounds, "_full", False)):
+                lib = SoundLibrary(log=self.log)
+                lib.ensure(download=bool(getattr(self.settings, "download_sounds", True)), cancel=self.cancel,
+                           kinds=None if full else ("models",))
+                lib._full = full  # type: ignore[attr-defined]
+                self.sounds = lib
+            return self.sounds
 
     def stage_audio(self) -> None:
         assert self.info
@@ -467,8 +551,8 @@ class Pipeline:
             return
         res = transcribe(self.work / "asr16k.wav", model_name=self.settings.whisper_model,
                          device=self.settings.whisper_device, compute_type=self.settings.whisper_compute,
-                         hint_terms=hints, duration=self.info.duration, log=self.log, progress=self._sp("asr"),
-                         cancel=self.cancel)
+                         batch_size=self.settings.whisper_batch, hint_terms=hints, duration=self.info.duration,
+                         log=self.log, progress=self._sp("asr"), cancel=self.cancel)
         res["key"] = key
         write_json(self.work / "transcript.json", res)
         self.log(f"인식 완료: {len(res['words'])}단어")
@@ -563,7 +647,8 @@ class Pipeline:
         if self.spec.lut or not self.spec.auto_grade:
             self.grade_info = {}
             return
-        kept = [u for u in self.utts if u.kept] or self.utts
+        # AI 기획과 동시에 돈다 — 편집 감독이 빼는 발화(director_drop)도 넣어 기획 결과와 상관없이 같은 표본·캐시 키
+        kept = [u for u in self.utts if u.kept or u.status == "director_drop"] or self.utts
         vt = [((u.start + u.end) / 2) for u in kept]
         cams = self.smap.cams
         times = {c.idx: self._grade_times(c, vt) for c in cams}
@@ -666,6 +751,10 @@ class Pipeline:
         return self.spec.use_claude and resolve_backend(self.settings)[0] != "none"
 
     def _client(self):
+        with self._ai_lock:
+            return self._client_locked()
+
+    def _client_locked(self):
         if self.claude is None:
             backend, why = resolve_backend(self.settings)
             if backend == "claude_code":
@@ -685,6 +774,10 @@ class Pipeline:
 
     def _ensure_studio(self) -> Optional[Studio]:
         """🎬 멀티 에이전트 스튜디오(Claude Code 구독 또는 API 키가 있을 때)."""
+        with self._ai_lock:
+            return self._ensure_studio_locked()
+
+    def _ensure_studio_locked(self) -> Optional[Studio]:
         if self.studio is not None:
             return self.studio
         if not (self._use_api() and self.spec.studio_mode):
@@ -911,6 +1004,11 @@ class Pipeline:
 
     # ------------------------------------------------------------------
     def stage_proxy(self) -> None:
+        """편집본: 카메라마다 프록시 인코딩 + 컷(기획이 끝난 뒤). run() 은 둘을 나눠, 인코딩은 AI 기획과 동시에 돌린다."""
+        self._encode_proxies()
+        self._make_edit()
+
+    def _encode_proxies(self) -> None:
         """카메라마다 편집용 프록시(CFR · 색보정 LUT · 디노이즈/샤픈). 0초 = 그 카메라의 첫 영상 프레임."""
         assert self.info
         height = proxy_height_for(self.info, self.spec.out_height)
@@ -938,6 +1036,10 @@ class Pipeline:
                         progress=lambda f, n=n: self._stage("proxy", 0.8 * (n + f) / len(cams)), cancel=self.cancel)
             keys[str(cam.idx)] = key
             write_json(self.media / "proxy.json", {"keys": keys, "height": height})
+
+    def _make_edit(self) -> None:
+        """기획(편집 감독의 drop · 숏폼 · 하이라이트)으로 keep 구간과 컷 목소리를 만든다."""
+        assert self.info
         self.base_keeps = self.smap.clamp_keeps(
             build_keeps(self.utts, pace=self._pace(), vad=self.vad, media_duration=self.info.duration, fps=self.fps,
                         exclude=self._removed_spans()), self.fps)
@@ -1051,7 +1153,8 @@ class Pipeline:
             wav = self.work / "verify16k.wav"
             self.ff.extract_audio(self.media / "long_voice.wav", wav, rate=16000, mono=True, cancel=self.cancel)
             res = transcribe(wav, model_name=self.settings.whisper_model, device=self.settings.whisper_device,
-                             compute_type=self.settings.whisper_compute, hint_terms=hints,
+                             compute_type=self.settings.whisper_compute, batch_size=self.settings.whisper_batch,
+                             hint_terms=hints,
                              duration=self.timemap.duration, log=lambda m: None,
                              progress=lambda f, r=rnd: self._stage("verify", (r - 1) * 0.5 + 0.45 * f),
                              cancel=self.cancel)
@@ -1361,9 +1464,6 @@ class Pipeline:
         t_title = max(0.2, t_title - 0.1)
         reserved.append(TimedGraphic("title", "title", "fullscreen", t_title, min(total, t_title + 3.4),
                                      {"title": self.title}, priority=12, source="auto"))
-        lt = t_title + 4.2
-        if lt + 4.5 < total:
-            reserved.append(TimedGraphic("lower", "lower_third", "overlay", lt, lt + 4.5, {}, priority=4, source="auto"))
         for c in chapters[1:]:
             if c["start"] < t_title + 4:
                 continue
@@ -1373,12 +1473,32 @@ class Pipeline:
                                          {"title": c["title"], "number": c["number"], "subtitle": c.get("claim", "")},
                                          priority=11, source="auto"))
         graphics = time_graphics(self.plan_long["graphics"], self.utts, tm, total=total, reserved=reserved)
+        lower = self._lower_third(graphics, after=min(total, t_title + 3.4), total=total)
+        if lower is not None:
+            graphics = sorted(graphics + [lower], key=lambda g: g.start)
         kept: list[TimedGraphic] = []
         for g in graphics:
             g.end = min(g.end, total - 0.1)
             if g.end - g.start >= 1.5:
                 kept.append(g)
         return kept, chapters
+
+    def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float) -> Optional[TimedGraphic]:
+        """타이틀 뒤 화자 이름 + '오늘의 주제'(셜록현준 레퍼런스: 이 영상이 답할 질문을 5~6초 한 줄로 — 총괄 감독의 논지).
+        얼굴만 보이는 첫 빈 자리(타이틀 뒤 60초 안, 4초 이상)에 둔다 — 예전엔 자리를 미리 잡아 두었다가 바로 뒤 그래픽에 밀려
+        대개 빠졌다. 말에 맞춘 그래픽을 밀어내지 않으므로 그래픽이 아주 촘촘하면(빈 자리가 없으면) 넣지 않는다."""
+        topic = topic_line(self.plan_long.get("summary", ""))
+        want, need = (5.6, 4.0) if topic else (4.5, 3.0)
+        t = after + 0.8
+        for a, b in sorted([(g.start, g.end) for g in graphics if g.end > after] + [(total - 0.3, total)]):
+            if t > after + 60.0:
+                return None
+            if a - 0.3 - t >= need:
+                return TimedGraphic("lower", "lower_third", "overlay", round(t, 3), round(min(t + want, a - 0.3), 3),
+                                    {"subtitle": "오늘의 주제", "title": topic} if topic else {}, priority=4,
+                                    source="auto")
+            t = max(t, b + 0.6)
+        return None
 
     def _prepare_render(self) -> list[tuple[Path, str]]:
         """폰트·그레인 준비 + 번들 public 에 연결할 큰 미디어 목록(한 번만)."""
@@ -1659,7 +1779,9 @@ class Pipeline:
                                  "moods": MOODS_LONG, "mood": self.plan_long.get("bgm_mood", ""), "short": False})
             self.log(f"✂️ 롱폼 편집: 샷 {ed.stats['shots']} · 전환 {ed.stats['transitions']} · 강조 글라이드 "
                      f"{ed.stats['punches']} · 강조 자막 {ed.stats['impact_captions']} · 효과음 {ed.stats['sfx']}"
-                     f" · 얼굴 화면 비율 {ed.stats['face_ratio'] * 100:.0f}%")
+                     f" · 콜아웃 {ed.stats['callouts']} · 얼굴 화면 비율 {ed.stats['face_ratio'] * 100:.0f}%"
+                     f" · 얼굴만 이어진 최장 {ed.stats['max_face_run']:.0f}초"
+                     + (f"(25초 넘는 곳 {ed.stats['face_runs_over_25s']}곳)" if ed.stats['face_runs_over_25s'] else ""))
         self.short_props: list[dict] = []
         short_pieces = getattr(self, "short_pieces", []) or []
         for i, (s, tm) in enumerate(zip(self.plan_shorts, getattr(self, "short_maps", [])), 1):
@@ -1724,12 +1846,31 @@ class Pipeline:
             name, total = labels[i]
             self._preview(ev["file"], f"{name} 렌더링 · {fmt_ts(fr / self.fps)} / {fmt_ts(total)}" if total else name)
 
+        self._start_mix_job()
         run_render(job, self.render_dir / "job.json", node=node, log=self.log, progress=self._sp("render"),
                    cancel=self.cancel, on_peek=on_peek)
 
     # ------------------------------------------------------------------
     def stage_master(self) -> None:
-        """🎚 음향: 컷 편집된 목소리 + 배경음악(자동 덕킹) + 효과음 → -14 LUFS 마스터 → 영상과 합치기."""
+        """🎚 음향: 컷 편집된 목소리 + 배경음악(자동 덕킹) + 효과음 → -14 LUFS 마스터 → 영상과 합치기.
+        믹스는 렌더하는 동안 미리 만들어 두었다(stage_render) — 여기서는 기다렸다가 영상과 합치기만."""
+        job, self._mix_job = self._mix_job, None
+        if job is not None:
+            job.result()
+        else:
+            self._mix_all(progress=lambda f: self._stage("master", 0.8 * f))
+        n = len(self.masters)
+        for k, m in enumerate(self.masters):
+            self.cancel.check()
+            mux_final(self.ff, m["raw"], m["mix"], m["dst"], log=self.log, cancel=self.cancel)
+            self.log(f"🎚 {m['name']}: 효과음 {m['n_sfx']}개 · 배경음악 "
+                     f"{m['bgm_title'] or '없음'} · -14 LUFS 마스터 → {m['dst'].name}")
+            self._stage("master", 0.8 + 0.2 * (k + 1) / max(1, n))
+        self.results["long"] = str(self.masters[0]["dst"]) if self.masters and not self.masters[0]["short"] else ""
+        self.results["shorts"] = [str(m["dst"]) for m in self.masters if m["short"]]
+
+    def _mix_all(self, progress: Callable[[float], None] = lambda f: None) -> None:
+        """편집 결정(효과음 큐 · 음악 스웰/교체/비우기)대로 목소리 + 음악 + 효과음 → 마스터 WAV(m['mix'])."""
         lib = self._sound_lib(full=True) if (self.spec.sfx or self.spec.music) else None
         n = len(self.masters)
         for k, m in enumerate(self.masters):
@@ -1761,15 +1902,37 @@ class Pipeline:
                                   playlist=[(str(t.path), t.lufs) for t in songs], switch_at=ed.bgm_switch)
             mix_wav = self.work / f"mix_{k}.wav"
             mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
-                      cancel=self.cancel)
-            mux_final(self.ff, m["raw"], mix_wav, m["dst"], log=self.log, cancel=self.cancel)
+                cancel=self.cancel)
+            m["mix"] = mix_wav
+            m["n_sfx"] = len(cues)
             m["bgm_title"] = (" / ".join(dict.fromkeys(t.credit for t in songs)) if track else
                               (Path(self.spec.bgm).name if self.spec.bgm else ""))
-            self.log(f"🎚 {m['name']}: 효과음 {len(cues)}개 · 배경음악 "
-                     f"{m['bgm_title'] or '없음'} · -14 LUFS 마스터 → {m['dst'].name}")
-            self._stage("master", (k + 1) / max(1, n))
-        self.results["long"] = str(self.masters[0]["dst"]) if self.masters and not self.masters[0]["short"] else ""
-        self.results["shorts"] = [str(m["dst"]) for m in self.masters if m["short"]]
+            progress((k + 1) / max(1, n))
+
+    def _start_mix_job(self) -> None:
+        """렌더(Chrome·인코더)가 도는 동안 음향 믹스(FFmpeg)를 옆에서 만든다 — 마스터링 단계가 합치기만 남는다."""
+        self._drop_mix_job()
+        if not self.masters:
+            return
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mix")
+        self._mix_job = pool.submit(self._mix_all)
+        pool.shutdown(wait=False)
+
+    def _drop_mix_job(self) -> None:
+        self._mix_job = None
+
+    def _prebundle(self) -> None:
+        """렌더 번들(webpack)을 편집 검사·자료 찾기와 함께 미리 만든다 — 검수 스틸과 본 렌더가 그대로 다시 쓴다
+        (렌더러 소스가 같으면 render.mjs 가 재사용하고, 그 사이 생긴 이미지·스톡은 public 동기화로 들어간다)."""
+        self._prepare_render()
+        rs = self.settings.render
+        job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=[], items=[],
+                        browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency,
+                        reuse_bundle=True)
+        t0 = time.time()
+        run_render(job, self.render_dir / "job_bundle.json", node=find_node(self.settings.node_path),
+                   log=self._log_file_only, cancel=self.cancel)
+        self._log_file_only(f"   (렌더 번들 미리 만들기 {time.time() - t0:.1f}s)")
 
     def _cam_at(self, t: float):
         """가상 시각 t 에 롱폼이 쓰는 카메라(원본이 여러 개일 때)."""
@@ -1945,6 +2108,17 @@ class Pipeline:
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
+
+
+def topic_line(text: str, limit: int = 28) -> str:
+    """'오늘의 주제' 한 줄: 논지의 첫 문장, 길면 어절 경계에서 자른다(끝 마침표 없이). 너무 짧거나 비면 ''."""
+    import re
+    first = re.split(r"(?<=[.!?。])\s+|\n", (text or "").strip())[0].strip().rstrip(".。")
+    if len(first) <= limit:
+        return first if len(first) >= 6 else ""
+    cut = first[:limit + 1]
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp >= limit * 0.6 else first[:limit]).rstrip(" ,·") + "…"
 
 
 def template_names() -> list[str]:

@@ -626,6 +626,7 @@ PIP_TEMPLATES = ("photo", "broll", "keyword", "definition", "quote", "stat")
 TOPBAR_MAX_CHARS = 16          # 이보다 짧은 키워드(보조문 없음)는 화면 위 소제목 바
 TOPBAR_CLEAR = 230             # 머리 위가 이만큼(px) 비어 있어야 소제목 바
 TOPBAR_W, TOPBAR_H = 1240, 120
+TOPBAR_MIN_HOLD = 4.5          # 소제목 바는 적어도 이만큼(레퍼런스 실측: 섹션 태그 4~6초) — 다음 그래픽 앞까지만
 
 
 def _head_half_width(s: float, H: int) -> float:
@@ -659,6 +660,8 @@ def face_safe_layouts(gdicts: list[dict[str, Any]], face: list[dict[str, Any]], 
             head_top = min(f["y"] * H - f["s"] * H * 0.95 for f in sub)
             if head_top >= TOPBAR_CLEAR:
                 g["pip"] = {"side": "top", "w": TOPBAR_W, "h": TOPBAR_H}
+                nxt = min([o["start"] for o in gdicts if o is not g and o["start"] > g["start"]], default=face[-1]["t"])
+                g["end"] = round(max(g["end"], min(g["start"] + TOPBAR_MIN_HOLD, nxt - 0.3, face[-1]["t"])), 3)
                 stats["placed"] += 1
                 stats["top"] = stats.get("top", 0) + 1
                 continue

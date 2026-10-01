@@ -31,8 +31,9 @@ type Props = {
  *  paper       : 사용자 템플릿 — 흰 종이 박스 + 검은 글자, 핵심어 어간만 굵게. 한두 마디씩 빠르게 바뀐다. 기본값.
  * 공통: 강조어 1개(밑줄 스윕/형광 마커/숫자), 이어지는 큐는 애니메이션 없이 교체(과잉 모션 방지).
  * hidden 큐(화면 그래픽·콜아웃이 같은 말을 이미 보여 줄 때)는 그리지 않는다(SRT 에는 남음).
+ * 자리·크기: 레퍼런스 실측(상자 아래 끝 화면 95%, 글자 높이 3.3~3.8%) — 바닥에서 56px, 종이 자막 43px(예전 70px·46px).
  */
-export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, centerX, frameW = 1920, bottom = 70,
+export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, centerX, frameW = 1920, bottom = 56,
   plain = false}) => {
   const i = lastIndexAtOrBefore(cues, t, (c) => c.start);
   if (i < 0) return null;
@@ -65,7 +66,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
 
   if (preset === 'paper') {
     return <PaperCaption cue={cue} local={local} remain={remain} joinPrev={joinPrev} joinNext={joinNext}
-      left={cx - frameW / 2} width={frameW} bottom={bottom} plain={plain} accent={theme.accent} />;
+      left={cx - frameW / 2} width={frameW} bottom={bottom} plain={plain} accent={theme.accent} size={43} />;
   }
 
   if (cue.style === 'impact' && !plain) {
