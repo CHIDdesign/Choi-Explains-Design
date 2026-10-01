@@ -35,7 +35,7 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
               ) : null}
             </div>
           ) : null}
-          <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} />
+          <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} onPaper />
         </div>
       );
     }

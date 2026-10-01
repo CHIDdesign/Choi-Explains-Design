@@ -193,11 +193,12 @@ export const KeywordSlam: React.FC<{keyword: string; sub?: string; f: number; W:
 };
 
 /** 우하단 출처(레퍼런스: "출처:…" 작게, 사진 위) */
-export const CornerCredit: React.FC<{text: string; opacity?: number}> = ({text, opacity = 1}) => (
+export const CornerCredit: React.FC<{text: string; opacity?: number; onPaper?: boolean}> = ({text, opacity = 1,
+  onPaper = false}) => (
   text ? (
     <div style={{position: 'absolute', right: 40, bottom: 22, fontFamily: FONT.sans, fontWeight: 500, fontSize: 20,
-      color: 'rgba(255,255,255,0.86)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', opacity,
-      textShadow: '0 1px 6px rgba(0,0,0,0.6)'}}>
+      color: onPaper ? NOTE.inkSoft : 'rgba(255,255,255,0.86)', letterSpacing: '-0.01em', whiteSpace: 'nowrap', opacity,
+      textShadow: onPaper ? undefined : '0 1px 6px rgba(0,0,0,0.6)'}}>
       {text.startsWith('출처') ? text : `출처: ${text}`}
     </div>
   ) : null
