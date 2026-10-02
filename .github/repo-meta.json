@@ -1,0 +1,5 @@
+{
+  "description": "토킹헤드 원본 + 대본 → 유튜브 롱폼·숏폼. Claude 가 조사·기획·컷·자료·검수를 총괄하는 Windows 영상 편집 오토파일럿 — 모던 모션 그래픽(Remotion) · 비파괴 컷 편집 · 자동 색보정·음향",
+  "homepage": "",
+  "topics": ["video-editing", "youtube", "motion-graphics", "remotion", "claude", "whisper", "python", "windows", "autopilot"]
+}
