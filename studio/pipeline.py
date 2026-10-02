@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import threading
@@ -1180,8 +1181,9 @@ class Pipeline:
             backend, why = resolve_backend(self.settings)
             if backend == "claude_code":
                 exe = find_claude(self.settings.claude_code_path) or "claude"
+                from .director.claude_code import scratch_dir
                 self.claude = ClaudeCodeClient(exe, self.settings.claude_model, self.settings.claude_effort,
-                                               log=self.log, workdir=self.work / "claude_code")
+                                               log=self.log, workdir=scratch_dir(self.work.parent.name))
                 self.log(f"AI 연결: Claude Code(Pro/Max 구독 사용량) · {exe}")
             else:
                 self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
@@ -1363,7 +1365,8 @@ class Pipeline:
             return {}
         rs = self.settings.render
         return capture_refs(slugs, node=find_node(self.settings.node_path), browser_executable=rs.browser_executable,
-                            gl=rs.gl, work=self.work, log=self.log, cancel=self.cancel)
+                            gl=rs.gl, work=self.work, log=self.log, cancel=self.cancel,
+                            ignore_cert_errors=os.environ.get("CHOI_IGNORE_CERT") == "1")   # 프록시 인증서 시험 환경용
 
     def _auto_photos(self) -> None:
         """대본·전사의 고유명사(라틴 문자 이름 · 『』《》 제목 · 종교)를 규칙으로 찾아 photo 그래픽(wiki=True)으로 더한다 —

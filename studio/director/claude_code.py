@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import queue
 import shutil
@@ -29,6 +30,20 @@ from ..util import CancelToken, LogFn, noop_log
 from .claude import DirectorError, extract_json
 
 # 구독 로그인 대신 API 키로 과금되게 만드는 환경변수(실행할 때 뺀다)
+def scratch_dir(tag: str) -> Path:
+    """CLI 를 돌릴 작업 폴더 — **설치·저장소 폴더 밖**(시스템 임시 폴더). Claude Code 는 현재 폴더에서 위로 올라가며
+    CLAUDE.md·.claude/ 를 자동으로 읽어 매 호출의 컨텍스트에 넣는다: 설치 폴더 안(projects/<job>/work)에서 부르면
+    개발 메모 CLAUDE.md(약 3만 토큰)가 모든 에이전트 호출에 딸려 들어가 "너는 이 저장소의 코딩 비서"를 먼저 읽었다
+    (2026-10-02 측정: 저장소 안 35,505 토큰 · 빈 폴더 1,733 토큰)."""
+    import tempfile
+    d = Path(tempfile.gettempdir()) / "choi_studio" / "claude_code" / re.sub(r"[^A-Za-z0-9_.-]+", "_", tag)[:60]
+    d.mkdir(parents=True, exist_ok=True)
+    stray = [p / "CLAUDE.md" for p in (d, *d.parents) if (p / "CLAUDE.md").exists()]
+    if stray:
+        raise RuntimeError(f"CLI 작업 폴더 위에 CLAUDE.md 가 있습니다(에이전트 컨텍스트에 섞입니다): {stray[0]}")
+    return d
+
+
 STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 # 오래된 Claude Code 에 없을 수 있는 선택 옵션(모르는 옵션이라고 하면 빼고 다시 실행)
 OPTIONAL_FLAGS = ("--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence")
@@ -131,7 +146,7 @@ class ClaudeCodeClient:
         self.model = model
         self.effort = effort
         self.log = log
-        self.workdir = Path(workdir) if workdir else Path.cwd()
+        self.workdir = Path(workdir) if workdir else scratch_dir("default")
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self.usage: list[dict] = []
