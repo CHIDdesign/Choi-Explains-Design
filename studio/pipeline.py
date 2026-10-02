@@ -1232,8 +1232,10 @@ class Pipeline:
         use_api = self._use_api()
         studio = self._ensure_studio()
         raw_long = raw_shorts = None
+        reused = False
         if self.spec.reuse_plan and saved.get("key") == key and saved.get("long"):
             self.log("기획: 저장된 계획 사용")
+            reused = True
             raw_long, raw_shorts = saved["long"], {"shorts": saved.get("shorts", [])}
             self.director_name = saved.get("director", "saved")
         elif studio is not None:
@@ -1295,8 +1297,10 @@ class Pipeline:
             raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
-        self._check_cards(tm0)
-        self._lint_motion(tm0)
+        # 저장된 계획은 검사 → 수정 → 검수(아트 디렉터)를 이미 거쳤다 — 다시 고치면 검수가 고친 장면을 되돌리고
+        # 검수 캐시까지 깨진다(재실행마다 모션 디자이너·아트 디렉터를 다시 부르던 것). 검사만 다시 하고 기록한다.
+        self._check_cards(tm0, revise=not reused)
+        self._lint_motion(tm0, revise=not reused)
         self._auto_photos()
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
@@ -1393,7 +1397,7 @@ class Pipeline:
         if added:
             self.log("📷 고유명사 자료 사진(위키백과) 후보: " + " · ".join(added[:8]))
 
-    def _check_cards(self, tm: TimeMap) -> None:
+    def _check_cards(self, tm: TimeMap, revise: bool = True) -> None:
         """🃏 자유 HTML 카드의 렌더 전 검사(renderer/scripts/check.mjs — 글꼴·넘침·크기·대비·런타임 오류).
         실패하면 카드 디자이너가 한 번 고치고(검사 결과를 그대로 줌), 그래도 실패하면 키워드 카드로 대체한다.
         결과는 plan.long.card_checks 에 남는다."""
@@ -1417,7 +1421,7 @@ class Pipeline:
         out_dir = self.work / "cards"
         self.log(f"🃏 카드 {len(cards)}개 렌더 전 검사(글꼴·넘침·크기·대비)")
         results: dict[str, dict] = {}
-        studio = self._ensure_studio()
+        studio = self._ensure_studio() if revise else None
         for rnd in range(2):
             todo = [g for g in cards if not results.get(g["card"]["id"], {}).get("ok")]
             if not todo:
@@ -1455,7 +1459,7 @@ class Pipeline:
             g.pop("card", None)
         self.plan_long["card_checks"] = {cid: {"ok": r["ok"], "problems": r["problems"][:6]} for cid, r in results.items()}
 
-    def _lint_motion(self, tm: TimeMap) -> None:
+    def _lint_motion(self, tm: TimeMap, revise: bool = True) -> None:
         """🎨 모션 장면 타이밍·구도 린트(studio/motion/lint.py, docs/upgrade/06c 4장) — 렌더 전, 스펙과 실제 단어 시각만으로.
         error(0.5초 빈 무대 · 채움 · 작은 글자 · 정지 시간 · 동시 등장 · pop · 말보다 늦음)가 있으면 모션 디자이너가 위반 목록을 받아
         한 번 고치고(Studio.revise_scene), 그래도 남으면 규칙 보정(작은 글자 키우기)만 하고 그대로 둔다 — 결과는
@@ -1485,19 +1489,14 @@ class Pipeline:
         studio = self._ensure_studio() if self.spec.studio_mode else None
         results: dict[str, dict] = {}
         todo = []
-        # 이미 한 번 고친 장면(저장된 계획의 같은 스펙)은 다시 부르지 않는다 — 재실행마다 모션 디자이너를 부르고 그래픽이
-        # 바뀌어 검수 캐시까지 깨지던 것
-        prev = ((read_json(self.work / "plan.json", {}).get("long") or {}).get("motion_checks") or {})
-        spec_key = lambda g: text_hash(json.dumps(g["spec"], ensure_ascii=False, sort_keys=True))
         for i, g in scenes:
             issues, dur, _ = check(g)
-            p = prev.get(f"g{i}") or {}
-            if dur and mlint.errors(issues) and p.get("revised") and p.get("spec") == spec_key(g):
-                results[f"g{i}"] = dict(p)
-            elif dur and mlint.errors(issues):
+            if dur and mlint.errors(issues) and revise:
                 todo.append((i, g, issues, dur))
             else:
-                results[f"g{i}"] = {"ok": True, "errors": [], "warns": sorted({x.rule for x in issues})}
+                errs = mlint.errors(issues) if dur else []
+                results[f"g{i}"] = {"ok": not errs, "errors": [x.rule for x in errs],
+                                    "warns": sorted({x.rule for x in issues if x.level == "warn"})}
         if todo:
             self.log(f"🎨 모션 장면 {len(scenes)}개 타이밍 린트: 고칠 것 {len(todo)}개"
                      + (" → 모션 디자이너 수정" if studio else " → 규칙 보정"))
@@ -1534,8 +1533,7 @@ class Pipeline:
                         issues, _, _ = check(g)
                 errs = mlint.errors(issues)
                 results[f"g{i}"] = {"ok": not errs, "errors": [x.rule for x in errs],
-                                    "warns": sorted({x.rule for x in issues if x.level == "warn"}), "revised": True,
-                                    "spec": spec_key(g)}
+                                    "warns": sorted({x.rule for x in issues if x.level == "warn"}), "revised": True}
                 if errs:
                     self._log_file_only(f"   (모션 g{i} 남은 위반: {', '.join(mlint.describe(errs))[:300]})")
         bad = sum(1 for r in results.values() if not r["ok"])
