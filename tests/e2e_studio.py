@@ -121,7 +121,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     if agent == "setpiece":    # 🛠 시그니처 장면 하나 — 검사를 통과한 예제 카드를 그대로
         assert "## 이번 장면" in instruction and "🔎 주제 조사 노트" in json.dumps(body, ensure_ascii=False)
         assert n_images == 1 and "## 모션 레퍼런스" in instruction, (n_images, instruction[-300:])   # 레퍼런스 프레임 시트
-        ex = next(iter(CARD_EXAMPLES.values()))
+        ex = CARD_EXAMPLES["slam_minimal"]
         return {"layout": "fullscreen", "style": ex.get("style") or "editorial", "title": "근접성 재현",
                 "html": ex["html"], "start_word": "", "notes": "조사 노트의 근접성 은유"}
     segs = _segs(body)
@@ -194,12 +194,15 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images == 1, (n_images, instruction[:300])
         spec = copy.deepcopy(EXAMPLES["fixation_two_groups"])
         card = CARD_EXAMPLES["slam_minimal"]["html"]   # 글자가 적어(35자) 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
+        # 🎨 트리트먼트의 시그니처 장면 구간(S{s_ask})은 🛠 빌더 몫 — 지시에 그 구간이 적혀 있으면 카드를 내지 않는다(진짜 모션 디자이너처럼)
+        sig = f"S{s_ask}–S{s_ask}" in instruction and "시그니처 장면 구간" in instruction
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
                                             "title": "근접성", "spec_json": json.dumps(spec, ensure_ascii=False),
                                             "reason": "모이는 움직임이 곧 설명"}],
                 # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
-                "cards": [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen", "style": "editorial",
-                           "title": "문제를 정의하라", "html": card, "reason": "한 문장 한 방"}]}
+                "cards": [] if sig else [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen",
+                                          "style": "editorial", "title": "문제를 정의하라", "html": card,
+                                          "reason": "한 문장 한 방"}]}
     if agent == "card_revise":
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
         return {"html": m.group(1) if m else "", "changes": "지적대로 수정"}
@@ -641,7 +644,8 @@ def main() -> int:
     assert ch2["data"]["subtitle"] == "해결책보다 질문이 먼저다", ch2["data"]
     assert plan["long"]["chapters"][1].get("claim") == "해결책보다 질문이 먼저다", plan["long"]["chapters"]
     grade_info = json.loads((job / "work" / "grade.json").read_text(encoding="utf-8"))
-    assert grade_info["choice"]["look"] == "warm_film" and grade_info["choice"]["by"] == "ai", grade_info["choice"]
+    # 컬러리스트(가짜)는 warm_film 을 고르지만 색 막대 원본은 채도가 커서(C > 22) 따뜻한 방 상한(WP11 clamp_to_scene)이 natural 로 낮춘다
+    assert grade_info["choice"]["look"] in ("warm_film", "natural") and grade_info["choice"]["by"] == "ai", grade_info["choice"]
     assert (job / "media" / "grade.cube").exists() and (out / "부가자료" / "색보정_전후.jpg").exists()
 
     plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
@@ -663,12 +667,17 @@ def main() -> int:
         and st["rungs"].get("code_drawn") == 1 and st["rungs"].get("stock") == 2, st
     evs = [g for g in lp["graphics"] if g["template"] == "evidence"]
     print("증거 그래픽:", [(g["id"], g["data"].get("treatment"), round(g["start"], 1), round(g["end"], 1)) for g in evs])
-    hero = next(g for g in evs if g["data"].get("treatment") == "hero")
+    # 화자 자료(크림 종이 위 스케치)는 바탕이 고르니 오려서 콜라주로(디자인 v3) — 예전엔 hero
+    hero = next(g for g in evs if g["data"].get("treatment") in ("hero", "collage"))
     a0 = hero["data"]["assets"][0]
     assert (job / "render" / "public_src" / a0["src"]).exists() and a0["tier"] == "own", hero
     assert hero["data"]["title"] == "해결책부터 그린 손" and hero["data"]["caption"] == "2학년 과제 · 2024", hero["data"]
-    assert any(g["data"].get("archive", {}).get("variant") == "source" for g in evs), evs
-    assert (out / "부가자료" / "자료_대장.csv").exists() and "Jansson" in upload, upload[-600:]
+    # 출처 카드는 계획에 있다 — 이 합성 대본은 챕터 카드·출처·화자 자료가 3초 문장 둘에 몰려, 밀려 온 출처 카드는 제 시각의
+    # 화자 자료에 자리를 내준다(plan.resolve_overlaps: 제 문장의 자료가 이긴다)
+    assert any((g.get("archive") or {}).get("variant") == "source" for g in plan["long"]["graphics"]), evs
+    assert (out / "부가자료" / "자료_대장.csv").exists()
+    if any((g["data"].get("archive") or {}).get("variant") == "source" for g in evs):   # 화면에 나간 자료만 출처에 오른다
+        assert "Jansson" in upload, upload[-600:]
     longs = [f for f in files if f.startswith("1_롱폼") and f.endswith(".mp4")]
     shorts = [f for f in files if "숏폼" in f and f.endswith(".mp4")]
     assert len(longs) == 1 and len(shorts) == 2, files
@@ -688,8 +697,8 @@ def main() -> int:
     before = len(load_calls())
     logs: list[str] = []
     p2 = pl.Pipeline(spec, settings, job, log=logs.append)
-    for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_align, p2.stage_face, p2.stage_grade,
-               p2.stage_director, p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
+    for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_face, p2.stage_research, p2.stage_align,
+               p2.stage_grade, p2.stage_director, p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
         fn()
     assert len(load_calls()) == before, load_calls()[before:]
     assert any("이전 검수 결과 사용" in m for m in logs), logs[-10:]

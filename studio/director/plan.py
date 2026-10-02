@@ -966,7 +966,22 @@ def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optiona
             last.end = g.start
             out.append(g)
             continue
-        if g.priority > last.priority and g.start - last.start >= min_last * 0.8:
+        if (g.template in EVIDENCE and last.template in EVIDENCE and orig.get(id(g), g.start) == g.start
+                and orig.get(id(last), last.start) != last.start and g.priority >= last.priority - 1):
+            # 밀려 온 자료가 제 문장의 자료를 밀어내지 않는다 — 제 시각의 자료가 이기고, 밀려 온 것은 그 뒤로(자리가 없으면 빠진다)
+            if g.start - last.start >= min_last * 0.8:
+                last.end = g.start
+                out.append(g)
+            else:
+                out[-1] = g
+                defer(last, g.end + gap)
+        elif (g.template in EVIDENCE and last.template in EVIDENCE and g.priority >= last.priority
+                and g.start - last.start >= min_last and orig.get(id(g), g.start) == g.start):
+            # 실물 자료끼리: 자료는 자기 문장의 것 — 앞 자료가 최소 시간을 채웠으면 다음 문장의 자료가 들어올 때 끝난다
+            # (읽을 시간으로 늘어난 앞 자료가 다음 문장의 자료를 밀어내 결국 버려지던 것)
+            last.end = g.start
+            out.append(g)
+        elif g.priority > last.priority and g.start - last.start >= min_last * 0.8:
             last.end = g.start - gap
             out.append(g)
         elif g.priority > last.priority:

@@ -1485,9 +1485,16 @@ class Pipeline:
         studio = self._ensure_studio() if self.spec.studio_mode else None
         results: dict[str, dict] = {}
         todo = []
+        # 이미 한 번 고친 장면(저장된 계획의 같은 스펙)은 다시 부르지 않는다 — 재실행마다 모션 디자이너를 부르고 그래픽이
+        # 바뀌어 검수 캐시까지 깨지던 것
+        prev = ((read_json(self.work / "plan.json", {}).get("long") or {}).get("motion_checks") or {})
+        spec_key = lambda g: text_hash(json.dumps(g["spec"], ensure_ascii=False, sort_keys=True))
         for i, g in scenes:
             issues, dur, _ = check(g)
-            if dur and mlint.errors(issues):
+            p = prev.get(f"g{i}") or {}
+            if dur and mlint.errors(issues) and p.get("revised") and p.get("spec") == spec_key(g):
+                results[f"g{i}"] = dict(p)
+            elif dur and mlint.errors(issues):
                 todo.append((i, g, issues, dur))
             else:
                 results[f"g{i}"] = {"ok": True, "errors": [], "warns": sorted({x.rule for x in issues})}
@@ -1527,7 +1534,8 @@ class Pipeline:
                         issues, _, _ = check(g)
                 errs = mlint.errors(issues)
                 results[f"g{i}"] = {"ok": not errs, "errors": [x.rule for x in errs],
-                                    "warns": sorted({x.rule for x in issues if x.level == "warn"}), "revised": bool(new)}
+                                    "warns": sorted({x.rule for x in issues if x.level == "warn"}), "revised": True,
+                                    "spec": spec_key(g)}
                 if errs:
                     self._log_file_only(f"   (모션 g{i} 남은 위반: {', '.join(mlint.describe(errs))[:300]})")
         bad = sum(1 for r in results.values() if not r["ok"])
