@@ -1,10 +1,9 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {cameraAt, punchFactor} from '../../compositions/LongForm';
-import {useFontForText} from '../../design/fonts';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
-import {FONT, HOUSE, makeTheme, paperShadow, rgba} from '../../design/tokens';
+import {FONT, makeTheme, MODERN, softShadow} from '../../design/tokens';
 import {fitSize} from '../../lib/fit';
 import {lastIndexAtOrBefore, sampleFace, toFrame} from '../../lib/time';
 import type {CaptionCue, Graphic, ShortBeat, ShortProps} from '../../lib/types';
@@ -24,12 +23,12 @@ import type {Rect} from '../TalkingHead';
  *  · 이음새: 한두 마디씩 아주 굵은 흰 자막(검은 외곽선·그림자)
  *  · 첫 2.2초(사진·스톡이 있을 때만): 흰 화면에 카드 여러 장이 부채꼴로 겹치고 큰 제목(훅) → 카드가 위로 모이며
  *    얼굴이 올라온다. 없으면 첫 프레임부터 위 카드 + 얼굴
- *  · 개념 텍스트의 핵심어에는 형광펜(다른 참고 릴스)
+ *  · 개념 텍스트의 핵심어는 이탤릭 세리프 강조 어절(디자인 v4 모던 모션 — 종이 질감·형광펜 없음)
  */
 const SEAM = 830;
 const FACE: Rect = {x: 0, y: SEAM, w: 1080, h: 1920 - SEAM};
 const CARD = {x: 50, y: 70, w: 980, h: 720};
-const BG = '#F5F5F3';
+const BG = MODERN.bg;
 
 type Slide = {start: number; end: number; kind: 'graphic' | 'beat' | 'title'; g?: Graphic; b?: ShortBeat};
 
@@ -79,9 +78,9 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
       <>
         <MediaFill src={src} video={video} f={f} dur={dur} />
         {g.data.title ? (
-          <div style={{position: 'absolute', left: 28, bottom: 26, background: 'rgba(17,17,20,0.82)', color: '#fff',
-            fontFamily: FONT.sans, fontWeight: 700, fontSize: 32, padding: '6px 16px 8px', borderRadius: 12,
-            opacity: tween(f, 8, 10)}}>{g.data.title}</div>
+          <div style={{position: 'absolute', left: 28, bottom: 26, background: MODERN.card, color: MODERN.ink,
+            fontFamily: FONT.sans, fontWeight: 600, fontSize: 30, padding: '10px 20px 12px', borderRadius: 999,
+            boxShadow: softShadow(1), opacity: tween(f, 8, 10)}}>{g.data.title}</div>
         ) : null}
       </>
     );
@@ -90,9 +89,9 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
     // 도식·목록·모션: 크림 종이 한 장(F-12, docs/upgrade/06 9장 규칙 6 — 앱 창 장식·신호등 점·카드 안의 카드·내부 이름 라벨 없음)
     const Comp = TEMPLATE_COMPONENTS[g.template];
     if (!Comp) return null;
-    const surf = mkSurface(theme, 'paper');
+    const surf = mkSurface(theme, 'modern');
     return (
-      <div style={{position: 'absolute', inset: 0, background: HOUSE.paper}}>
+      <div style={{position: 'absolute', inset: 0, background: MODERN.card}}>
         <div style={{position: 'absolute', left: 40, top: 40, width: CARD.w - 80, height: CARD.h - 80}}>
           <Comp id={g.id} data={g.data} frame={f} dur={dur} fps={fps} theme={theme} surface={surf}
             box={{w: CARD.w - 80, h: CARD.h - 80}} layout="split" brand={props.brand} episode={props.episode} />
@@ -132,13 +131,6 @@ const titleAccent = (props: ShortProps, line: string, i: number, n: number): str
 };
 
 /** 명조로 그릴 수 있는 글자 전부(자막·개념 텍스트·그래픽 제목) — 렌더 전에 받아 둔다 */
-const serifText = (props: ShortProps): string => {
-  const parts = [props.hookTitle, props.seriesLabel, ...(props.beats ?? []).flatMap((b) => [b.text, b.label ?? '']),
-    ...props.captions.flatMap((c) => c.lines.flat().map((w) => w.text)),
-    ...props.graphics.flatMap((g) => [g.data.title ?? '', g.data.body ?? '', g.data.subtitle ?? ''])];
-  return Array.from(new Set(parts.join('').split(''))).join('');
-};
-
 /** 한두 마디씩, 아주 굵은 흰 글씨 + 검은 외곽선·그림자(참고 릴스 자막) */
 const SeamCaption: React.FC<{cues: CaptionCue[]; t: number; fps: number; y: number; accent: string;
   onLight?: boolean}> = ({cues, t, fps, y, accent, onLight = false}) => {
@@ -188,7 +180,7 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
         const src = mediaOf(g)!;
         return (
           <div key={g.id} style={{position: 'absolute', left: 540 - w / 2 + (i - 1) * 70, top: 470 + i * 26, width: w,
-            height: h, borderRadius: 26, overflow: 'hidden', boxShadow: paperShadow(2), background: '#ddd',
+            height: h, borderRadius: 26, overflow: 'hidden', boxShadow: softShadow(3), background: '#ddd',
             rotate: `${interpolate(p, [0, 1], [tilts[i] + 8, tilts[i]])}deg`, opacity: p,
             translate: `0 ${interpolate(p, [0, 1], [80, 0])}px`}}>
             {g.template === 'broll' && g.data.kind === 'video'
@@ -201,8 +193,8 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
         {props.seriesLabel ? <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 34,
           color: '#6B6B70', marginBottom: 20}}>{props.seriesLabel}</div> : null}
         {lines.map((l, i) => (
-          <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: size, lineHeight: 1.18,
-            letterSpacing: '-0.01em', color: INK, whiteSpace: 'nowrap',
+          <div key={i} style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: size, lineHeight: 1.1,
+            letterSpacing: '-0.035em', color: INK, whiteSpace: 'nowrap',
             translate: `0 ${interpolate(tween(frame, 2 + i * 3, 12), [0, 1], [24, 0])}px`,
             opacity: tween(frame, 2 + i * 3, 10)}}>
             <Highlighted text={l} accent={titleAccent(props, l, i, lines.length)} p={tween(frame, 10 + i * 4, 14)}
@@ -215,12 +207,11 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
 };
 
 export const ReelShort: React.FC<ShortProps> = (props) => {
-  useFontForText('700 40px "Noto Serif KR"', useMemo(() => serifText(props), [props]));
   const frame = useCurrentFrame();
   const {fps, durationInFrames} = useVideoConfig();
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
-  const marker = rgba(theme.accent, 0.3);
+  const marker = theme.accentDeep;            // v4: 강조 어절은 짙은 디자인 색 이탤릭(형광펜 없음)
   const face = sampleFace(props.face, t);
   const zoom = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
   // 사진·스톡이 있으면 첫 2.2초는 부채꼴 카드 + 큰 제목, 없으면 첫 프레임부터 위 카드 + 얼굴
@@ -238,7 +229,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
   return (
     <AbsoluteFill style={{background: BG}}>
       <div style={{position: 'absolute', left: 0, top: 0, width: 1080, height: SEAM + 40,
-        background: `linear-gradient(180deg, #E9E9E6 0%, ${BG} 18%, ${BG} 100%)`}} />
+        background: `linear-gradient(180deg, ${theme.accentTint}55 0%, ${BG} 22%, ${BG} 100%)`}} />
       {/* 위 카드: 새 카드가 살짝 아래에서 올라오며 앞 카드를 덮는다 */}
       {si >= 0 && mediaOf(slides[si].g) ? (
         // 사진·스톡 카드 뒤에는 같은 사진을 흐리게 깐다(참고 채널: 스크린샷 카드 + 흐린 자기 복제)
@@ -268,7 +259,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
         const leaving = i < si;
         return (
           <div key={`${i}-${s.start}`} style={{position: 'absolute', left: CARD.x, top: CARD.y, width: CARD.w, height: CARD.h,
-            borderRadius: 30, overflow: 'hidden', boxShadow: paperShadow(2), background: HOUSE.paper,
+            borderRadius: 30, overflow: 'hidden', boxShadow: softShadow(3), background: MODERN.card,
             opacity: leaving ? 1 : p * k, rotate: `${leaving ? 0 : interpolate(p, [0, 1], [seedTilt + 1.5, 0])}deg`,
             scale: `${leaving ? interpolate(tween((t - slides[si].start) * fps, 0, 14), [0, 1], [1, 0.96]) : interpolate(p, [0, 1], [0.97, 1])}`,
             translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 40, 0])}px`,
