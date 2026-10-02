@@ -4214,6 +4214,3 @@ def topic_line(text: str, limit: int = 28) -> str:
     sp = cut.rfind(" ")
     return (cut[:sp] if sp >= limit * 0.6 else first[:limit]).rstrip(" ,·") + "…"
 
-
-def template_names() -> list[str]:
-    return list(TEMPLATES.keys())

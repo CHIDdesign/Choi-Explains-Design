@@ -71,10 +71,6 @@ CSS_FORBIDDEN = re.compile(r"@import|@font-face|@charset|expression\s*\(|behavio
 STYLE_ATTR_FORBIDDEN = re.compile(r"expression\s*\(|url\s*\(|javascript:|position\s*:\s*fixed|\btransition\b|\banimation\b", re.I)
 
 
-class CardError(ValueError):
-    pass
-
-
 def _num(v: Any, lo: float, hi: float) -> Optional[float]:
     try:
         f = float(v)
@@ -515,7 +511,3 @@ def card_settle_time(card: dict[str, Any]) -> float:
         t = max(t, a + d)
     return t
 
-
-def card_summary(card: dict[str, Any]) -> str:
-    n = len(re.findall(r"data-anim=", card.get("html") or ""))
-    return f"{card.get('style') or 'card'} · {card['w']}×{card['h']} · 애니메이션 {n}개 · {card_text(card)[:40]}"

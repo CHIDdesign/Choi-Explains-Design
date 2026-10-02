@@ -144,10 +144,3 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
         raise RenderError("Remotion 렌더 실패\n" + (state["err"] or tail)[-3000:])
     progress(1.0)
 
-
-def open_studio(public_dir: Path, props_path: Path, node: str, composition: str = "LongForm") -> subprocess.Popen:
-    """Remotion Studio(브라우저 미리보기)를 연다."""
-    ensure_renderer_installed()
-    cli = RENDERER_DIR / "node_modules" / "@remotion" / "cli" / "remotion-cli.js"
-    args = [node, str(cli), "studio", "src/index.ts", f"--public-dir={public_dir}", f"--props={props_path}"]
-    return subprocess.Popen(args, cwd=RENDERER_DIR)

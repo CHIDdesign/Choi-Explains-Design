@@ -172,6 +172,3 @@ def write_ledger(path: Path, rows: list[dict[str, Any]]) -> None:
         for r in rows:
             w.writerow({k: r.get(k, "") for k in LEDGER_FIELDS})
 
-
-def tier_of(d: Optional[dict[str, Any]]) -> str:
-    return str(((d or {}).get("license") or {}).get("tier") or (d or {}).get("tier") or "")

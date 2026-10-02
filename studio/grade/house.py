@@ -149,14 +149,6 @@ def treat_file(src: Path, dst: Path, *, kind: str = "photo", treatment: str = "a
     return dst, t
 
 
-def tone_range(x: np.ndarray) -> dict[str, Any]:
-    """F7 — 자료의 블랙·화이트·중간톤 채도(종이 위 자료가 잉크·종이 범위 안인가)."""
-    lum = _luma(x.reshape(-1, 3))
-    st = house_stats(x)
-    return {"black": round(float(np.percentile(lum, 0.5)), 3), "white": round(float(np.percentile(lum, 99.5)), 3),
-            "chroma": round(st["c_med"], 1)}
-
-
 def colorful_clipart(path: Path) -> Optional[float]:
     """B8 — 컬러 클립아트인가: 불투명 화소의 채도 중앙값(Lab C). 선화(잉크 한 색)는 거의 0."""
     from PIL import Image

@@ -115,6 +115,3 @@ def pick_by_rule(cands: list[dict[str, Any]], count: int) -> list[int]:
     """AI 가 없을 때: 좋은 출처 순으로 서로 다른 파일 count 장."""
     return list(range(min(max(1, count), len(cands))))
 
-
-def first_or_none(xs: list[Any]) -> Optional[Any]:
-    return xs[0] if xs else None

@@ -211,10 +211,6 @@ def analyze_voice(pcm: np.ndarray, rate: int = 24000, *, frame: int = 2048, hop:
 # 레시피
 # ---------------------------------------------------------------------------
 
-def _half(dev: float, cap: float) -> float:
-    return float(np.sign(dev) * min(cap, HALF * abs(dev)))
-
-
 def plan_voice_recipe(st: VoiceStats) -> VoiceRecipe:
     r = VoiceRecipe()
     if not st.ok:

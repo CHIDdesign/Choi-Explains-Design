@@ -193,12 +193,3 @@ def cue_windows(cues: list[MusicCue], total: float, step: float = 0.01) -> "Any"
 def plan_cues(cues: list[MusicCue]) -> list[dict[str, Any]]:
     return [q.to_dict() for q in cues]
 
-
-def from_dicts(items: Optional[list[dict[str, Any]]]) -> list[MusicCue]:
-    out = []
-    for d in items or []:
-        try:
-            out.append(MusicCue(**{k: d[k] for k in MusicCue.__dataclass_fields__ if k in d}))
-        except TypeError:
-            continue
-    return out

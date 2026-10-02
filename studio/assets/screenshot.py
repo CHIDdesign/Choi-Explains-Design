@@ -69,7 +69,3 @@ def credit(url: str, as_of: str = "") -> tuple[str, str]:
     when = f" ({as_of})" if as_of else ""
     return f"화면: {d}{when}", f"{d} 화면 캡처{when}. 비평·교육 목적의 인용 — {url}"
 
-
-def first_ok(res: dict[str, dict[str, Any]], sid: str, out: Path) -> Optional[Path]:
-    r = res.get(sid) or {}
-    return out if r.get("ok") and out.exists() and out.stat().st_size > 0 else None

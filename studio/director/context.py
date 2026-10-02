@@ -98,6 +98,3 @@ def shorts_instruction(brief: JobBrief) -> str:
             .replace("{{count}}", str(brief.shorts_count))
             .replace("{{max_sec}}", str(brief.short_max_sec)))
 
-
-def prompt_files_present() -> list[str]:
-    return [p.name for p in Path(PROMPTS_DIR).glob("*.md")]

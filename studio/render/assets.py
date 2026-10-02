@@ -152,36 +152,3 @@ def _lowpass(x: np.ndarray, cutoff: np.ndarray) -> np.ndarray:
         y[i] = acc
     return y
 
-
-def make_sfx(dst: Path) -> dict[str, str]:
-    """whoosh: 그래픽 전환 / tick: 목록 항목 / thud: 챕터 카드"""
-    dst.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(3)
-    files = {}
-    p = dst / "whoosh.wav"
-    if not p.exists():
-        n = int(SR * 0.42)
-        t = np.linspace(0, 1, n)
-        noise = rng.normal(0, 1, n)
-        cutoff = 400 + 5200 * np.sin(np.pi * t) ** 2
-        x = _lowpass(noise, cutoff)
-        env = np.sin(np.pi * t) ** 1.6
-        x = x * env
-        _write_wav(p, x / (np.abs(x).max() + 1e-9) * 0.55)
-    files["whoosh"] = p.name
-    p = dst / "tick.wav"
-    if not p.exists():
-        n = int(SR * 0.08)
-        t = np.arange(n) / SR
-        x = np.sin(2 * np.pi * 1850 * t) * np.exp(-t * 90) + 0.3 * rng.normal(0, 1, n) * np.exp(-t * 300)
-        _write_wav(p, x / (np.abs(x).max() + 1e-9) * 0.35)
-    files["tick"] = p.name
-    p = dst / "thud.wav"
-    if not p.exists():
-        n = int(SR * 0.6)
-        t = np.arange(n) / SR
-        f = 62 * np.exp(-t * 2.2) + 38
-        x = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 6.5)
-        _write_wav(p, x / (np.abs(x).max() + 1e-9) * 0.7)
-    files["thud"] = p.name
-    return files
