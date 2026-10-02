@@ -101,6 +101,73 @@ def claude_version(exe: str) -> str:
         return ""
 
 
+def _no_window() -> dict[str, Any]:
+    """Windows 에서 콘솔 창을 띄우지 않는 subprocess 인자."""
+    import subprocess
+    if os.name == "nt":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        return {"startupinfo": si, "creationflags": 0x08000000}
+    return {}
+
+
+def format_quota(info: dict[str, Any]) -> str:
+    """rate_limit_event → '5시간 창 77% 사용(초기화 14:30) · 주간 42%(10/5 11:00)'. 없으면 ''."""
+    if not info:
+        return ""
+    import datetime as _dt
+    wins = info.get("unifiedWindows") or {}
+    parts = []
+    for key, name in (("five_hour", "5시간 창"), ("seven_day", "주간")):
+        w = wins.get(key) or {}
+        if "utilization" not in w:
+            continue
+        used = float(w.get("utilization") or 0) * 100
+        reset = w.get("resetsAt")
+        when = ""
+        if reset:
+            try:
+                t = _dt.datetime.fromtimestamp(float(reset))
+                when = t.strftime(" · 초기화 %m/%d %H:%M") if key == "seven_day" else t.strftime(" · 초기화 %H:%M")
+            except (TypeError, ValueError, OSError):
+                when = ""
+        parts.append(f"{name} {used:.0f}% 사용(잔여 {max(0.0, 100 - used):.0f}%{when})")
+    if info.get("status") and info["status"] != "allowed":
+        parts.append(f"상태 {info['status']}")
+    return " · ".join(parts)
+
+
+def probe_quota(exe: str, *, model: str = "claude-haiku-4-5-20251001", timeout: float = 90.0) -> dict[str, Any]:
+    """아주 작은 호출 한 번으로 구독 한도 창(5시간·주간) 사용률을 받는다 — Claude Code 는 stream-json 에 rate_limit_event 를
+    낸다(2026-10-02 확인). 가장 싼 모델로, 도구 없이. 반환: {quota, usage, model, error}."""
+    import subprocess
+    import tempfile
+    out: dict[str, Any] = {"quota": {}, "usage": {}, "model": "", "error": ""}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            proc = subprocess.run([exe, "-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--model", model],
+                                  input="Reply with the single word OK", capture_output=True, text=True, encoding="utf-8",
+                                  timeout=timeout, cwd=td, env=clean_env(), **_no_window())
+        for ln in (proc.stdout or "").splitlines():
+            ln = ln.strip()
+            if not ln.startswith("{"):
+                continue
+            try:
+                ev = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("type") == "rate_limit_event" and isinstance(ev.get("rate_limit_info"), dict):
+                out["quota"] = dict(ev["rate_limit_info"], at=time.time())
+            elif ev.get("type") == "result":
+                out["usage"] = ev.get("usage") or {}
+                out["model"] = next(iter((ev.get("modelUsage") or {}).keys()), "")
+        if proc.returncode != 0 and not out["quota"]:
+            out["error"] = (proc.stderr or "")[-300:]
+    except Exception as e:  # noqa: BLE001
+        out["error"] = str(e)[:300]
+    return out
+
+
 def auth_status(exe: str) -> dict[str, Any]:
     """`claude auth status --json` → {loggedIn, authMethod, ...}. 실패하면 빈 dict."""
     try:
@@ -150,6 +217,7 @@ class ClaudeCodeClient:
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self.usage: list[dict] = []
+        self.rate_limit: dict[str, Any] = {}   # 마지막 rate_limit_event(5시간·7일 창 사용률) — 사용량 표시용
         self._drop: set[str] = set()   # 이 버전이 모르는 선택 옵션
         self._lock = threading.Lock()
 
@@ -282,6 +350,8 @@ class ClaudeCodeClient:
                     result = ev
                 elif ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("model"):
                     served = str(ev["model"])
+                elif ev.get("type") == "rate_limit_event" and isinstance(ev.get("rate_limit_info"), dict):
+                    self.rate_limit = dict(ev["rate_limit_info"], at=time.time())
                 elif ev.get("type") == "assistant":
                     served = str(((ev.get("message") or {}).get("model")) or served)
                     searches += sum(1 for b in (ev.get("message") or {}).get("content") or []

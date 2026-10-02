@@ -168,8 +168,17 @@ export type MotionImage = MotionElBase & {type: 'image'; src: string; w: number;
 export type MotionMark = MotionElBase & {type: 'mark'; kind: 'circle' | 'underline' | 'arrow' | 'bracket' | 'strike';
   w: number; h: number; strokeWidth?: number};
 
+// 디자인 v4 모던 부품(components/modern/Modern.tsx) — 자기 등장 애니메이션을 가진다(enter 는 none)
+export type MotionPanel = MotionElBase & {type: 'panel'; title?: string; rows: string[]; w: number; size?: number; tilt?: boolean; on?: number};
+export type MotionChip = MotionElBase & {type: 'chip'; text: string; size?: number; icon?: 'check' | 'dot' | 'gear' | 'none';
+  fill?: 'card' | 'tint' | 'accent'};
+export type MotionBubble = MotionElBase & {type: 'bubble'; text: string; sub?: string; size?: number; tail?: 'bottom' | 'left' | 'none';
+  icon?: 'check' | 'dot' | 'gear' | 'none'};
+export type MotionDevice = MotionElBase & {type: 'device'; kind: 'monitor' | 'laptop' | 'phone'; w: number; src?: string; rows?: string[];
+  title?: string};
+export type MotionIso = MotionElBase & {type: 'iso'; cols: number; rows: number; seed: number; road: boolean};
 export type MotionEl = MotionText | MotionRect | MotionCircle | MotionLine | MotionPath | MotionDots | MotionCounter |
-  MotionBar | MotionImage | MotionMark;
+  MotionBar | MotionImage | MotionMark | MotionPanel | MotionChip | MotionBubble | MotionDevice | MotionIso;
 
 export type MotionSpec = {
   bg?: 'board' | 'paper' | 'ink' | 'signal' | 'transparent';

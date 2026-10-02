@@ -3,6 +3,12 @@
 import type {Brand} from '../lib/types';
 
 const hexToRgb = (hex: string): [number, number, number] => {
+  // 'rgb(r, g, b)' / 'rgba(…)' 도 받는다 — mix() 결과를 다시 mix() 에 넣으면 NaN 색(검정)이 되던 것(IsoBlocks 길 색)
+  const m = hex.match(/^rgba?\(([^)]+)\)/);
+  if (m) {
+    const p = m[1].split(',').map((x) => parseFloat(x));
+    return [p[0] || 0, p[1] || 0, p[2] || 0];
+  }
   const h = hex.replace('#', '');
   const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
   const n = parseInt(v, 16);

@@ -16,6 +16,7 @@ FPS = 30
 BOXES = {"fullscreen": (1728, 838), "split": (1069, 644), "paper": (860, 644), "desk": (1048, 700)}
 P = {
     "first_visible_s": 0.3, "open_ink_share": 0.35, "open_min_elements": 2,     # 06 4-1, motion_craft 2 (게이트 C4)
+    "overlap_share": 0.12,                                                     # L27 요소 겹침(작은 쪽 넓이 대비)
     "stage_by_s": 1.5, "stage_share": 0.5,
     "same_frame_s": 0.1, "same_frame_max": 2,                                   # motion_craft 3
     "burst_window_s": 0.5, "burst_max": 3,
@@ -72,6 +73,8 @@ def enter_of(el: dict) -> str:
         return "scale"
     if t == "bar":
         return "fade"
+    if t in ("panel", "chip", "bubble", "device", "iso"):
+        return "none"                   # v4 부품은 스스로 등장한다
     return "up"
 
 
@@ -95,6 +98,14 @@ def settle_of(el: dict) -> float:
         return at + el.get("dur", 0.9)
     if t == "dots":
         return at + ((el["count"] - 1) * 1.2 + 8) / FPS
+    if t == "panel":
+        return at + (8 + 3 * len(el.get("rows") or []) + 12) / FPS
+    if t in ("chip", "bubble"):
+        return at + 14 / FPS
+    if t == "device":
+        return at + 18 / FPS
+    if t == "iso":
+        return at + 1.2
     return at + el.get("dur", 0.4)
 
 
@@ -145,6 +156,22 @@ def bbox(el: dict, W: float, H: float):
         w, h = el["w"] / 100 * W, el["h"] / 100 * H
         top = y - h / 2 - ((max(18, h * 0.8) + 8) if el.get("label") else 0)
         return (x, top, x + w, y + h / 2)
+    if t == "panel":                     # 흰 둥근 카드: 폭 w%, 높이 = 제목 줄 + 행 수
+        w = el["w"] / 100 * W
+        fs = el.get("size", 2.6) / 100 * H
+        h = fs * 0.9 * 2 + (fs * 1.1 if el.get("title") else 0) + fs * 0.5 + len(el.get("rows") or []) * fs * 2.52
+        return (x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+    if t in ("chip", "bubble"):
+        fs = el.get("size", 2.6) / 100 * H
+        w = sum(_cw(c) for c in el["text"]) * fs + fs * (2.2 if t == "chip" else 2.6)
+        h = fs * (1.9 if t == "chip" else (2.6 if el.get("sub") else 1.9))
+        return (x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+    if t == "device":
+        w = el["w"] / 100 * W
+        h = w * (0.68 if el["kind"] == "monitor" else 0.66 if el["kind"] == "laptop" else 2.05)
+        return (x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+    if t == "iso":
+        return (0, 0, W, H)
     return (x, y, x, y)
 
 
@@ -319,6 +346,33 @@ def lint(spec: dict, dur: float, words=None, box=BOXES["paper"]) -> list[Issue]:
                 add("L11_late_vs_speech", "error", f'그 말이 나온 뒤 {d:.2f}초에 안착(기준 {P["late_vs_word_s"]}초 이내)', [_name(i, els[i])])
             elif d < -P["early_vs_word_s"] and i != headline:
                 add("L11_early_vs_speech", "warn", f'그 말보다 {-d:.2f}초 먼저 안착(기준 {P["early_vs_word_s"]}초 이내)', [_name(i, els[i])])
+
+    # ── 겹침(L27, 채널 주인 2026-10-02: 예시에서 그래픽끼리 겹쳤다) ─────────────────────────────────────
+    # 같은 시간에 보이는 글·숫자·패널·칩·말풍선·기기·사진의 상자가 서로 12% 넘게 겹치면 오류(배경 면·선·점·주석·막대는 제외).
+    # 글이 사진 위에 놓이는 것(영상 위 글자)은 경고만.
+    solid = {"text", "counter", "panel", "chip", "bubble", "device", "image"}
+    for i in range(n):
+        if els[i]["type"] not in solid:
+            continue
+        ai, bi = els[i].get("at", 0.0), els[i].get("out", dur)
+        for j in range(i + 1, n):
+            if els[j]["type"] not in solid:
+                continue
+            aj, bj = els[j].get("at", 0.0), els[j].get("out", dur)
+            if max(ai, aj) >= min(bi, bj) - 0.05:
+                continue                                     # 같은 시간에 보이지 않는다
+            x0 = max(bbs[i][0], bbs[j][0]); y0 = max(bbs[i][1], bbs[j][1])
+            x1 = min(bbs[i][2], bbs[j][2]); y1 = min(bbs[i][3], bbs[j][3])
+            if x1 <= x0 or y1 <= y0:
+                continue
+            inter = (x1 - x0) * (y1 - y0)
+            small = max(1.0, min(_area(bbs[i]), _area(bbs[j])))
+            if inter / small <= P["overlap_share"]:
+                continue
+            pair = {els[i]["type"], els[j]["type"]}
+            level = "warn" if "image" in pair and "text" in pair else "error"
+            add("L27_overlap", level, f'요소가 겹친다({inter / small:.0%} - 기준 {P["overlap_share"]:.0%} 이하) - 자리를 옮기거나 등장·퇴장 시각을 나눈다',
+                [_name(i, els[i]), _name(j, els[j])])
 
     # ── 진입 어휘·움직임 ─────────────────────────────────────────────
     kinds = [enter_of(e) for e in els]

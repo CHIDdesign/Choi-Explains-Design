@@ -74,7 +74,11 @@ PARAMS: dict[str, Any] = {
                  "pencil_tick": -30, "stamp": -23, "print_place": -25, "air_soft": -30, "tonal": -19, "ident": -16,
                  # 🎬 총괄 감독이 고르는 모션 그래픽 효과음(Pixabay·Mixkit 실제 파일) — 목소리 아래 은은하게
                  "whoosh_soft": -25, "swoosh_short": -25, "swipe": -25, "pop": -24, "click": -26, "typing": -27,
-                 "camera_shutter": -24, "paper": -23, "ding": -27, "bell_soft": -27, "notification": -25},
+                 "camera_shutter": -24, "paper": -23, "ding": -27, "bell_soft": -27, "notification": -25,
+                 "whoosh_fast": -24, "whoosh_deep": -24},
+    # 자동 모션 효과음(채널 주인 2026-10-02: 장면 전환·모션 등장에 유명한 효과음을 기본으로): 감독 지정보다 낮은 우선순위, 더 촘촘히
+    "sfx_min_gap_auto": 1.0,
+    "sfx_per_min_auto": 8,
     "sfx_min_gap": 2.0,         # 효과음 사이 최소 2초
     "sfx_per_min": 3,           # 60초 창 어디서도 3개 이하 — 목록 틱까지 모두 센다(게이트 D5)
     "list_click_max": 2,        # 목록 틱은 목록당 최대 2개(상한에 포함)
@@ -136,6 +140,18 @@ SFX_FOR_TEMPLATE = {"keyword": "paper_place", "definition": "pencil_stroke", "qu
                     "pyramid": "paper_place", "concept": "paper_place", "image_note": "tape", "lower_third": "",
                     "recap": "paper_place", "evidence": "print_place", "card": "paper_slide"}
 LIST_TEMPLATES = ("list", "process", "cycle", "timeline", "pyramid")
+# 자동 모션 효과음(디자인 v4): 그래픽이 들어올 때 — 모션 그래픽에서 흔한 소리(Pixabay·Mixkit 실제 파일)
+AUTO_SFX_FOR_TEMPLATE = {"motion": "whoosh_soft", "card": "whoosh_soft", "keyword": "pop", "stat": "ding", "photo": "camera_shutter",
+                         "broll": "whoosh_soft", "evidence": "whoosh_soft", "title": "whoosh_deep", "chapter": "whoosh_deep",
+                         "list": "swoosh_short", "process": "swoosh_short", "cycle": "swoosh_short", "timeline": "swoosh_short",
+                         "compare": "swoosh_short", "definition": "click", "quote": "bell_soft", "recap": "click",
+                         "pyramid": "swoosh_short", "matrix": "swoosh_short", "venn": "swoosh_short", "double_diamond": "swoosh_short",
+                         "lower_third": ""}
+# 장면 전환(components/fx/Transitions.tsx 종류)
+AUTO_SFX_FOR_TX = {"whip": "whoosh_fast", "push": "whoosh_soft", "wipe": "swipe", "blur": "whoosh_soft", "leak": "whoosh_soft",
+                   "zoom": "whoosh_soft", "flash": "", "dip": ""}
+# 모션 장면 안의 부품이 등장할 때
+AUTO_SFX_FOR_EL = {"chip": "pop", "bubble": "pop", "panel": "click", "device": "swoosh_short", "counter": "ding", "bar": "swoosh_short"}
 
 MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")
 
@@ -187,8 +203,35 @@ def _inside(t: float, spans: list[tuple[float, float, Any]], pad: float = 0.0) -
     return any(a - pad <= t <= b + pad for a, b, *_ in spans)
 
 
+def auto_motion_sfx(graphics: list[dict], transitions: list[dict] = ()) -> list[dict]:
+    """자동 모션 효과음 후보(prio 1): 그래픽 등장(템플릿별) · 모션 장면 안 부품(칩·말풍선·패널·숫자) · 장면 전환."""
+    ev: list[dict] = []
+    for g in graphics:
+        tpl = str(g.get("template", ""))
+        cat = AUTO_SFX_FOR_TEMPLATE.get(tpl, "")
+        data = g.get("data") or {}
+        if str(data.get("sfx") or "") not in ("", "none"):
+            continue                                        # 감독이 지정한 그래픽은 감독 소리만
+        if cat:
+            ev.append({"t": g["start"], "category": cat, "prio": 1, "why": f"{tpl} 등장(자동)"})
+        spec = data.get("spec") if tpl == "motion" else None
+        for el in (spec or {}).get("elements", []) or []:
+            c2 = AUTO_SFX_FOR_EL.get(str(el.get("type", "")), "")
+            if c2 and float(el.get("at", 0) or 0) >= 0.4:
+                ev.append({"t": g["start"] + float(el.get("at", 0) or 0), "category": c2, "prio": 1,
+                           "why": f"{el.get('type')} 등장(자동)"})
+            elif el.get("type") == "text" and el.get("reveal") == "chars" and float(el.get("at", 0) or 0) >= 0.4:
+                ev.append({"t": g["start"] + float(el.get("at", 0) or 0), "category": "typing", "prio": 1, "why": "타자 글(자동)"})
+    for tx in transitions or ():
+        cat = AUTO_SFX_FOR_TX.get(str(tx.get("type", "")), "")
+        if cat:
+            ev.append({"t": float(tx.get("t", 0) or 0), "category": cat, "prio": 1, "why": f"전환 {tx.get('type')}(자동)"})
+    return ev
+
+
 def directed_sfx(graphics: list[dict], segments: list[tuple[float, str]], *, holds: list[tuple[float, float]] = (),
-                 speech_starts: list[float] = (), total: float = 0.0, P: dict = PARAMS) -> list[dict]:
+                 speech_starts: list[float] = (), total: float = 0.0, P: dict = PARAMS, auto: bool = False,
+                 transitions: list[dict] = ()) -> list[dict]:
     """총괄 감독이 고른 곳에만 효과음(설정 sfx_mode='directed', 기본) — 규칙이 템플릿마다 뿌리지 않는다.
     graphics: 렌더 그래픽(data.sfx 가 있으면 그 그래픽이 들어올 때), segments: [(단락 시작 편집 시각, 효과음)] — 단락
     시작 뒤 1.5초 안에 그래픽이 들어오면 그 순간에 맞춘다. 홀드 안·첫 3초·말 시작 0.15초 안은 피하고(앞으로 당김),
@@ -204,6 +247,8 @@ def directed_sfx(graphics: list[dict], segments: list[tuple[float, str]], *, hol
             continue
         near = next((x for x in starts if t - 0.2 <= x <= t + 1.5), None)
         ev.append({"t": near if near is not None else t, "category": cat, "prio": 2, "why": "단락 시작(감독 지정)"})
+    if auto:
+        ev += auto_motion_sfx(graphics, transitions)
     out = []
     for e in ev:
         t = e["t"]
@@ -213,7 +258,9 @@ def directed_sfx(graphics: list[dict], segments: list[tuple[float, str]], *, hol
         if t < 3.0 or (total and t > total - 1.0) or any(a <= t < b for a, b in holds):
             continue
         out.append({**e, "t": round(t, 3), "gain_db": P["sfx_gain"].get(e["category"], -25)})
-    return _cap_per_minute(_thin_by_gap(out, P["sfx_min_gap"]), P["sfx_per_min"])
+    gap = P["sfx_min_gap_auto"] if auto else P["sfx_min_gap"]
+    per_min = P["sfx_per_min_auto"] if auto else P["sfx_per_min"]
+    return _cap_per_minute(_thin_by_gap(out, gap), per_min)
 
 
 def _thin_by_gap(events: list[dict], gap: float, key: str = "t") -> list[dict]:

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from .paths import DEFAULT_PROJECTS_DIR, SETTINGS_FILE, ensure_user_dirs
+from .paths import DEFAULT_PROJECTS_DIR, SETTINGS_FILE, USER_DIR, ensure_user_dirs
 
 
 @dataclass
@@ -71,6 +71,7 @@ class Settings:
     # 🎬 AI 스튜디오(멀티 에이전트) — Claude 총괄 제작(docs/upgrade/14): 조사·기획·디자인 판단은 Claude 가 하고,
     # 같은 품질을 낼 수 있는 기계적인 일(음성 인식·얼굴 추적·색 측정·렌더·믹스)만 다른 알고리즘이 한다
     research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
+    sfx_motion_auto: bool = True      # 장면 전환·모션 등장에 흔한 효과음(우시·스우시·팝·클릭·타이핑·딩)을 자동으로(감독 지정과 함께)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low", "timeline_review": "high"}
     agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
@@ -134,3 +135,71 @@ def _merge(obj, raw: dict[str, Any]):
         if k in names:
             setattr(obj, k, v)
     return obj
+
+
+# ---- 사용량 장부(user/usage.json): 작업마다 에이전트 호출 토큰·API 환산 비용·마지막 한도 창 ----
+USAGE_FILE = USER_DIR / "usage.json"
+
+
+def load_usage() -> dict:
+    try:
+        return json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"jobs": [], "last_quota": {}}
+
+
+def record_usage(title: str, usage: list[dict], quota: dict) -> dict:
+    """작업 하나의 호출 목록을 합쳐 장부에 더한다(최근 60개). 반환: 이 작업 요약."""
+    import datetime as _dt
+    agg = {"title": title[:60], "at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "calls": len(usage), "input": 0, "output": 0,
+           "cache_read": 0, "cache_write": 0, "api_equiv_usd": 0.0, "models": {}}
+    for u in usage:
+        for k in ("input", "output", "cache_read", "cache_write"):
+            agg[k] += int(u.get(k, 0) or 0)
+        agg["api_equiv_usd"] += float(u.get("api_equiv_usd", 0) or 0)
+        m = str(u.get("model") or "")
+        if m:
+            agg["models"][m] = agg["models"].get(m, 0) + 1
+    agg["api_equiv_usd"] = round(agg["api_equiv_usd"], 2)
+    book = load_usage()
+    book.setdefault("jobs", []).append(agg)
+    book["jobs"] = book["jobs"][-60:]
+    if quota:
+        book["last_quota"] = quota
+    try:
+        USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        USAGE_FILE.write_text(json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return agg
+
+
+def save_quota(quota: dict) -> None:
+    """설정 창의 '한도 확인'이 받은 창 사용률을 장부에 남긴다."""
+    book = load_usage()
+    book["last_quota"] = quota
+    try:
+        USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        USAGE_FILE.write_text(json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def usage_summary() -> str:
+    """설정 창에 보이는 한 줄: 최근 작업 + 누적 API 환산 + 마지막 한도 창."""
+    from .director.claude_code import format_quota
+    book = load_usage()
+    jobs = book.get("jobs") or []
+    if not jobs and not book.get("last_quota"):
+        return "아직 기록 없음 — 작업을 한 번 돌리면 호출 수·토큰·한도 창 사용률이 여기에 쌓입니다"
+    parts = []
+    if jobs:
+        j = jobs[-1]
+        parts.append(f"최근 작업 「{j['title']}」({j['at']}): 호출 {j['calls']}회 · 입력 {j['input'] + j['cache_read']:,} · "
+                     f"출력 {j['output']:,} 토큰 · API 환산 약 ${j['api_equiv_usd']:.2f}")
+        tot = sum(float(x.get("api_equiv_usd", 0) or 0) for x in jobs)
+        parts.append(f"누적 {len(jobs)}개 작업 · API 환산 약 ${tot:.2f}(구독이라 실제 청구 없음)")
+    q = format_quota(book.get("last_quota") or {})
+    if q:
+        parts.append("한도 창(마지막 확인): " + q)
+    return "\n".join(parts)

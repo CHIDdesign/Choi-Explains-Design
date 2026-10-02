@@ -14,8 +14,11 @@ import {fitBlock} from '../../lib/fit';
  * 질감은 정적(노이즈 타일·그라데이션)뿐 — 프레임마다 바뀌는 필터 없음(렌더 속도 규칙). 움직임은 tween 만.
  */
 
+export type ModernColors = {bg: string; bgGlow: string; ink: string; inkSoft: string; line: string; card: string; cardTint: string;
+  accent: string; deep: string; tint: string; dark: boolean};
+
 /** 모던 팔레트(테마의 디자인 색에서) */
-export const modernColors = (theme: Theme, dark = false) => {
+export const modernColors = (theme: Theme, dark = false): ModernColors => {
   if (dark) {
     return {
       bg: MODERN.dark, bgGlow: rgba(theme.accent, 0.16), ink: MODERN.darkInk, inkSoft: MODERN.darkSoft,
@@ -29,7 +32,15 @@ export const modernColors = (theme: Theme, dark = false) => {
     deep: theme.accentDeep, tint: theme.accentTint, dark: false,
   };
 };
-export type ModernColors = ReturnType<typeof modernColors>;
+/** 표면(Surface)만 있는 곳(모션 장면)에서 쓰는 팔레트 — 테마 없이 표면 색으로 */
+export const modernColorsFromSurface = (s: {bg: string; fg: string; dim: string; faint: string; accent: string; name: string}): ModernColors => {
+  const dark = s.name === 'dark' || s.name === 'ink' || s.name === 'board';
+  return {
+    bg: s.bg, bgGlow: rgba(s.accent, 0.16), ink: s.fg, inkSoft: s.dim, line: s.faint, card: dark ? '#17181A' : '#FFFFFF',
+    cardTint: dark ? '#1E2022' : mix(s.accent, '#FFFFFF', 0.9), accent: s.accent, deep: s.accent,
+    tint: dark ? rgba(s.accent, 0.22) : mix(s.accent, '#FFFFFF', 0.78), dark,
+  };
+};
 
 /** 무대: 밝은 바탕 + 아래쪽에 옅은 디자인 색 번짐 + 아주 옅은 입자. dark 면 검정 + 가운데 색 번짐 */
 export const ModernStage: React.FC<{theme: Theme; frame?: number; dark?: boolean; glow?: number}> = ({theme, frame = 0,
@@ -324,9 +335,10 @@ export const DeviceFrame: React.FC<{kind: 'monitor' | 'laptop' | 'phone'; w: num
 /** 아이소메트릭 블록 도시(레퍼런스: 흰 블록 + 옅은 초록 길) — SVG 정적, 블록은 시드로 높이·등장 순서 */
 export const IsoBlocks: React.FC<{W: number; H: number; c: ModernColors; frame: number; seed?: number; cols?: number; rows?: number;
   road?: boolean; opacity?: number}> = ({W, H, c, frame, seed = 1, cols = 11, rows = 8, road = true, opacity = 1}) => {
-  const cell = Math.max(W, H) / (cols * 0.95);
+  // 촘촘한 작은 블록(레퍼런스의 도시): 칸 = 폭 / (열 × 1.3), 높이는 칸의 0.1~0.5
+  const cell = W / (cols * 1.3);
   const ox = W / 2;
-  const oy = H * 0.14;
+  const oy = H * 0.08;
   const iso = (x: number, y: number, z: number): [number, number] => [ox + (x - y) * cell * 0.866, oy + (x + y) * cell * 0.5 - z];
   const rnd = (i: number) => {
     const v = Math.sin(i * 12.9898 + seed * 78.233) * 43758.5453;
@@ -347,7 +359,7 @@ export const IsoBlocks: React.FC<{W: number; H: number; c: ModernColors; frame: 
       const isRoad = roadCells.has(`${i},${j}`);
       const r = rnd(n++);
       const p = tween(frame, Math.floor((i + j) * 1.6 + r * 4), 12, 'enter');
-      const h = isRoad ? 0 : (0.25 + r * 1.1) * cell * 0.6 * p;
+      const h = isRoad ? 0 : (0.18 + r * 0.75) * cell * 0.55 * p;
       const g = 0.08;
       const [ax, ay] = iso(i + g, j + g, h);
       const [bx, by] = iso(i + 1 - g, j + g, h);

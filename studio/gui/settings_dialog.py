@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
                                QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
                                QTabWidget, QVBoxLayout, QWidget)
 
-from ..director.claude_code import auth_status, claude_version, describe_auth, find_claude, open_login
+from ..director.claude_code import auth_status, claude_version, describe_auth, find_claude, format_quota, open_login, probe_quota
+from ..settings import save_quota, usage_summary
 from ..settings import Settings
 from .widgets import hint
 
@@ -27,6 +28,41 @@ class _Probe(QObject):
             self.done.emit("", "Claude Code 를 찾지 못했습니다 — setup_windows.bat 을 다시 실행하면 설치됩니다")
             return
         self.done.emit(f"{exe}  ·  {claude_version(exe) or '버전 확인 실패'}", describe_auth(auth_status(exe)))
+
+
+class _Quota(QObject):
+    """한도 창 확인(아주 작은 호출 한 번, 가장 싼 모델) — 창을 얼리지 않게 스레드에서"""
+    done = Signal(str)
+
+    def __init__(self, custom: str):
+        super().__init__()
+        self.custom = custom
+
+    def run(self) -> None:
+        exe = find_claude(self.custom)
+        if not exe:
+            self.done.emit("Claude Code 를 찾지 못했습니다")
+            return
+        r = probe_quota(exe)
+        if r.get("quota"):
+            save_quota(r["quota"])
+            self.done.emit("한도 창(방금 확인): " + format_quota(r["quota"]))
+        else:
+            self.done.emit("한도 창을 받지 못했습니다: " + (r.get("error") or "응답에 rate_limit 정보 없음(Claude Code 를 업데이트하세요)"))
+
+
+# 모델 선택지(편집 가능 — 다른 id 를 직접 적어도 된다)
+MODEL_CHOICES = [("claude-fable-5-1", "Fable 5.1 — 최신 최상위(기획·시그니처 장면에 추천)"),
+                 ("claude-opus-5-5", "Opus 5.5 — 기본"),
+                 ("claude-sonnet-5-5", "Sonnet 5.5 — 빠르고 저렴"),
+                 ("claude-haiku-4-5-20251001", "Haiku 4.5 — 가장 저렴(검수·카피·선택용)")]
+EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"]
+# 에이전트별 덮어쓰기 표(비우면 위 기본): (키, 이름)
+AGENT_ROWS = [("research", "🔎 리서치 디렉터"), ("director", "🎬 총괄 감독"), ("setpiece", "🛠 시그니처 장면"),
+              ("cut_editor", "✂️ 컷 편집 총괄"), ("editor", "✂️ 편집 감독"), ("motion", "🎨 모션 디자이너"),
+              ("stock", "🎞 자료 리서처"), ("captions", "🔤 자막 디자이너"), ("shorts", "📱 숏폼 PD"), ("copy", "✍️ 카피라이터"),
+              ("music", "🎼 음악 감독"), ("art_director", "🧐 아트 디렉터"), ("timeline_review", "🧐 타임라인 검수"),
+              ("colorist", "🎨 컬러리스트")]
 
 
 class SettingsDialog(QDialog):
@@ -90,22 +126,64 @@ class SettingsDialog(QDialog):
         m.setContentsMargins(0, 10, 0, 0)
         self.model = QComboBox()
         self.model.setEditable(True)
-        self.model.addItems(["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "opus", "sonnet"])
+        for mid, _label in MODEL_CHOICES:
+            self.model.addItem(mid)
         self.model.setCurrentText(s.claude_model)
+        self.model.setToolTip("\n".join(f"{mid}: {label}" for mid, label in MODEL_CHOICES))
         self.effort = QComboBox()
-        self.effort.addItems(["low", "medium", "high", "xhigh", "max"])
+        self.effort.addItems(EFFORT_CHOICES)
         self.effort.setCurrentText(s.claude_effort)
         self.workers = QSpinBox()
         self.workers.setRange(1, 8)
         self.workers.setValue(s.studio_workers)
         self.workers.setToolTip("총괄 감독 아래에서 동시에 일하는 전문 에이전트 수(한도에 자주 걸리면 2로)")
         m.addRow("모델", self.model)
+        m.addRow("", hint(" · ".join(label for _, label in MODEL_CHOICES)))
         m.addRow("사고 강도", self.effort)
         m.addRow("동시 에이전트", self.workers)
         self.research_web = QCheckBox("웹 조사 — 🔎 리서치 디렉터·🛠 시그니처 장면이 인물·제품·개념을 검색해 확인한다(권장)")
         self.research_web.setChecked(bool(getattr(s, "research_web", True)))
         m.addRow("조사", self.research_web)
         v.addLayout(m)
+        # 에이전트별 모델·사고 강도(비우면 기본)
+        agents_box = QFormLayout()
+        agents_box.setContentsMargins(0, 8, 0, 0)
+        head2 = QLabel("에이전트별 모델·사고 강도 (비우면 위 기본 — 예: 기획·시그니처는 Fable, 선택·카피는 Haiku)")
+        head2.setStyleSheet("font-weight:700;")
+        agents_box.addRow(head2)
+        self.agent_widgets: dict[str, tuple[QComboBox, QComboBox]] = {}
+        for key, name in AGENT_ROWS:
+            mc = QComboBox()
+            mc.setEditable(True)
+            mc.addItem("")
+            for mid, _label in MODEL_CHOICES:
+                mc.addItem(mid)
+            mc.setCurrentText(str((getattr(s, "agent_models", {}) or {}).get(key, "")))
+            ec = QComboBox()
+            ec.addItem("")
+            ec.addItems(EFFORT_CHOICES)
+            ec.setCurrentText(str((getattr(s, "agent_effort", {}) or {}).get(key, "")))
+            row2 = QHBoxLayout()
+            row2.addWidget(mc, 3)
+            row2.addWidget(ec, 1)
+            agents_box.addRow(name, row2)
+            self.agent_widgets[key] = (mc, ec)
+        v.addLayout(agents_box)
+        # 📊 사용량·한도
+        self.usage_lbl = QLabel(usage_summary())
+        self.usage_lbl.setObjectName("hint")
+        self.usage_lbl.setWordWrap(True)
+        b_quota = QPushButton("한도 확인(소량 호출)")
+        b_quota.setToolTip("가장 싼 모델로 아주 작은 호출을 한 번 보내 5시간·주간 한도 창의 사용률을 받습니다")
+        b_quota.clicked.connect(self._check_quota)
+        urow = QHBoxLayout()
+        urow.addWidget(b_quota)
+        urow.addStretch(1)
+        u = QFormLayout()
+        u.setContentsMargins(0, 8, 0, 0)
+        u.addRow("사용량", self.usage_lbl)
+        u.addRow("", urow)
+        v.addLayout(u)
         v.addStretch(1)
         tabs.addTab(ai, "AI 연결")
 
@@ -261,6 +339,16 @@ class SettingsDialog(QDialog):
         self.cc_auth.setText(("● " if ok else "○ ") + auth)
         self.cc_auth.setStyleSheet(f"font-weight:700; color:{'#4CAF7A' if ok else '#E0A030'};")
 
+    def _check_quota(self) -> None:
+        self.usage_lbl.setText(usage_summary() + "\n한도 창 확인 중…")
+        self._qthread = QThread(self)
+        self._qworker = _Quota(self.cc_path.text().strip())
+        self._qworker.moveToThread(self._qthread)
+        self._qthread.started.connect(self._qworker.run)
+        self._qworker.done.connect(lambda msg: self.usage_lbl.setText(usage_summary() + "\n" + msg))
+        self._qworker.done.connect(self._qthread.quit)
+        self._qthread.start()
+
     def _login(self) -> None:
         exe = find_claude(self.cc_path.text().strip())
         if not exe:
@@ -282,6 +370,8 @@ class SettingsDialog(QDialog):
         s.anthropic_api_key = self.key.text().strip()
         s.claude_model = self.model.currentText().strip()
         s.claude_effort = self.effort.currentText()
+        s.agent_models = {k: mc.currentText().strip() for k, (mc, _ec) in self.agent_widgets.items() if mc.currentText().strip()}
+        s.agent_effort = {k: ec.currentText().strip() for k, (_mc, ec) in self.agent_widgets.items() if ec.currentText().strip()}
         s.studio_workers = self.workers.value()
         s.research_web = self.research_web.isChecked()
         s.pixabay_api_key = self.pixabay.text().strip()

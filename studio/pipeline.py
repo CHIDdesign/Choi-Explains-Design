@@ -3234,7 +3234,8 @@ class Pipeline:
         if self._sfx_mode() == "directed":
             # 🎬 효과음은 총괄 감독이 고른 곳에만(트리트먼트의 단락·시그니처 장면) — 규칙이 템플릿마다 뿌리지 않는다
             ed.sfx = directed_sfx(lp["graphics"], self._directed_segments(seg_t), holds=holds or [],
-                                  speech_starts=sorted(a for a, _ in seg_t.values()), total=lp["duration"])
+                                  speech_starts=sorted(a for a, _ in seg_t.values()), total=lp["duration"],
+                                  auto=bool(getattr(self.settings, "sfx_motion_auto", True)), transitions=ed.transitions)
             ed.stats["sfx"] = len(ed.sfx)
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
@@ -3400,7 +3401,8 @@ class Pipeline:
             if self._sfx_mode() == "directed":
                 # 숏폼도 감독이 고른 그래픽(시그니처 장면 등)에만
                 ed.sfx = directed_sfx(sp["graphics"], [], total=sp["duration"],
-                                      speech_starts=sorted(a for a, _ in seg_edit_times(self.utts, tm).values()))
+                                      speech_starts=sorted(a for a, _ in seg_edit_times(self.utts, tm).values()),
+                                      auto=bool(getattr(self.settings, "sfx_motion_auto", True)), transitions=ed.transitions)
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
@@ -3579,7 +3581,8 @@ class Pipeline:
         results = [
             gate.d1_voice_over_music(voice_lufs if has_music else None, rep.get("bgm_under_db") if has_music else None),
             gate.d3_one_track(int(rep.get("bgm_tracks", 0) or 0)),
-            gate.d5_sfx_density(main.get("sfx_used", []), punch=punch),
+            gate.d5_sfx_density(main.get("sfx_used", []), punch=punch,
+                                cap=PARAMS["sfx_per_min_auto"] if getattr(self.settings, "sfx_motion_auto", True) else PARAMS["sfx_per_min"]),
             gate.d6_fit(int(sheet["fit_score"]) if has_music and sheet.get("fit_score") is not None else None),
             gate.d8_occupancy(rep.get("music_share") if has_music else None, main.get("music_cues") or []),
             gate.d9_license(used),
@@ -3838,6 +3841,17 @@ class Pipeline:
             report += "\n## ⚠️ 건너뛴 작업(실패했지만 영상은 끝까지 만들었습니다)\n\n" + "".join(
                 f"- {f['label']}: {f['error']}\n" for f in self.soft_failures)
         write_text(self.extras / "편집리포트.md", report)
+        # 📊 사용량 장부(user/usage.json): 이 작업의 호출·토큰·API 환산 + 마지막 한도 창(설정 창 '사용량')
+        try:
+            from .settings import record_usage
+            if self.claude is not None and getattr(self.claude, "usage", None):
+                agg = record_usage(self.title, self.claude.usage, getattr(self.claude, "rate_limit", {}) or {})
+                from .director.claude_code import format_quota
+                q = format_quota(getattr(self.claude, "rate_limit", {}) or {})
+                self.log(f"📊 Claude 호출 {agg['calls']}회 · 입력 {agg['input'] + agg['cache_read']:,} · 출력 {agg['output']:,} 토큰"
+                         f" · API 환산 약 ${agg['api_equiv_usd']:.2f}" + (f" · {q}" if q else ""))
+        except Exception as e:  # noqa: BLE001 - 장부는 덤
+            self._log_file_only(f"사용량 장부 실패: {e}")
         shutil.copyfile(self.work / "plan.json", self.extras / "plan.json")
         self.results["extras"] = str(self.extras)
         self.results["upload_info"] = str(self.out / "업로드정보.txt")

@@ -116,3 +116,27 @@ def test_qa_actionable_keeps_escalations_out():
     issues = [{"action": "escalate_edit", "severity": "high", "scope": "edit", "blocking": True},
               {"action": "shorten_text", "severity": "low"}, {"action": "none", "severity": "high"}]
     assert [i["action"] for i in qa_actionable(issues)] == ["shorten_text"]
+
+
+def test_v4_modern_elements_clean_and_lint():
+    """디자인 v4 부품(panel·chip·bubble·device·iso): 정화가 필드를 지키고 enter 는 none, 린트가 상자를 잰다."""
+    spec = {"bg": "paper", "elements": [
+        {"type": "iso", "x": 50, "y": 50, "at": 0, "cols": 10, "rows": 7, "seed": 3},
+        {"type": "text", "text": "서로 말하지 않는 도구들", "x": 30, "y": 22, "size": 9, "at": 0.1, "font": "display"},
+        {"type": "panel", "x": 28, "y": 60, "at": 0.4, "w": 34, "title": "프로젝트 단가", "rows": ["1번가|3.8", "2번가|3.5", "3번가|4.8"], "on": 2, "tilt": True},
+        {"type": "chip", "x": 72, "y": 30, "at": 1.0, "text": "구역 확인", "icon": "check"},
+        {"type": "bubble", "x": 72, "y": 55, "at": 1.4, "text": "4.8억", "sub": "3번가", "tail": "bottom"},
+        {"type": "device", "x": 78, "y": 70, "at": 1.8, "kind": "laptop", "w": 30, "rows": ["이웃", "가격", "설계"], "title": "밴티지"},
+        {"type": "chip", "x": 50, "y": 90, "at": 2.2, "text": "", "icon": "check"},               # 빈 글 → 빠짐
+    ]}
+    out = clean_spec(spec, 8.0)
+    types = [e["type"] for e in out["elements"]]
+    assert types == ["iso", "text", "panel", "chip", "bubble", "device"]
+    panel = out["elements"][2]
+    assert panel["rows"] == ["1번가|3.8", "2번가|3.5", "3번가|4.8"] and panel["on"] == 2 and panel["tilt"] is True and panel["enter"] == "none"
+    assert out["elements"][3]["fill"] == "card" and out["elements"][4]["tail"] == "bottom" and out["elements"][5]["kind"] == "laptop"
+    issues = lint.lint(out, 8.0, [], box=lint.box_for("fullscreen"))
+    assert not [i for i in issues if i.rule in ("L01", "L02")], [str(i) for i in issues]   # 0.5초 안에 무대가 선다(iso + 제목)
+    for e in out["elements"]:
+        x0, y0, x1, y1 = lint.bbox(e, 1728, 838)
+        assert x1 > x0 and y1 > y0, e["type"]

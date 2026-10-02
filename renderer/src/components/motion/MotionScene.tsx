@@ -1,4 +1,5 @@
 import React from 'react';
+import {Bubble, DeviceFrame, IsoBlocks, modernColorsFromSurface, Pill, UIPanel} from '../modern/Modern';
 import {Img, interpolate, staticFile} from 'remotion';
 import {DUR, EASE, exitFrames, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
 import type {EaseName} from '../../design/motion';
@@ -490,6 +491,48 @@ const ghostOf = (el: MotionEl): MotionEl => {
   return base as MotionEl;
 };
 
+/** 디자인 v4 부품 — 장면 상자 안에서 가운데 (x, y) 에 놓이고 스스로 등장한다(frame = 요소의 local) */
+const ModernEl: React.FC<{el: Extract<MotionEl, {type: 'panel' | 'chip' | 'bubble' | 'device' | 'iso'}>; c: Ctx}> = ({el, c}) => {
+  const st = elementState(el, c);
+  if (!st.visible) return null;
+  const mc = modernColorsFromSurface(c.surface);
+  const f = Math.max(0, Math.round(st.local));
+  const px = (pct: number | undefined, d: number) => ((pct ?? d) / 100) * c.H;
+  if (el.type === 'iso') {
+    return (
+      <div style={{position: 'absolute', inset: 0, opacity: (el.opacity ?? 0.9) * st.opacity}}>
+        <IsoBlocks W={c.W} H={c.H} c={mc} frame={f} seed={el.seed} cols={el.cols} rows={el.rows} road={el.road} />
+      </div>
+    );
+  }
+  let node: React.ReactNode = null;
+  if (el.type === 'chip') {
+    node = <Pill text={el.text} c={mc} frame={f} size={px(el.size, 2.6)} icon={el.icon ?? 'check'} fill={el.fill ?? 'card'} />;
+  } else if (el.type === 'bubble') {
+    node = <Bubble text={el.text} sub={el.sub} c={mc} frame={f} size={px(el.size, 3.2)} tail={el.tail ?? 'bottom'} icon={el.icon ?? 'none'} />;
+  } else if (el.type === 'panel') {
+    const rows = el.rows.map((r, i) => {
+      const [label, value] = r.split('|');
+      return {label: label.trim(), value: value ? value.trim() : undefined, on: i === el.on, icon: 'dot' as const};
+    });
+    node = <UIPanel title={el.title} rows={rows} c={mc} frame={f} w={(el.w / 100) * c.W} size={px(el.size, 2.6)} tilt={el.tilt} />;
+  } else if (el.type === 'device') {
+    const w = (el.w / 100) * c.W;
+    const inner = el.src ? (
+      <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+    ) : el.rows && el.rows.length ? (
+      <div style={{position: 'absolute', inset: 0, background: mc.bg, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+        <UIPanel title={el.title} rows={el.rows.map((r) => {
+          const [label, value] = r.split('|');
+          return {label: label.trim(), value: value ? value.trim() : undefined, icon: 'dot' as const};
+        })} c={mc} frame={f} w={w * 0.62} size={w * 0.022} windowDots={false} />
+      </div>
+    ) : <div style={{position: 'absolute', inset: 0, background: mc.bg}} />;
+    node = <DeviceFrame kind={el.kind} w={w} c={mc} frame={f} screenBg={mc.bg}>{inner}</DeviceFrame>;
+  }
+  return <Wrap st={st} anchor={el.anchor}>{node}</Wrap>;
+};
+
 const renderEl = (el: MotionEl, key: React.Key, c: Ctx): React.ReactNode => {
   switch (el.type) {
     case 'text':
@@ -502,6 +545,12 @@ const renderEl = (el: MotionEl, key: React.Key, c: Ctx): React.ReactNode => {
       return <ImageEl key={key} el={el} c={c} />;
     case 'mark':
       return <MarkEl key={key} el={el} c={c} />;
+    case 'panel':
+    case 'chip':
+    case 'bubble':
+    case 'device':
+    case 'iso':
+      return <ModernEl key={key} el={el} c={c} />;
     default:
       return <ShapeEl key={key} el={el} c={c} />;
   }
