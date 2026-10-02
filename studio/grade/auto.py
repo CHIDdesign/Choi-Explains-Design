@@ -32,6 +32,8 @@ from ..media.ffmpeg import FFmpeg, FFmpegError, MediaInfo, hdr_to_sdr_filter
 from ..util import _popen_kwargs
 
 LUT_SIZE = 33
+# 색보정 알고리즘 판(07 문서 2-1) — grade.json · 편집 리포트에 남고 캐시 키에 들어간다(코드가 바뀌면 다시 굽는다)
+GRADE_VERSION = 3
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,8 @@ SKIN_HUE = (32.0, 60.0)        # 피부가 자연스러운 CIELAB 색상 범위(
 SKIN_HUE_TARGET = 50.0
 SKIN_CHROMA_MAX = 30.0         # 이보다 진한 피부는 주황
 WARMTH_MAX_B = 9.0             # 한 영상에 더할 수 있는 온기(b*) 상한
+MATCH_CAP = 6.0                # 샷 매칭 이동량 성분마다 상한(Lab)
+MATCH_DE = 3.0                 # 원본 사이 얼굴 ΔE 가 이보다 크면 매칭(같은 사람 같은 날로 읽히는 문턱)
 CHROMA_GAIN_MAX = 1.8          # 채도 이득 상한(피부는 따로, 1.3)
 CONTRAST_MAX = 0.32            # S-커브 상한
 
@@ -106,6 +110,7 @@ class GradeChoice:
     reason: str = ""
     by: str = "rule"
     skin: tuple = ()               # 이 영상의 얼굴 평균색(원본 sRGB 0~1) — 피부 보호가 이 색 근처만 필요한 만큼 고친다
+    match_lab: tuple = ()          # 원본 사이 샷 매칭(07 문서 2-6): 얼굴 기준 Lab 이동 (dL, da, db) — 중간톤 가중
 
     def clamp(self) -> "GradeChoice":
         c = replace(self)
@@ -115,6 +120,8 @@ class GradeChoice:
         c.exposure = float(min(0.15, max(-0.15, c.exposure)))
         c.warmth = float(min(0.4, max(-0.4, c.warmth)))
         c.saturation = float(min(1.15, max(0.85, c.saturation)))
+        if c.match_lab:
+            c.match_lab = tuple(float(min(MATCH_CAP, max(-MATCH_CAP, v))) for v in tuple(c.match_lab)[:3])
         return c
 
 
@@ -187,7 +194,10 @@ def apply_correction(x: np.ndarray, c: Correction) -> np.ndarray:
     lin = _to_linear(x) * np.array(c.gains, dtype=np.float32)
     y = _to_gamma(lin)
     y = np.clip((y - c.black) / max(1e-3, c.white - c.black), 0, 1)
-    y = np.power(y, c.gamma)
+    if abs(c.gamma - 1) > 1e-4:
+        # 노출 감마는 밝기에만 — 채널마다 걸면 채도가 덩달아 바뀐다(07 문서 2-3: 감마 1.3 에서 벽 채도 23 → 27.5)
+        lum = np.clip(_luma(y)[..., None], 1e-4, 1.0)
+        y = y * (np.power(lum, c.gamma) / lum)
     if abs(c.sat - 1) > 1e-3:
         lum = _luma(y)[..., None]
         y = lum + (y - lum) * c.sat
@@ -496,8 +506,11 @@ def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
             recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
             # 레시피는 범위를 벗어난 만큼만 고치는 '교정'이라 룩 세기와 상관없이 다 적용한다(세기는 룩의 캐릭터에만)
             v = enrich(v, recipe, 1.0 if ch.recipe else min(1.0, ch.match))
-        return apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
-                          saturation=ch.saturation)
+        v = apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
+                       saturation=ch.saturation)
+        if ch.match_lab and any(abs(d) > 1e-3 for d in ch.match_lab):
+            v = match_shift(v, ch.match_lab)
+        return v
     face = before_guard(np.asarray(ch.skin, np.float32).reshape(1, 3))[0] if len(ch.skin) == 3 else None
     return skin_guard(before_guard(x), face)
 
@@ -572,8 +585,8 @@ def analyze(frames: list[tuple[float, np.ndarray]], faces: list[Optional[dict]])
             x0, y0, x1, y1 = box
             face_pix.append(f[y0:y1, x0:x1].reshape(-1, 3))
     face = np.concatenate(face_pix) if face_pix else None
-    # 무채색 후보: 중간 밝기 + 저채도(피부 제외)
-    neutral = (lum > 0.12) & (lum < 0.9) & (s < 0.22)
+    # 무채색 후보: 중간 밝기 + 저채도(피부 제외). 0.80 이상은 뺀다 — 화면 속 전등갓의 크림색은 흰색이 아니라 광원이다
+    neutral = (lum > 0.12) & (lum < 0.80) & (s < 0.22)
     lap = []
     for _, f in frames[:6]:
         g = _luma(f)
@@ -583,6 +596,7 @@ def analyze(frames: list[tuple[float, np.ndarray]], faces: list[Optional[dict]])
         "p005": float(np.percentile(lum, 0.5)), "p50": float(np.percentile(lum, 50)),
         "p997": float(np.percentile(lum, 99.7)), "sat_mean": float(np.mean(s)),
         "neutral_frac": float(np.mean(neutral)), "noise": float(np.median(lap)) if lap else 0.0,
+        "practical": has_practical(frames, faces), "clip": clip_frac([f for _, f in frames]),
         "mean_rgb": [float(v) for v in pix.mean(axis=0)],
     }
     if neutral.sum() > 500:
@@ -672,7 +686,8 @@ def correction_from_stats(st: dict[str, Any]) -> Correction:
     if black_ire > OK["black_ire"][1]:
         black = round(min(0.08, (black_ire - OK["black_ire"][1] + 3) / 100 * 0.7), 4)
     white = 1.0
-    if white_ire < OK["white_ire"][0]:
+    # 화면 속 전등(프랙티컬)이 있으면 화이트를 늘리지 않는다 — 99.7% 지점을 전등이 정해 전등·침구가 날아간다(07 문서 2-5)
+    if white_ire < OK["white_ire"][0] and not st.get("practical"):
         white = round(max(0.8, min(1.0, st["p997"] + 0.04)), 4)
     if white - black < 0.8:
         white = min(1.0, black + 0.8)
@@ -719,7 +734,8 @@ def is_identity(c: Correction, choice: "GradeChoice") -> bool:
         and abs(ch.recipe.get("chroma_gain", 1) - 1) < 1e-3 and abs(ch.recipe.get("skin_gain", 1) - 1) < 1e-3
         and ch.recipe.get("warmth", 0) < 1e-3)
     no_look = ch.strength <= 0 and abs(ch.exposure) < 1e-4 and abs(ch.warmth) < 1e-4 and abs(ch.saturation - 1) < 1e-4
-    return is_identity_correction(c) and no_recipe and no_look
+    no_match = not ch.match_lab or all(abs(d) < 1e-3 for d in ch.match_lab)
+    return is_identity_correction(c) and no_recipe and no_look and no_match
 
 
 def untouched_choice(reason: str = "원본이 정상 범위 — 보정하지 않음") -> GradeChoice:
@@ -797,10 +813,12 @@ def _to_img(x: np.ndarray):
 
 
 def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 360, src_lab: tuple = (),
-                     ref_lab: tuple = (), skin_rgb=None) -> bytes:
-    """행 = 프레임, 열 = 원본 + 룩들(각 룩의 목표에 맞춰 이 영상용 레시피를 따로 계산). 🎨 컬러리스트가 고를 비교 시트."""
+                     ref_lab: tuple = (), skin_rgb=None, row_label: str = "") -> bytes:
+    """행 = 프레임, 열 = 원본 + 룩들(각 룩의 목표에 맞춰 이 영상용 레시피를 따로 계산). 🎨 컬러리스트가 고를 비교 시트.
+    row_label: 원본 이름(원본이 여럿일 때 머리줄에 — 시트를 stack_sheets 로 쌓는다)."""
     from PIL import Image, ImageDraw
-    cols = [("0 원본", None)] + [(f"{i + 1} {l.label}", l.name) for i, l in enumerate(LOOKS.values())]
+    cols = [("0 " + (row_label[:14] if row_label else "원본"), None)] + \
+        [(f"{i + 1} {l.label}", l.name) for i, l in enumerate(LOOKS.values())]
     ch = int(round(cell_w * frames[0].shape[0] / frames[0].shape[1]))
     pad, head = 6, 34
     sheet = Image.new("RGB", (len(cols) * (cell_w + pad) + pad, head + len(frames) * (ch + pad) + pad), (18, 18, 18))
@@ -815,6 +833,23 @@ def comparison_sheet(frames: list[np.ndarray], c: Correction, *, cell_w: int = 3
             sheet.paste(tile, (pad + j * (cell_w + pad), head + i * (ch + pad)))
     buf = io.BytesIO()
     sheet.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
+def stack_sheets(sheets: list[bytes]) -> bytes:
+    """원본마다 만든 비교 시트를 위아래로(모든 원본을 한 장에 — 07 문서 2-6)."""
+    from PIL import Image
+    if len(sheets) == 1:
+        return sheets[0]
+    ims = [Image.open(io.BytesIO(b)).convert("RGB") for b in sheets]
+    w = max(i.width for i in ims)
+    out = Image.new("RGB", (w, sum(i.height for i in ims) + 8 * (len(ims) - 1)), (40, 40, 40))
+    y = 0
+    for im in ims:
+        out.paste(im, (0, y))
+        y += im.height + 8
+    buf = io.BytesIO()
+    out.save(buf, "JPEG", quality=88)
     return buf.getvalue()
 
 
@@ -839,4 +874,159 @@ def before_after(frame: np.ndarray, c: Correction, choice: GradeChoice, path: Pa
 
 
 def plan_to_dict(stats: dict, c: Correction, choice: GradeChoice, filters: list[str]) -> dict[str, Any]:
-    return {"stats": stats, "correction": asdict(c), "choice": asdict(choice), "filters": filters}
+    return {"version": GRADE_VERSION, "stats": stats, "correction": asdict(c), "choice": asdict(choice),
+            "filters": filters}
+
+
+# ---------------------------------------------------------------------------
+# 따뜻한 방 규칙(07 문서 2-4) — 룩 선택과 상한이 장면 온기를 따른다(프롬프트는 취향, 상한은 코드)
+# ---------------------------------------------------------------------------
+
+WARM_ROOM_B, WARM_ROOM_C, MILD_ROOM_B = 16.0, 22.0, 8.0
+
+
+def scene_warmth(frames: list[np.ndarray], faces: list[Optional[dict]]) -> dict[str, Any]:
+    """교정 뒤 프레임의 벽(얼굴 상자 기둥을 뺀 위쪽 62%, L 40~92) — {wall_b, wall_C, wall_hue, level: cool|mild|warm}."""
+    bs, cs, hs = [], [], []
+    for f, fc in zip(frames, faces):
+        h, w = f.shape[:2]
+        mask = np.zeros((h, w), bool)
+        mask[: int(h * 0.62)] = True
+        box = face_box(fc, w, h)
+        if box:
+            x0, _, x1, _ = box
+            mask[:, max(0, x0 - (x1 - x0) // 2): min(w, x1 + (x1 - x0) // 2)] = False
+        L, a, b = srgb_to_lab(f[mask])
+        keep = (L > 40) & (L < 92)
+        if keep.sum() < 200:
+            continue
+        bs.append(float(np.median(b[keep])))
+        cs.append(float(np.median(np.hypot(a[keep], b[keep]))))
+        hs.append(float(_lab_hue(np.array(np.median(a[keep])), np.array(np.median(b[keep])))))
+    if not bs:
+        return {"wall_b": 0.0, "wall_C": 0.0, "wall_hue": 0.0, "level": "unknown"}
+    wb, wc = float(np.median(bs)), float(np.median(cs))
+    level = "warm" if (wb > WARM_ROOM_B or wc > WARM_ROOM_C) else "mild" if wb >= MILD_ROOM_B else "cool"
+    return {"wall_b": round(wb, 1), "wall_C": round(wc, 1), "wall_hue": round(float(np.median(hs)), 1), "level": level}
+
+
+def scene_note(scene: dict[str, Any]) -> str:
+    lv = scene.get("level")
+    rng = {"warm": "따뜻한 방 → 룩 natural · 세기 0.7 이하 · warmth 0 이하(온기를 더하지 않는다)",
+           "mild": "조금 따뜻한 방 → warm_rich 세기 0.7~0.9 · warmth +0.1 까지",
+           "cool": "중립·차가운 방 → warm_rich 0.8~1.0 가능"}.get(str(lv), "벽을 재지 못함")
+    return f"벽 b* {scene.get('wall_b', 0):+.0f} · 채도 {scene.get('wall_C', 0):.0f} → {rng}"
+
+
+def clamp_to_scene(choice: GradeChoice, scene: Optional[dict[str, Any]]) -> GradeChoice:
+    """에이전트가 무엇을 골랐든 장면 온기의 상한을 적용한다 — 이미 따뜻한 방을 더 주황으로 밀지 않는다."""
+    if not scene or scene.get("level") not in ("warm", "mild"):
+        return choice
+    ch = replace(choice)
+    rec = dict(ch.recipe or {})
+    if scene["level"] == "warm":
+        if ch.look in ("warm_rich", "warm_film"):
+            ch.look = "natural"
+        ch.strength = min(ch.strength, 0.7)
+        ch.warmth = min(ch.warmth, 0.0)
+        if rec:
+            rec["warmth"] = 0.0
+            if "chroma_gain" in rec:
+                rec["chroma_gain"] = min(float(rec["chroma_gain"]), 1.0)
+    else:
+        ch.strength = min(ch.strength, 0.9)
+        ch.warmth = min(ch.warmth, 0.1)
+        if rec and "chroma_gain" in rec:
+            rec["chroma_gain"] = min(float(rec["chroma_gain"]), 1.4)
+    ch.recipe = rec
+    return ch
+
+
+# ---------------------------------------------------------------------------
+# 화면 속 전등 · 하이라이트 · 얼룩 · 원본 사이 매칭(07 문서 2-5 · 2-6 · 7절 F1·F3·F4)
+# ---------------------------------------------------------------------------
+
+def has_practical(frames: list[tuple[float, np.ndarray]], faces: list[Optional[dict]], *, level: float = 0.92,
+                  frac: float = 0.004) -> bool:
+    """얼굴 상자 밖에서 밝기 ≥ 0.92 인 화소가 화면의 0.4% 이상인 프레임이 절반 이상 — 전등이 화면에 있다."""
+    hits = 0
+    for (_, f), fc in zip(frames, faces):
+        y = _luma(f)
+        mask = y >= level
+        box = face_box(fc, f.shape[1], f.shape[0])
+        if box:
+            x0, y0, x1, y1 = box
+            mask[y0:y1, x0:x1] = False
+        hits += int(float(mask.mean()) >= frac)
+    return bool(frames) and hits * 2 >= len(frames)
+
+
+def clip_frac(frames: list[np.ndarray], level: float = 0.985) -> float:
+    """채널 최댓값이 level 이상인 화소 비율(날아간 하이라이트)."""
+    if not frames:
+        return 0.0
+    return float(np.mean([float((f.max(axis=-1) >= level).mean()) for f in frames]))
+
+
+def _flat_mask(x: np.ndarray, grad: float = 0.012) -> np.ndarray:
+    """기울기가 작은 영역(벽·하늘 같은 평평한 면) — 4방향 밝기 차가 모두 grad 아래, 너무 어둡거나 밝지 않은 곳."""
+    y = _luma(x)
+    g = np.zeros_like(y, dtype=bool)
+    gx = np.abs(np.diff(y, axis=1, append=y[:, -1:]))
+    gy = np.abs(np.diff(y, axis=0, append=y[-1:, :]))
+    g = (gx < grad) & (gy < grad) & (y > 0.15) & (y < 0.92)
+    return g
+
+
+def blotch_index(before: list[np.ndarray], after: list[np.ndarray]) -> dict[str, float]:
+    """F1 — 평평한 면에서 색 잡음이 몇 배가 됐나(a*·b* 표준편차 비)와 색상이 그 면의 중앙값에서 12° 넘게 벗어난 화소가
+    얼마나 늘었나(색상 스냅 → 분홍·누런 패치). 10/1: 예전 피부 보호 ×4.36 · 2.1~14.7%, 지금 ×1.34 · 0%."""
+    ratios, offs = [], []
+    for b0, a1 in zip(before, after):
+        m = _flat_mask(b0)
+        if m.sum() < 400:
+            continue
+        _, a0, bb0 = srgb_to_lab(b0[m])
+        _, a_1, bb1 = srgb_to_lab(a1[m])
+        ratios.append(max(float(a_1.std()) / max(float(a0.std()), 0.2), float(bb1.std()) / max(float(bb0.std()), 0.2)))
+
+        def off(a: np.ndarray, b: np.ndarray) -> float:
+            C = np.hypot(a, b)
+            keep = C > 4.0
+            if keep.sum() < 100:
+                return 0.0
+            h = _lab_hue(a[keep], b[keep])
+            return float((np.abs(_wrap(h - np.median(h))) > 12.0).mean())
+        offs.append(max(0.0, off(a_1, bb1) - off(a0, bb0)))
+    return {"ratio": round(float(np.median(ratios)) if ratios else 1.0, 3),
+            "off": round(float(np.median(offs)) if offs else 0.0, 4), "frames": len(ratios)}
+
+
+def face_lab_after(face_rgb, c: Correction, choice: GradeChoice, identity: bool = False) -> tuple[float, float, float]:
+    """보정 뒤 얼굴 평균색(Lab) — 원본 사이 매칭의 기준."""
+    f = np.asarray(face_rgb, np.float32).reshape(1, 3)
+    g = f if identity else grade(f, c, choice)
+    L, a, b = srgb_to_lab(g)
+    return float(L[0]), float(a[0]), float(b[0])
+
+
+def delta_e(p: tuple, q: tuple) -> float:
+    return float(math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(p[:3], q[:3]))))
+
+
+def match_sources(face_lab: dict[Any, tuple], weight: dict[Any, float], *, k: float = 1.0,
+                  cap: float = MATCH_CAP) -> dict[Any, tuple]:
+    """원본마다 얼굴 Lab → 쓰인 길이로 가중한 평균을 기준으로 각 원본의 Lab 이동량(성분마다 ±cap)."""
+    keys = [c for c in face_lab if face_lab[c]]
+    if len(keys) < 2:
+        return {}
+    w = np.array([max(1e-3, float(weight.get(c, 1.0))) for c in keys])
+    ref = (np.array([face_lab[c][:3] for c in keys]) * w[:, None]).sum(0) / w.sum()
+    return {c: tuple(float(v) for v in np.clip((ref - np.array(face_lab[c][:3])) * k, -cap, cap)) for c in keys}
+
+
+def match_shift(x: np.ndarray, d: tuple, k: float = 0.8) -> np.ndarray:
+    """Lab 이동을 중간톤 가중으로(블랙·화이트는 그대로) — 픽셀 독립이라 같은 LUT 에 들어간다."""
+    L, a, b = srgb_to_lab(x)
+    w = 4.0 * np.clip(L / 100.0, 0, 1) * (1.0 - np.clip(L / 100.0, 0, 1))
+    return lab_to_srgb(L + k * float(d[0]) * w, a + k * float(d[1]) * w, b + k * float(d[2]) * w)

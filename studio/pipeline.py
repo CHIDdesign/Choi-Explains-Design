@@ -824,9 +824,9 @@ class Pipeline:
         return times
 
     def stage_grade(self) -> None:
-        """🎨 자동 색보정: 남길 구간의 프레임 분석 → 교정 + 레퍼런스 색 매칭 + 룩(기본 웜 리치, 컬러리스트가 비교 시트에서
-        선택) → LUT. 원본이 여러 개면 카메라마다 교정·색 매칭을 따로 하고(같은 레퍼런스로 모아 앵글끼리 색이 맞는다),
-        룩은 첫 카메라에서 한 번 고른다."""
+        """🎨 자동 색보정(색보정 v3 — docs/upgrade/07_영상_룩_v2.md): 원본마다 분석·교정(벗어난 것만) → 🎨 컬러리스트가
+        **모든 원본**의 비교 시트를 한 번에 보고 룩 하나(따뜻한 방 상한은 코드가) → 원본마다 레시피·검사(색 잡음 · 얼룩 F1 ·
+        하이라이트 F4) → 원본 사이 얼굴 ΔE 가 3 을 넘으면 얼굴 기준 Lab 매칭(F3) → LUT."""
         assert self.info
         if self.spec.lut or not self.spec.auto_grade:
             self.grade_info = {}
@@ -838,7 +838,7 @@ class Pipeline:
         times = {c.idx: self._grade_times(c, vt) for c in cams}
         ref_lab = grade.reference_lab(USER_DIR / "reference_frames")
         key = text_hash([(file_fingerprint(c.path), [round(t, 1) for t in times[c.idx]]) for c in cams], self._use_api(),
-                        [round(v, 1) for v in ref_lab], "grade-v5")
+                        [round(v, 1) for v in ref_lab], "grade-v5", grade.GRADE_VERSION)
         cached = read_json(self.work / "grade.json", {})
         luts = cached.get("luts") or {}
         if cached.get("key") == key and all(not luts.get(str(c.idx), True) or self._cube(c.idx).exists() for c in cams):
@@ -846,25 +846,33 @@ class Pipeline:
             self.log("🎨 색보정: 캐시 사용(" + ("원본 그대로" if not any(luts.values()) else
                                              grade.LOOKS[cached['choice']['look']].label) + ")")
             return
-        base: Optional[grade.GradeChoice] = None
+        anas = [self._grade_analyze(cam, times[cam.idx]) for cam in cams]
+        self._stage("grade", 0.3)
+        base = self._grade_pick_look(anas, ref_lab)
         per_cam: dict[str, dict] = {}
         luts = {}
-        for n, cam in enumerate(cams):
-            plan, choice = self._grade_cam(cam, times[cam.idx], ref_lab, base, first=(n == 0))
+        done: list[tuple[Any, dict, Any, Any, dict]] = []
+        for n, (cam, ana) in enumerate(zip(cams, anas)):
+            plan, choice, corr = self._grade_finish(cam, ana, ref_lab, base, first=(n == 0))
             if n == 0:
-                base = choice
                 self.grade_info = {"key": key, **plan}
+            done.append((cam, ana, corr, choice, plan))
+            self._stage("grade", 0.3 + 0.6 * (n + 1) / len(cams))
+        if len(cams) > 1:
+            done = self._grade_match(done)
+        for cam, ana, corr, choice, plan in done:
             luts[str(cam.idx)] = bool(plan.get("lut"))
             per_cam[str(cam.idx)] = {"filters": plan.get("filters", []), "lut": bool(plan.get("lut")),
-                                     "notes": plan.get("correction", {}).get("notes", [])}
-            self._stage("grade", (n + 1) / len(cams))
+                                     "notes": plan.get("correction", {}).get("notes", []),
+                                     "match_lab": list(choice.match_lab or ())}
         self.grade_info["luts"] = luts
+        self.grade_info["version"] = grade.GRADE_VERSION
         if len(cams) > 1:
             self.grade_info["cams"] = per_cam
         write_json(self.work / "grade.json", self.grade_info)
 
-    def _grade_cam(self, cam, times: list[float], ref_lab, base: Optional["grade.GradeChoice"], *,
-                   first: bool) -> tuple[dict, "grade.GradeChoice"]:
+    def _grade_analyze(self, cam, times: list[float]) -> dict[str, Any]:
+        """한 원본: 표본 프레임 · 얼굴 · 통계 · 스코프 판정 · 교정 · 비교용 프레임 · 장면 온기."""
         info = self.infos[cam.idx]
         frames = grade.sample_frames(self.ff, cam.path, times, info)
         track = self.face_cams.get(cam.idx) or []
@@ -872,12 +880,11 @@ class Pipeline:
         stats = grade.analyze(frames, faces)
         raw_frames = [f for _, f in frames]
         # 스코프(파형·벡터스코프 수치)로 먼저 판정 — 모든 항목이 정상 범위면 원본 그대로(LUT 도 걸지 않는다)
-        before = scopes.metrics(raw_frames, faces)
-        checks = scopes.assess(before)
+        checks = scopes.assess(scopes.metrics(raw_frames, faces))
         untouched = scopes.all_ok(checks)
         corr = grade.Correction(notes=["원본 정상 범위 — 보정 없음"]) if untouched else grade.correction_from_stats(stats)
-        # 교정 후 평균색 → 레퍼런스(사용자가 좋아하는 따뜻하고 풍부한 색) 쪽으로 옮길 기준
-        src_lab = grade.lab_stats(np.concatenate([grade.apply_correction(f, corr).reshape(-1, 3) for _, f in frames]))
+        corrected = [grade.apply_correction(f, corr) for f in raw_frames]
+        src_lab = grade.lab_stats(np.concatenate([f.reshape(-1, 3) for f in corrected]))
         # 비교용 3프레임: 얼굴이 크고 서로 떨어진 순간
         order = sorted(range(len(frames)), key=lambda i: -(faces[i] or {}).get("s", 0))
         picks: list[int] = []
@@ -886,43 +893,74 @@ class Pipeline:
                 picks.append(i)
             if len(picks) == 3:
                 break
-        picks = sorted(picks or [0])
-        skin_rgb = stats.get("face_rgb")      # 피부 보호는 이 카메라의 얼굴색 근처만, 벗어난 만큼만 고친다
         who = f"[{Path(cam.path).name}] " if not self.smap.single else ""
         self.log(f"🎨 {who}스코프: " + scopes.summary(checks))
+        return {"frames": frames, "faces": faces, "stats": stats, "raw": raw_frames, "checks": checks,
+                "untouched": untouched, "corr": corr, "src_lab": src_lab, "picks": sorted(picks or [0]),
+                "skin": stats.get("face_rgb"), "scene": grade.scene_warmth(corrected, faces), "who": who}
+
+    def _grade_pick_look(self, anas: list[dict[str, Any]], ref_lab) -> Optional["grade.GradeChoice"]:
+        """🎨 컬러리스트 한 번 — 보정이 필요한 **모든 원본**을 행으로 한 비교 시트(07 문서 2-6). 룩·세기는 영상에 하나.
+        반환: 기준 선택(룩·세기·미세 조정) 또는 None(AI 없음·전부 원본 그대로 → 규칙)."""
+        need = [a for a in anas if not a["untouched"]]
+        studio = self._ensure_studio() if need else None
+        if studio is None:
+            return None
+        sheets = []
+        for a in need:
+            sheets.append(grade.comparison_sheet([a["frames"][i][1] for i in a["picks"]][: (3 if len(need) == 1 else 2)],
+                                                 a["corr"], src_lab=a["src_lab"], ref_lab=ref_lab, skin_rgb=a["skin"],
+                                                 row_label=Path(a["who"].strip("[] ")).stem if a["who"] else ""))
+        sheet = grade.stack_sheets(sheets)
+        (self.work / "grade_sheet.jpg").write_bytes(sheet)
+        a0 = need[0]
+        scope_sheet = scopes.draw([((a["who"] or "원본"), [a["raw"][i] for i in a["picks"]]) for a in need[:2]])
+        faces = [grade.face_lab_after(a["skin"], a["corr"], grade.GradeChoice(), identity=True)
+                 for a in need if a["skin"] is not None]
+        de = max((grade.delta_e(p, q) for i, p in enumerate(faces) for q in faces[i + 1:]), default=0.0)
+        notes = " / ".join(
+            [f"{a['who'] or '원본'}스코프(범위 밖만): {scopes.summary(a['checks'])} · 교정: "
+             f"{' · '.join(a['corr'].notes) or '적음'} · 장면: {grade.scene_note(a['scene'])}"
+             + (" · 화면 속 전등 있음" if a["stats"].get("practical") else "") for a in need]
+            + ([f"원본 사이 얼굴 ΔE {de:.1f}(3 을 넘으면 앱이 얼굴색을 맞춘다)"] if len(faces) > 1 else []))
+        try:
+            r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"),
+                             ("scopes", scope_sheet, "image/jpeg"))
+            base = grade.plan_choice(a0["raw"], a0["corr"], str(r.get("look", "natural")), ref_lab,
+                                     skin_rgb=a0["skin"], strength=float(r.get("strength", 0.6) or 0.0),
+                                     exposure=float(r.get("exposure", 0) or 0), warmth=float(r.get("warmth", 0) or 0),
+                                     saturation=float(r.get("saturation", 1) or 1), reason=str(r.get("reason", "")),
+                                     by="ai").clamp()
+            return base
+        except (DirectorError, ValueError, TypeError) as e:
+            self.log(f"🎨 컬러리스트 실패 → 규칙(내추럴 약하게): {e}")
+            return None
+
+    def _grade_finish(self, cam, ana: dict[str, Any], ref_lab, base: Optional["grade.GradeChoice"], *,
+                      first: bool) -> tuple[dict, "grade.GradeChoice", "grade.Correction"]:
+        """한 원본의 선택 → 따뜻한 방 상한 → 색 잡음 · 얼룩(F1) · 하이라이트(F4) 검사 → LUT · 전후 자료."""
+        frames, faces, stats, raw_frames = ana["frames"], ana["faces"], ana["stats"], ana["raw"]
+        corr, picks, skin_rgb, who, untouched = ana["corr"], ana["picks"], ana["skin"], ana["who"], ana["untouched"]
+        checks = ana["checks"]
         if untouched:
             choice = grade.untouched_choice()
-        elif base is not None:        # 두 번째 카메라부터: 같은 룩·세기, 레시피는 이 카메라의 상태로 다시
+        elif base is not None:        # 같은 룩·세기·미세 조정, 레시피는 이 원본의 상태로
             choice = replace(grade.plan_choice(raw_frames, corr, base.look, ref_lab, skin_rgb=skin_rgb),
-                             strength=base.strength,
-                             exposure=base.exposure, warmth=base.warmth, saturation=base.saturation, reason=base.reason,
-                             by=base.by)
+                             strength=base.strength, exposure=base.exposure, warmth=base.warmth,
+                             saturation=base.saturation, reason=base.reason, by=base.by)
         else:
             # 규칙 기본: 벗어난 것만 고치는 레시피 + 내추럴 룩을 약하게(원본의 인상을 지킨다)
             choice = grade.plan_choice(raw_frames, corr, "natural", ref_lab, skin_rgb=skin_rgb, strength=0.5)
-            studio = self._ensure_studio()
-            if studio is not None:
-                sheet = grade.comparison_sheet([frames[i][1] for i in picks], corr, src_lab=src_lab, ref_lab=ref_lab,
-                                               skin_rgb=skin_rgb)
-                (self.work / "grade_sheet.jpg").write_bytes(sheet)
-                scope_sheet = scopes.draw([("원본", [raw_frames[i] for i in picks])])
-                try:
-                    notes = ("스코프(정상 범위 밖만): " + scopes.summary(checks) + " / 교정: "
-                             + (" · ".join(corr.notes) or "교정 필요 적음") + " / 이 영상 레시피(웜 리치 기준): "
-                             + grade.recipe_summary(choice.recipe))
-                    r = studio.grade(f"# 색보정\n주제: {self.title}", notes, ("grade_sheet", sheet, "image/jpeg"),
-                                     ("scopes", scope_sheet, "image/jpeg"))
-                    choice = grade.plan_choice(raw_frames, corr, str(r.get("look", "natural")), ref_lab,
-                                               skin_rgb=skin_rgb, strength=float(r.get("strength", 0.6) or 0.0),
-                                               exposure=float(r.get("exposure", 0) or 0),
-                                               warmth=float(r.get("warmth", 0) or 0),
-                                               saturation=float(r.get("saturation", 1) or 1),
-                                               reason=str(r.get("reason", "")), by="ai").clamp()
-                except (DirectorError, ValueError, TypeError) as e:
-                    self.log(f"🎨 컬러리스트 실패 → 규칙(내추럴 약하게): {e}")
+        if not untouched:
+            before_scene = choice
+            choice = grade.clamp_to_scene(choice, ana["scene"])
+            if (choice.look, round(choice.strength, 2)) != (before_scene.look, round(before_scene.strength, 2)):
+                self.log(f"🎨 {who}{grade.scene_note(ana['scene'])} → 룩 '{grade.LOOKS[choice.look].label}' "
+                         f"세기 {choice.strength:.1f}")
         qc: dict[str, Any] = {"noise_gain": 1.0, "backoff": []}
         identity = untouched or grade.is_identity(corr, choice)
         cube = self._cube(cam.idx)
+        gates: list[gate.GateResult] = []
         if identity:
             cube.unlink(missing_ok=True)      # 예전 실행의 LUT 이 남아 프록시에 걸리지 않게
         else:
@@ -930,7 +968,14 @@ class Pipeline:
             choice, qc = grade.qc_backoff(raw_frames, corr, choice)
             for line in qc["backoff"]:
                 self.log(f"🎨 {who}검사: {line}")
-            grade.write_cube(cube, corr, choice)
+            corr, choice, gates = self._grade_gates(raw_frames, corr, choice, stats, who)
+            identity = grade.is_identity(corr, choice)
+            if identity:
+                cube.unlink(missing_ok=True)
+            else:
+                grade.write_cube(cube, corr, choice)
+        if gates:
+            self._gate_record(gates, "색")
         graded = raw_frames if identity else [grade.grade(f, corr, choice) for f in raw_frames]
         after_checks = scopes.assess(scopes.metrics(graded, faces))
         filters = grade.cleanup_filters(stats)
@@ -951,6 +996,7 @@ class Pipeline:
                      + (", 디노이즈/샤픈만" if filters else "") + ")")
         else:
             after = grade.lab_stats(np.concatenate([g.reshape(-1, 3) for g in graded[:6]]))
+            src_lab = ana["src_lab"]
             self.log(f"🎨 {who}색 변화: 따뜻함(b) {src_lab[2]:+.1f} → {after[2]:+.1f} · 진하기(C) {src_lab[3]:.1f} → "
                      f"{after[3]:.1f}")
             self.log(f"🎨 {who}색보정: {', '.join(corr.notes) or '교정 거의 없음'} → 룩 '{grade.LOOKS[choice.look].label}'"
@@ -959,9 +1005,83 @@ class Pipeline:
             self.log(f"🎨 {who}이 영상에 맞춘 양: {grade.recipe_summary(choice.recipe)} · 보정 뒤 스코프: "
                      + scopes.summary(after_checks) + f" · 색 잡음 ×{qc['noise_gain']:.2f}")
         plan = grade.plan_to_dict(stats, corr, choice, filters)
-        plan.update(lut=not identity, scopes={"before": [c.to_dict() for c in checks],
-                                              "after": [c.to_dict() for c in after_checks], **qc})
-        return plan, choice
+        plan.update(lut=not identity, scene=ana["scene"], scopes={"before": [c.to_dict() for c in checks],
+                                                                  "after": [c.to_dict() for c in after_checks], **qc})
+        return plan, choice, corr
+
+    def _grade_gates(self, raw: list, corr, choice, stats: dict, who: str):
+        """색 게이트 F1(평평한 면의 얼룩) · F4(날아간 하이라이트) — 실패하면 고쳐서 다시 잰다.
+        F1: 피부 보호를 끈 판(얼굴색 정보 없이) → 그래도 얼룩이면 룩·레시피를 반으로 → 그래도면 원본 그대로.
+        F4: 화이트를 1.0 으로(늘리지 않는다)."""
+        sample = raw[:4]
+        graded = [grade.grade(f, corr, choice) for f in sample]
+        bi = grade.blotch_index(sample, graded)
+        r1 = gate.f1_blotch(bi)
+        if not r1.ok:
+            tries = [replace(choice, skin=()),
+                     replace(choice, skin=(), strength=round(choice.strength * 0.5, 3),
+                             recipe={k: (1.0 + (v - 1.0) * 0.5 if k in ("chroma_gain", "skin_gain") else
+                                         v * 0.5 if k in ("contrast", "warmth", "black") else v)
+                                     for k, v in (choice.recipe or {}).items()})]
+            for ch in tries:
+                bi2 = grade.blotch_index(sample, [grade.grade(f, corr, ch) for f in sample])
+                r2 = gate.f1_blotch(bi2)
+                if r2.ok:
+                    self.log(f"🎨 {who}게이트 F1: 얼룩(색 잡음 ×{bi['ratio']:.2f}) → 줄여서 통과(×{bi2['ratio']:.2f})")
+                    choice, r1 = ch, r2
+                    r1.repaired = True
+                    break
+            else:
+                self.log(f"🎨 {who}게이트 F1: 보정이 벽에 얼룩을 만든다 → 이 원본은 그대로 둔다")
+                choice = grade.untouched_choice("색 게이트 F1 — 얼룩이 생겨 원본 그대로")
+                corr = grade.Correction(notes=corr.notes + ["F1 얼룩 → 원본 그대로"])
+                r1 = gate.f1_blotch(grade.blotch_index(sample, sample))
+                r1.repaired = True
+        clip0 = float(stats.get("clip") if stats.get("clip") is not None else grade.clip_frac(sample))
+        clip1 = grade.clip_frac([grade.grade(f, corr, choice) for f in sample])
+        r4 = gate.f4_clipping(clip0, clip1)
+        if not r4.ok and corr.white < 1.0:
+            corr = replace(corr, white=1.0, notes=corr.notes + ["F4 하이라이트 → 화이트 그대로"])
+            clip2 = grade.clip_frac([grade.grade(f, corr, choice) for f in sample])
+            r4b = gate.f4_clipping(clip0, clip2)
+            self.log(f"🎨 {who}게이트 F4: 하이라이트 {clip1:.1%} → 화이트를 늘리지 않음({clip2:.1%})")
+            r4 = r4b
+            r4.repaired = r4.ok
+        return corr, choice, [r1, r4]
+
+    def _grade_match(self, done: list) -> list:
+        """원본 사이 샷 매칭(07 문서 2-6 · 게이트 F3): 보정 뒤 얼굴 Lab 중앙값의 ΔE 가 3 을 넘으면 쓰인 길이로 가중한 평균
+        얼굴로 원본마다 Lab 이동(중간톤 가중, 성분마다 ±6) → LUT 다시. 벽(배경) 차이는 고치지 않고 적는다."""
+        faces = {}
+        for cam, ana, corr, choice, plan in done:
+            if ana["skin"] is not None:
+                ident = not plan.get("lut")
+                faces[cam.idx] = grade.face_lab_after(ana["skin"], corr, choice, identity=ident)
+        if len(faces) < 2:
+            return done
+        keys = list(faces)
+        before = max(grade.delta_e(faces[a], faces[b]) for i, a in enumerate(keys) for b in keys[i + 1:])
+        if before <= grade.MATCH_DE:
+            self._gate_record([gate.f3_sources(before, before)], "색")
+            self.log(f"🎨 원본 사이 얼굴 ΔE {before:.1f} — 맞출 필요 없음")
+            return done
+        weight = {cam.idx: float(self.infos[cam.idx].duration or 1.0) for cam, *_ in done}
+        shifts = grade.match_sources(faces, weight, k=1.0 / 0.8)
+        out = []
+        for cam, ana, corr, choice, plan in done:
+            d = shifts.get(cam.idx)
+            if d and any(abs(v) > 0.3 for v in d):
+                choice = replace(choice, match_lab=tuple(round(v, 3) for v in d)).clamp()
+                grade.write_cube(self._cube(cam.idx), corr, choice)
+                plan = {**plan, "lut": True, "choice": {**plan.get("choice", {}), "match_lab": list(choice.match_lab)}}
+            out.append((cam, ana, corr, choice, plan))
+        after_faces = {cam.idx: grade.face_lab_after(ana["skin"], corr, choice, identity=not plan.get("lut"))
+                       for cam, ana, corr, choice, plan in out if ana["skin"] is not None}
+        ks = list(after_faces)
+        after = max(grade.delta_e(after_faces[a], after_faces[b]) for i, a in enumerate(ks) for b in ks[i + 1:])
+        self.log(f"🎨 원본 사이 얼굴 ΔE {before:.1f} → {after:.1f}(얼굴 기준 Lab 매칭)")
+        self._gate_record([gate.f3_sources(before, after)], "색")
+        return out
 
     # ------------------------------------------------------------------
     def _brief(self) -> JobBrief:
@@ -1294,6 +1414,9 @@ class Pipeline:
                 continue
             self.log(f"편집본{who}: {height}p · {self.fps}fps · {'NVENC' if self.ff.nvenc_ok else 'x264'}"
                      + (" · 색보정 LUT" if lut else "") + (" · 디노이즈/샤픈" if filters else ""))
+            if not self.ff.nvenc_ok and getattr(self.ff, "nvenc_error", "") and n == 0:
+                # 조용히 x264 로 떨어지지 않게 — 드라이버가 낮으면 업데이트만으로 편집본 인코딩이 빨라진다(07 문서 1-4)
+                self.log(f"   (NVENC 를 못 씀: {self.ff.nvenc_error})")
             build_proxy(self.ff, cam.path, self.infos[cam.idx], proxy, fps=self.fps, height=height,
                         lut=lut or None, pre_filters=pre, post_filters=post, log=self.log,
                         progress=lambda f, n=n: self._stage("proxy", 0.8 * (n + f) / len(cams)), cancel=self.cancel)
@@ -3199,6 +3322,7 @@ class Pipeline:
         for i, sp in enumerate(self.short_props, 1):
             write_text(self.extras / f"숏폼{i}_자막.srt", cues_to_srt(sp["captions"]))
         self._review_sheets()
+        self._color_tags()
         self._timeline_review()
         text = youtube_text(self.plan_long, chapters, self.plan_shorts, credits)
         if music:
@@ -3250,6 +3374,18 @@ class Pipeline:
         shutil.copyfile(self.work / "plan.json", self.extras / "plan.json")
         self.results["extras"] = str(self.extras)
         self.results["upload_info"] = str(self.out / "업로드정보.txt")
+
+    def _color_tags(self) -> None:
+        """게이트 F6 — 완성본의 색 태그가 BT.709 · tv · yuv420p 인가(07 문서 2-7: 10/1 완성본은 풀레인지 BT.601 로 나갔다)."""
+        probs: dict[str, list[str]] = {}
+        for m in self.masters:
+            try:
+                if Path(m["dst"]).exists():
+                    probs[Path(m["dst"]).name] = self.ff.assert_bt709(m["dst"])
+            except Exception as e:  # noqa: BLE001 - 검사 실패는 결과물에 영향 없음
+                self._log_file_only(f"   (색 태그 검사 실패 {m.get('dst')}: {e})")
+        if probs:
+            self._gate_record([gate.f6_tags(probs)], "완성본 색")
 
     def _timeline_review(self) -> None:
         """🧐 게이트 E — 완성본을 처음 보는 눈으로: 검토 시트(2.5초 간격) 전부 + 자막 + 이벤트 목록 + 감독의 계획 + 게이트 결과를

@@ -448,3 +448,41 @@ def test_event_list_has_holds_sequences_and_text():
     assert "TX   wipe" in ev and "SFX  paper" in ev and "PEAK" in ev
     lines = ev.splitlines()[1:]
     assert lines == sorted(lines, key=lambda x: x[:5])          # 시간순
+
+
+# ---------------------------------------------------------------------------
+# 색 게이트 F(docs/upgrade/07 7절) — 10/1 실측값 픽스처
+# ---------------------------------------------------------------------------
+
+def test_color_gates_use_measured_thresholds():
+    assert not gate.f1_blotch({"ratio": 4.36, "off": 0.021, "frames": 3}).ok        # 설치본(수정 전 피부 보호)
+    assert gate.f1_blotch({"ratio": 1.34, "off": 0.0, "frames": 3}).ok              # 지금 보정
+    assert gate.f1_blotch({"ratio": 1.0, "off": 0.0, "frames": 0}).skipped
+    r = gate.f3_sources(5.0, 1.8)
+    assert r.ok and r.repaired                                                        # 매칭으로 통과
+    assert not gate.f3_sources(11.2, 4.4).ok
+    assert not gate.f4_clipping(0.0019, 0.0441).ok                                   # 2번 카메라 0.19% → 4.41%
+    assert gate.f4_clipping(0.002, 0.0043).ok
+    bad = gate.f6_tags({"long.mp4": ["color_range=pc", "color_space=bt470bg"], "short.mp4": []})
+    assert not bad.ok and "long.mp4" in bad.message and gate.f6_tags({"a.mp4": []}).ok
+
+
+def test_assert_bt709_and_nvenc_reason(monkeypatch):
+    import subprocess
+    from studio.media import ffmpeg as F
+    ff = F.FFmpeg.__new__(F.FFmpeg)
+    ff.ffmpeg, ff.ffprobe, ff.nvenc_error = "ffmpeg", "ffprobe", ""
+    full601 = F.MediaInfo(path="x", duration=1.0, pix_fmt="yuvj420p", color_space="bt470bg", color_transfer="",
+                          color_primaries="", color_range="pc")
+    monkeypatch.setattr(F.FFmpeg, "probe", lambda self, p: full601)
+    probs = ff.assert_bt709("x.mp4")
+    assert "color_range=pc" in probs and "color_space=bt470bg" in probs and "pix_fmt=yuvj420p" in probs
+    ok = F.MediaInfo(path="y", duration=1.0, pix_fmt="yuv420p", color_space="bt709", color_transfer="bt709",
+                     color_primaries="bt709", color_range="tv")
+    monkeypatch.setattr(F.FFmpeg, "probe", lambda self, p: ok)
+    assert ff.assert_bt709("y.mp4") == []
+
+    class R:
+        returncode, stderr = 1, "[h264_nvenc] Driver does not support the required nvenc API version. minimum required Nvidia driver for nvenc is 610.00\nmore"
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    assert ff._nvenc_variant() is None and "610.00" in ff.nvenc_error

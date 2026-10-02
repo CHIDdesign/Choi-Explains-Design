@@ -384,6 +384,17 @@ class Ladder:
                     prepare_photo(path, dst)
             path = dst
         lic = lic_obj or (License(tier=tier, name=lic_text) if tier else classify(lic_text, origin=origin))
+        orig = path
+        if kind == "photo" and origin in ("commons", "wikipedia", "openverse") and lic.tier != "C" \
+                and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+            # 하우스 트리트먼트 T1(07b): 색이 정보인 실물(작품·제품·건물)이라 색은 그대로 두고 레벨만 [잉크, 종이] 안으로
+            from ..grade.house import HOUSE_VERSION, treat_file
+            base = path.with_name(f"{path.stem}.full.h{HOUSE_VERSION}")
+            try:
+                path = base.with_suffix(".jpg") if base.with_suffix(".jpg").exists() else \
+                    treat_file(path, base, kind="photo", keep_color=True, surface="full")[0]
+            except Exception as e:  # noqa: BLE001
+                self.log(f"자료 톤 처리 실패({path.name}): {e}")
         w = h = 0
         try:
             with Image.open(path) as im:
@@ -422,7 +433,7 @@ class Ladder:
             names = [x for x in ((it.get("subject") or {}).get("name_ko"), (it.get("subject") or {}).get("name_en"),
                                  it.get("local_file")) if x]
             try:
-                self.d.library.add(path, meta.to_dict(), names, qid=str(((o.get("info") or {}).get("qid")) or ""))
+                self.d.library.add(orig, meta.to_dict(), names, qid=str(((o.get("info") or {}).get("qid")) or ""))
             except Exception as e:  # noqa: BLE001 - 라이브러리는 덤
                 self.log(f"자산 라이브러리 등록 실패: {e}")
 

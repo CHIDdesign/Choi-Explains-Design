@@ -205,6 +205,8 @@ const main = async () => {
       jpegQuality: 92,
       ...(r.muted ? {muted: true} : {audioCodec: 'aac', audioBitrate: '320k'}),
       pixelFormat: 'yuv420p',
+      // 완성본 색 태그: BT.709 · 제한 범위(07 문서 2-7 — 지정하지 않으면 풀레인지 BT.601(yuvj420p · pc · bt470bg)로 나갔다)
+      colorSpace: r.colorSpace || 'bt709',
       overwrite: true,
       offthreadVideoCacheSizeInBytes: 2 * 1024 * 1024 * 1024,
       ...(onArtifact ? {onArtifact} : {}),

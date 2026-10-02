@@ -46,6 +46,8 @@ class MediaInfo:
     pix_fmt: str = ""
     color_transfer: str = ""
     color_space: str = ""
+    color_primaries: str = ""
+    color_range: str = ""
     bit_depth: int = 8
     v_start: float = 0.0       # 영상 스트림 시작 시각(start_time)
     a_start: float = 0.0       # 오디오 스트림 시작 시각 — 폰·카메라·OBS 녹화는 영상과 수십~수백 ms 어긋나기도 함
@@ -78,6 +80,7 @@ class FFmpeg:
             self.ffprobe = str(cand) if cand.exists() else ""
         if not self.ffprobe:
             raise FFmpegError("ffprobe 를 찾을 수 없습니다 (ffmpeg 와 같은 폴더에 있어야 합니다).")
+        self.nvenc_error = ""          # NVENC 를 못 쓰는 이유(드라이버 등) — 진단·로그용
 
     @staticmethod
     def _find(name: str) -> str:
@@ -131,6 +134,7 @@ class FFmpeg:
             ["-preset", "p5", "-cq", "{cq}"],
         ]
         found: list[str] | None = None
+        self.nvenc_error = ""
         for v in variants:
             opts = [x.replace("{cq}", "19") for x in v]
             try:
@@ -143,6 +147,10 @@ class FFmpeg:
             if r.returncode == 0:
                 found = v
                 break
+            # 실패 사유는 남긴다(07 문서 1-4: 드라이버가 낮으면 'minimum required Nvidia driver …' — 조용히 x264 로 떨어졌다)
+            first = next((ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()), "")
+            if first and not self.nvenc_error:
+                self.nvenc_error = first[:200]
         self._nvenc_cache = found
         return found
 
@@ -162,6 +170,17 @@ class FFmpeg:
         preset = "veryfast" if quality == "intermediate" else "fast"
         return ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-g", str(gop), "-bf", "0",
                 "-pix_fmt", "yuv420p"]
+
+    def assert_bt709(self, path: str | Path) -> list[str]:
+        """완성본 색 태그 검사(07 문서 2-7 · 게이트 F6): BT.709 · 제한 범위(tv) · yuv420p 가 아니면 어긋난 항목들."""
+        info = self.probe(path)
+        bad = []
+        for k, want in (("color_space", "bt709"), ("color_transfer", "bt709"), ("color_primaries", "bt709"),
+                        ("color_range", "tv"), ("pix_fmt", "yuv420p")):
+            got = getattr(info, k, "") or "unknown"
+            if got != want:
+                bad.append(f"{k}={got}")
+        return bad
 
     # ------------------------------------------------------------------
     def probe(self, path: str | Path) -> MediaInfo:
@@ -184,6 +203,8 @@ class FFmpeg:
                 info.pix_fmt = st.get("pix_fmt", "")
                 info.color_transfer = st.get("color_transfer", "") or ""
                 info.color_space = st.get("color_space", "") or ""
+                info.color_primaries = st.get("color_primaries", "") or ""
+                info.color_range = st.get("color_range", "") or ""
                 info.bit_depth = 10 if "10" in info.pix_fmt else 8
                 rfr = st.get("r_frame_rate") or "30/1"
                 afr = st.get("avg_frame_rate") or rfr

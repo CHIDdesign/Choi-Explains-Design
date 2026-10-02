@@ -239,6 +239,9 @@ class StockResearcher:
                 g.update(src=res["src"], kind=res["kind"], credit=res["credit"], stock_url=res["url"])
                 if res["kind"] == "photo":
                     g.setdefault("kenburns", "in")
+                    # 하우스 트리트먼트(07b): 놓이는 곳(전면 · 종이 위)에 맞춰 [잉크, 종이] 안으로 — 캐시는 원본 그대로 두고
+                    # 그래픽마다 처리한 사본을 쓴다(파일 이름에 처리·판)
+                    g["src"] = self._house(res["src"], "photo", "full" if g.get("layout") == "fullscreen" else "paper")
                 keep.append(g)
                 if res["src"] not in used:
                     used.add(res["src"])
@@ -272,7 +275,13 @@ class StockResearcher:
                 got[ref] = self._image_for(ref)
             res = got[ref]
             if res:
-                el["src"] = res["src"]
+                # 하우스 트리트먼트(07b 7절): 클립아트(vector·illustration)는 언제나 잉크 한 색 선화, 사진은 듀오톤 —
+                # 칠판·크림 화면 위 원색 클립아트(10/1 커피컵·책 더미)가 '붙여 넣은 것'으로 보이던 것
+                kind = (ref.split(":", 2) + ["", ""])[1] or "vector"
+                dark = str(spec.get("bg") or "") in ("board", "ink", "dark", "stage", "chalk")
+                el["src"] = self._house(res["src"], "vector" if kind in ("vector", "illustration") else "photo",
+                                        "stage" if dark else "paper",
+                                        treatment="lineart" if kind in ("vector", "illustration") else "duotone")
                 n += 1
             else:
                 spec["elements"] = [e for e in spec.get("elements", []) if e is not el]
@@ -316,6 +325,25 @@ class StockResearcher:
                 self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
         self.log(f"🖼 '{query}'({kind}) 이미지 없음 → 그 요소만 뺌")
         return None
+
+    def _house(self, src: str, kind: str, surface: str, treatment: str = "auto") -> str:
+        """public 기준 경로 → 하우스 트리트먼트를 거친 사본의 경로(`이름.표면.h판.jpg|png`). 실패하면 원본 그대로."""
+        from ..grade.house import HOUSE_VERSION, treat_file
+        p = self.public / src
+        if not p.exists() or f".h{HOUSE_VERSION}." in p.name:
+            return src
+        base = p.with_name(f"{p.stem}.{surface}.h{HOUSE_VERSION}")
+        for ext in (".jpg", ".png"):
+            if base.with_suffix(ext).exists():
+                return base.with_suffix(ext).relative_to(self.public).as_posix()
+        try:
+            out, t = treat_file(p, base, kind=kind, treatment=treatment, surface=surface)
+        except Exception as e:  # noqa: BLE001 - 처리 실패는 원본으로
+            self.log(f"🎞 자료 톤 처리 실패({p.name}): {e}")
+            return src
+        self.stats.setdefault("house", {})
+        self.stats["house"][t] = self.stats["house"].get(t, 0) + 1
+        return out.relative_to(self.public).as_posix()
 
     def _prepare_image(self, raw: Path, name: str, max_side: int = 1400) -> Path:
         """투명 PNG 는 그대로(알파 유지), 나머지는 JPEG. 긴 변 1400px."""

@@ -625,6 +625,51 @@ def b6_pick_scores(graphics: list[dict]) -> GateResult:
     return _ok("B6_relevance", "warn", m, "화면의 자료는 모두 관련도 2점 이상(또는 화자 자료·규칙 선택)")
 
 
+# --- 색(07 문서 7절 게이트 F) ----------------------------------------------------------------------------
+
+def f1_blotch(bi: dict[str, float], *, max_ratio: float = 2.0, max_off: float = 0.01) -> GateResult:
+    """평평한 면의 얼룩: 색 잡음 비 ≤ 2.0 이고 색상이 그 면에서 12° 넘게 벗어난 화소 증가 ≤ 1%.
+    (10/1 설치본 ×4.36 · 2.1~14.7% 실패, 지금 ×1.34 · 0% 통과)"""
+    m = dict(bi)
+    if bi.get("frames", 1) == 0:
+        r = _ok("F1_blotch", "repair", m, "평평한 면이 없어 얼룩 검사 건너뜀")
+        r.skipped = True
+        return r
+    if bi.get("ratio", 1.0) > max_ratio or bi.get("off", 0.0) > max_off:
+        return _bad("F1_blotch", "repair", m, f"보정이 평평한 면에 얼룩(색 잡음 ×{bi.get('ratio', 0):.2f}, "
+                    f"색상 튐 {bi.get('off', 0):.1%})", "soften_grade")
+    return _ok("F1_blotch", "repair", m, f"얼룩 없음(색 잡음 ×{bi.get('ratio', 1):.2f})")
+
+
+def f3_sources(before: float, after: float, *, max_de: float = 3.0) -> GateResult:
+    """원본 사이 얼굴 ΔE ≤ 3 — 컷으로 이어 붙여도 같은 사람 같은 날로 읽힌다."""
+    m = {"face_de_before": round(before, 2), "face_de_after": round(after, 2)}
+    if after > max_de:
+        return _bad("F3_sources", "warn", m, f"원본 사이 얼굴색 차이 ΔE {after:.1f}(매칭 전 {before:.1f}) — 조명이 크게 다름")
+    msg = f"원본 사이 얼굴 ΔE {after:.1f}" + (f"(매칭 전 {before:.1f})" if before > after + 0.05 else "")
+    r = _ok("F3_sources", "repair", m, msg)
+    r.repaired = before > max_de >= after
+    return r
+
+
+def f4_clipping(before: float, after: float, *, max_total: float = 0.02, max_rise: float = 0.01) -> GateResult:
+    """날아간 하이라이트: 화면 ≤ 2% 이고 원본 대비 증가 ≤ 1%p(전등·침구가 날아가지 않게)."""
+    m = {"clip_before": round(before, 4), "clip_after": round(after, 4)}
+    if after > max(max_total, before) or after - before > max_rise:
+        return _bad("F4_clipping", "repair", m, f"하이라이트가 날아감 {before:.1%} → {after:.1%}", "white_1")
+    return _ok("F4_clipping", "repair", m, f"하이라이트 {before:.1%} → {after:.1%}")
+
+
+def f6_tags(problems: dict[str, list[str]]) -> GateResult:
+    """완성본 색 태그: BT.709 · 제한 범위(tv) · yuv420p — 어긋나면 플레이어마다 색이 다르게 보인다."""
+    bad = {k: v for k, v in problems.items() if v}
+    m = {"files": bad}
+    if bad:
+        k, v = next(iter(bad.items()))
+        return _bad("F6_tags", "warn", m, f"색 태그가 BT.709 가 아님: {k} ({', '.join(v)})")
+    return _ok("F6_tags", "warn", m, "색 태그 BT.709 · tv · yuv420p")
+
+
 def b3_query_labels(graphics: list[dict]) -> GateResult:
     """자료 라벨 = 검색어(10/1: 스톡 위 큰 글씨 '스케치북 넘기기'). 계획 모양의 broll·photo(stock 이 있는 것)."""
     bad = []

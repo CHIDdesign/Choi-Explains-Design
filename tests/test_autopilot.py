@@ -184,7 +184,12 @@ def test_grade_correction_fixes_blue_cast_and_underexposure(tmp_path):
     c = G.correction_from_stats(st)
     assert c.gains[2] < 1.0 and c.gamma < 1.0             # 파랑 줄이고 밝게
     out = G.grade(img, c, G.GradeChoice(look="natural"))
-    assert out[..., 2].mean() / out[..., 0].mean() < img[..., 2].mean() / img[..., 0].mean()
+    # 화이트밸런스만 떼어 보면 파랑이 준다(블랙 포인트를 빼면 평균 비는 커질 수 있어 따로 본다 — 07 문서 2-3)
+    from dataclasses import replace as _r
+    wb = G.apply_correction(img, _r(c, black=0.0, white=1.0, gamma=1.0))
+    assert wb[..., 2].mean() / wb[..., 0].mean() < img[..., 2].mean() / img[..., 0].mean()
+    _, fa, fb = G.srgb_to_lab(out[30:60, 60:100].reshape(-1, 3))
+    assert 30.0 <= float(np.degrees(np.arctan2(fb.mean(), fa.mean()))) <= 62.0      # 얼굴은 피부 범위로
     # LUT 로 구운 결과가 numpy 계산과 같은 모양(.cube 33³)
     cube = G.write_cube(tmp_path / "g.cube", c, G.GradeChoice(look="warm_film", strength=0.7))
     lines = cube.read_text(encoding="ascii").splitlines()
@@ -247,8 +252,9 @@ def test_blue_monitor_room_keeps_its_light_but_skin_and_whites_are_fixed():
     _, _, _, Cs, hs = _lab(skin)
     assert 32 <= hs <= 62 and 8 <= Cs <= 32, (hs, Cs)
     Lw, aw, bw, Cw, _ = _lab(white)
-    # 흰 벽·모니터는 거의 흰색(원본 C 14 → 9 이하). 최소 개입이라 얼굴을 범위 안쪽 경계까지만 옮기므로 완전한 중립은 아니다
-    assert abs(bw) <= 6 and Cw <= 9 and Lw > 85
+    # 흰 벽·모니터는 거의 흰색(원본 C 14 → 10 이하). 최소 개입이라 얼굴을 범위 안쪽 경계까지만 옮기므로 완전한 중립은 아니다.
+    # (노출 감마를 밝기에만 걸면서(07 문서 2-3) 채널별 감마가 덤으로 빼던 채도가 남는다 — 9.0 → 9.5)
+    assert abs(bw) <= 6 and Cw <= 10 and Lw > 85
     assert _lab(wall)[2] <= -10                                       # 파란 배경은 파란 채로(노랗게 되지 않음)
     assert any("피부" in n for n in c.notes)
 
@@ -886,3 +892,76 @@ def test_thumb_frames_come_from_speech_gaps_in_the_final_cut(tmp_path):
     ts = [round(x["t"], 1) for x in out]
     assert ts and all(19.0 <= t <= 22.5 for t in ts), ts            # 40초 틈은 얼굴이 옆으로 돌아 탈락
     assert any("썸네일 프레임" in m for m in logs)
+
+
+def test_exposure_gamma_keeps_chroma():
+    """노출 감마는 밝기에만(07 문서 2-3) — 감마 1.3 에서 채도 변화 ≤ 5%(채널마다 걸면 벽 채도가 23 → 27.5 로 올랐다)."""
+    from studio.grade import auto as G
+    rng = np.random.default_rng(3)
+    img = np.clip(rng.normal([0.62, 0.55, 0.42], 0.03, (60, 80, 3)), 0, 1).astype(np.float32)   # 따뜻한 벽
+    c = G.Correction(gamma=1.3)
+    out = G.apply_correction(img, c)
+
+    def sat(x):     # 채널 비로 본 채도(HSV) — 밝기만 바꾸면 그대로여야 한다
+        return float(((x.max(-1) - x.min(-1)) / np.maximum(x.max(-1), 1e-4)).mean())
+    assert abs(sat(out) / sat(img) - 1) <= 0.05 and G._luma(out).mean() < G._luma(img).mean()
+    chan = np.power(img, 1.3)                                   # 예전 방식(채널마다): 채도가 덩달아 오른다
+    assert sat(chan) / sat(img) > 1.1
+    _, a0, b0 = G.srgb_to_lab(img.reshape(-1, 3))
+    _, a1, b1 = G.srgb_to_lab(out.reshape(-1, 3))
+    h0 = np.degrees(np.arctan2(b0.mean(), a0.mean()))
+    h1 = np.degrees(np.arctan2(b1.mean(), a1.mean()))
+    assert abs(h1 - h0) < 2.0                                   # 색상은 그대로
+
+
+def test_practical_lamp_does_not_stretch_white_or_pick_neutral():
+    """화면 속 전등(07 문서 2-5): 얼굴 밖 밝은 덩어리가 있으면 화이트를 늘리지 않고, 전등갓은 무채색 후보가 아니다."""
+    from studio.grade import auto as G
+    img = np.full((90, 160, 3), [0.42, 0.38, 0.33], np.float32)        # 어두운 방(화이트 75 IRE 아래)
+    img[30:60, 70:100] = [0.62, 0.48, 0.40]                            # 얼굴
+    img[5:20, 5:30] = [0.97, 0.95, 0.88]                               # 전등갓
+    face = {"t": 0, "x": 0.53, "y": 0.5, "s": 0.3}
+    st = G.analyze([(0.0, img)], [face])
+    assert st["practical"] is True
+    c = G.correction_from_stats(st)
+    assert c.white == 1.0
+    out = G.apply_correction(img, c)
+    assert G.clip_frac([out]) - G.clip_frac([img]) <= 0.003
+
+
+def test_blotch_index_flags_hue_snap_and_passes_gentle_grade():
+    """F1 — 평평한 벽에서 색상 스냅(예전 피부 보호의 12~100° → 32~60°)을 흉내 내면 지수가 크고, 지금 보정은 작다."""
+    from studio.grade import auto as G
+    rng = np.random.default_rng(7)
+    wall = np.clip(np.array([0.70, 0.62, 0.45]) + rng.normal(0, 0.012, (120, 160, 3)), 0, 1).astype(np.float32)
+    L, a, b = G.srgb_to_lab(wall)
+    h = np.degrees(np.arctan2(b, a))
+    snap = np.where(h > 80, h - 37.0 * np.clip((h - 80) / 8, 0, 1), h)    # 경계를 오가는 화소만 크게 돌아간다
+    C = np.hypot(a, b)
+    bad = G.lab_to_srgb(L, C * np.cos(np.radians(snap)), C * np.sin(np.radians(snap)))
+    gi = G.blotch_index([wall], [bad])
+    assert gi["ratio"] > 2.0 or gi["off"] > 0.01, gi
+    gentle = G.apply_look(wall, G.LOOKS["natural"], 0.5)
+    ok = G.blotch_index([wall], [gentle])
+    assert ok["ratio"] <= 2.0 and ok["off"] <= 0.01, ok
+
+
+def test_two_sources_are_matched_by_face_lab():
+    """원본 사이 샷 매칭(07 문서 2-6): 같은 얼굴에 다른 캐스트 → 얼굴 기준 Lab 이동 뒤 ΔE ≤ 3."""
+    from studio.grade import auto as G
+    face_a = np.array([0.78, 0.60, 0.50], np.float32)
+    face_b = np.array([0.80, 0.58, 0.56], np.float32)      # 분홍 쪽으로 틀어진 둘째 카메라
+    c = G.Correction()
+    la = G.face_lab_after(face_a, c, G.GradeChoice(), identity=True)
+    lb = G.face_lab_after(face_b, c, G.GradeChoice(), identity=True)
+    before = G.delta_e(la, lb)
+    assert before > 3.0
+    shifts = G.match_sources({0: la, 1: lb}, {0: 120.0, 1: 60.0}, k=1.0 / 0.8)
+    ga = G.grade(face_a.reshape(1, 3), c, G.GradeChoice(look="natural", strength=0.0, match=0.0, match_lab=shifts[0]))
+    gb = G.grade(face_b.reshape(1, 3), c, G.GradeChoice(look="natural", strength=0.0, match=0.0, match_lab=shifts[1]))
+    La, aa, ba = G.srgb_to_lab(ga)
+    Lb, ab, bb = G.srgb_to_lab(gb)
+    after = G.delta_e((La[0], aa[0], ba[0]), (Lb[0], ab[0], bb[0]))
+    assert after < 3.0 and after < before, (before, after)
+    assert not G.is_identity(c, G.GradeChoice(look="natural", strength=0.0, match=0.0, match_lab=shifts[1]))
+    assert G.GradeChoice(match_lab=(20.0, -20.0, 1.0)).clamp().match_lab == (6.0, -6.0, 1.0)
