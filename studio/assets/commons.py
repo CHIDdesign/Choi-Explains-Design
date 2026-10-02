@@ -16,7 +16,7 @@ from .license import allowed, classify
 
 MEDIA_LIST = "https://{lang}.wikipedia.org/api/rest_v1/page/media-list/{title}"
 RASTER = ("image/jpeg", "image/png", "image/webp", "image/tiff")
-SRC_RANK = {"wikidata": 0, "lead": 1, "article": 2, "depicts": 3, "category": 4}
+SRC_RANK = {"research": -1, "wikidata": 0, "lead": 1, "article": 2, "depicts": 3, "category": 4}   # research = 🔎 조사 노트가 확인한 파일
 SKIP_NAMES = ("flag of", "coat of arms", "icon", "logo", "map", "signature", "locator", "commons-logo", "wiki")
 
 

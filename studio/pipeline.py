@@ -47,12 +47,13 @@ from .director.context import (JobBrief, load_prompt, long_instruction, shared_c
                                system_prompt)
 from .motion.card import card_settle_time, card_text
 from .motion.check import CheckError, check_cards, problem_lines
+from .director.plan import EVIDENCE as EVIDENCE_TEMPLATES
 from .director.plan import (TimedGraphic, blank_graphic, merge_step_runs, type_card, normalize_long, normalize_shorts, seg_edit_times,
                             spec_settle_time, time_graphics, word_edit_time)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
 from .edit.cuts import PACES, build_keeps, keeps_for_segments
-from .edit.grammar import PARAMS, EditDecisions, Moment, build_long_edit, build_short_edit
+from .edit.grammar import PARAMS, EditDecisions, Moment, build_long_edit, build_short_edit, directed_sfx
 from .edit.style import LookPlan, apply_looks, choose_looks
 from .edit.verify import find_issues, merge, subtract, to_source
 from .eta import Eta, features
@@ -78,6 +79,7 @@ from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resolve_cues
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
+from .sound.tracks import track_listing
 from .stock.providers import StockHub
 from .stock.research import StockResearcher, contact_sheet, strip_stock_images
 from .text.align import ScriptAligner, build_utterances, norm
@@ -96,6 +98,7 @@ STAGES: list[tuple[str, str, float]] = [
     ("audio", "목소리 다듬기(잡음 제거·EQ·음량)", 4),
     ("face", "얼굴 추적 · 화면 품질", 5),
     ("asr", "음성 인식(Whisper)", 20),
+    ("research", "주제 조사(🔎 리서치 디렉터 · 웹)", 6),
     ("align", "대본 맞추기 · 가장 또렷한 테이크 고르기", 2),
     ("grade", "자동 색보정", 3),
     ("director", "AI 기획(감독 + 전문 팀)", 9),
@@ -114,7 +117,7 @@ STAGE_LABEL = {k: v for k, v, _ in STAGES}
 EXTRAS = "부가자료"
 
 # 서로 기다릴 필요가 없는 단계는 동시에 돈다 — 칸(차례로) → 줄(동시에) → 단계(줄 안에서 차례로).
-#  · 얼굴 추적(영상 디코딩)은 목소리 다듬기 → 음성 인식(소리·GPU)과 함께
+#  · 얼굴 추적(영상 디코딩)은 목소리 다듬기 → 음성 인식(소리·GPU)과 함께, 🔎 주제 조사(웹 · 대본과 주제 설명만 본다)도 함께
 #  · 🎬 AI 기획(네트워크)은 색보정 → 편집본 인코딩(GPU/CPU)과 함께 — 컷은 둘 다 끝난 뒤(_make_edit)
 #  · 🔎 편집 검사(Whisper)는 자료 사진 → 스톡(네트워크) · 효과음 준비 → 렌더 번들 미리 만들기와 함께
 #  · 🎼 음악 큐 시트는 편집 검사가 컷을 확정한 뒤, 아트 디렉터 검수와 함께
@@ -122,7 +125,7 @@ EXTRAS = "부가자료"
 # STAGES 에 없는 키(bundle)는 화면·남은 시간에 나오지 않는 준비 작업이다(실패해도 작업은 계속).
 SCHEDULE: list[list[list[str]]] = [
     [["probe"]],
-    [["audio", "asr"], ["face"]],
+    [["audio", "asr"], ["face"], ["research"]],
     [["align"]],
     [["director"], ["grade", "proxy"]],
     [["verify"], ["broll", "stock"], ["sound", "bundle"]],
@@ -131,10 +134,10 @@ SCHEDULE: list[list[list[str]]] = [
     [["master"]],
     [["export"]],
 ]
-PLAN_ONLY = ("probe", "audio", "asr", "face", "align", "grade", "director")
+PLAN_ONLY = ("probe", "audio", "asr", "face", "research", "align", "grade", "director")
 # 말단 작업 — 실패해도 영상은 끝까지 만든다(그 단계만 건너뛰고 안전한 대체 상태로). 원본·음성 인식·대본 맞추기·
 # 렌더·합치기만 영상에 꼭 필요하다. 채널 주인: "초기 작업의 외부 프로그램 오류 하나로 전체 작업이 다 망한다"
-SOFT_STAGES = {"audio", "face", "grade", "verify", "broll", "stock", "sound", "qa", "music", "export"}
+SOFT_STAGES = {"audio", "face", "research", "grade", "verify", "broll", "stock", "sound", "qa", "music", "export"}
 MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 
 
@@ -183,6 +186,7 @@ class JobSpec:
     caption_preset: str = "auto"
     short_caption_preset: str = "auto"
     studio_mode: bool = True
+    research: bool = True          # 🔎 주제 조사(웹) — 대본의 인물·제품·개념을 먼저 조사해 팀에 넘긴다
     fetch_stock: bool = True
     verify_edit: bool = True       # 편집 후 목소리를 다시 인식해 남은 되풀이·무음을 한 번 더 자른다
     # 화면 구성: auto = 대본·전사·기획을 보고 챕터·그래픽마다 기본 디자인과 사용자 템플릿(종이 콜라주)을 섞는 하이브리드
@@ -295,6 +299,7 @@ class Pipeline:
         self.director_name = ""
         self.claude: Optional[ClaudeClient] = None
         self.studio: Optional[Studio] = None
+        self.research: dict = {}       # 🔎 조사 노트(work/research.json)
         self.ctx = ""
         self.broll_log: list[dict] = []
         self.evidence_stats: dict[str, Any] = {}      # 자료 조달 깔때기(work/evidence.json)
@@ -362,6 +367,7 @@ class Pipeline:
         gpu = gpu_expected(self.settings.whisper_device, self.log)
         variants = {"asr": "asr@gpu" if gpu else "asr@cpu", "verify": "verify@gpu" if gpu else "verify@cpu",
                     "director": "director@ai" if ai else "director@rule",
+                    "research": "research@ai" if (ai and self.spec.studio_mode and self._research_on()) else "research@rule",
                     "align": "align@ai" if (ai and self.spec.studio_mode) else "align",
                     "qa": "qa@ai" if ai else "qa@rule",
                     "music": "music@ai" if (ai and self.spec.studio_mode) else "music@rule",
@@ -491,11 +497,32 @@ class Pipeline:
             raise errors[0]
 
     # ------------------------------------------------------------------
+    def _sfx_mode(self) -> str:
+        st = self.settings
+        if getattr(st, "sfx_enabled", False):
+            return "auto"
+        mode = str(getattr(st, "sfx_mode", "directed") or "directed")
+        return mode if mode in ("off", "directed", "auto") else "directed"
+
+    def _directed_segments(self, seg_t: dict[int, tuple[float, float]], shift: float = 0.0) -> list[tuple[float, str]]:
+        """트리트먼트 화면 구성표의 단락 효과음 → [(편집 시각, 효과음)]."""
+        tr = (self.plan_long.get("studio") or {}).get("treatment") or {}
+        out = []
+        for s in tr.get("segments") or []:
+            try:
+                a = int(s.get("start_seg", -1))
+            except (TypeError, ValueError):
+                continue
+            ids = sorted(i for i in seg_t if i >= a)
+            if ids and s.get("sfx") and s["sfx"] != "none":
+                out.append((seg_t[ids[0]][0] + shift, str(s["sfx"])))
+        return out
+
     def _resolve_sound(self) -> None:
         """설정의 소리 방침 → 이번 작업: 효과음은 켰을 때만, 배경음악은 직접 고른 곡 → 내 음악 폴더(mine) →
         기본 라이브러리(library) → 없음(off). 내 음악 폴더가 비어 있으면 배경음악 없이(라이브러리로 몰래 넘어가지 않는다)."""
         st = self.settings
-        if not getattr(st, "sfx_enabled", False):
+        if self._sfx_mode() == "off":
             self.spec.sfx = False
         mode = getattr(st, "music_mode", "mine")
         if self.spec.bgm and Path(self.spec.bgm).exists():
@@ -506,9 +533,11 @@ class Pipeline:
             folder = Path(getattr(st, "music_dir", "") or (USER_DIR / "music"))
             tracks = sorted(p for p in folder.glob("*") if p.suffix.lower() in MUSIC_EXT) if folder.is_dir() else []
             if tracks:
-                # 같은 영상이면 같은 곡(다시 돌려도 바뀌지 않게), 영상마다 돌아가며
+                # 임시로 한 곡(같은 영상이면 같은 곡) — 곡이 둘 이상이면 🎼 음악 감독(Claude)이 측정값과 트리트먼트를 보고 고친다
+                self._my_tracks = tracks
                 self.spec.bgm = str(tracks[int(text_hash(self.spec.topic or self.spec.video), 16) % len(tracks)])
-                self.log(f"🔊 배경음악: 내 음악 폴더의 「{Path(self.spec.bgm).stem}」")
+                self.log(f"🔊 배경음악: 내 음악 폴더 {len(tracks)}곡" + (" — 🎼 음악 감독이 이 영상에 맞는 곡을 고릅니다"
+                                                                      if len(tracks) > 1 else f" 「{Path(self.spec.bgm).stem}」"))
             else:
                 self.spec.music = False
                 self.log(f"🔊 배경음악 없이(내 음악 폴더 {folder} 가 비어 있음 — 곡을 넣으면 그 곡을 씁니다)")
@@ -690,6 +719,41 @@ class Pipeline:
         res["key"] = key
         write_json(self.work / "transcript.json", res)
         self.log(f"인식 완료: {len(res['words'])}단어")
+
+    def _research_on(self) -> bool:
+        return bool(self.spec.research)
+
+    def stage_research(self) -> None:
+        """🔎 주제 조사 — 대본·주제 설명만 보고 웹에서(소리·얼굴 작업과 동시에). 결과는 팀 전원의 공유 컨텍스트와
+        조달 사다리(커먼즈 파일), 화자에게 주는 조사 노트(부가자료/조사노트.md)로 간다."""
+        from .agents.research import clean_research, is_empty
+        self.research = {}
+        if not (self.spec.research and self.spec.studio_mode and self._use_api()):
+            return
+        topic, script = self.spec.topic_text, self.spec.script
+        if not (topic.strip() or script.strip()):
+            self.log("🔎 주제 설명·대본이 없어 조사를 건너뜁니다")
+            return
+        web = bool(getattr(self.settings, "research_web", True))
+        key = text_hash(topic, script, self.title, self.settings.claude_model, self.spec.direction, web, "research-v1")
+        path = self.work / "research.json"
+        saved = read_json(path, {})
+        if self.spec.reuse_plan and saved.get("key") == key and saved.get("research"):
+            self.research = clean_research(saved["research"])
+            self.log("🔎 저장된 조사 노트 사용")
+            return
+        studio = self._ensure_studio()
+        if studio is None:
+            return
+        self._stage("research", 0.05)
+        res = studio.research(title=self.title, topic=topic, script=script)
+        self.research = res if not is_empty(res) else {}
+        write_json(path, {"key": key, "research": self.research})
+        self._stage("research", 1.0)
+
+    def _soft_research(self) -> None:
+        self.research = {}
+        self.log("   → 조사 노트 없이(팀이 대본과 기억으로) 계속합니다")
 
     def stage_align(self) -> None:
         tr = read_json(self.work / "transcript.json", {})
@@ -1143,6 +1207,7 @@ class Pipeline:
                              effort=self.settings.agent_effort, models=self.settings.agent_models,
                              user_direction=self.spec.direction, use_stock=self._stock_enabled(),
                              use_motion=self.spec.motion_scenes)
+        self.studio.web = bool(getattr(self.settings, "research_web", True))
         return self.studio
 
     def _stock_enabled(self) -> bool:
@@ -1154,12 +1219,15 @@ class Pipeline:
         assert self.info
         brief = self._brief()
         tm0 = self._initial_timemap()
-        ctx = shared_context(brief, self.utts, self.tags, tm0, tm0.duration)
+        from .agents.research import research_block
+        rblock = research_block(self.research)
+        # 🔎 조사 노트는 공유 컨텍스트 끝에 — 모든 에이전트가 같은 사실·같은 커먼즈 파일 목록에서 출발한다(캐시도 함께)
+        ctx = shared_context(brief, self.utts, self.tags, tm0, tm0.duration) + (f"\n\n{rblock}" if rblock else "")
         self.ctx = ctx
         mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
                         self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
-                        self._stock_enabled(), self.spec.motion_scenes, "plan-v4")
+                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v5")
         saved = read_json(self.work / "plan.json", {})
         use_api = self._use_api()
         studio = self._ensure_studio()
@@ -1179,7 +1247,8 @@ class Pipeline:
                                                    progress=lambda f: self._stage("director", 0.95 * f),
                                                    procure=self._procure_evidence
                                                    if (self.spec.fetch_broll or self._stock_enabled()) else None,
-                                                   materials=(local_assets.listing(mats), local_assets.sheet(mats)))
+                                                   materials=(local_assets.listing(mats), local_assets.sheet(mats)),
+                                                   refs=self._motion_refs if self.spec.motion_scenes else None)
                 # 숏폼 PD 가 한 편도 못 냈을 때만 규칙으로 채운다 — 둘째 편을 억지로 채우지 않는다(제대로 된 한 편이 우선)
                 if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
                     raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1,
@@ -1281,6 +1350,16 @@ class Pipeline:
         self.log(f"🎬 제목 「{self.title}」 · 챕터 {len(self.plan_long['chapters'])} · 그래픽 {len(self.plan_long['graphics'])}"
                  f"(모션 장면 {n_motion} · 스톡 {n_broll}) · 강조 순간 {len(self.plan_long.get('moments', []))}"
                  f" · 숏폼 {len(self.plan_shorts)} · 추가 컷 {len(drop_ids)}")
+
+    def _motion_refs(self, slugs: list[str]) -> dict[str, bytes]:
+        """🎞 총괄 감독이 고른 모션 레퍼런스(Jitter 템플릿 slug) → 미리보기 프레임 시트(렌더와 같은 Chrome, 캐시)."""
+        from .assets.motion_ref import capture_refs, known
+        slugs = [s for s in slugs if known(s)]
+        if not slugs:
+            return {}
+        rs = self.settings.render
+        return capture_refs(slugs, node=find_node(self.settings.node_path), browser_executable=rs.browser_executable,
+                            gl=rs.gl, work=self.work, log=self.log, cancel=self.cancel)
 
     def _auto_photos(self) -> None:
         """대본·전사의 고유명사(라틴 문자 이름 · 『』《》 제목 · 종교)를 규칙으로 찾아 photo 그래픽(wiki=True)으로 더한다 —
@@ -2230,6 +2309,15 @@ class Pipeline:
         items = [it for it in res.get("items", []) or [] if isinstance(it, dict)]
         if not items:
             return {"outcomes": [], "brief": "", "sheet": None, "backfill": ""}
+        if self.research:
+            # 🔎 리서처가 확인한 커먼즈 파일을 대상 이름으로 이어 준다(자료 리서처가 옮겨 적지 않았어도)
+            from .agents.research import files_for
+            for it in items:
+                subj = it.get("subject") if isinstance(it.get("subject"), dict) else {}
+                if not it.get("commons_files"):
+                    fs = files_for(self.research, subj.get("name_ko"), subj.get("name_en"))
+                    if fs:
+                        it["commons_files"] = fs
         self.log(f"🎞 자료 조달 {rnd}회차: 증거 {len(items)}건 — 화자 자료 → 고유명사·출처 → 화면 → 스톡 순서로")
         ladder = Ladder(self._evidence_deps(), public=self.public, work=self.work, log=self.log)
         outcomes = ladder.run(items)
@@ -2538,7 +2626,11 @@ class Pipeline:
         kept_ids = [u.id for u in self.utts if u.kept]
         listing = self._music_listing()
         brief = self.plan_long.get("studio") or {}
-        key = text_hash(listing, json.dumps(self.plan_long.get("music") or {}, ensure_ascii=False), "music-v1")
+        my = getattr(self, "_my_tracks", []) or []
+        tracks_text = track_listing(my, self.ff.ffmpeg, cache=USER_DIR / "cache" / "music_features.json") \
+            if len(my) > 1 else ""
+        key = text_hash(listing, json.dumps(self.plan_long.get("music") or {}, ensure_ascii=False), tracks_text,
+                        "music-v2")
         cache = read_json(self.work / "music.json", {})
         sheet: dict = {}
         if cache.get("key") == key and cache.get("sheet"):
@@ -2549,8 +2641,15 @@ class Pipeline:
             if studio is not None:
                 b = dict(brief, music=self.plan_long.get("music") or {}, chapters=self.plan_long.get("chapters", []))
                 try:
-                    sheet = clean_music(studio.score(listing, b), kept_ids)
+                    raw = studio.score(listing, b, tracks=tracks_text)
+                    sheet = clean_music(raw, kept_ids)
                     sheet["by"] = "ai"
+                    names = {p.name: p for p in getattr(self, "_my_tracks", []) or []}
+                    if tracks_text and str(raw.get("track") or "") in names:
+                        sheet["track"] = str(raw["track"])
+                        sheet["track_reason"] = str(raw.get("track_reason") or "")[:200]
+                    elif tracks_text:
+                        sheet["track"] = ""         # 맞는 곡이 없다 — 아무 곡이나 쓰지 않는다
                 except DirectorError as e:
                     self.log(f"🎼 음악 감독 실패 → 규칙 큐 시트: {e}")
             if not sheet:
@@ -2563,6 +2662,16 @@ class Pipeline:
                 sheet["by"] = "rule"
             write_json(self.work / "music.json", {"key": key, "sheet": sheet})
         self._music = sheet
+        if "track" in sheet:
+            names = {p.name: p for p in getattr(self, "_my_tracks", []) or []}
+            if sheet["track"] in names:
+                self.spec.bgm = str(names[sheet["track"]])
+                self.log(f"🎼 배경음악(음악 감독 선택): 「{names[sheet['track']].stem}」"
+                         + (f" — {sheet['track_reason']}" if sheet.get("track_reason") else ""))
+            else:
+                self.spec.bgm = ""
+                self.spec.music = False
+                self.log("🎼 내 음악 폴더에 이 영상에 맞는 곡이 없다고 판단 → 배경음악 없이(아무 곡이나 쓰지 않는다)")
         n = len(sheet.get("cues") or [])
         self.log(f"🎼 큐 시트({'음악 감독' if sheet.get('by') == 'ai' else '규칙'}): {sheet.get('suite', '')} · 큐 {n}개 · "
                  f"침묵 {len(sheet.get('silences') or [])}곳 · 맞는 정도 {sheet.get('fit_score', '-')}/10")
@@ -2870,6 +2979,7 @@ class Pipeline:
             return graphics
         out: list[TimedGraphic] = []
         dropped = 0
+        shifted: list[tuple[TimedGraphic, float]] = []
         for g in graphics:
             if g.source == "tag" or g.template in ("title", "chapter"):
                 out.append(g)
@@ -2878,17 +2988,33 @@ class Pipeline:
             if hit is None:
                 out.append(g)
                 continue
-            a, _ = hit
+            a, b = hit
             min_d = TEMPLATES[g.template].min_dur if g.template in TEMPLATES else 1.5
             if g.start < a and a - 0.2 - g.start >= min_d * 0.8:
                 g.end = a - 0.2
                 out.append(g)
+            elif g.template in EVIDENCE_TEMPLATES and g.end - (b + 0.05) >= min_d * 0.8:
+                # 실물 자료(사진·스톡·증거)는 버리지 않고 홀드가 끝난 뒤로 민다 — 얼굴보다 자료(디자인 v3). 홀드 꼬리 여유(1.5초)
+                # 안에서 시작하던 스톡 영상이 통째로 빠지던 것
+                g.start = b + 0.05
+                out.append(g)
+                shifted.append((g, min_d))
             else:
                 dropped += 1
-        if dropped:
+        moved = 0
+        for g, min_d in shifted:       # 옮긴 자료가 다음 그래픽을 덮지 않게 — 짧아지면 뺀다
+            nxt = min((o.start for o in out if o is not g and o.start >= g.start), default=float("inf"))
+            if g.end > nxt - 0.2:
+                g.end = nxt - 0.2
+            if g.end - g.start < min_d * 0.8:
+                out.remove(g)
+                dropped += 1
+            else:
+                moved += 1
+        if dropped or moved:
             self.log(f"🙂 얼굴 홀드 {len(holds)}곳(" + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in holds)
-                     + f") — 그 안의 그래픽 {dropped}개를 뺌")
-        return out
+                     + f") — 그 안의 그래픽 {dropped}개를 뺌" + (f" · 실물 자료 {moved}개는 홀드 뒤로 옮김" if moved else ""))
+        return sorted(out, key=lambda g: g.start)
 
     def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float,
                      avoid: Optional[list[tuple[float, float]]] = None) -> Optional[TimedGraphic]:
@@ -3069,6 +3195,11 @@ class Pipeline:
                              P=PARAMS if (self.spec.skin == "paper" or looks) else {**PARAMS, "framed_every": 0},
                              framed_ranges=looks.paper_ranges() if looks else None, angle_cuts=angle_cuts,
                              punch_spans=punch_spans, holds=holds, rhythm=self._rhythm_spans(seg_t))
+        if self._sfx_mode() == "directed":
+            # 🎬 효과음은 총괄 감독이 고른 곳에만(트리트먼트의 단락·시그니처 장면) — 규칙이 템플릿마다 뿌리지 않는다
+            ed.sfx = directed_sfx(lp["graphics"], self._directed_segments(seg_t), holds=holds or [],
+                                  speech_starts=sorted(a for a, _ in seg_t.values()), total=lp["duration"])
+            ed.stats["sfx"] = len(ed.sfx)
         apply_edit(lp, ed)
         hid = dedupe_captions(lp["captions"], caption_overlays(lp))
         seq_types = {q["id"]: q["type"] for q in self.plan_long.get("sequences", []) or []}
@@ -3139,6 +3270,8 @@ class Pipeline:
                                moments=moments, cues=hp["captions"], sentence_starts=sorted(a for a, _ in seg_t.values()),
                                text_graphic_spans=text_graphic_spans(hp["graphics"]), endcard=False, face=hp.get("face"),
                                P={**PARAMS, "framed_every": 0}, angle_cuts=angle_cuts, punch_spans=[(0.0, hd)], seed=7)
+        if self._sfx_mode() == "directed":
+            ed_h.sfx = []             # 하이라이트에는 규칙 효과음을 뿌리지 않는다(본편으로 넘어가는 종이 소리 하나만 아래에서)
         apply_edit(hp, ed_h)
         dedupe_captions(hp["captions"], caption_overlays(hp))
         mark_stack_cues(hp["captions"], min_gap=4.0, avoid=stack_avoid_spans(hp))
@@ -3228,6 +3361,10 @@ class Pipeline:
             ed = build_short_edit(timemap=tm, total=sp["duration"], graphics=sp["graphics"], cues=sp["captions"],
                                   moments=self._moments(tm, set(s["segments"])), seed=i, angle_cuts=angle_cuts,
                                   punch_spans=self._punch_spans(seg_edit_times(self.utts, tm), set(s["segments"])))
+            if self._sfx_mode() == "directed":
+                # 숏폼도 감독이 고른 그래픽(시그니처 장면 등)에만
+                ed.sfx = directed_sfx(sp["graphics"], [], total=sp["duration"],
+                                      speech_starts=sorted(a for a, _ in seg_edit_times(self.utts, tm).values()))
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
@@ -3602,6 +3739,11 @@ class Pipeline:
         ledger = [r for where, pp in all_props for r in ledger_rows(pp.get("graphics", []), where)]
         if ledger:
             write_ledger(self.extras / "자료_대장.csv", ledger)
+        # 🔎 조사 노트(출처·대본 확인) — 화자가 고정 댓글·다음 녹화에 쓴다
+        from .agents.research import research_notes
+        notes = research_notes(self.research, title=self.title)
+        if notes:
+            write_text(self.extras / "조사노트.md", notes)
         music = sorted({m.get("bgm_title", "") for m in self.masters if m.get("bgm_title")})
         sfx_credits = sorted({c for m in self.masters for c in m.get("sfx_credits", []) or []})
         chapters = getattr(self, "long_chapters", [])

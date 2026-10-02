@@ -29,16 +29,21 @@ def main(argv: list[str]) -> int:
     opts = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
     schema = json.loads(opts["--json-schema"])
     assert Path(opts["--system-prompt-file"]).read_text(encoding="utf-8").strip(), "빈 시스템 프롬프트"
-    assert opts["--tools"] == "", "도구는 꺼져 있어야 한다"
     msg = json.loads(sys.stdin.readline())
     content = msg["message"]["content"]
     import e2e_studio as E  # noqa: E402 - 같은 가짜 답변 로직
     agent = E.agent_of(schema)
+    # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만
+    if agent in ("research", "setpiece"):
+        assert opts["--tools"] == "WebSearch,WebFetch" and opts.get("--allowedTools") == "WebSearch,WebFetch", opts
+    else:
+        assert opts["--tools"] == "", f"도구는 꺼져 있어야 한다({agent})"
     n_images = sum(1 for b in content if b.get("type") == "image")
     instruction = next(b["text"] for b in reversed(content) if b.get("type") == "text")
     ans = E.fake_answer(agent, {"messages": [{"content": content}]}, n_images, instruction)
     E.record_call({"agent": agent, "images": n_images, "effort": opts.get("--effort"), "backend": "claude_code",
-                   "model": opts.get("--model"), "api_key_env": "ANTHROPIC_API_KEY" in os.environ})
+                   "model": opts.get("--model"), "api_key_env": "ANTHROPIC_API_KEY" in os.environ,
+                   "tools": opts.get("--tools")})
     print(json.dumps({"type": "system", "subtype": "init", "model": opts.get("--model")}))
     print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2,
                       "result": json.dumps(ans, ensure_ascii=False), "structured_output": ans,

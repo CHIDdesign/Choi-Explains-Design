@@ -100,6 +100,30 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         assert n_images == 2, n_images
         return {"look": "warm_film", "strength": 0.7, "exposure": 0.0, "warmth": 0.05, "saturation": 1.0,
                 "reason": "피부가 가장 자연스럽다"}
+    if agent == "research":    # 🔎 대본·주제만 받는다(전사본 없이) — 웹 조사 결과 흉내
+        assert "## 대본" in instruction and "WebSearch" in instruction, instruction[:200]
+        return {"topic_summary": "디자인 과정은 문제를 넓게 펼친 뒤 좁히는 두 번의 발산·수렴이다.", "angle": "질문이 먼저다",
+                "entities": [{"name_ko": "더블 다이아몬드", "name_en": "Double Diamond", "kind": "work",
+                              "role_in_script": "디자인 과정 모델", "script_quote": "더블 다이아몬드라는",
+                              "summary": "영국 디자인 카운슬이 2005년에 정리한 과정 모델.",
+                              "facts": [{"fact": "2005년 영국 디자인 카운슬", "source_url": "https://www.designcouncil.org.uk/"}],
+                              "years": "2005", "visual_identity": "마름모 두 개가 나란히",
+                              "commons_files": ["File:Double diamond.png"], "official_url": "", "wikipedia_url": ""}],
+                "concepts": [{"term": "근접성", "term_en": "proximity", "plain": "가까운 것은 한 무리로 보인다",
+                              "canonical_example": "점 묶음", "visual_metaphor": "모이는 점", "source_url": ""}],
+                "timeline": [{"year": "2005", "event": "더블 다이아몬드 발표", "source_url": ""}],
+                "quotes": [], "numbers": [],
+                "recreations": [{"name": "더블 다이아몬드 도식", "what": "마름모 두 개", "spec": "발산·수렴 4단계, 좌→우",
+                                 "source_url": ""}],
+                "script_checks": [{"sentence": "더블 다이아몬드라는 모델이 있습니다", "verdict": "ok", "note": "", "source_url": ""}],
+                "visual_directions": ["마름모 두 개를 종이 위 선 그림으로 그리고 단계마다 형광펜"],
+                "sources": [{"title": "Design Council", "url": "https://www.designcouncil.org.uk/"}]}
+    if agent == "setpiece":    # 🛠 시그니처 장면 하나 — 검사를 통과한 예제 카드를 그대로
+        assert "## 이번 장면" in instruction and "🔎 주제 조사 노트" in json.dumps(body, ensure_ascii=False)
+        assert n_images == 1 and "## 모션 레퍼런스" in instruction, (n_images, instruction[-300:])   # 레퍼런스 프레임 시트
+        ex = next(iter(CARD_EXAMPLES.values()))
+        return {"layout": "fullscreen", "style": ex.get("style") or "editorial", "title": "근접성 재현",
+                "html": ex["html"], "start_word": "", "notes": "조사 노트의 근접성 은유"}
     segs = _segs(body)
     ids = sorted(segs)
     first, last = ids[0], ids[-1]
@@ -134,7 +158,18 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                                "fallback": "single", "priority": 2, "reason": "사례를 쌓는다"}],
                 "hook_segs": [first], "title_card_seg": ids[1], "shorts_ideas": [{"segments": ids[-5:], "angle": "통념 반박"}],
                 "caption_direction": "절제된 다큐멘터리 톤, 전문용어만 마커", "music": {"mood": "calm piano", "notes": ""},
-                "notes_for_team": "화자 중심, 도식은 크게"}
+                "notes_for_team": "화자 중심, 도식은 크게",
+                "treatment": {"concept": "연구 노트 위에서 질문이 해결책을 앞지르는 장면", "motifs": ["물음표", "마름모"],
+                              "texture_note": "", "type_note": "", "sound_concept": "종이 소리만 드물게",
+                              "segments": [{"start_seg": first, "end_seg": s_wide, "layout": "face", "show": "화자",
+                                            "asset": "", "motion": "", "sfx": "none", "why": "훅"},
+                                           {"start_seg": s_sketch, "end_seg": s_trip, "layout": "stock_video",
+                                            "show": "스케치하는 손", "asset": "", "motion": "", "sfx": "whoosh_soft",
+                                            "why": "현장"}],
+                              "signature_scenes": [{"id": "sig1", "start_seg": s_ask, "end_seg": s_ask, "start_word": "",
+                                                    "kind": "diagram", "title": "근접성 재현",
+                                                    "brief": "점 여섯 개가 두 무리로 모인다", "research_ref": "근접성",
+                                                    "motion_ref": "the-stack-testimonial", "sfx": "pop"}]}}
     if agent == "editor":
         s_pencil = _seg_with(segs, "연필보다")   # 그래픽이 없는(얼굴만 보이는) 문장 → 콜아웃 자리
         return {"drop": [], "moments": [
@@ -265,7 +300,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
     # 🎼 음악 감독(MUSIC)도 'shorts' 필드를 가지니 숏폼 PD 보다 먼저 가른다
-    for key, marker in (("music", "suite"), ("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
+    for key, marker in (("research", "recreations"), ("setpiece", "start_word"), ("music", "suite"),
+                        ("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
                         ("stock", "requests"), ("stock", "items"),
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
@@ -470,6 +506,13 @@ def main() -> int:
         d.scholar = FakeScholar()
         return d
     pl.Pipeline._evidence_deps = deps_with_fake_scholar
+    # 🎞 모션 레퍼런스(Jitter 미리보기 캡처)는 네트워크 없이 — 가짜 프레임 시트
+    ref_calls: list[list[str]] = []
+
+    def fake_refs(self, slugs):
+        ref_calls.append(list(slugs))
+        return {s: _jpeg((230, 226, 214)) for s in slugs}
+    pl.Pipeline._motion_refs = fake_refs
     spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다 — 디자인 전공 1~2학년 대상", episode="01",
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
                       direction="모션 장면은 크게", images_dir=str(mats), bgm=str(bgm))
@@ -490,9 +533,16 @@ def main() -> int:
     print("에이전트 호출:", json.dumps(CALLS, ensure_ascii=False))
 
     agents = [c["agent"] for c in CALLS]
-    for a in ("director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
+    for a in ("research", "setpiece", "director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
               "motion_revise", "colorist", "cut_editor"):
         assert a in agents, f"{a} 호출 없음: {agents}"
+    # 🔎 주제 조사는 총괄 감독보다 먼저(소리·얼굴과 동시에), 웹 도구는 조사·시그니처 장면에만
+    assert agents.index("research") < agents.index("director") < agents.index("setpiece"), agents
+    if args.backend == "claude_code":
+        assert all((c.get("tools") or "") == ("WebSearch,WebFetch" if c["agent"] in ("research", "setpiece") else "")
+                   for c in CALLS if c.get("backend") == "claude_code"), CALLS
+    assert (out / "부가자료" / "조사노트.md").exists()
+    assert ref_calls == [["the-stack-testimonial"]], ref_calls
     # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전
     assert agents.index("director") < min(agents.index(a) for a in ("editor", "motion", "stock", "captions", "shorts",
                                                                      "copy")), agents
@@ -510,6 +560,9 @@ def main() -> int:
     assert motion["data"]["spec"]["elements"], motion
     # 🃏 자유 HTML 카드: 정리(스코프)·렌더 전 검사 통과·props 에 그대로
     assert "card" in tpl, tpl
+    plan0 = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
+    assert any(g.get("signature") for g in plan0["long"]["graphics"] if g["template"] == "card"), "시그니처 장면 없음"
+    assert plan0["long"]["studio"]["treatment"]["concept"], plan0["long"]["studio"].get("treatment")
     card = next(g for g in lp["graphics"] if g["template"] == "card")
     cid = card["data"]["card"]["id"]   # 카드 스코프 id(card{n}) — 그래픽 id(g{n}) 와 다르다
     assert card["data"]["card"]["html"].startswith('<div class="root">') and card["data"]["card"]["css"].count(f'.card[data-card-id="{cid}"]') > 3, cid

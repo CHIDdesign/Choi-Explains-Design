@@ -5,7 +5,7 @@
 - CSS: 주석·@import·@font-face·url()·transition/animation(GSAP 만 움직인다)·position:fixed 를 지우고,
   모든 선택자를 `.card[data-card-id="ID"]` 로 스코프한다(이미 붙어 있던 다른 id 는 새 id 로 바꾼다).
 - data-anim: 종류·수치 범위를 검사한다(renderer/vendor/hyperframes/card-anim.mjs 와 같은 목록).
-- 크기 상한(HTML·CSS 16KB, 요소 160개). 넘으면 카드 전체를 버린다(반쯤 잘린 카드보다 없는 게 낫다).
+- 크기 상한(HTML·CSS 24KB, 요소 260개 — 🛠 시그니처 장면의 UI·제품 재현이 들어가게). 넘으면 카드 전체를 버린다(반쯤 잘린 카드보다 없는 게 낫다).
 
 렌더러 계약(renderer/src/lib/types.ts CardSpec): {id, html(.card 안쪽), css(스코프됨), w, h, style}.
 """
@@ -20,9 +20,9 @@ from typing import Any, Optional
 CANVAS = {"fullscreen": (1920, 1080), "split": (1080, 792), "overlay": (1728, 810)}
 STYLES = ("editorial", "academic", "whiteboard", "swiss", "minimal", "board")
 
-MAX_HTML = 16000
-MAX_CSS = 16000
-MAX_ELEMENTS = 160
+MAX_HTML = 24000
+MAX_CSS = 24000
+MAX_ELEMENTS = 260
 
 ANIM_KINDS = {"fade-in", "fade-out", "slide-in", "kinetic-chars", "typewriter", "count-up", "draw-path", "grow-x", "grow-y",
               "scale-pop", "blur-in", "mask-reveal", "morph-to", "highlight", "stagger-in", "pulse"}

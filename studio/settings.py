@@ -62,10 +62,15 @@ class Settings:
     allow_quote: bool = False
     download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
     # 🔊 소리 — 채널 주인: "효과음과 음원이 싹 다 별로". 이상한 소리를 넣느니 넣지 않는다
-    sfx_enabled: bool = False        # 효과음(기본 끔)
+    sfx_enabled: bool = False        # (예전) 효과음 켜기 — True 면 sfx_mode 'auto' 와 같다
+    # 효과음: directed = 🎬 총괄 감독(Claude)이 트리트먼트에서 고른 곳에만(기본, docs/upgrade/14) · auto = 예전 규칙(템플릿마다)
+    #         · off = 없음
+    sfx_mode: str = "directed"
     music_mode: str = "mine"         # 배경음악: mine = 내 음악 폴더의 곡만 · library = 기본 라이브러리 · off = 없음
     music_dir: str = ""              # 내 음악 폴더(비우면 user/music)
-    # 🎬 AI 스튜디오(멀티 에이전트)
+    # 🎬 AI 스튜디오(멀티 에이전트) — Claude 총괄 제작(docs/upgrade/14): 조사·기획·디자인 판단은 Claude 가 하고,
+    # 같은 품질을 낼 수 있는 기계적인 일(음성 인식·얼굴 추적·색 측정·렌더·믹스)만 다른 알고리즘이 한다
+    research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
     agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low", "timeline_review": "high"}
     agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}

@@ -21,7 +21,7 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 - **금지**: `<script>` · `<iframe>` · `<video>` · 외부 URL(`src`·`href`·`url()`) · `on*` 이벤트 · `@import` · `@font-face` · `@keyframes` ·
   `transition` · `animation` · `position:fixed`. 이미지는 앱이 준 로컬 경로(`images/…`)만.
 - 글꼴은 **변수만** 쓴다(`var(--font-head)` …). 글꼴 이름을 직접 쓰면 번들에 없는 것은 본문 글꼴로 바뀐다.
-- 크기 상한: HTML 16KB · CSS 16KB · 요소 160개. 한 카드 = 한 생각, 글자 수 60자 이내.
+- 크기 상한: HTML 24KB · CSS 24KB · 요소 260개. 한 카드 = 한 생각, 글자 수 60자 이내(🛠 시그니처 장면의 UI 재현은 화면 속 글자를 빼고 셈).
 
 ### 캔버스(px) — layout 별
 | layout | 캔버스 | 쓰임 |

@@ -35,6 +35,11 @@ MOOD_ALIAS = {"piano": ("calm", "minimal"), "calm": ("calm", "minimal"), "minima
               "upbeat": ("ambient", "minimal", "calm")}
 
 
+# 문구 팔레트 → 실제 파일이 있는 카테고리(매니페스트: Pixabay·Mixkit 의 종이·팝·클릭·휙). 모션 그래픽에서 흔히 쓰는 짝
+REAL_FOR = {"paper_slide": "paper", "paper_place": "paper", "print_place": "paper", "page_turn": "paper", "tape": "paper",
+            "pencil_stroke": "paper", "pencil_tick": "click", "stamp": "pop", "air_soft": "whoosh_soft"}
+
+
 @dataclass
 class Sound:
     id: str
@@ -197,10 +202,15 @@ class SoundLibrary:
     # ------------------------------------------------------------------
     def pick(self, category: str, *, seed: int = 0, prefer_real: bool = True) -> Optional[Sound]:
         """그 카테고리에서 하나(없으면 None — 비슷한 소리로 메우지 않는다). 내려받은 실제 효과음을 절차적보다 먼저,
-        같은 세션(family)의 변주 안에서 돌리고 직전과 같은 파일은 피한다(04c 3절)."""
+        같은 세션(family)의 변주 안에서 돌리고 직전과 같은 파일은 피한다(04c 3절).
+        문구 팔레트(paper_slide·page_turn·stamp…)는 실제 파일이 없어 절차적 소리뿐이었고 믹스가 절차적 소리를 거절해
+        효과음이 하나도 들리지 않았다 — 실제 파일이 있는 가장 가까운 카테고리(`REAL_FOR`)로 받는다."""
         tiers = ([lambda s: s.source != "synth"] if prefer_real else []) + [lambda s: True]
+        cats = [category] + ([REAL_FOR[category]] if category in REAL_FOR else [])
         for ok in tiers:
-            pool = [s for s in self.sfx if s.category == category and ok(s)]
+            pool = [s for s in self.sfx if s.category in cats and ok(s)]
+            if any(s.category == category for s in pool):
+                pool = [s for s in pool if s.category == category]
             if not pool:
                 continue
             fam = getattr(self, "_family", {}).get(category)

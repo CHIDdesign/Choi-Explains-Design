@@ -102,6 +102,9 @@ class SettingsDialog(QDialog):
         m.addRow("모델", self.model)
         m.addRow("사고 강도", self.effort)
         m.addRow("동시 에이전트", self.workers)
+        self.research_web = QCheckBox("웹 조사 — 🔎 리서치 디렉터·🛠 시그니처 장면이 인물·제품·개념을 검색해 확인한다(권장)")
+        self.research_web.setChecked(bool(getattr(s, "research_web", True)))
+        m.addRow("조사", self.research_web)
         v.addLayout(m)
         v.addStretch(1)
         tabs.addTab(ai, "AI 연결")
@@ -153,8 +156,11 @@ class SettingsDialog(QDialog):
         # --- 소리
         so = QWidget()
         fso = QFormLayout(so)
-        self.sfx = QCheckBox("효과음 넣기")
-        self.sfx.setChecked(bool(getattr(s, "sfx_enabled", False)))
+        self.sfx = QComboBox()
+        for key, lab in (("directed", "감독(Claude)이 고른 곳에만 — 기본"), ("auto", "자동(그래픽마다, 예전 방식)"), ("off", "끔")):
+            self.sfx.addItem(lab, key)
+        cur = "auto" if getattr(s, "sfx_enabled", False) else str(getattr(s, "sfx_mode", "directed") or "directed")
+        self.sfx.setCurrentIndex(max(0, self.sfx.findData(cur)))
         self.music = QComboBox()
         modes = [("mine", "내 음악 폴더의 곡만"), ("library", "기본 라이브러리(자동 선곡)"), ("off", "배경음악 없음")]
         for key, label in modes:
@@ -276,6 +282,7 @@ class SettingsDialog(QDialog):
         s.claude_model = self.model.currentText().strip()
         s.claude_effort = self.effort.currentText()
         s.studio_workers = self.workers.value()
+        s.research_web = self.research_web.isChecked()
         s.pixabay_api_key = self.pixabay.text().strip()
         s.unsplash_access_key = self.unsplash.text().strip()
         s.coverr_api_key = self.coverr.text().strip()
@@ -304,7 +311,8 @@ class SettingsDialog(QDialog):
         s.render.crf = self.crf.value()
         s.wikimedia_contact = self.wm.text().strip()
         s.allow_quote = self.quote.isChecked()
-        s.sfx_enabled = self.sfx.isChecked()
+        s.sfx_mode = str(self.sfx.currentData() or "directed")
+        s.sfx_enabled = False
         s.music_mode = self.music.currentData() or "mine"
         s.music_dir = self.music_dir.text().strip()
         s.save()

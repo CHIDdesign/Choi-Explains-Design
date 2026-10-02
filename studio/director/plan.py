@@ -24,6 +24,10 @@ EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "ma
 # 증거 자료(evidence)의 트리트먼트별 기본 유지 시간(03b 14절 — 읽을 것이 있으면 길게)
 EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "collage": 5.0, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
                  "grid": 4.5, "compare_pair": 6.0, "pip": 3.0}
+# 총괄 감독이 트리트먼트에서 고르는 효과음(그래픽이 들어올 때) — 모션 그래픽에서 흔히 쓰는 소리(Pixabay·Mixkit, 매니페스트)
+SFX_DIRECTED = ("paper_slide", "paper_place", "page_turn", "pencil_stroke", "pencil_tick", "stamp", "tape",
+                "whoosh_soft", "swoosh_short", "swipe", "pop", "click", "typing", "camera_shutter", "paper", "ding",
+                "bell_soft", "notification")
 EVIDENCE_ASSET_KEYS = ("src", "kind", "w", "h", "focus", "credit", "credit_full", "tier", "origin", "shows", "score",
                        "meta", "mat_src", "cut")
 
@@ -313,6 +317,10 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         if not card:
             return None
         out["card"] = card
+        if g.get("signature"):
+            out["signature"] = True     # 🛠 시그니처 장면(트리트먼트) — 겹치면 이긴다
+    if g.get("sfx") in SFX_DIRECTED:
+        out["sfx"] = g["sfx"]           # 총괄 감독이 고른 효과음(트리트먼트) — 그 그래픽이 들어올 때
     if tn == "broll":
         # 🎞 스톡 요청 — 단일 디렉터 모드에서는 image=영어 검색어, subtitle=video|photo, title=한국어 검색어
         st = g.get("stock") if isinstance(g.get("stock"), dict) else {}
@@ -903,8 +911,11 @@ def time_graphics(
             data["card"] = g["card"]
         # 증거의 역할: 근거·사례는 우선순위 그대로(8), 맥락·분위기는 6(03 문서 6-2)
         role_pen = 2 if (g.get("evidence") or {}).get("role") in ("context", "mood") else 0
+        if g.get("sfx") in SFX_DIRECTED:
+            data["sfx"] = g["sfx"]
         timed.append(TimedGraphic(f"{id_prefix}{i}", g["template"], g["layout"], start, end, data,
-                                  t.priority - role_pen + (3 if "태그" in (g.get("reason") or "") else 0),
+                                  t.priority - role_pen + (3 if "태그" in (g.get("reason") or "") else 0)
+                                  + (3 if g.get("signature") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))
     return resolve_overlaps(timed + list(reserved or []), total=total)
 

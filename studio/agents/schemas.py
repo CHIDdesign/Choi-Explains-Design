@@ -39,6 +39,41 @@ SEQUENCE = _obj({
 })
 
 # 🎬 총괄 감독 — 크리에이티브 브리프
+# 🎨 트리트먼트(docs/upgrade/14 — Claude 총괄 제작): 조사 노트를 바탕으로 이 영상만의 시각·소리 설계
+PLAN_LAYOUTS = ["face", "face_callout", "face_photo", "collage", "photo_full", "stock_video", "quote_over_footage",
+                "document", "motion", "signature", "board", "timeline", "compare"]
+# 모션 그래픽에서 흔히 쓰는 효과음(매니페스트의 Pixabay·Mixkit 실제 파일) + 문구 팔레트(실제 파일로 대신 받는다)
+SFX_KINDS = ["none", "whoosh_soft", "swoosh_short", "swipe", "pop", "click", "typing", "camera_shutter", "paper", "ding",
+             "bell_soft", "notification", "paper_slide", "page_turn", "pencil_tick", "stamp"]
+SIGNATURE_KINDS = ["ui_recreation", "object_recreation", "data_story", "diagram", "timeline", "document", "collage"]
+TREATMENT = _obj({
+    "concept": STR,                        # 이 영상만의 시각 콘셉트(조사에 근거한 한 문단)
+    "motifs": STR_LIST,                    # 되풀이되는 시각 장치 3~5개(예: '밀까 당길까 문 손잡이', '빨간 펜 교정 표시')
+    "texture_note": STR,                   # 종이 콜라주 안에서 이 주제의 질감·색 쓰임(강조색 설정은 그대로)
+    "type_note": STR,                      # 서체 역할 중 이 영상에서 앞세울 것과 이유
+    "sound_concept": STR,                  # 음악·효과음이 할 일(효과음은 아래 sfx 로 고른 곳에만 들어간다)
+    # 대본의 흐름 그대로 — 단락(발화 범위)마다 화면 구성. 빈틈 없이 처음부터 끝까지
+    "segments": {"type": "array", "items": _obj({
+        "start_seg": INT, "end_seg": INT,
+        "layout": {"type": "string", "enum": PLAN_LAYOUTS},
+        "show": STR,                       # 화면에 무엇을(구체적인 대상·자료 이름 — '관련 이미지' 금지)
+        "asset": STR,                      # 조사 노트의 무엇(인물·제품 이름·커먼즈 파일·재현 대상) — 없으면 ""
+        "motion": STR,                     # 움직임·전환 아이디어 한 줄
+        "sfx": {"type": "string", "enum": SFX_KINDS},
+        "why": STR,
+    })},
+    # 이 영상의 시그니처 장면 3~6개 — 🛠 시그니처 장면 빌더가 HTML 로 정밀하게 재현한다(UI·제품·데이터 이야기)
+    "signature_scenes": {"type": "array", "items": _obj({
+        "id": STR, "start_seg": INT, "end_seg": INT, "start_word": STR,
+        "kind": {"type": "string", "enum": SIGNATURE_KINDS},
+        "title": STR,
+        "brief": STR,                      # 무엇을 어떻게 — 재현 사양(치수·색·배치·글자)과 움직임 순서
+        "research_ref": STR,               # 조사 노트의 근거(recreations·entities 이름)
+        "motion_ref": STR,                 # 모션 레퍼런스 목록(Jitter)의 slug — 그 움직임을 참고해 다시 짓는다(없으면 "")
+        "sfx": {"type": "string", "enum": SFX_KINDS},
+    })},
+})
+
 BRIEF = _obj({
     "title": STR,          # 화면 타이틀 카드·파일 이름에 쓰는 영상 제목(18자 이내)
     "logline": STR,
@@ -78,6 +113,7 @@ BRIEF = _obj({
         "expected_sec": INT,                                             # 주 테이크만 썼을 때 예상 길이(초)
         "issues": STR_LIST,
     }),
+    "treatment": TREATMENT,
 })
 
 # ✂️ 편집 감독
@@ -208,6 +244,7 @@ EVIDENCE = _obj({
         "label": STR,                    # 화면 제목(14자 이내, 주장의 한 조각). 없으면 ""
         "caption": STR,                  # 사실 캡션(24자 이내: 연도·작가·출처). 없으면 ""
         "display": STR,                  # 콜라주: 사진 뒤 큰 글자(2~8자, 그 문장의 핵심 낱말). 없으면 ""
+        "commons_files": STR_LIST,       # 조사 노트가 확인한 위키미디어 공용 파일 이름('File:' 없이) — 사다리가 먼저 쓴다
         "quote": STR,                    # full(영상·사진 전면) 위 인용 한 줄(화자의 말을 줄인 것, 36자 이내). 없으면 ""
         "treatment": {"type": "string", "enum": TREATMENTS},
         "focus": STR,                    # detail_zoom·annotate 대상(말로)
@@ -262,6 +299,9 @@ MUSIC = _obj({
     "hero": {"type": "array", "items": _obj({
         "seg": INT, "kind": {"type": "string", "enum": ["ident", "tonal"]}, "why": STR})},
     "shorts": _obj({"role": {"type": "string", "enum": ["bed", "air", "none"]}, "energy": INT, "note": STR}),
+    # 내 음악 폴더의 곡 목록이 주어지면 이 영상에 쓸 곡의 파일 이름(목록에 있는 것만, 맞는 곡이 없으면 "")
+    "track": STR,
+    "track_reason": STR,
     "notes": STR,
 })
 
@@ -303,6 +343,48 @@ QA = _obj({
     "summary": STR,
 })
 
+# 🔎 주제 조사(Claude + 웹 검색·가져오기) — 대본과 주제 설명만 보고 영상 제작 전에(docs/upgrade/14)
+SOURCED = {"source_url": STR}
+RESEARCH = _obj({
+    "topic_summary": STR,                  # 이 주제의 사실 요약(3~6문장)
+    "angle": STR,                          # 대본이 세우려는 관점 한 줄
+    "entities": {"type": "array", "items": _obj({
+        "name_ko": STR, "name_en": STR,
+        "kind": {"type": "string", "enum": EV_KINDS},
+        "role_in_script": STR,             # 대본에서 이 대상이 하는 일
+        "script_quote": STR,               # 처음 나오는 대본 문장의 일부(그대로)
+        "summary": STR,                    # 2~3문장(사실)
+        "facts": {"type": "array", "items": _obj({"fact": STR, **SOURCED})},
+        "years": STR,                      # 생몰·출시·완공 등("1935–", "2007")
+        "visual_identity": STR,            # 어떻게 생겼나·무엇으로 알아보나(재현·자료 고르기에 쓴다)
+        "commons_files": STR_LIST,         # 직접 확인한 위키미디어 공용 파일 이름('File:' 없이) — 라이선스는 앱이 다시 확인
+        "official_url": STR, "wikipedia_url": STR,
+    })},
+    "concepts": {"type": "array", "items": _obj({
+        "term": STR, "term_en": STR, "plain": STR, "canonical_example": STR, "visual_metaphor": STR, **SOURCED})},
+    "timeline": {"type": "array", "items": _obj({"year": STR, "event": STR, **SOURCED})},
+    "quotes": {"type": "array", "items": _obj({"text": STR, "speaker": STR, "work": STR, "verified": BOOL, **SOURCED})},
+    "numbers": {"type": "array", "items": _obj({"value": STR, "meaning": STR, **SOURCED})},
+    # 화면으로 다시 그릴 수 있는 것(UI·제품·도식·문서) — 재현에 필요한 사실(치수·색 HEX·배치·글자·순서)
+    "recreations": {"type": "array", "items": _obj({"name": STR, "what": STR, "spec": STR, **SOURCED})},
+    # 대본 주장 확인(대본은 바꾸지 않는다 — 화자에게 알려 줄 뿐)
+    "script_checks": {"type": "array", "items": _obj({
+        "sentence": STR, "verdict": {"type": "string", "enum": ["ok", "caution", "wrong", "unverifiable"]},
+        "note": STR, **SOURCED})},
+    "visual_directions": STR_LIST,         # 이 주제를 보여 주는 방법에 대한 조사자의 제안 3~6개
+    "sources": {"type": "array", "items": _obj({"title": STR, "url": STR})},
+})
+
+# 🛠 시그니처 장면 빌더 — 트리트먼트의 시그니처 장면 하나를 자유 HTML 카드로(카드 DSL, check.mjs 로 검사)
+SETPIECE = _obj({
+    "layout": {"type": "string", "enum": ["fullscreen", "split", "overlay"]},
+    "style": {"type": "string", "enum": CARD_STYLES},
+    "title": STR,
+    "html": STR,
+    "start_word": STR,
+    "notes": STR,
+})
+
 # 🎨 모션 디자이너(수정 라운드)
 MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
 # 🃏 카드 디자이너(수정 라운드) — html 은 고친 카드 조각 전체
@@ -310,7 +392,7 @@ CARD_REVISE = _obj({"html": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

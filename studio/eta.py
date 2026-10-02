@@ -28,7 +28,10 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "face": lambda f: 10 + 8 * f.get("mv", f["m"]) * f["k"],        # mv: 원본 영상 길이 합(다시점이면 카메라 수만큼)
     "grade": lambda f: 25 + 3 * f.get("mv", f["m"]),
     # 자료 조달(사다리)이 모션 디자이너 앞으로 왔다(13 문서 2-2) — 병렬이 직렬로 바뀌어 약 2~3분 늘어난다
-    "director@ai": lambda f: 300 + 20 * f["m"],
+    # + 🛠 시그니처 장면(카드 3~6개, 동시에)·트리트먼트 — Claude 총괄 제작(docs/upgrade/14)
+    "director@ai": lambda f: 420 + 20 * f["m"],
+    "research@ai": lambda f: 480,        # 🔎 웹 조사(검색·가져오기 20~45회) — 소리·얼굴 작업과 동시에
+    "research@rule": lambda f: 1,
     "director@rule": lambda f: 15,
     "proxy": lambda f: 15 + 25 * f.get("mv", f["m"]) * f["k"],
     "verify@gpu": lambda f: 30 + 12 * f["out_s"] / 60,     # 편집된 목소리 다시 인식(최대 2차)
@@ -49,7 +52,7 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
 }
 # 같은 종류(느리면 같이 느린) 단계 묶음
 GROUPS = {"audio": "sound", "master": "sound", "face": "video", "grade": "video", "proxy": "video",
-          "render": "video", "director": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net", "music": "ai",
+          "render": "video", "director": "ai", "research": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net", "music": "ai",
           "export": "ai"}
 GROUP_MIN, GROUP_MAX = 0.75, 2.0   # 같은 묶음 조정 범위(줄일 때는 조금만 — 보수적으로)
 GROUP_EVIDENCE = 60.0  # 같은 묶음에서 이만큼(예상 초) 끝나야 조정

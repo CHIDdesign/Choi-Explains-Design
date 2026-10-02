@@ -33,27 +33,37 @@ class Agent:
     schema: dict
     effort: str          # 기본 사고 강도(설정에서 바꿀 수 있음)
     max_tokens: int = 32000
+    tools: tuple[str, ...] = ()     # 웹 조사 도구(WebSearch·WebFetch) — 🔎 주제 조사·🛠 시그니처 장면만
+    max_turns: int = 0              # 도구를 쓰는 에이전트의 도구 사용 상한
+    timeout: float = 0.0            # 0 = 클라이언트 기본(30분)
 
+
+WEB = ("WebSearch", "WebFetch")
 
 AGENTS: dict[str, Agent] = {a.key: a for a in [
-    Agent("director", "🎬 총괄 감독", "director", S.BRIEF, "high"),
+    # 🔎 리서치 디렉터(docs/upgrade/14): 대본·주제만 보고 웹에서 조사 — 팀 전원이 같은 사실·자료 목록에서 출발한다
+    Agent("research", "🔎 리서치 디렉터", "researcher", S.RESEARCH, "high", 64000, WEB, 60, 3000.0),
+    Agent("director", "🎬 총괄 감독", "director", S.BRIEF, "high", 48000),
+    # 🛠 시그니처 장면 빌더: 트리트먼트의 시그니처 장면 하나를 자유 HTML 카드로 정밀 재현(UI·제품·데이터 이야기)
+    Agent("setpiece", "🛠 시그니처 장면", "setpiece", S.SETPIECE, "high", 48000, WEB, 16, 2400.0),
     Agent("cut_editor", "✂️ 컷 편집 총괄", "cut_editor", S.CUT_REVIEW, "high", 16000),
-    Agent("editor", "✂️ 편집 감독", "editor", S.EDITOR, "medium", 16000),
+    Agent("editor", "✂️ 편집 감독", "editor", S.EDITOR, "high", 16000),
     Agent("motion", "🎨 모션 디자이너", "motion", S.MOTION, "high", 48000),
     # 자료 리서처 v2: 증거 계획(need·트리트먼트) — 증거 설계가 영상의 인상을 좌우한다(13 문서 3절: medium → high)
     Agent("stock", "🎞 자료 리서처", "visual_researcher", S.EVIDENCE, "high", 24000),
-    Agent("captions", "🔤 자막 디자이너", "captions", S.CAPTIONS, "medium", 24000),
+    Agent("captions", "🔤 자막 디자이너", "captions", S.CAPTIONS, "high", 24000),
     Agent("shorts", "📱 숏폼 PD", "shorts", S.SHORTS, "high", 32000),
-    Agent("copy", "✍️ 카피라이터", "copy", S.COPY, "medium", 16000),
-    Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick_v2", S.EVIDENCE_PICK, "low", 8000),
-    Agent("portrait_pick", "📷 자료 리서처(인물 사진)", "portrait_pick", S.STOCK_PICK, "low", 8000),
+    Agent("copy", "✍️ 카피라이터", "copy", S.COPY, "high", 16000),
+    # 그림 고르기는 보는 판단이라 Claude 가 한다(토큰보다 맞는 그림) — 예전 low
+    Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick_v2", S.EVIDENCE_PICK, "medium", 8000),
+    Agent("portrait_pick", "📷 자료 리서처(인물 사진)", "portrait_pick", S.STOCK_PICK, "medium", 8000),
     Agent("art_director", "🧐 아트 디렉터", "art_director", S.QA, "high", 24000),
     Agent("motion_revise", "🎨 모션 디자이너(수정)", "motion_revise", S.MOTION_REVISE, "high", 24000),
     Agent("card_revise", "🃏 카드 디자이너(수정)", "card_revise", S.CARD_REVISE, "high", 32000),
     Agent("colorist", "🎨 컬러리스트", "colorist", S.GRADE, "medium", 8000),
     Agent("timeline_review", "🧐 타임라인 검수", "timeline_review", S.TIMELINE_QA, "high", 16000),
     # 🎼 음악 감독 — SPECIALISTS 에 넣지 않는다: 컷이 확정된 뒤 따로 부른다(13 문서 3절)
-    Agent("music", "🎼 음악 감독", "music_supervisor", S.MUSIC, "medium", 12000),
+    Agent("music", "🎼 음악 감독", "music_supervisor", S.MUSIC, "high", 12000),
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
@@ -72,6 +82,32 @@ def studio_system_prompt() -> str:
         "\n\n# 디자인 스킬 노트(오픈소스 스킬·편집 이론에서 정리)\n\n" + skills_block(),
     ]
     return "\n".join(p for p in parts if p.strip())
+
+
+# 에이전트별 스킬 노트(prompts/skills/agents/*.md — 전문가·제작자 자료에서 정리, 그 에이전트의 지시 끝에만 붙는다)
+AGENT_SKILLS: dict[str, tuple[str, ...]] = {
+    "research": ("research",), "director": ("director", "sound_design"), "editor": ("editor",),
+    "cut_editor": ("editor",), "motion": ("motion",), "motion_revise": ("motion",), "setpiece": ("setpiece", "motion"),
+    "card_revise": ("setpiece",), "art_director": ("art_director",), "timeline_review": ("art_director", "editor"),
+    "music": ("music",), "captions": ("captions",), "copy": ("copy",), "shorts": ("shorts",),
+    "stock": ("stock",), "stock_pick": ("stock",), "portrait_pick": ("stock",),
+}
+
+
+def agent_skill_block(key: str) -> str:
+    """그 에이전트의 스킬 노트(있는 것만). 출처 목록은 지시에 넣지 않는다(토큰만 든다)."""
+    from ..paths import PROMPTS_DIR
+    parts = []
+    for name in AGENT_SKILLS.get(key, ()):
+        f = PROMPTS_DIR / "skills" / "agents" / f"{name}.md"
+        if not f.exists():
+            continue
+        text = f.read_text(encoding="utf-8").strip()
+        text = text.split("\n## 출처", 1)[0].strip()
+        if text:
+            parts.append(text)
+    return ("\n\n---\n# 이 역할의 스킬 노트(전문가·제작자에게서 배운 것 — 지시와 부딪히면 지시가 이긴다)\n\n"
+            + "\n\n".join(parts) + "\n") if parts else ""
 
 
 def skills_block() -> str:
@@ -140,6 +176,62 @@ def parse_spec(text: str) -> Optional[dict[str, Any]]:
         except (DirectorError, json.JSONDecodeError):
             return None
     return obj if isinstance(obj, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# 트리트먼트(총괄 감독의 시각·소리 설계) — 시그니처 장면 고르기 · 전문가에게 주는 블록
+# ---------------------------------------------------------------------------
+BUILDABLE = ("ui_recreation", "object_recreation", "data_story", "diagram", "timeline")
+
+
+def signature_scenes(director: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
+    """트리트먼트의 시그니처 장면 중 🛠 빌더가 HTML 로 지을 것(실물 사진이 필요한 document·collage 는 자료 리서처 몫)."""
+    tr = director.get("treatment") if isinstance(director.get("treatment"), dict) else {}
+    out: list[dict[str, Any]] = []
+    for n, sc in enumerate(tr.get("signature_scenes") or []):
+        if not isinstance(sc, dict) or sc.get("kind") not in BUILDABLE or not str(sc.get("brief") or "").strip():
+            continue
+        try:
+            a, b = int(sc.get("start_seg", -1)), int(sc.get("end_seg", sc.get("start_seg", -1)))
+        except (TypeError, ValueError):
+            continue
+        if a < 0:
+            continue
+        out.append({"id": str(sc.get("id") or f"sig{n + 1}")[:16], "start_seg": a, "end_seg": max(a, b),
+                    "start_word": str(sc.get("start_word") or ""), "kind": sc["kind"],
+                    "title": str(sc.get("title") or sc["kind"])[:40], "brief": str(sc["brief"])[:3000],
+                    "research_ref": str(sc.get("research_ref") or "")[:300], "sfx": str(sc.get("sfx") or "none"),
+                    "motion_ref": str(sc.get("motion_ref") or "").strip()[:80]})
+    return out[:limit]
+
+
+def treatment_block(director: dict[str, Any], key: str) -> str:
+    """전문가 지시 끝에 붙는 트리트먼트 요약 — 콘셉트·모티프와, 시그니처 장면 구간(겹쳐 내지 않는다)."""
+    tr = director.get("treatment") if isinstance(director.get("treatment"), dict) else {}
+    if not tr:
+        return ""
+    lines = ["", "", "## 🎨 총괄 감독의 트리트먼트(이 영상만의 설계 — 따른다)"]
+    if tr.get("concept"):
+        lines.append(f"- 콘셉트: {tr['concept']}")
+    if tr.get("motifs"):
+        lines.append("- 모티프: " + " · ".join(str(m) for m in tr["motifs"][:6]))
+    sigs = [sc for sc in tr.get("signature_scenes") or [] if isinstance(sc, dict)]
+    if sigs and key in ("motion", "stock"):
+        lines.append("- 시그니처 장면 구간(🛠 빌더가 짓는다 — 이 구간에는 다른 화면을 내지 않는다): "
+                     + " · ".join(f"S{sc.get('start_seg')}–S{sc.get('end_seg')} 「{sc.get('title', '')}」" for sc in sigs))
+    segs = [s for s in tr.get("segments") or [] if isinstance(s, dict)]
+    if segs and key in ("motion", "stock"):
+        want = {"motion": ("motion", "board", "timeline", "compare", "face_callout"),
+                "stock": ("collage", "photo_full", "stock_video", "quote_over_footage", "document", "face_photo")}[key]
+        mine = [s for s in segs if s.get("layout") in want]
+        if mine:
+            lines.append("- 화면 구성표 중 네 몫(이 구간을 이 구성으로 채운다):")
+            lines += [f"  - S{s.get('start_seg')}–S{s.get('end_seg')} [{s.get('layout')}] {s.get('show', '')}"
+                      + (f" — 자료: {s['asset']}" if s.get("asset") else "") + (f" — 움직임: {s['motion']}" if s.get("motion") else "")
+                      for s in mine[:40]]
+    if key == "editor" and tr.get("sound_concept"):
+        lines.append(f"- 소리 콘셉트: {tr['sound_concept']}")
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +322,23 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
                            reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card,
                            sequence_id=str(cd.get("sequence_id") or "")))
         n_card += 1
+    # 🛠 시그니처 장면(트리트먼트) — 자유 HTML 카드로 정밀 재현. 겹치면 이긴다(signature → 우선순위 +3)
+    n_sig = 0
+    for sp in results.get("setpieces") or []:
+        sc = sp.get("scene") or {}
+        layout = sp.get("layout") if sp.get("layout") in ("fullscreen", "split", "overlay") else "fullscreen"
+        card = clean_card(sp.get("html", ""), layout=layout, card_id=f"card{n_card + 1}")
+        if not card:
+            log(f"🛠 시그니처 장면 「{sc.get('title', '')}」 의 HTML 이 올바르지 않아 제외")
+            continue
+        if sp.get("style") in STYLES:
+            card["style"] = sp["style"]
+        graphics.append(_g("card", layout, sc.get("start_seg", -1), sc.get("end_seg", sc.get("start_seg", -1)),
+                           str(sp.get("start_word") or sc.get("start_word") or ""), title=str(sc.get("title", "")),
+                           reason=f"🛠 시그니처 장면({sc.get('kind', '')}): {str(sp.get('notes', ''))[:80]}", card=card,
+                           signature=True, sfx=str(sc.get("sfx") or "")))
+        n_card += 1
+        n_sig += 1
     # 🎞 자료 리서처 v2 — 증거 항목(need·트리트먼트) + 조달 결과(사다리) → 그래픽(studio/assets/graphics.py)
     ev_items = [it for it in stock.get("items", []) or [] if isinstance(it, dict)]
     if ev_items:
@@ -307,10 +416,12 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "tone": brief.get("tone", ""),
             "beats": brief.get("beats", []), "notes_for_team": brief.get("notes_for_team", ""),
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
-            "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),
+            "motion_scenes": n_scene, "cards": n_card, "signature_scenes": n_sig,
+            "stock_requests": len(stock.get("requests", []) or []),
             "wiki_photos": len(stock.get("photos", []) or []),
             "evidence_items": len(ev_items), "evidence_notes": str(stock.get("notes", "") or "")[:400],
             "integrity": brief.get("integrity") or {},
+            "treatment": brief.get("treatment") or {},
         },
     }
     return raw_long, shorts
@@ -336,17 +447,45 @@ class Studio:
         self.system = studio_system_prompt()
         self.results: dict[str, Any] = {}
         self.errors: dict[str, str] = {}
+        self.web = True                                                   # 🔎·🛠 에이전트에 웹 도구를 준다
         self.materials: tuple[str, Optional[bytes]] = ("", None)        # ④ 자료 폴더 목록 + 썸네일 시트(자료 리서처에게)
         self.evidence: tuple[str, Optional[bytes]] = ("", None)         # 확보 목록 + 컨택트 시트(모션 디자이너에게)
 
     # ------------------------------------------------------------------
-    def call(self, key: str, ctx: str, instruction: str, *, images=None) -> dict[str, Any]:
+    def call(self, key: str, ctx: str, instruction: str, *, images=None, system: Optional[str] = None,
+             label: str = "") -> dict[str, Any]:
         a = AGENTS[key]
         eff = self.effort.get(key) or a.effort
         model = self.models.get(key) or None
-        return self.claude.structured(system=self.system, shared_context=ctx, instruction=instruction, schema=a.schema,
-                                      max_tokens=a.max_tokens, cancel=self.cancel, label=a.label, images=images,
-                                      effort=eff, model=model)
+        kw: dict[str, Any] = {}
+        if a.tools and self.web:
+            kw = {"tools": a.tools, "max_turns": a.max_turns}
+            if a.timeout:
+                kw["timeout"] = a.timeout
+        instruction = instruction + agent_skill_block(key)
+        return self.claude.structured(system=system or self.system, shared_context=ctx, instruction=instruction,
+                                      schema=a.schema, max_tokens=a.max_tokens, cancel=self.cancel,
+                                      label=label or a.label, images=images, effort=eff, model=model, **kw)
+
+    def research(self, *, title: str, topic: str, script: str) -> dict[str, Any]:
+        """🔎 주제 조사 — 대본·주제 설명만 보고(영상·전사 없이) 웹에서 조사한 노트. 실패하면 DirectorError."""
+        from .research import clean_research
+        if not (topic.strip() or script.strip()):
+            return {}
+        text = (load_prompt("agents/researcher.md").replace("{{title}}", title or "(미정)")
+                .replace("{{topic}}", topic.strip() or "(주제 설명 없음 — 대본에서 읽는다)")
+                .replace("{{script}}", script.strip() or "(대본 없음)")
+                .replace("{{user_direction}}", direction_block(self.direction)))
+        system = load_prompt("system_studio.md")
+        self.log("🔎 리서치 디렉터: 대본의 인물·제품·개념을 웹에서 조사"
+                 + ("" if self.web else "(이 연결은 웹 도구를 못 써 기억으로만)"))
+        res = clean_research(self.call("research", "# 조사 의뢰", text, system=system))
+        self.results["research"] = res
+        n_files = sum(len(e.get("commons_files") or []) for e in res.get("entities") or [])
+        self.log(f"🔎 조사 노트: 대상 {len(res.get('entities') or [])} · 개념 {len(res.get('concepts') or [])} · "
+                 f"재현 사양 {len(res.get('recreations') or [])} · 커먼즈 파일 {n_files} · "
+                 f"대본 확인 {sum(1 for c in res.get('script_checks') or [] if c['verdict'] in ('wrong', 'caution'))}건")
+        return res
 
     def _instruction(self, key: str, brief: JobBrief, director: dict[str, Any]) -> str:
         text = load_prompt(f"agents/{AGENTS[key].prompt}.md")
@@ -362,20 +501,29 @@ class Studio:
                     + direction_block(self.direction))
         if key == "motion" and not self.use_motion:
             text += "\n\n(이번 작업은 모션 DSL 장면·HTML 카드를 만들지 않는다: scenes 와 cards 는 빈 배열.)"
+        if key in ("motion", "stock", "editor", "captions"):
+            text += treatment_block(director, key)
         return text
 
     def plan(self, brief: JobBrief, ctx: str, *, shorts_count: int,
              progress: Callable[[float], None] = lambda f: None,
              procure: Optional[Callable[[dict[str, Any], int], dict[str, Any]]] = None,
-             materials: tuple[str, Optional[bytes]] = ("", None)) -> tuple[dict[str, Any], dict[str, Any]]:
+             materials: tuple[str, Optional[bytes]] = ("", None),
+             refs: Optional[Callable[[list[str]], dict[str, bytes]]] = None) -> tuple[dict[str, Any], dict[str, Any]]:
         """🎬 → 전문가들. 자료가 먼저, 모션이 나중(13 문서 2-2): 🎞 자료 리서처(증거 계획) → procure(조달 사다리 →
         확보 목록·컨택트 시트, 부족하면 보충 요청 블록) → 🎨 모션 디자이너(확보한 자료를 받고 설계). 나머지 전문가는 그동안
         동시에. 총괄 감독이 실패하면 DirectorError."""
         self.materials = materials
         self.log("🎬 총괄 감독: 전사본을 읽고 크리에이티브 브리프 작성")
+        from ..assets.motion_ref import catalog_block
+        mref = catalog_block() if (refs is not None and self.use_motion) else ""
         director = self.call("director", ctx, load_prompt("agents/director.md")
                              .replace("{{title}}", brief.title)
-                             .replace("{{user_direction}}", direction_block(self.direction)))
+                             .replace("{{user_direction}}", direction_block(self.direction))
+                             + (f"\n\n{mref}\n시그니처 장면마다 위 목록에서 움직임이 가장 맞는 것 하나를 `motion_ref`(slug)로 "
+                                "고른다 — 이름이 아니라 **움직임**(쌓임·마스크·회전·늘어남·숫자 세기 등)이 장면의 뜻과 맞는 것. 맞는 것이 "
+                                "없으면 \"\". 앱이 그 템플릿의 미리보기를 찍어 🛠 빌더에게 보여 주고, 빌더는 우리 종이 콜라주 "
+                                "스타일로 다시 짓는다." if mref else ""))
         self.results["director"] = director
         self.log(f"🎬 브리프: {director.get('logline', '')}")
         beats = director.get("beats", []) or []
@@ -384,6 +532,16 @@ class Studio:
 
         jobs = [k for k in SPECIALISTS if not (k == "stock" and not self.use_stock)
                 and not (k == "shorts" and shorts_count <= 0)]
+        scenes = signature_scenes(director) if self.use_motion else []
+        ref_sheets: dict[str, bytes] = {}
+        if scenes:
+            self.log(f"🛠 시그니처 장면 {len(scenes)}개를 따로 짓습니다: " + " · ".join(f"「{sc['title']}」" for sc in scenes))
+            want = [sc["motion_ref"] for sc in scenes if sc.get("motion_ref")]
+            if want and refs is not None:
+                try:
+                    ref_sheets = refs(want)
+                except Exception as e:  # noqa: BLE001 - 레퍼런스 없이도 짓는다
+                    self.log(f"🎞 모션 레퍼런스 캡처 실패 → 레퍼런스 없이: {e}")
         chain = procure is not None and "stock" in jobs and "motion" in jobs
         done = [0]
 
@@ -423,15 +581,47 @@ class Studio:
 
         self.log("동시 작업: " + " · ".join(AGENTS[k].label for k in jobs)
                  + (" (🎞 자료 → 조달 → 🎨 모션은 차례로)" if chain else ""))
-        with ThreadPoolExecutor(max_workers=min(self.workers, len(jobs) or 1)) as pool:
+        def build_scene(sc: dict[str, Any]) -> tuple[str, Optional[dict[str, Any]]]:
+            if self.cancel:
+                self.cancel.check()
+            text = (load_prompt("agents/setpiece.md")
+                    .replace("{{scene}}", json.dumps(sc, ensure_ascii=False, indent=1))
+                    .replace("{{treatment}}", json.dumps({k: v for k, v in (director.get("treatment") or {}).items()
+                                                          if k not in ("segments", "signature_scenes")},
+                                                         ensure_ascii=False, indent=1))
+                    .replace("{{user_direction}}", direction_block(self.direction)))
+            sheet = ref_sheets.get(sc.get("motion_ref") or "")
+            imgs = [(f"모션 레퍼런스 {sc['motion_ref']}(1→8 시간 순서)", sheet, "image/jpeg")] if sheet else None
+            if sheet:
+                text += ("\n\n## 모션 레퍼런스\n첨부 이미지는 총괄 감독이 고른 레퍼런스 템플릿의 미리보기를 시간 순서로 찍은 것이다. "
+                         "그 **움직임**(무엇이 어떤 순서로·어떤 이징으로 들어오고 쌓이고 사라지는지, 마스크·흐림·늘어남·회전)을 읽어 "
+                         "이 장면의 내용과 우리 종이 콜라주 스타일(서체·색·질감)로 다시 짓는다. 레퍼런스의 글자·로고·사진·색을 "
+                         "그대로 옮기지 않는다. `notes` 에 무엇을 가져왔는지 한 줄.")
+            try:
+                res = self.call("setpiece", ctx, text, images=imgs, label=f"🛠 시그니처 장면 「{sc['title'][:16]}」")
+                return "setpiece", {"scene": sc, **res}
+            except DirectorError as e:
+                self.errors[f"setpiece:{sc['id']}"] = str(e)
+                self.log(f"🛠 시그니처 장면 「{sc['title']}」 실패({e}) → 이 장면 없이 진행")
+                return "setpiece", None
+
+        with ThreadPoolExecutor(max_workers=min(self.workers + len(scenes), len(jobs) + len(scenes) or 1)) as pool:
             futs = [pool.submit(run, k) for k in jobs if not (chain and k in ("stock", "motion"))]
             if chain:
                 futs.append(pool.submit(research_then_motion))
+            futs += [pool.submit(build_scene, sc) for sc in scenes]
+            setpieces: list[dict[str, Any]] = []
             for f in futs:
                 r = f.result()
                 for key, res in (r if isinstance(r, list) else [r]):
-                    if res is not None:
+                    if res is None:
+                        continue
+                    if key == "setpiece":
+                        setpieces.append(res)
+                    else:
                         self.results[key] = res
+            if setpieces:
+                self.results["setpieces"] = sorted(setpieces, key=lambda x: x["scene"]["start_seg"])
         if self.cancel:
             self.cancel.check()
         self._report()
@@ -516,10 +706,17 @@ class Studio:
         instr = load_prompt("agents/colorist.md").replace("{{notes}}", notes)
         return self.call("colorist", ctx, instr, images=[sheet] + ([scope_sheet] if scope_sheet else []))
 
-    def score(self, ctx: str, brief: dict[str, Any]) -> dict[str, Any]:
-        """🎼 음악 감독: 컷이 확정된 전사본(편집 시각) + 감독 브리프 → 큐 시트(MUSIC)."""
+    def score(self, ctx: str, brief: dict[str, Any], tracks: str = "") -> dict[str, Any]:
+        """🎼 음악 감독: 컷이 확정된 전사본(편집 시각) + 감독 브리프 → 큐 시트(MUSIC). tracks: 내 음악 폴더의 곡 목록(측정값)
+        — 있으면 그중 이 영상에 맞는 곡을 고른다(예전엔 파일 이름 해시로 아무 곡이나 돌렸다)."""
         instr = (load_prompt("agents/music_supervisor.md").replace("{{brief}}", compact_brief(brief))
                  .replace("{{user_direction}}", direction_block(self.direction)))
+        if tracks:
+            instr += ("\n\n## 내 음악 폴더(채널 주인이 고른 곡 — 이 안에서만 고른다)\n" + tracks
+                      + "\n\n`track` 에 이 영상에 쓸 곡의 파일 이름을 그대로 적는다. 고르는 기준: 말 아래 바닥이 되는가(느린 템포·"
+                        "낮은 밀도·말 대역이 비어 있음), 트리트먼트의 소리 콘셉트·이 주제의 시대와 질감에 맞는가, 같은 장르의 롱폼 "
+                        "해설 채널(디자인·건축·인문 교양)이 실제로 쓰는 결(잔잔한 피아노·앰비언트·로파이·어쿠스틱 미니멀)인가. "
+                        "맞는 곡이 없으면 \"\" — 아무 곡이나 고르지 않는다. `track_reason` 한 줄.")
         return self.call("music", ctx, instr)
 
     def review_timeline(self, ctx: str, events: str, srt: str, plan_text: str, gate_text: str,

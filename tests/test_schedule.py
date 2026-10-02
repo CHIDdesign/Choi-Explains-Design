@@ -125,19 +125,24 @@ def test_user_cancel_propagates_as_cancelled(tmp_path):
 
 
 def test_sound_defaults_no_sfx_and_only_my_music(tmp_path):
-    """채널 주인: 효과음·음원이 다 별로 — 기본은 효과음 없음, 배경음악은 내 음악 폴더의 곡만(비어 있으면 없음)."""
+    """채널 주인: 효과음·음원이 다 별로 → 효과음은 🎬 총괄 감독(Claude)이 고른 곳에만(sfx_mode='directed', 기본 —
+    docs/upgrade/14), 배경음악은 내 음악 폴더의 곡만(비어 있으면 없음, 둘 이상이면 음악 감독이 고른다)."""
     from types import SimpleNamespace
 
     from studio.settings import Settings
     st = Settings()
-    assert st.sfx_enabled is False and st.music_mode == "mine"
+    assert st.sfx_enabled is False and st.sfx_mode == "directed" and st.music_mode == "mine"
     p = _bare(tmp_path)
     music = tmp_path / "music"
     music.mkdir()
-    p.settings = SimpleNamespace(sfx_enabled=False, music_mode="mine", music_dir=str(music))
+    p.settings = SimpleNamespace(sfx_enabled=False, sfx_mode="off", music_mode="mine", music_dir=str(music))
     p.spec = SimpleNamespace(sfx=True, music=True, bgm="", topic="디자인", video="a.mp4")
     pl.Pipeline._resolve_sound(p)
-    assert p.spec.sfx is False and p.spec.music is False and p.spec.bgm == ""      # 폴더가 비면 음악 없음
+    assert p.spec.sfx is False and p.spec.music is False and p.spec.bgm == ""      # 효과음 끔 · 폴더가 비면 음악 없음
+    p.settings = SimpleNamespace(sfx_enabled=False, sfx_mode="directed", music_mode="mine", music_dir=str(music))
+    p.spec = SimpleNamespace(sfx=True, music=True, bgm="", topic="디자인", video="a.mp4")
+    pl.Pipeline._resolve_sound(p)
+    assert p.spec.sfx is True                                                        # 감독이 고른 곳에만
     (music / "calm.mp3").write_bytes(b"x")
     p.spec = SimpleNamespace(sfx=True, music=True, bgm="", topic="디자인", video="a.mp4")
     pl.Pipeline._resolve_sound(p)

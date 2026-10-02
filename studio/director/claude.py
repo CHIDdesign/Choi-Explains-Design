@@ -13,6 +13,20 @@ class DirectorError(RuntimeError):
     pass
 
 
+WEB_FETCH_BETA = "web-fetch-2025-09-10"
+
+
+def web_tools(tools: tuple[str, ...], max_uses: int = 0) -> list[dict[str, Any]]:
+    """Claude Code 도구 이름 → API 서버 도구(웹 검색 · 웹 가져오기)."""
+    n = max(4, int(max_uses or 20))
+    out: list[dict[str, Any]] = []
+    if "WebSearch" in tools:
+        out.append({"type": "web_search_20250305", "name": "web_search", "max_uses": n})
+    if "WebFetch" in tools:
+        out.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": n})
+    return out
+
+
 def _supports_adaptive(model: str) -> bool:
     return not model.startswith("claude-haiku")
 
@@ -59,10 +73,15 @@ class ClaudeClient:
         images: Optional[list[tuple[str, bytes, str]]] = None,
         effort: Optional[str] = None,
         model: Optional[str] = None,
+        tools: tuple[str, ...] = (),
+        max_turns: int = 0,
+        timeout: Optional[float] = None,
     ) -> dict:
         """system + (캐시되는) 공통 컨텍스트 + [이미지들] + 작업 지시 → 스키마에 맞는 dict.
 
         images: [(라벨, 바이트, media_type)] — 아트 디렉터 검수·스톡 선택용
+        tools: ("WebSearch", "WebFetch") — 서버 도구(web_search · web_fetch)로 웹 조사(🔎 주제 조사). 거부되면 웹 검색만 →
+        도구 없이 순서로 물러난다. max_turns 는 도구 사용 횟수 상한(검색·가져오기 각각).
         """
         import base64
         system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
@@ -86,13 +105,31 @@ class ClaudeClient:
             base["thinking"] = {"type": "adaptive"}
             output_config["effort"] = effort or self.effort
         base["output_config"] = output_config
+        tool_sets = [web_tools(tools, max_turns)] if tools else [[]]
+        if tools and "WebFetch" in tools:
+            tool_sets.append(web_tools(("WebSearch",), max_turns))       # 가져오기(베타)가 거부되면 검색만
+        if tools:
+            tool_sets.append([])                                         # 그래도 안 되면 도구 없이(기억으로)
+        last_err: Exception | None = None
+        for k, ts in enumerate(tool_sets):
+            try:
+                return self._structured_once(base, ts, schema, use_model, cancel, label)
+            except DirectorError as e:
+                last_err = e
+                if k + 1 < len(tool_sets):
+                    self.log(f"{label}: 웹 도구 요청이 거부됨 → {'검색만' if tool_sets[k + 1] else '도구 없이'} 다시 시도")
+        raise last_err if last_err else DirectorError(f"{label} 호출 실패")
 
+    def _structured_once(self, base: dict, tools: list[dict], schema: dict, use_model: str,
+                         cancel: Optional[CancelToken], label: str) -> dict:
         attempts = [("structured+fallback", True, True), ("structured", True, False), ("plain-json", False, False)]
         last_err: Exception | None = None
         for name, use_schema, use_fallback in attempts:
             if use_fallback and not _supports_fallbacks(use_model):
                 continue
             kwargs = json.loads(json.dumps(base))  # 깊은 복사
+            if tools:
+                kwargs["tools"] = tools
             if not use_schema:
                 kwargs["output_config"].pop("format", None)
                 if not kwargs["output_config"]:
@@ -121,25 +158,35 @@ class ClaudeClient:
     def _stream(self, kwargs: dict, use_fallback: bool, use_schema: bool, cancel: Optional[CancelToken],
                 label: str) -> dict:
         t0 = time.time()
-        if use_fallback:
-            ctx = self.client.beta.messages.stream(
-                **kwargs, betas=["server-side-fallback-2026-07-01"], extra_body={"fallbacks": "default"})
-        else:
-            ctx = self.client.messages.stream(**kwargs)
+        betas = (["server-side-fallback-2026-07-01"] if use_fallback else []) + \
+            ([WEB_FETCH_BETA] if any(t.get("name") == "web_fetch" for t in kwargs.get("tools") or []) else [])
         chars = 0
         last_log = time.time()
-        with ctx as stream:
-            for event in stream:
-                if cancel and cancel.cancelled:
-                    stream.close()
-                    cancel.check()
-                if getattr(event, "type", "") == "content_block_delta":
-                    delta = getattr(event, "delta", None)
-                    chars += len(getattr(delta, "text", "") or getattr(delta, "partial_json", "") or "")
-                if time.time() - last_log > 8:
-                    last_log = time.time()
-                    self.log(f"{label}: 편집 계획 작성 중… ({int(time.time() - t0)}초, {chars}자)")
-            msg = stream.get_final_message()
+        msg = None
+        for _turn in range(8):          # 서버 도구가 길어지면 pause_turn — 받은 내용을 그대로 이어 붙여 계속한다
+            if betas:
+                extra = {"extra_body": {"fallbacks": "default"}} if use_fallback else {}
+                ctx = self.client.beta.messages.stream(**kwargs, betas=betas, **extra)
+            else:
+                ctx = self.client.messages.stream(**kwargs)
+            with ctx as stream:
+                for event in stream:
+                    if cancel and cancel.cancelled:
+                        stream.close()
+                        cancel.check()
+                    if getattr(event, "type", "") == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        chars += len(getattr(delta, "text", "") or getattr(delta, "partial_json", "") or "")
+                    if time.time() - last_log > 8:
+                        last_log = time.time()
+                        self.log(f"{label}: 작성 중… ({int(time.time() - t0)}초, {chars}자)")
+                msg = stream.get_final_message()
+            if getattr(msg, "stop_reason", "") != "pause_turn":
+                break
+            kwargs = dict(kwargs)
+            kwargs["messages"] = list(kwargs["messages"]) + [
+                {"role": "assistant", "content": [b.model_dump(exclude_none=True) if hasattr(b, "model_dump") else b
+                                                  for b in msg.content]}]
         usage = getattr(msg, "usage", None)
         if usage is not None:
             u = {"input": getattr(usage, "input_tokens", 0), "output": getattr(usage, "output_tokens", 0),
@@ -153,12 +200,17 @@ class ClaudeClient:
             raise DirectorError(f"모델이 요청을 거절했습니다: {getattr(detail, 'category', '')}")
         if msg.stop_reason == "max_tokens":
             raise DirectorError("출력이 max_tokens 에서 잘렸습니다")
-        text = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", "") == "text")
+        texts = [getattr(b, "text", "") for b in msg.content if getattr(b, "type", "") == "text"]
+        text = "".join(texts)
         if not text.strip():
             raise DirectorError("빈 응답")
-        if use_schema:
+        # 도구를 쓴 응답은 중간에 설명 글이 끼일 수 있다 — 마지막 글 덩어리부터 JSON 을 찾는다
+        for cand in ([texts[-1]] if len(texts) > 1 else []) + [text]:
             try:
-                return json.loads(text)
+                return json.loads(cand)
             except json.JSONDecodeError:
-                return extract_json(text)
-        return extract_json(text)
+                try:
+                    return extract_json(cand)
+                except (DirectorError, json.JSONDecodeError):
+                    continue
+        raise DirectorError("응답에서 JSON 을 읽지 못했습니다")

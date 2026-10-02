@@ -72,7 +72,7 @@ def test_clean_card_limits_and_rejects_empty():
     assert clean_card("", card_id="a") is None
     assert clean_card({"html": ""}) is None
     assert clean_card("<script>1</script>", card_id="a") is None          # 요소가 하나도 안 남음
-    assert clean_card("<div>" * 200 + "x" + "</div>" * 200, card_id="a") is None   # 요소 상한
+    assert clean_card("<div>" * 300 + "x" + "</div>" * 300, card_id="a") is None   # 요소 상한(260 — 시그니처 장면 재현)
     big = "<div class='root'>" + "<p>가</p>" * 3000 + "</div>"
     assert clean_card(big, card_id="a") is None                          # HTML 상한
 

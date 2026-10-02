@@ -50,6 +50,9 @@
   - `creator_en`·`year`·`qid` 는 아는 만큼. 모르면 "". 지어내지 않는다. 대상이 없는 항목은 `kind=other`, `shot=context`.
 - `source.citation`: 확실한 것만 적는다(저자·연도·제목·저널 중). 앱이 서지 데이터베이스로 확인하고, 일치하는 문헌이 없으면 출처 카드를 만들지 않는다.
   `locator`: 밑줄 칠 문장의 요지나 그림 번호("초록의 결론 문장", "Fig. 2").
+- `commons_files`: 위 **🔎 주제 조사 노트**에 그 대상의 "커먼즈 파일(확인됨)"이 있으면 그 이름을 그대로 옮긴다(앱이 그 파일부터 쓴다).
+  조사 노트에 없는 파일 이름을 지어내지 않는다. 없으면 [].
+- 조사 노트의 트리트먼트·연출 제안과 총괄 감독의 화면 구성표(`treatment.segments`)가 정한 자료를 먼저 채운다.
 - `stock.query_en`: 보이는 행동 + 대상 + 장소 + 화각으로 3~6낱말("hands flipping sketchbook pages close up"). 추상어(innovation, creativity, success) 금지.
 - `must_show`: 화면에 반드시 보여야 할 것 한 줄. `avoid`: 나오면 안 되는 것(복제품, 다른 모델, 큰 얼굴, 로고).
 - `treatment`: 대상 첫 등장 = `archive_card` 또는 `hero` · 논문·책 = `doc_highlight` · 화면 = `browser_frame` · 부분을 말함 = `detail_zoom`/`annotate`

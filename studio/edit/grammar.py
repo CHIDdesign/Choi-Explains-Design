@@ -71,7 +71,10 @@ PARAMS: dict[str, Any] = {
     # 문구 팔레트 v2(docs/upgrade/04c 3절): 소리는 화면의 재질(종이·연필·테이프·도장)을 따른다. 게인은 표의 상대 레벨
     # (목소리 V − 18~26 LU)을 피크 정규화 기준 dB 로 옮긴 출발값 — 자주 나는 소리일수록 작고 짧게
     "sfx_gain": {"paper_slide": -26, "paper_place": -25, "page_turn": -23, "tape": -26, "pencil_stroke": -28,
-                 "pencil_tick": -30, "stamp": -23, "print_place": -25, "air_soft": -30, "tonal": -19, "ident": -16},
+                 "pencil_tick": -30, "stamp": -23, "print_place": -25, "air_soft": -30, "tonal": -19, "ident": -16,
+                 # 🎬 총괄 감독이 고르는 모션 그래픽 효과음(Pixabay·Mixkit 실제 파일) — 목소리 아래 은은하게
+                 "whoosh_soft": -25, "swoosh_short": -25, "swipe": -25, "pop": -24, "click": -26, "typing": -27,
+                 "camera_shutter": -24, "paper": -23, "ding": -27, "bell_soft": -27, "notification": -25},
     "sfx_min_gap": 2.0,         # 효과음 사이 최소 2초
     "sfx_per_min": 3,           # 60초 창 어디서도 3개 이하 — 목록 틱까지 모두 센다(게이트 D5)
     "list_click_max": 2,        # 목록 틱은 목록당 최대 2개(상한에 포함)
@@ -182,6 +185,35 @@ def _covers(graphics: list[dict], total: float) -> list[tuple[float, float, dict
 
 def _inside(t: float, spans: list[tuple[float, float, Any]], pad: float = 0.0) -> bool:
     return any(a - pad <= t <= b + pad for a, b, *_ in spans)
+
+
+def directed_sfx(graphics: list[dict], segments: list[tuple[float, str]], *, holds: list[tuple[float, float]] = (),
+                 speech_starts: list[float] = (), total: float = 0.0, P: dict = PARAMS) -> list[dict]:
+    """총괄 감독이 고른 곳에만 효과음(설정 sfx_mode='directed', 기본) — 규칙이 템플릿마다 뿌리지 않는다.
+    graphics: 렌더 그래픽(data.sfx 가 있으면 그 그래픽이 들어올 때), segments: [(단락 시작 편집 시각, 효과음)] — 단락
+    시작 뒤 1.5초 안에 그래픽이 들어오면 그 순간에 맞춘다. 홀드 안·첫 3초·말 시작 0.15초 안은 피하고(앞으로 당김),
+    2초 간격·60초 창 3개(게이트 D5)."""
+    starts = sorted(g["start"] for g in graphics)
+    ev: list[dict] = []
+    for g in graphics:
+        cat = str((g.get("data") or {}).get("sfx") or "")
+        if cat and cat != "none":
+            ev.append({"t": g["start"], "category": cat, "prio": 3, "why": f"{g.get('template', '')} 등장(감독 지정)"})
+    for t, cat in segments:
+        if not cat or cat == "none":
+            continue
+        near = next((x for x in starts if t - 0.2 <= x <= t + 1.5), None)
+        ev.append({"t": near if near is not None else t, "category": cat, "prio": 2, "why": "단락 시작(감독 지정)"})
+    out = []
+    for e in ev:
+        t = e["t"]
+        for s0 in speech_starts:
+            if 0.0 <= s0 - t < P["sfx_speech_gap"]:
+                t = max(0.0, s0 - P["sfx_speech_gap"])
+        if t < 3.0 or (total and t > total - 1.0) or any(a <= t < b for a, b in holds):
+            continue
+        out.append({**e, "t": round(t, 3), "gain_db": P["sfx_gain"].get(e["category"], -25)})
+    return _cap_per_minute(_thin_by_gap(out, P["sfx_min_gap"]), P["sfx_per_min"])
 
 
 def _thin_by_gap(events: list[dict], gap: float, key: str = "t") -> list[dict]:

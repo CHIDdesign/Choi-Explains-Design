@@ -57,6 +57,7 @@ def clean_item(it: dict[str, Any]) -> dict[str, Any]:
         d[k] = dict(d.get(k) or {}) if isinstance(d.get(k), dict) else {}
     d["label"] = str(d.get("label") or "").strip()[:14]
     d["caption"] = str(d.get("caption") or "").strip()[:24]
+    d["commons_files"] = [str(x).strip() for x in d.get("commons_files") or [] if str(x).strip()][:6]
     d["display"] = str(d.get("display") or "").strip()[:8]
     d["quote"] = str(d.get("quote") or "").strip()[:36]
     return d
@@ -217,6 +218,8 @@ class Ladder:
             o["why"] = "온라인 자료 꺼짐"
             return
         kind, shot = subj.get("kind") or "other", subj.get("shot") or "subject"
+        if self._research_files(i, it, o, pending, names, kind, shot):
+            return
         if kind in LOGO_KINDS or shot == "logo" or (kind == "organization" and shot in ("logo", "screen")):
             p = self.d.resolver.plan(names[0], "brand", tuple(names[1:]))
             if p.result is not None:
@@ -284,6 +287,29 @@ class Ladder:
         cs, cf = credit(url, as_of)
         self._add_file(o, it, out, origin="screenshot", rung="screenshot", kind=kind, role="screen",
                        title=url, source_url=url, credit=(cs, cf), copy=False)
+        return True
+
+    def _research_files(self, i: int, it: dict[str, Any], o: dict[str, Any], pending: list, names: list[str],
+                        kind: str, shot: str) -> bool:
+        """🔎 조사 노트가 직접 확인한 커먼즈 파일이 있으면 그것부터(라이선스·크기는 여기서 다시 확인) — 위키데이터·문서 검색보다
+        먼저. 로고 자리에는 쓰지 않는다(로고는 로고 칸이 맡는다)."""
+        from ..agents.research import commons_name
+        files = [f for f in (commons_name(x) for x in it.get("commons_files") or []) if f]
+        if not files or self.d.media is None or shot == "logo" or kind in LOGO_KINDS:
+            return False
+        try:
+            metas = self.d.media.wp.files_meta(files[:6])
+        except Exception as e:  # noqa: BLE001 - 네트워크 오류면 예전 칸으로
+            self.log(f"🔎 조사 노트의 커먼즈 파일 확인 실패({names[0]}): {e}")
+            return False
+        cands = self.d.media.usable([{**m, "src": "research"} for m in metas], kind=kind, tier_max=it["tier_max"],
+                                    min_long=900)
+        if not cands:
+            self.log(f"🔎 조사 노트의 커먼즈 파일 {len(files)}개 — 라이선스·크기에 맞는 것이 없어 다른 칸으로({names[0]})")
+            return False
+        pending.append((i, it, cands))
+        o["info"] = {"title": names[0], "qid": str((it.get("subject") or {}).get("qid") or "")}
+        o["research"] = True
         return True
 
     def _pick_and_fetch(self, pending: list[tuple[int, dict[str, Any], list[dict[str, Any]]]],
