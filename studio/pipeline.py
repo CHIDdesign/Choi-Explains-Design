@@ -1200,7 +1200,7 @@ class Pipeline:
                 exe = find_claude(self.settings.claude_code_path) or "claude"
                 from .director.claude_code import scratch_dir
                 self.claude = ClaudeCodeClient(exe, self.settings.claude_model, self.settings.claude_effort,
-                                               log=self.log, workdir=scratch_dir(self.work.parent.name))
+                                               log=self.log, workdir=scratch_dir(self.work.parent.name, log=self.log))
                 self.log(f"AI 연결: Claude Code(Pro/Max 구독 사용량) · {exe}")
             else:
                 self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,

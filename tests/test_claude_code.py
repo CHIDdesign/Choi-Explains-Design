@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from studio.director.claude import DirectorError  # noqa: E402
-from studio.director.claude_code import ClaudeCodeClient, describe_auth, explain_error, resolve_backend  # noqa: E402
+from studio.director.claude_code import (ClaudeCodeClient, _scratch_bases, describe_auth, explain_error,  # noqa: E402
+                                         resolve_backend, scratch_dir)
 
 FAKE = r'''
 import json, os, sys
@@ -30,6 +31,7 @@ msg = json.loads(sys.stdin.readline())
 opts = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
 with open(log, "a", encoding="utf-8") as f:
     f.write(json.dumps({"argv": argv, "content": msg["message"]["content"], "api_key": "ANTHROPIC_API_KEY" in os.environ,
+                        "claude_mds_off": os.environ.get("CLAUDE_CODE_DISABLE_CLAUDE_MDS"),
                         "cwd": os.getcwd(), "system": open(opts["--system-prompt-file"], encoding="utf-8").read()}) + "\n")
 print(json.dumps({"type": "system", "subtype": "init"}))
 if mode == "limit":
@@ -78,6 +80,7 @@ def test_structured_call_args_images_env(fake):
     assert argv[argv.index("--tools") + 1] == "" and argv[argv.index("--effort") + 1] == "low"
     assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
     assert call["system"] == "스튜디오 헌장" and not call["api_key"]  # API 키는 자식 프로세스에 넘기지 않는다
+    assert call["claude_mds_off"] == "1"   # 어느 폴더에서 돌든 CLAUDE.md 를 읽지 않게
     kinds = [b["type"] for b in call["content"]]
     assert kinds == ["text", "text", "image", "text"] and call["content"][-1]["text"] == "지시"
     assert Path(call["cwd"]) == tmp / "wd"
@@ -135,3 +138,38 @@ def test_unknown_option_is_seen_even_when_stderr_arrives_late(fake, monkeypatch)
     c = ClaudeCodeClient(str(shim), workdir=tmp / "wd", log=logs.append)
     assert c.structured(system="s", shared_context="c", instruction="i", schema=SCHEMA) == {"a": 1}
     assert any("모르는 옵션" in m for m in logs)
+
+
+def test_scratch_dir_avoids_temp_under_install_claude_md(tmp_path):
+    """2026-10-03 실제 작업: run_studio.bat 이 TEMP 를 설치 폴더 안 tools\\tmp 로 돌려 두어 임시 폴더 위에 개발 메모 CLAUDE.md 가
+    있었고, 주제 조사는 건너뛰고 ✂️ 컷 총괄에서 작업이 멈췄다 — 다음 후보(사용자 로컬 임시 폴더)로 피한다."""
+    install = tmp_path / "Choi-Explains-Design-main"
+    (install / "tools" / "tmp").mkdir(parents=True)
+    (install / "CLAUDE.md").write_text("# 개발 메모", encoding="utf-8")
+    local_temp = tmp_path / "AppData" / "Local" / "Temp"
+    logs: list[str] = []
+    d = scratch_dir("20261003_0436_주제는 디자인", bases=[install / "tools" / "tmp", local_temp], log=logs.append)
+    assert d.is_dir() and local_temp in d.parents and install not in d.parents
+    assert d.name.startswith("20261003_0436_")      # 꼬리표에서 공간·한글은 _ 로
+    assert any("CLAUDE.md" in m for m in logs)      # 피한 이유를 로그에
+    # 첫 후보가 깨끗하면 그대로, 로그 없음
+    logs.clear()
+    assert local_temp in scratch_dir("x", bases=[local_temp, install / "tools" / "tmp"], log=logs.append).parents and not logs
+
+
+def test_scratch_dir_stops_when_every_base_is_under_claude_md(tmp_path):
+    (tmp_path / "CLAUDE.local.md").write_text("x", encoding="utf-8")
+    with pytest.raises(RuntimeError) as e:
+        scratch_dir("job", bases=[tmp_path / "a", tmp_path / "b"])
+    assert "CLAUDE.local.md" in str(e.value) and "옮기거나 지우고" in str(e.value)
+
+
+def test_scratch_bases_start_at_tempdir_and_end_at_home(tmp_path, monkeypatch):
+    import tempfile
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    monkeypatch.setenv("TMP", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", None)      # gettempdir 캐시 초기화
+    bases = _scratch_bases()
+    assert bases[0] == Path(tempfile.gettempdir()) and bases[-1] == Path.home() / ".choi_studio"
+    assert len(bases) == len(set(bases)) and len(bases) >= 3
