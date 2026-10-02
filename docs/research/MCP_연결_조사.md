@@ -221,7 +221,7 @@
   - YouTube URL을 넣으면 yt-dlp로 받아서 처리합니다.
 - `guimatheus92/mcp-video-analyzer` (80★, MIT) [README]
   - `analyze_video` 하나로 자막, 키프레임, OCR, 메타데이터를 돌려줍니다.
-- [해석] 저장소에 `docs/research/셜록현준_편집스타일_리서치.md`가 있는 것으로 보아 **레퍼런스 편집 스타일 분석**을 이미 하고 있습니다. 이 작업을 반자동화할 수 있습니다.
+- [해석] 저장소에 `docs/research/레퍼런스_채널_편집스타일_리서치.md`가 있는 것으로 보아 **레퍼런스 편집 스타일 분석**을 이미 하고 있습니다. 이 작업을 반자동화할 수 있습니다.
 
 **DaVinci Resolve** [README]
 - `samuelgursky/davinci-resolve-mcp` (3.2k★, MIT, npm 4.8.22)

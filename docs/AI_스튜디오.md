@@ -105,4 +105,4 @@ Choi Studio 는 Claude 한 번에게 "알아서 편집해"라고 맡기지 않�
 | `prompts/motion_dsl.md`, `prompts/examples/motion_examples.json` | 모션 DSL 문법과 검증된 예제 |
 | `prompts/card_dsl.md`, `prompts/examples/card_examples.json` | 자유 HTML 카드 계약(캔버스·토큰·`data-anim`·검사 항목)과 검사·렌더를 통과한 예시 5종 |
 | `prompts/skills/*.md` | 오픈소스 디자인 스킬에서 정리한 모션·자막·편집 원칙 |
-| `prompts/style_guide.md`, `prompts/hooks.md` | 채널 스타일(셜록현준·Musicbed 리포트)과 숏폼 후킹 |
+| `prompts/style_guide.md`, `prompts/hooks.md` | 채널 스타일(레퍼런스 채널·Musicbed 리포트)과 숏폼 후킹 |

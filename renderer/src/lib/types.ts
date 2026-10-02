@@ -207,7 +207,7 @@ export type EmType = 'keyword' | 'term' | 'number' | 'contrast';
 export type CaptionWord = {text: string; start: number; end: number; em?: boolean | EmType};
 export type LongCaptionPreset = 'paper' | 'editorial' | 'documentary' | 'glass' | 'boxed';
 export type ShortCaptionPreset = 'paper' | 'kinetic' | 'clean' | 'boxed' | 'bar';
-// style: 'impact' = 강조 순간(강조 줌·효과음과 함께) 자막을 크게 가운데로 — 셜록현준·지식 채널식 강조 자막
+// style: 'impact' = 강조 순간(강조 줌·효과음과 함께) 자막을 크게 가운데로 — 레퍼런스 채널·지식 채널식 강조 자막
 //        (paper 자막 프리셋은 크기를 바꾸지 않는다)
 // hidden: 화면 그래픽(개념 카드·도식·콜아웃·숏폼 카드)이 같은 말을 이미 보여 줄 때 — 화면 자막만 끈다(SRT 에는 남음)
 // style: impact(편집 엔진이 고른 강조 순간) · stack(몇 초에 한 번, 핵심어가 든 한 마디) — 둘 다 두 층 강조 자막으로 그린다
@@ -324,7 +324,7 @@ export type ShortProps = {
   hookTitle: string; // 줄바꿈 \n
   hookHighlight: string;
   seriesLabel: string;
-  // window = 셜록현준식 레터박스(상단 2줄 제목 · 가운데 1080×1030 창 · 창 안 하단 자막 · 로고)
+  // window = 레퍼런스 채널식 레터박스(상단 2줄 제목 · 가운데 1080×1030 창 · 창 안 하단 자막 · 로고)
   // reel = 참고 릴스식(위 큰 카드 · 아래 얼굴 · 이음새 굵은 자막) — 기본
   layout: 'full' | 'framed' | 'window' | 'reel';
   progressBar: boolean;

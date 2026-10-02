@@ -163,7 +163,7 @@ Pretendard 굵은 것 하나로 다 쓰지 않습니다. **내용·성격·크�
 
 ## 편집 원칙
 
-기본값은 레퍼런스 연구(셜록현준 등 롱폼 9편·숏폼 10편 실측, 리텐션 편집 가이드, 교육 영상 연구)와 채널 운영자의 피드백에서 가져왔습니다. 출처는 [`docs/research`](docs/research), 에이전트가 읽는 요약은 [`prompts/playbook`](prompts/playbook), 수치는 [`studio/edit/grammar.py`](studio/edit/grammar.py) 의 `PARAMS` 한 곳에 있습니다.
+기본값은 레퍼런스 연구(레퍼런스 채널 등 롱폼 9편·숏폼 10편 실측, 리텐션 편집 가이드, 교육 영상 연구)와 채널 운영자의 피드백에서 가져왔습니다. 출처는 [`docs/research`](docs/research), 에이전트가 읽는 요약은 [`prompts/playbook`](prompts/playbook), 수치는 [`studio/edit/grammar.py`](studio/edit/grammar.py) 의 `PARAMS` 한 곳에 있습니다.
 
 | 항목 | 기본값 |
 |---|---|

@@ -6,7 +6,7 @@ from .catalog import LAYOUTS, TEMPLATE_NAMES
 
 HOOK_TYPES = (
     # docs/research/숏폼_후킹_리서치.md 7-2 의 우선순위 순서
-    "everyday_why",        # 일상 사물의 '왜' (셜록현준형)
+    "everyday_why",        # 일상 사물의 '왜' (레퍼런스 채널형)
     "reframe_definition",  # 재정의·레이블링
     "payoff_first",        # 결과 먼저(콜드 오픈)
     "hidden_mechanism",    # 숨은 원리

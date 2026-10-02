@@ -355,7 +355,7 @@ export const TitleCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
 // ---------------------------------------------------------------------------
 export const LowerThird: React.FC<TemplateProps> = ({frame, dur, brand, theme, data}) => {
   const out = exit(frame, dur, 12);
-  // '오늘의 주제' 태그(셜록현준 레퍼런스: 타이틀 뒤 5~6초 동안 이 영상의 질문을 한 줄로) — 파이프라인이 data.title 을 줄 때만
+  // '오늘의 주제' 태그(레퍼런스 채널 레퍼런스: 타이틀 뒤 5~6초 동안 이 영상의 질문을 한 줄로) — 파이프라인이 data.title 을 줄 때만
   const topic = String(data?.title || '').trim();
   const topicSize = topic ? fitSize(topic, 980, 54, 34, -0.01) : 0;
   return (

@@ -3054,7 +3054,7 @@ class Pipeline:
 
     def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float,
                      avoid: Optional[list[tuple[float, float]]] = None) -> Optional[TimedGraphic]:
-        """타이틀 뒤 화자 이름 + '오늘의 주제'(셜록현준 레퍼런스: 이 영상이 답할 질문을 5~6초 한 줄로 — 총괄 감독의 논지).
+        """타이틀 뒤 화자 이름 + '오늘의 주제'(레퍼런스 채널 레퍼런스: 이 영상이 답할 질문을 5~6초 한 줄로 — 총괄 감독의 논지).
         얼굴만 보이는 첫 빈 자리(타이틀 뒤 60초 안, 4초 이상)에 둔다 — 예전엔 자리를 미리 잡아 두었다가 바로 뒤 그래픽에 밀려
         대개 빠졌다. 말에 맞춘 그래픽과 콜아웃 강조 순간(avoid)을 밀어내지 않으므로 빈 자리가 없으면 넣지 않는다."""
         topic = topic_line(self.plan_long.get("summary", ""))

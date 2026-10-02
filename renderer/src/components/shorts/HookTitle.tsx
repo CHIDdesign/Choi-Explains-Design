@@ -54,7 +54,7 @@ export const HookTitle: React.FC<{
 };
 
 /**
- * 셜록현준식 레터박스 제목(검정 바탕 위, y 180~395): 2줄 고정, 1줄 흰색 · 2줄 강조색, 초굵은 고딕.
+ * 레퍼런스 채널식 레터박스 제목(검정 바탕 위, y 180~395): 2줄 고정, 1줄 흰색 · 2줄 강조색, 초굵은 고딕.
  * 강조어가 있으면 그 단어만 강조색(두 줄 모두 흰색 + 핵심 명사만 강조).
  */
 export const WindowTitle: React.FC<{text: string; highlight: string; frame: number; theme: Theme; width: number}> = ({

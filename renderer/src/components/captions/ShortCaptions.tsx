@@ -53,7 +53,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
   }
 
   if (preset === 'bar') {
-    // 셜록현준 숏폼 자막: 창 안 하단, 불투명 검정 박스 한 줄, 흰 SemiBold 약 48px, 강조어 노랑(#FFE14D)
+    // 레퍼런스 채널 숏폼 자막: 창 안 하단, 불투명 검정 박스 한 줄, 흰 SemiBold 약 48px, 강조어 노랑(#FFE14D)
     const pIn = tween((t - cue.start) * fps, 0, 3, 'outQuint');
     return (
       <div style={{position: 'absolute', left: 0, width, top: y, display: 'flex', justifyContent: 'center',

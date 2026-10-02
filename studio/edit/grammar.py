@@ -14,7 +14,7 @@
   - impact_cues : 크게 가운데로 바뀌는 강조 자막 큐 번호
   - bgm_swells  : 배경음악을 올릴 구간(인트로·챕터 카드·엔드카드) · bgm_dips(핵심 문장 직전 비우기) · bgm_switch(곡 교체)
 
-수치는 prompts/playbook/ 의 리서치(셜록현준·지식 채널·리텐션 편집 가이드)에서 가져와, 교육 영상에 맞게
+수치는 prompts/playbook/ 의 리서치(레퍼런스 채널·지식 채널·리텐션 편집 가이드)에서 가져와, 교육 영상에 맞게
 젠틀하게 낮췄다(2026-09-30 사용자 피드백). PARAMS 한 곳에서 조정한다.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ FPS_BASE = 30.0
 
 PARAMS: dict[str, Any] = {
     # 카메라(점프컷 프레이밍)
-    # 셜록현준 스토리보드 실측: 2~3 앵글을 5~8초마다 교차, 1080p 소스는 100/112/120%, 점프컷마다 12% 이상 차이
+    # 레퍼런스 채널 스토리보드 실측: 2~3 앵글을 5~8초마다 교차, 1080p 소스는 100/112/120%, 점프컷마다 12% 이상 차이
     # 2026-09-30 사용자 피드백: "너무 훅훅 튀어 정신없다, 교육 영상이니 젠틀하게" → 프레이밍 차이를 줄이고(112→106%),
     # 5~8초마다 바꾸던 앵글 교차를 없앴다. 프레이밍은 NG 를 잘라낸 큰 점프·챕터·그래픽 복귀에서만 바꾸고
     # (참고 채널 Nick Saraev 롱폼도 고정 카메라·얼굴 줌 0회), 그 사이는 아주 느린 드리프트(가감속).
@@ -38,7 +38,7 @@ PARAMS: dict[str, Any] = {
     "medium": 1.06,             # 두 번째 '카메라'(차이는 작게)
     "medium_x": 0.016,
     "min_shot": 6.0,            # 긴 얼굴 구간을 문장 시작에서 나눌 때 앞뒤로 남길 최소 길이(초)
-    # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다 — 셜록현준 리서치(20~40초마다 카메라
+    # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 글라이드로 한 번 바꾼다 — 레퍼런스 채널 리서치(20~40초마다 카메라
     # 변화, 얼굴만 25초가 절대 상한)의 가운데 값. 컷이 아니라 1.2초 글라이드(1.00↔1.06)라 젠틀함은 그대로(예전 60초)
     "max_shot": 30.0,
     # 리듬 수준별 강조·콜아웃 최소 간격(편집 감독의 rhythm 이 있는 곳만 — 없으면 punch_min_gap·callout_min_gap 그대로).
@@ -160,7 +160,7 @@ class EditDecisions:
     transitions: list[dict] = field(default_factory=list)
     sfx: list[dict] = field(default_factory=list)          # {t, category, gain_db, why}
     impact_cues: list[int] = field(default_factory=list)
-    callouts: list[dict] = field(default_factory=list)      # 화자 반대편 키워드 콜아웃(셜록현준식)
+    callouts: list[dict] = field(default_factory=list)      # 화자 반대편 키워드 콜아웃(레퍼런스 채널식)
     bgm_swells: list[tuple[float, float]] = field(default_factory=list)
     bgm_switch: list[float] = field(default_factory=list)  # 배경음악을 다음 곡으로 바꿀 시각(챕터 카드)
     bgm_dips: list[tuple[float, float]] = field(default_factory=list)  # 음악을 비울 구간(핵심 문장 직전)
@@ -556,7 +556,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         called.add(p["t"])
         if not p["punch"]:
             ed.callouts[-1]["pop"] = True    # 글라이드 없는 콜아웃: 등장에 작은 pop(효과음 간격 규칙은 그대로)
-    # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 천천히(glide) 옮겨 자리를 만든다(셜록현준식 리프레이밍).
+    # 화자가 화면 가운데에 있으면 콜아웃 동안 카메라를 반대쪽으로 천천히(glide) 옮겨 자리를 만든다(레퍼런스 채널식 리프레이밍).
     # 이때는 리프레이밍 자체가 강조 역할을 하므로 같은 순간의 강조 글라이드는 뺀다(효과음은 유지).
     reframed: set[float] = set()
     for c in ed.callouts:
