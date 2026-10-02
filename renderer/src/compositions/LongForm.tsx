@@ -1,4 +1,5 @@
 import React, {useMemo} from 'react';
+import {PaperStage} from '../components/press/Press';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {GraphicLayer} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
@@ -8,7 +9,7 @@ import {LivePeek} from '../components/fx/LivePeek';
 import {PaperEndCard} from '../components/layout/EndCard';
 import {PAPER, PaperBg, RoughBorder, SourceCredit, TornFrame} from '../components/paper/Paper';
 import {paperSpeakerBox} from '../components/paper/PaperGraphic';
-import {boardCard, ContextStrip, speakerCard, STAGE, stripOpacity} from '../components/longform/Stage';
+import {boardCard, ContextStrip, speakerCard, stripOpacity} from '../components/longform/Stage';
 import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
@@ -187,8 +188,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t, fps), 'center', 0.42);
         const bc = boardCard(props.panelSide, W, H);
         capCenter = W / 2 + (bc.x + bc.w / 2 - W / 2) * p;
-        radius = STAGE.radius * p;
-        border = `1px solid rgba(255,255,255,${0.14 * p})`;
+        radius = 6 * p;     // 디자인 v3: 화자 사진도 종이 위 프린트처럼(둥근 UI 창 대신)
+        border = `1px solid rgba(36,33,30,${0.18 * p})`;
       } else if (span.kind === 'pip') {
         target = {x: W - 96 - 520, y: H - 96 - 292 - 70, w: 520, h: 292};
         tBox = videoBoxFor(target, face, 1.0, 'anchor');
@@ -261,8 +262,10 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
   return (
-    <AbsoluteFill style={{background: theme.ink}}>
+    <AbsoluteFill style={{background: '#ECEAE1'}}>
       <TransitionStage tx={tx}>
+        {/* 디자인 v3: 화자가 판으로 줄어들 때 뒤는 책상(잉크)이 아니라 크림 종이 무대 */}
+        {region !== full ? <PaperStage theme={theme} frame={frame} /> : null}
         {under.map(seq)}
         {paperP > 0 && frame < endStart ? (
           <>

@@ -1,7 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, interpolate} from 'remotion';
 import {EASE_IN_OUT, EASE_OUT, enter, exit} from '../../lib/anim';
-import {surface as mkSurface, surfaceFor, TEMPLATE_LABEL} from '../../design/surfaces';
+import {surface as mkSurface, surfaceFor, surfaceForSpecBg, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
 import {GRID} from '../../design/tokens';
 import type {Brand, Episode, Graphic, Skin, TemplateName} from '../../lib/types';
@@ -14,8 +14,10 @@ import {PhotoCard} from './Photo';
 import {BrollCard} from './Broll';
 import {EvidenceCard} from '../longform/Evidence';
 import {MotionScene} from '../motion/MotionScene';
+import {PaperStage} from '../press/Press';
 import {HtmlCard} from '../card/HtmlCard';
-import {PaperGraphic, referenceGraphic} from '../paper/PaperGraphic';
+import {PaperGraphic, textBoxFor} from '../paper/PaperGraphic';
+import {CollageChapter, CollageTitle} from '../press/Titles';
 import {BoardPanel, RecapBoard} from '../longform/Board';
 import {CONCEPT_TEMPLATES, ConceptPlate, MediaPlate} from '../longform/Plates';
 import {SectionBar} from '../longform/Note';
@@ -94,16 +96,30 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
       episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
       paperTexture={paperTexture} />;
   }
-  // 타이틀은 두 스킨 공통 구도(글 왼쪽 + 화자 액자 오른쪽)
+  // 타이틀은 두 스킨 공통 구도(글 왼쪽 + 화자 액자 오른쪽) — 디자인 v3: 크림 종이 무대 위 명조 타이틀
   if (g.template === 'title') {
-    const ref = referenceGraphic({g, frame, dur, W, H, panelSide, chapterTag, faceX, brand, episode, theme, paperTexture});
-    return <AbsoluteFill style={{background: theme.ink}}>{ref}</AbsoluteFill>;
+    const tb = textBoxFor(panelSide);
+    return (
+      <AbsoluteFill>
+        <PaperStage theme={theme} frame={frame} />
+        <CollageTitle data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} brand={brand} episode={episode}
+          textW={tb.w} left={tb.x} />
+      </AbsoluteFill>
+    );
+  }
+  // 챕터 카드(길잡이 부품 — 한 가지 모양): 이탤릭 세리프 번호 + 송명 제목 + 목차
+  if (g.template === 'chapter') {
+    return (
+      <AbsoluteFill style={{opacity: Math.min(enter(frame, 0, 8, EASE_OUT), exit(frame, dur, 10, EASE_IN_OUT))}}>
+        <CollageChapter data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} />
+      </AbsoluteFill>
+    );
   }
   const concept = CONCEPT_TEMPLATES.has(g.template);
   const media = g.template === 'photo' ? g.data.image : g.template === 'broll' ? g.data.src : undefined;
   const credit = g.data.credit || (g.template === 'quote' ? '' : g.data.source) || '';
   const specBg = g.template === 'motion' ? g.data.spec?.bg : undefined;
-  const sName = specBg && specBg !== 'transparent' ? specBg : surfaceFor(g.template, g.layout);
+  const sName = surfaceForSpecBg(specBg) ?? surfaceFor(g.template, g.layout);
   const s = mkSurface(theme, sName);
   const pIn = enter(frame, 0, 14, EASE_OUT);
   const pOut = exit(frame, dur, 10, EASE_IN_OUT);
@@ -159,14 +175,20 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const bottom = noHeader ? 0 : 170;
   const innerW = noHeader ? W : W - m * 2;
   const innerH = H - top - bottom;
+  // 디자인 v3 종이 콜라주: 리포트 머리글·위에서 내려오는 쓸기 대신 종이 무대가 8프레임에 깔리고 내용이 올라온다
+  const collage = s.name === 'collage';
+  // 전면 영상·사진·카드는 6프레임 디졸브로 들어온다(위에서 내려오는 쓸기는 들어오는 동안 뒤의 화자를 드러낸다)
+  const fade = collage || noHeader;
   return (
-    <AbsoluteFill style={{clipPath: clip, background: s.bg}}>
-      {!noHeader && !stage ? (
+    <AbsoluteFill style={{clipPath: fade ? undefined : clip, background: collage ? undefined : s.bg,
+      opacity: fade ? Math.min(enter(frame, 0, collage ? 8 : 6, EASE_OUT), pOut) : undefined}}>
+      {collage ? <PaperStage theme={theme} frame={frame} /> : null}
+      {!noHeader && !stage && !collage ? (
         <RunningHeader surface={s} frame={frame} width={W}
           cells={[brand.name, episode.title, brand.year, pageLabel || TEMPLATE_LABEL[g.template]]} />
       ) : null}
       <div style={{position: 'absolute', left: noHeader ? 0 : m, top, width: innerW, height: innerH,
-        translate: `0 ${interpolate(pIn, [0, 1], [24, 0])}px`}}>
+        translate: noHeader ? undefined : `0 ${interpolate(pIn, [0, 1], [24, 0])}px`}}>
         <Comp {...common} frame={frame} dur={dur} box={{w: innerW, h: innerH}} />
       </div>
       {credit && !noHeader ? <SourceCredit text={credit} top={62} right={48} opacity={enter(frame, 8, 12)} /> : null}

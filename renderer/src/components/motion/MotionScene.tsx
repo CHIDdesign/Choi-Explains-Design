@@ -167,13 +167,17 @@ const TextEl: React.FC<{el: Extract<MotionEl, {type: 'text'}>; c: Ctx}> = ({el, 
   const st = elementState(el, c);
   if (!st.visible) return null;
   const size = (el.size / 100) * c.H;
-  const font = el.font === 'serif' ? FONT.serif : el.font === 'latin' ? FONT.latin : el.font === 'heavy' ? FONT.heavy
-    : el.font === 'round' ? FONT.round : el.font === 'hand' ? FONT.hand : FONT.display;
-  const single = el.font === 'latin' || el.font === 'heavy' || el.font === 'round' || el.font === 'hand';
+  const named: Record<string, string> = {serif: FONT.serif, latin: FONT.latin, heavy: FONT.heavy, round: FONT.round,
+    hand: FONT.hand, sans: FONT.sans, display: FONT.display, poster: FONT.poster, italic: FONT.italic};
+  // 디자인 v3: 지정이 없으면 제목(6% 이상)은 명조(고운바탕 700), 본문·라벨은 고딕
+  const font = (el.font && named[el.font]) || (el.size >= 6 ? FONT.display : FONT.sans);
+  const single = ['latin', 'heavy', 'round', 'hand', 'poster', 'italic'].includes(el.font ?? '');
   const color = colorOf(el.color, c.surface, c.surface.fg);
   const maxW = el.maxWidth ? (el.maxWidth / 100) * c.W : undefined;
-  const style: React.CSSProperties = {fontFamily: font, fontWeight: single ? 400 : el.weight ?? 800,
-    fontSize: size, lineHeight: 1.12, letterSpacing: size > 60 ? '-0.04em' : '-0.02em', color, textAlign: el.align ?? 'center',
+  const style: React.CSSProperties = {fontFamily: font, fontWeight: single ? 400 : el.weight ?? (font === FONT.sans ? 500 : 800),
+    fontStyle: el.font === 'italic' ? 'italic' : undefined,
+    fontSize: size, lineHeight: 1.12, letterSpacing: el.font === 'italic' ? '-0.01em' : size > 60 ? '-0.04em' : '-0.02em',
+    color, textAlign: el.align ?? 'center',
     maxWidth: maxW, whiteSpace: maxW ? 'normal' : 'nowrap', wordBreak: 'keep-all'};
   const reveal = el.reveal ?? (st.enter === 'mask' ? 'words' : 'none');
   const hl = el.highlight;
@@ -340,7 +344,7 @@ const CounterEl: React.FC<{el: Extract<MotionEl, {type: 'counter'}>; c: Ctx}> = 
   const txt = `${el.prefix ?? ''}${v.toFixed(el.decimals ?? 0)}${el.suffix ?? ''}`;
   return (
     <Wrap st={st} anchor={el.anchor}>
-      <div style={{fontFamily: FONT.latin, fontSize: (el.size / 100) * c.H, lineHeight: 1,
+      <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: (el.size / 100) * c.H, lineHeight: 1,
         color: colorOf(el.color, c.surface, c.surface.accent), fontVariantNumeric: 'tabular-nums'}}>{txt}</div>
     </Wrap>
   );

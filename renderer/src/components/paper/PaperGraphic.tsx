@@ -16,7 +16,7 @@ const CONCEPT = new Set(['keyword', 'definition', 'quote', 'stat']);
 export const paperSpeakerBox = (panelSide: 'left' | 'right', W = 1920): Box =>
   panelSide === 'left' ? PAPER.speaker : {...PAPER.speaker, x: W - PAPER.speaker.x - PAPER.speaker.w};
 
-const textBoxFor = (panelSide: 'left' | 'right'): Box =>
+export const textBoxFor = (panelSide: 'left' | 'right'): Box =>
   panelSide === 'left' ? {x: 156, y: 222, w: 860, h: 740} : {x: 904, y: 222, w: 860, h: 740};
 
 type Props = {

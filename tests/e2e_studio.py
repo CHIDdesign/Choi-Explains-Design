@@ -264,12 +264,13 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
-    for key, marker in (("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
+    # 🎼 음악 감독(MUSIC)도 'shorts' 필드를 가지니 숏폼 PD 보다 먼저 가른다
+    for key, marker in (("music", "suite"), ("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
                         ("stock", "requests"), ("stock", "items"),
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
-                        ("motion_revise", "changes"), ("timeline_review", "thesis_read"), ("music", "suite")):
+                        ("motion_revise", "changes"), ("timeline_review", "thesis_read")):
         if marker in props:
             return key
     return "unknown"
@@ -473,6 +474,7 @@ def main() -> int:
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
                       direction="모션 장면은 크게", images_dir=str(mats), bgm=str(bgm))
     job = work / "job"
+    (job / "work" / "music.json").unlink(missing_ok=True)     # 큐 시트는 매번 음악 감독(가짜)에게서 — 캐시가 옛 답을 숨기지 않게
     previews: list[str] = []
     res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
                       preview=lambda _p, cap: previews.append(cap)).run()

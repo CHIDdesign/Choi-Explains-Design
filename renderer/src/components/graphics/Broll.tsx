@@ -2,9 +2,11 @@ import React from 'react';
 import {Img, interpolate, OffthreadVideo, staticFile} from 'remotion';
 import {EASE, tween} from '../../design/motion';
 import {FONT} from '../../design/tokens';
-import {Credit, MaskLine} from '../layout/Editorial';
+import {Credit} from '../layout/Editorial';
 import type {TemplateProps} from './common';
 import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
+import {CollageScene} from '../press/CollageScene';
+import {GRADE_QUOTE, NameChip, QuoteOverlay} from '../press/Press';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -14,6 +16,11 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
  */
 export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, surface, box, layout, compact, theme}) => {
   if (!data.src) return null;
+  // 디자인 v3: 스톡 사진도 '붙이지 않고 편집한다' — 콜라주(연도·큰 글자·바닥 타원)로 쓸 수 있으면 종이 무대 위로
+  if (layout === 'fullscreen' && data.kind !== 'video' && (data.treatment === 'collage' || data.cut || data.display || data.year)) {
+    return <CollageScene id={id} data={{...data, assets: [{src: data.src, kind: 'photo', w: data.w ?? 1600, h: data.h ?? 1067,
+      cut: data.cut}]}} frame={frame} dur={dur} theme={theme} W={box.w} H={box.h} />;
+  }
   const src = staticFile(data.src);
   const pIn = tween(frame, 0, 10, 'outQuint');
   const kb = data.kenburns ?? 'in';
@@ -26,15 +33,13 @@ export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
   if (layout === 'fullscreen' || layout === 'pip') {
     return (
       <div style={{position: 'absolute', inset: 0, overflow: 'hidden', background: '#000'}}>
-        <div style={{position: 'absolute', inset: 0, scale: `${scale}`, translate: `${tx}% 0`}}>{media}</div>
+        <div style={{position: 'absolute', inset: 0, scale: `${scale}`, translate: `${tx}% 0`,
+          filter: data.quote ? GRADE_QUOTE : undefined}}>{media}</div>
         <div style={{position: 'absolute', inset: 0, background:
           'radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 100%)'}} />
-        {data.title ? (
+        {data.quote ? <QuoteOverlay text={data.quote} frame={frame} W={box.w} H={box.h} /> : data.title ? (
           <div style={{position: 'absolute', left: 72, top: 60}}>
-            <MaskLine frame={frame} delay={8}>
-              <div style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: 26, color: 'rgba(255,255,255,0.92)',
-                textShadow: '0 2px 12px rgba(0,0,0,0.5)'}}>( {data.title} )</div>
-            </MaskLine>
+            <NameChip text={data.title} theme={theme} frame={frame} delay={8} size={36} />
           </div>
         ) : null}
         <FilmLook frame={frame} id={id} strength={data.kind === 'video' ? 0.6 : 0.9} />

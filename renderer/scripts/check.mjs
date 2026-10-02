@@ -29,10 +29,12 @@ const vars = {
   '--muted': 'rgba(28, 28, 28, 0.7)', '--accent': '#E8682C', '--accent-deep': '#9E4720', '--accent-light': '#EC7F52',
   '--accent-soft': 'rgba(232, 104, 44, 0.32)', '--board': '#1A1C1B', '--board-edge': '#2A2D2B', '--chalk': '#F1ECDD',
   '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#F5F2EA',   // HtmlCard.tsx cardVars 와 같게(크림 종이·따뜻한 잉크)
-  '--font-head': '"Pretendard", "Malgun Gothic", sans-serif', '--font-body': '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-  '--font-serif': '"Noto Serif KR", "Nanum Myeongjo", serif', '--font-latin': '"Anton", "Pretendard", sans-serif',
+  '--font-head': '"Gowun Batang", "Noto Serif KR", "Pretendard", serif', '--font-body': '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+  '--font-serif': '"Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", serif', '--font-latin': '"Anton", "Pretendard", sans-serif',
+  '--font-editorial': '"Song Myung", "Gowun Batang", "Noto Serif KR", serif', '--font-poster': '"Song Myung", "Gowun Batang", serif',
+  '--font-italic': '"Instrument Serif", "Playfair Display", serif',
   '--font-heavy': '"Black Han Sans", "Pretendard", sans-serif', '--font-round': '"Jua", "Pretendard", sans-serif',
-  '--font-hand': '"Nanum Pen Script", "Pretendard", cursive', '--font-numeral': '"Playfair Display", "Noto Serif KR", serif',
+  '--font-hand': '"Nanum Pen Script", "Pretendard", cursive', '--font-numeral': '"Playfair Display", "Gowun Batang", serif',
   '--font-mono': '"Pretendard", monospace',
 };
 
@@ -47,6 +49,22 @@ const fontFaces = () => {
   }
   faces.push(`@font-face{font-family:"Playfair Display";font-weight:700;src:url("${pub}PlayfairDisplay-Bold.woff2") format("woff2");}`);
   faces.push(`@font-face{font-family:"Playfair Display";font-weight:700;font-style:italic;src:url("${pub}PlayfairDisplay-BoldItalic.woff2") format("woff2");}`);
+  faces.push(`@font-face{font-family:"Playfair Display";font-weight:400;font-style:italic;src:url("${pub}PlayfairDisplay-Italic.woff2") format("woff2");}`);
+  faces.push(`@font-face{font-family:"Playfair Display";font-weight:900;font-style:italic;src:url("${pub}PlayfairDisplay-BlackItalic.woff2") format("woff2");}`);
+  faces.push(`@font-face{font-family:"Instrument Serif";font-weight:400;src:url("${pub}InstrumentSerif-Regular.woff2") format("woff2");}`);
+  faces.push(`@font-face{font-family:"Instrument Serif";font-weight:400;font-style:italic;src:url("${pub}InstrumentSerif-Italic.woff2") format("woff2");}`);
+  const LAT = 'unicode-range:U+0000-00FF,U+2000-206F,U+20AC,U+2122,U+2212;';
+  for (const [fam, file, ws] of [['Gowun Batang', 'GowunBatang', ['400', '700']], ['Hahmlet', 'Hahmlet', ['300', '700', '800']]]) {
+    for (const wt of ws) {
+      faces.push(`@font-face{font-family:"${fam}";font-weight:${wt};src:url("${pub}${file}-${wt}-korean.woff2") format("woff2");}`);
+      faces.push(`@font-face{font-family:"${fam}";font-weight:${wt};src:url("${pub}${file}-${wt}-latin.woff2") format("woff2");${LAT}}`);
+    }
+  }
+  faces.push(`@font-face{font-family:"Song Myung";font-weight:400;src:url("${pub}SongMyung-korean.woff2") format("woff2");}`);
+  for (const wt of ['400', '700']) {
+    faces.push(`@font-face{font-family:"Press Serif";font-weight:${wt};src:url("${pub}GowunBatang-700-korean.woff2") format("woff2");}`);
+  }
+  faces.push(`@font-face{font-family:"Song Myung";font-weight:400;src:url("${pub}SongMyung-latin.woff2") format("woff2");${LAT}}`);
   const serif = path.join(root, 'node_modules', '@fontsource', 'noto-serif-kr');
   const links = ['500', '700'].filter((x) => fs.existsSync(path.join(serif, `${x}.css`)))
     .map((x) => `<link rel="stylesheet" href="${pathToFileURL(path.join(serif, `${x}.css`)).href}">`);
@@ -85,7 +103,8 @@ const audit = async (opts) => {
   }
   // 글꼴: 카드 글자로 로드 요청 뒤 확인
   const text = root.textContent || '가';
-  const fams = ['Pretendard', 'Noto Serif KR', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display'];
+  const fams = ['Pretendard', 'Noto Serif KR', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display',
+    'Instrument Serif', 'Gowun Batang', 'Hahmlet', 'Song Myung', 'Press Serif'];
   try {
     await Promise.all(fams.flatMap((f) => ['400', '700'].map((w) => document.fonts.load(`${w} 40px "${f}"`, text))));
     await document.fonts.ready;
@@ -175,7 +194,7 @@ const audit = async (opts) => {
     const fs = parseFloat(cs.fontSize);
     const sel = desc(el);
     const fam = (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim();
-    if (fam && !/^(pretendard|noto serif kr|anton|jua|black han sans|nanum pen script|playfair display|serif|sans-serif|cursive|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
+    if (fam && !/^(pretendard|noto serif kr|anton|jua|black han sans|nanum pen script|playfair display|instrument serif|gowun batang|hahmlet|song myung|press serif|serif|sans-serif|cursive|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
       push('font_family_not_bundled', fam, sel);
     } else if (fam && !/^(serif|sans-serif|cursive|monospace|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(fam)) {
       const w = cs.fontWeight === 'bold' ? '700' : cs.fontWeight;

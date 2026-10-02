@@ -27,6 +27,15 @@ def _g(template: str, layout: str, start: int, end: int, word: str = "", **kw: A
     return g
 
 
+def _collage_text(it: dict[str, Any]) -> dict[str, str]:
+    """리서처 항목 → 콜라주 화면 글(연도는 대상의 연도, 큰 글자·인용은 리서처가 준 것만)."""
+    out = {k: str(it.get(k) or "").strip() for k in ("display", "quote") if it.get(k)}
+    year = str((it.get("subject") or {}).get("year") or "").strip()
+    if year:
+        out["year"] = year
+    return out
+
+
 def worst_tier(assets: list[dict[str, Any]]) -> str:
     tiers = [str(a.get("tier") or "") for a in assets]
     return max(tiers, key=lambda t: TIER_WORST.get(t, 1)) if tiers else "made"
@@ -70,6 +79,7 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
             st = o["stock"]
             layout = "fullscreen" if it["treatment"] in FULLSCREEN else "pip"
             g = _g("broll", layout, s, e, word, title=it.get("label", ""), image=it["stock"].get("query_en", ""),
+                   **_collage_text(it),
                    stock={"kind": st.get("kind") or it["stock"].get("kind") or "photo",
                           "query_en": it["stock"].get("query_en", ""), "query_ko": it["stock"].get("query_ko", ""),
                           "purpose": str(it.get("claim", ""))[:60], "must_show": it.get("must_show", "")},
@@ -77,6 +87,8 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
                    stock_url=st.get("url", ""), **common)
             if st.get("kind") == "photo":
                 g["kenburns"] = "in"
+                if it["treatment"] in ("collage", "cutout") or it.get("display"):
+                    g["treatment"] = "collage"      # 디자인 v3: 스톡 사진도 종이 무대 위 콜라주로
             graphics.append(g)
             continue
         assets = [a for a in o.get("assets") or [] if isinstance(a, dict) and a.get("src")][: it["count"]]
@@ -84,6 +96,8 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
             tier = worst_tier(assets) if assets else "made"
             kind0 = str(assets[0].get("kind") or "photo") if assets else ""
             t = drawn_treatment(it["treatment"], len(assets), tier, kind0) if assets else "archive_card"
+            if t == "hero" and kind0 == "photo" and (assets[0].get("cut") or it.get("display")):
+                t = "collage"      # 디자인 v3: 오린 사진·큰 글자가 있으면 바닥 타원 위 콜라주(운영자 레퍼런스)
             if t == "pip" and kind0 in ("photo", "logo"):
                 a = assets[0]
                 g = _g("photo", "pip", s, s, word, title=it.get("label") or name, image=a.get("mat_src") or a["src"],
@@ -101,7 +115,7 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
                 or str(o.get("credit") or "")
             graphics.append(_g("evidence", "fullscreen", s, e, word, title=it.get("label", ""),
                                body=it.get("caption", ""), assets=assets, treatment=t, archive=archive, tier=tier,
-                               credit=credit[:120], caption=it.get("caption", ""), **common))
+                               credit=credit[:120], caption=it.get("caption", ""), **_collage_text(it), **common))
             continue
         rung = o.get("rung") or "type_card"
         if rung == "code_drawn":

@@ -180,7 +180,7 @@ EV_ROLES = ["proof", "example", "context", "process", "mood"]
 EV_KINDS = ["person", "work", "product", "brand", "site_app", "place", "organization", "publication", "other"]
 EV_SHOTS = ["subject", "screen", "logo", "portrait", "detail", "context", "first_page", "figure", "cover"]
 TREATMENTS = ["hero", "full", "pip", "sequence", "grid", "stack", "cutout", "archive_card",
-              "doc_highlight", "browser_frame", "detail_zoom", "annotate", "compare_pair"]
+              "doc_highlight", "browser_frame", "detail_zoom", "annotate", "compare_pair", "collage"]
 TIERS = ["A", "B", "C"]
 FALLBACKS = ["type_card", "code_drawn", "stock", "face"]
 
@@ -207,6 +207,8 @@ EVIDENCE = _obj({
         "count": INT,                    # 1~5
         "label": STR,                    # 화면 제목(14자 이내, 주장의 한 조각). 없으면 ""
         "caption": STR,                  # 사실 캡션(24자 이내: 연도·작가·출처). 없으면 ""
+        "display": STR,                  # 콜라주: 사진 뒤 큰 글자(2~8자, 그 문장의 핵심 낱말). 없으면 ""
+        "quote": STR,                    # full(영상·사진 전면) 위 인용 한 줄(화자의 말을 줄인 것, 36자 이내). 없으면 ""
         "treatment": {"type": "string", "enum": TREATMENTS},
         "focus": STR,                    # detail_zoom·annotate 대상(말로)
         "annotations": {"type": "array", "items": _obj({

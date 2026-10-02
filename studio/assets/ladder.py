@@ -32,10 +32,11 @@ from .local import LocalItem, find as find_local
 
 NEEDS = ("own_material", "entity", "primary_source", "screenshot", "code_drawn", "stock")
 TREATMENTS = ("hero", "full", "pip", "sequence", "grid", "stack", "cutout", "archive_card", "doc_highlight",
-              "browser_frame", "detail_zoom", "annotate", "compare_pair")
-# 지금 렌더러가 그리는 것(나머지는 hero 로 — detail_zoom·annotate·cutout·stack·sequence 는 03b 의 P2)
-DRAWN = ("hero", "full", "pip", "archive_card", "doc_highlight", "browser_frame", "grid", "compare_pair")
-FULLSCREEN = ("hero", "full", "archive_card", "doc_highlight", "browser_frame", "grid", "compare_pair")
+              "browser_frame", "detail_zoom", "annotate", "compare_pair", "collage")
+# 지금 렌더러가 그리는 것(나머지는 hero 로 — detail_zoom·annotate·stack·sequence 는 03b 의 P2, cutout 은 콜라주로)
+DRAWN = ("hero", "full", "pip", "archive_card", "doc_highlight", "browser_frame", "grid", "compare_pair", "collage")
+FULLSCREEN = ("hero", "full", "archive_card", "doc_highlight", "browser_frame", "grid", "compare_pair", "collage",
+              "cutout")
 LOGO_KINDS = ("brand", "site_app")
 SUBJECT_KINDS = ("site_app", "product", "work", "brand")     # 이 대상이 주 피사체가 아니면 0점
 PickFn = Callable[[str, list[tuple[str, bytes, str]]], list[dict[str, Any]]]
@@ -56,12 +57,16 @@ def clean_item(it: dict[str, Any]) -> dict[str, Any]:
         d[k] = dict(d.get(k) or {}) if isinstance(d.get(k), dict) else {}
     d["label"] = str(d.get("label") or "").strip()[:14]
     d["caption"] = str(d.get("caption") or "").strip()[:24]
+    d["display"] = str(d.get("display") or "").strip()[:8]
+    d["quote"] = str(d.get("quote") or "").strip()[:36]
     return d
 
 
 def drawn_treatment(t: str, n_assets: int, tier: str, kind: str = "photo") -> str:
     """요청한 트리트먼트 → 지금 그릴 수 있는 것. C 등급은 풀블리드 금지(정책 4절 3)."""
-    t = t if t in DRAWN else "hero"
+    t = "collage" if t == "cutout" else t if t in DRAWN else "hero"
+    if t == "collage" and kind != "photo":
+        t = "hero"
     if t == "grid" and n_assets < 4:
         t = "hero"
     if t == "compare_pair" and n_assets < 2:
@@ -424,7 +429,17 @@ class Ladder:
                 mat = m.relative_to(self.public).as_posix() if m is not None and m.is_relative_to(self.public) else ""
             except Exception:  # noqa: BLE001
                 mat = ""
+        cut = ""
+        if kind == "photo" and lic.tier not in ("C", "D") and w and h:
+            # 디자인 v3 콜라주: 바탕이 고른 판화·스캔·제품 사진은 오려서 바닥 타원 위에 세운다(못 오리면 프린트로)
+            from .cutout import cutout
+            try:
+                c = cutout(path)
+                cut = c.relative_to(self.public).as_posix() if c is not None and c.is_relative_to(self.public) else ""
+            except Exception as e:  # noqa: BLE001 - 오리기는 덤
+                self.log(f"오려 내기 실패({path.name}): {e}")
         o["assets"].append({"src": rel, "kind": kind, "w": w, "h": h, "focus": meta.focus_box or None, "mat_src": mat,
+                            "cut": cut,
                             "credit": meta.credit_short, "credit_full": meta.credit_full, "tier": lic.tier,
                             "origin": origin, "shows": shows, "score": score,
                             "meta": {"title": title[:80], "creator": creator[:60], "ref": source_url}})

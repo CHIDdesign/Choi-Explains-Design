@@ -55,6 +55,7 @@ SCOPE_RE = re.compile(r"""\.card\[data-card-id=(?:"[^"]*"|'[^']*'|[^\]]*)\]\s*""
 FONT_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;}]+)", re.I)
 FONT_SHORTHAND_RE = re.compile(r"(?<![a-z-])font\s*:\s*([^;}]+)", re.I)
 FONT_OK = {"pretendard", "noto serif kr", "anton", "jua", "black han sans", "nanum pen script", "playfair display",
+           "instrument serif", "gowun batang", "hahmlet", "song myung", "press serif",
            "serif", "sans-serif", "monospace", "system-ui", "ui-serif",
            "ui-sans-serif", "ui-monospace", "inherit", "apple sd gothic neo", "malgun gothic", "nanum myeongjo"}
 CSS_FORBIDDEN = re.compile(r"@import|@font-face|@charset|expression\s*\(|behavior\s*:|-moz-binding|javascript:|"

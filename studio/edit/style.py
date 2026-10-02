@@ -11,6 +11,10 @@
   보드)은 그 챕터의 구성을 따른다 — 기본 챕터의 개념 카드는 롱폼 무대의 플레이트·보드(docs/롱폼_무대_디자인.md), 종이
   챕터의 개념 카드는 사용자 템플릿(검정 라벨 + 큰 흰 글씨 · 개념 카드 + 화자 액자).
 - 액자 샷(화자를 찢어진 액자에 담는 세 번째 앵글)은 종이 챕터에서만.
+
+디자인 v3(운영자 레퍼런스, docs/디자인_v3_종이콜라주.md): **한 재질 — 크림 종이 콜라주.** 예전 '종이' 구성(구겨진 짙은 종이 +
+흰 글씨)과 '기본'(칠판·잉크)을 섞는 대신 모든 챕터를 같은 렌더러(classic 경로 = 콜라주 표면·종이 무대)로 그린다.
+섞기는 STYLE_MIX 로만 되살린다(개발·시험용).
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 CONCEPT = {"keyword", "definition", "quote", "stat"}
+STYLE_MIX = False      # True 면 예전 하이브리드(종이·기본 섞기). 기본은 디자인 v3 한 재질
 PAPER_LEAN = {"keyword": 2.0, "definition": 2.0, "quote": 2.0, "stat": 1.5, "photo": 1.5, "broll": 1.0, "card": 1.0}
 CLASSIC_LEAN = {"process": 2.0, "cycle": 2.0, "double_diamond": 2.0, "matrix": 2.0, "compare": 1.5, "timeline": 1.5,
                 "venn": 1.5, "pyramid": 1.5, "list": 1.0, "motion": 1.0}
@@ -42,7 +47,7 @@ class LookPlan:
         return [(c["start"], c["end"]) for c in self.chapters if c["look"] == "paper"]
 
     def summary(self) -> str:
-        names = {"paper": "종이", "classic": "기본"}
+        names = {"paper": "종이", "classic": "콜라주" if not STYLE_MIX else "기본"}
         return " · ".join(f"챕터 {i + 1} {names[c['look']]}({c['why']})" for i, c in enumerate(self.chapters))
 
 
@@ -70,17 +75,19 @@ def choose_looks(graphics: list[dict[str, Any]], chapters: list[dict[str, Any]],
         why = "개념·사례 중심" if look == "paper" else "구조·도식 중심"
         if paper == classic == 0:
             why = "그래픽 적음"
+        if not STYLE_MIX:
+            look, why = "classic", "종이 콜라주"
         plan.chapters.append({"start": round(a, 3), "end": round(b, 3), "look": look, "paper": round(paper, 2),
                               "classic": round(classic, 2), "why": why})
     # 한쪽으로만 쏠리면 차이가 가장 작은 챕터를 반대로(하이브리드)
-    if len(plan.chapters) >= 2 and len({c["look"] for c in plan.chapters}) == 1:
+    if STYLE_MIX and len(plan.chapters) >= 2 and len({c["look"] for c in plan.chapters}) == 1:
         flip = min(plan.chapters[1:] or plan.chapters, key=lambda c: abs(c["paper"] - c["classic"]))
         flip["look"] = "classic" if flip["look"] == "paper" else "paper"
         flip["why"] += " → 섞기 위해 반대로"
     for g in graphics:
         tpl = g.get("template", "")
         if tpl == "title":
-            skin = "paper"
+            skin = "paper" if STYLE_MIX else "classic"
         elif tpl == "lower_third":
             skin = "classic"
         else:

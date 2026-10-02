@@ -69,7 +69,7 @@ from .models import Span, Tag, TimeMap, Utterance, Word
 from .net import download as net_download, redact
 from .paths import USER_DIR
 from .render.assets import copy_fonts, make_grain, make_paper
-from .render.props import (Episode, apply_edit, caption_overlays, dedupe_captions, hide_over, high_load_spans,
+from .render.props import (Episode, apply_edit, brand_props, caption_overlays, dedupe_captions, hide_over, high_load_spans,
                            mark_sequences, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
                            short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
@@ -2323,7 +2323,7 @@ class Pipeline:
         return contact_sheet(cells, contain=True) if cells else None
 
     def _backfill_block(self, items: list[dict[str, Any]], outcomes: list[dict[str, Any]]) -> str:
-        """게이트 B1(실물 자료 화면 비율 ≥ 15%)을 기획 단계에서 어림 — 모자라면 자료 리서처 보충 요청 블록(13 문서 2-3).
+        """게이트 B1(실물 자료 화면 비율 ≥ 30%)을 기획 단계에서 어림 — 모자라면 자료 리서처 보충 요청 블록(13 문서 2-3).
         어림: 확보한 증거마다 트리트먼트 유지 시간(EVIDENCE_HOLD)을 그 발화 구간 길이로 자른 합 / 남긴 발화 길이."""
         from .director.plan import EVIDENCE_HOLD
         kept = [u for u in self.utts if u.kept]
@@ -2343,12 +2343,12 @@ class Pipeline:
             if a:
                 got_t.append(a.start)
         ratio = shown / max(1.0, total)
-        if ratio >= 0.15 or total < 90:
+        if ratio >= 0.30 or total < 90:
             return ""
         gaps = []
         marks = sorted([kept[0].start] + got_t + [kept[-1].end])
         for x, y in zip(marks, marks[1:]):
-            if y - x >= 45:
+            if y - x >= 30:
                 segs = [u.id for u in kept if x <= u.start < y]
                 if segs:
                     gaps.append(f"- [B1] {int(x // 60):02d}:{int(x % 60):02d}–{int(y // 60):02d}:{int(y % 60):02d}"
@@ -2363,7 +2363,7 @@ class Pipeline:
         left = [m for m in getattr(self, "_materials", []) or [] if m.name not in used and m.key not in used]
         lines = ["## 이번 호출은 보충이다",
                  "아래 구간·항목만 낸다. 이미 낸 것은 다시 내지 않는다(같은 문장에 같은 자료를 또 내지 않는다).",
-                 f"- [B1] 실물 자료가 보이는 시간 어림 {ratio:.0%}(목표 25~30%, 최소 15%)."]
+                 f"- [B1] 실물 자료가 보이는 시간 어림 {ratio:.0%}(목표 40~55%, 최소 30%)."]
         lines += gaps[:6] + lost[:8]
         if left:
             lines.append("- 자료 폴더에 아직 쓰지 않은 파일: " + ", ".join(f"{m.key} `{m.name}`" for m in left[:12]))
@@ -3571,11 +3571,7 @@ class Pipeline:
                 sp = text.find(" ", max(0, mid - 3))
                 if sp > 0:
                     text = text[:sp] + "\n" + text[sp + 1:]
-            props = {"width": 1280, "height": 720, "brand": {
-                "name": self.settings.brand.name, "shortName": self.settings.brand.short_name,
-                "handle": self.settings.brand.handle, "presenter": self.settings.brand.presenter,
-                "presenterTitle": self.settings.brand.presenter_title, "accent": self.settings.brand.accent,
-                "ink": self.settings.brand.ink, "paper": self.settings.brand.paper, "year": self.settings.brand.year},
+            props = {"width": 1280, "height": 720, "brand": brand_props(self.settings.brand),
                 "episode": self._episode().to_props(), "image": f"images/{frame.name}", "text": text,
                 "highlight": words[-1] if words else "", "variant": variants[i], "faceX": pk.get("x", 0.5)}
             p = self.render_dir / f"props_thumb_{i + 1}.json"

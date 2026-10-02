@@ -8,6 +8,8 @@ import type {TemplateProps} from '../graphics/common';
 import {hashSeed} from '../paper/Paper';
 import {CornerCredit, FilmLook, Halftone, PaperFiber, PaperNote} from './Note';
 import {Numerals, RiseLine, Rule} from './Stage';
+import {CollageScene} from '../press/CollageScene';
+import {GRADE_QUOTE, Highlighter, NameChip, PaperStage, QuoteOverlay, pressColors} from '../press/Press';
 
 /**
  * 증거 자료(evidence) — 사진을 "붙이지" 않고 "편집"한다(docs/upgrade/03b_자료_트리트먼트_컴포넌트.md).
@@ -80,14 +82,6 @@ const AssetSequence: React.FC<{assets: EvidenceAsset[]; win: {w: number; h: numb
   );
 };
 
-/** 크림 종이 바탕(책상 위 한 장) — 망점 + 섬유 */
-const PaperGround: React.FC<{id: string}> = ({id}) => (
-  <div style={{position: 'absolute', inset: 0, background: NOTE.paper}}>
-    <Halftone opacity={0.35} />
-    <PaperFiber id={id} />
-  </div>
-);
-
 /** 캡션 줄: 왼쪽 = 라벨(주장, Jua) + 캡션(사실, Pretendard + 숫자 Playfair), 오른쪽 = 출처(22px) */
 const CaptionRow: React.FC<{x: number; y: number; w: number; label?: string; caption?: string; credit?: string;
   frame: number; theme: Theme}> = ({x, y, w, label, caption, credit, frame, theme}) => (
@@ -95,8 +89,8 @@ const CaptionRow: React.FC<{x: number; y: number; w: number; label?: string; cap
     gap: 22}}>
     {label ? (
       <RiseLine frame={frame} delay={8}>
-        <div style={{fontFamily: FONT.round, fontSize: 42, color: NOTE.ink, whiteSpace: 'nowrap',
-          borderBottom: `4px solid ${theme.accent}`, paddingBottom: 2}}>{label}</div>
+        <div style={{fontFamily: FONT.serif, fontWeight: 700, fontSize: 42, color: NOTE.ink, whiteSpace: 'nowrap',
+          borderBottom: `4px solid ${theme.accentTint}`, paddingBottom: 2}}>{label}</div>
       </RiseLine>
     ) : null}
     {caption ? (
@@ -116,49 +110,77 @@ const CaptionRow: React.FC<{x: number; y: number; w: number; label?: string; cap
   </div>
 );
 
-/** DocHighlight — 문서 전체 → 어두워지며 한 줄만 남고 밑줄(줄 좌표가 있을 때) → 오른쪽 종이 메모에 풀이 */
+/** DocHighlight(디자인 v3, 레퍼런스 2번) — 문서가 화면을 채우고 핵심 줄 뒤에 형광펜이 왼→오로 칠해진 뒤 그 줄 쪽으로
+ *  아주 느리게 다가간다. 어둡게 덮지 않는다(문서가 주인공). 줄 좌표가 없으면 느린 푸시만. */
 const DocHighlight: React.FC<{asset: EvidenceAsset; lines?: NBox[]; quote?: string; win: {w: number; h: number};
-  frame: number; fps: number; theme: Theme}> = ({asset, lines = [], quote, win, frame, fps, theme}) => {
-  const docW = quote ? win.w * 0.6 : win.w;
-  const k = Math.min(docW / Math.max(1, asset.w), win.h / Math.max(1, asset.h));
+  frame: number; fps: number; dur: number; theme: Theme}> = ({asset, lines = [], win, frame, fps, dur, theme}) => {
+  const k = Math.min(win.w / Math.max(1, asset.w), (win.h * 1.25) / Math.max(1, asset.h));
   const w = asset.w * k;
   const h = asset.h * k;
-  const ox = (docW - w) / 2;
-  const oy = (win.h - h) / 2;
-  const f0 = Math.round(1.2 * fps);
-  const dim = lines.length ? tween(frame, f0, DUR.normal, 'outCubic') : 0;
+  const ox = (win.w - w) / 2;
+  const oy = Math.min(0, (win.h - h) / 2);
+  const f0 = Math.round(0.9 * fps);
+  const first = lines[0];
+  const fx = first ? (first[0] + first[2] / 2) * 100 : 50;
+  const fy = first ? (first[1] + first[3] / 2) * 100 : 35;
+  const push = interpolate(frame, [f0, Math.max(f0 + 1, dur)], [1, first ? 1.09 : 1.03],
+    {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: EASE.move});
   return (
-    <div style={{position: 'absolute', inset: 0}}>
-      <Img src={staticFile(asset.src)} style={{position: 'absolute', left: ox, top: oy, width: w, height: h,
-        boxShadow: paperShadow(1), rotate: '-0.6deg'}} />
-      <div style={{position: 'absolute', left: ox, top: oy, width: w, height: h, background: 'rgba(38,33,30,0.55)',
-        opacity: dim}} />
-      {lines.map(([x, y, lw, lh], i) => {
-        const p = tween(frame, f0 + 4 + i * STAGGER.line, LONG.underline, 'outQuint');
-        const L = ox + x * w;
-        const T = oy + y * h;
-        return (
-          <React.Fragment key={i}>
-            <div style={{position: 'absolute', left: L, top: T, width: lw * w, height: lh * h, overflow: 'hidden',
-              opacity: dim}}>
-              <Img src={staticFile(asset.src)} style={{position: 'absolute', left: ox - L, top: oy - T, width: w, height: h}} />
-            </div>
-            <div style={{position: 'absolute', left: L, top: T + lh * h + 2, width: lw * w * p, height: 5,
-              background: theme.accent}} />
-          </React.Fragment>
-        );
-      })}
-      {quote ? (
-        <div style={{position: 'absolute', left: docW + 48, top: win.h * 0.2, width: win.w - docW - 48,
-          opacity: tween(frame, f0 + 10, DUR.slow), translate: `0 ${interpolate(tween(frame, f0 + 10, DUR.slow), [0, 1], [16, 0])}px`}}>
-          <Rule frame={frame} delay={f0 + 8} color={theme.accent} thick={4} width={80} />
-          <div style={{marginTop: 22, fontFamily: FONT.serif, fontWeight: 600, fontSize: 46, lineHeight: 1.35,
-            color: NOTE.ink}}>{quote}</div>
+    <div style={{position: 'absolute', inset: 0, overflow: 'hidden'}}>
+      <div style={{position: 'absolute', left: ox, top: oy, width: w, height: h, scale: `${push}`,
+        transformOrigin: `${fx}% ${fy}%`, boxShadow: paperShadow(2)}}>
+        <Img src={staticFile(asset.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%',
+          filter: 'saturate(0.88) contrast(1.04)'}} />
+        {lines.map(([x, y, lw, lh], i) => (
+          <Highlighter key={i} x={x * w - 10} y={y * h - lh * h * 0.08} w={lw * w + 20} h={lh * h * 1.16} theme={theme}
+            p={tween(frame, f0 + i * 6, 14, 'enter')} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/** DocPage(디자인 v3, 레퍼런스 2번) — 종이 무대 위에 스캔한 문서 한 장이 크게(화면 너비 60%) 비스듬히 놓이고, 뒤에 한 장이
+ *  더 겹친다. 핵심 줄이 화면 가운데쯤 오게 놓고 형광펜이 왼→오로 칠해진 뒤 그 줄 쪽으로 아주 느리게 다가간다(7%).
+ *  긴 문서는 위아래가 화면 밖으로 잘린다 — 문서가 주인공이고 여백은 종이. */
+const DocPage: React.FC<{asset: EvidenceAsset; lines?: NBox[]; title?: string; frame: number; fps: number; dur: number;
+  theme: Theme; W: number; H: number; seed: number}> = ({asset, lines = [], title, frame, fps, dur, theme, W, H, seed}) => {
+  const ar = Math.max(0.3, (asset.w || 3) / Math.max(1, asset.h || 4));
+  const pw = Math.min(W * 0.6, H * 1.25 * ar);
+  const ph = pw / ar;
+  const first = lines[0];
+  const ly = first ? (first[1] + first[3] / 2) * ph : ph * 0.32;
+  const fit = ph < H * 0.8;
+  const top = fit ? (H * 0.84 - ph) / 2 + H * 0.02 : Math.max(H * 0.82 - ph, Math.min(H * 0.08, H * 0.44 - ly));
+  const left = (W - pw) / 2 + (seed % 2 ? 1 : -1) * W * 0.025;
+  const rot = ((seed % 5) - 2) * 0.45;
+  const pin = tween(frame, 0, 12, 'enter');
+  const f0 = Math.round(0.8 * fps);
+  const push = interpolate(frame, [f0, Math.max(f0 + 1, dur)], [1, first ? 1.07 : 1.03], {...clampX, easing: EASE.move});
+  const ox = first ? ((first[0] + first[2] / 2) * pw + left) / W * 100 : 50;
+  const oy = (top + ly) / H * 100;
+  return (
+    <div style={{position: 'absolute', inset: 0, overflow: 'hidden', scale: `${push}`, transformOrigin: `${ox}% ${oy}%`}}>
+      <div style={{position: 'absolute', left: left + pw * 0.035, top: top + H * 0.02, width: pw, height: ph,
+        background: '#E7E2D6', rotate: `${rot + 2.2}deg`, boxShadow: paperShadow(1), opacity: pin}} />
+      <div style={{position: 'absolute', left, top, width: pw, height: ph, rotate: `${rot}deg`, boxShadow: paperShadow(2),
+        opacity: Math.min(1, pin * 1.4), translate: `0 ${interpolate(pin, [0, 1], [28, 0])}px`}}>
+        <Img src={staticFile(asset.src)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%',
+          filter: 'saturate(0.85) contrast(1.05) sepia(0.08)'}} />
+        {lines.map(([x, y, lw, lh], i) => (
+          <Highlighter key={i} x={x * pw - 10} y={y * ph - lh * ph * 0.08} w={lw * pw + 20} h={lh * ph * 1.16} theme={theme}
+            p={tween(frame, f0 + i * 6, 14, 'enter')} />
+        ))}
+      </div>
+      {title ? (
+        <div style={{position: 'absolute', left: W * 0.07, top: H * 0.1}}>
+          <NameChip text={title} theme={theme} frame={frame} delay={10} size={40 * (W / 1920)} />
         </div>
       ) : null}
     </div>
   );
 };
+const clampX = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
 /** BrowserFrame — 도식 틀(점 셋 + 도메인) 안의 화면 캡처, 0.8초 멈춘 뒤 천천히 스크롤(초당 창 높이 35% 이하) */
 const BrowserFrame: React.FC<{asset: EvidenceAsset; url?: string; win: {w: number; h: number}; frame: number;
@@ -310,6 +332,19 @@ export const EvidenceCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps
   const seed = hashSeed(id);
   const out = tweenOut(frame, dur, LONG.out);
   const pIn = tween(frame, 0, LONG.plateIn, 'outQuint');
+  if (t === 'collage') {
+    return <CollageScene id={id} data={data} frame={frame} dur={dur} theme={theme} W={W} H={H} />;
+  }
+  if (t === 'doc_highlight' && assets[0]?.kind === 'document') {
+    return (
+      <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden'}}>
+        <PaperStage theme={theme} frame={frame} />
+        <DocPage asset={assets[0]} lines={data.lines} title={data.title} frame={frame} fps={fps} dur={dur} theme={theme}
+          W={W} H={H} seed={seed} />
+        <CornerCredit text={data.credit || ''} onPaper opacity={tween(frame, 10, DUR.normal)} />
+      </div>
+    );
+  }
   if (t === 'archive_card' || !assets.length) {
     return <div style={{position: 'absolute', inset: 0, opacity: out}}>
       <ArchiveCard data={data} frame={frame} dur={dur} W={W} H={H} theme={theme} seed={seed} id={id} /></div>;
@@ -317,20 +352,19 @@ export const EvidenceCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps
   if (t === 'full') {
     return (
       <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: '#0B0B0B'}}>
-        <div style={{position: 'absolute', inset: 0, opacity: tween(frame, 0, DUR.normal)}}>
+        <div style={{position: 'absolute', inset: 0, opacity: tween(frame, 0, DUR.normal),
+          filter: data.quote ? GRADE_QUOTE : undefined}}>
           <AssetSequence assets={assets} win={{w: W, h: H}} frame={frame} dur={dur} bleed />
         </div>
+        {data.quote ? <QuoteOverlay text={data.quote} frame={frame} W={W} H={H} /> : null}
         <div style={{position: 'absolute', inset: 0, background:
           'linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 24%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.5) 100%)'}} />
-        {data.title ? (
+        {data.title && !data.quote ? (
           <div style={{position: 'absolute', left: 72 * k, top: 58 * k}}>
-            <RiseLine frame={frame} delay={6}>
-              <div style={{fontFamily: FONT.round, fontSize: 46 * k, color: '#fff', textShadow: '0 2px 14px rgba(0,0,0,0.45)',
-                borderBottom: `4px solid ${theme.accent}`}}>{data.title}</div>
-            </RiseLine>
+            <NameChip text={data.title} theme={theme} frame={frame} delay={6} size={40 * k} />
             {data.caption ? (
               <RiseLine frame={frame} delay={10}>
-                <div style={{marginTop: 8, fontFamily: FONT.sans, fontWeight: 500, fontSize: 26 * k,
+                <div style={{marginTop: 10, fontFamily: FONT.sans, fontWeight: 500, fontSize: 26 * k,
                   color: 'rgba(255,255,255,0.88)', textShadow: '0 2px 10px rgba(0,0,0,0.4)'}}><Numerals text={data.caption} /></div>
               </RiseLine>
             ) : null}
@@ -349,7 +383,7 @@ export const EvidenceCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps
     inner = <BrowserFrame asset={first} url={first.meta?.ref} win={win} frame={frame} dur={dur} fps={fps} />;
   } else if (t === 'doc_highlight' && first.kind === 'document') {
     inner = <DocHighlight asset={first} lines={data.lines} quote={data.archive?.quote || data.caption} win={win}
-      frame={frame} fps={fps} theme={theme} />;
+      frame={frame} fps={fps} dur={dur} theme={theme} />;
   } else if (t === 'grid' && assets.length >= 4) {
     inner = <ImageGrid assets={assets.slice(0, 9)} win={win} frame={frame} />;
   } else if (t === 'compare_pair' && assets.length >= 2) {
@@ -358,13 +392,17 @@ export const EvidenceCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps
     inner = <AssetSequence assets={assets} win={win} frame={frame} dur={dur} />;
   }
   const framed = t === 'hero' || t === 'grid' || t === 'compare_pair';
+  // 디자인 v3: 크림 종이 무대 위 — 사진 창은 종이 테두리 프린트(테두리 14px · 높이 2 그림자 · 시드 각도)
+  const print = t === 'hero';
   return (
     <div style={{position: 'absolute', inset: 0, opacity: out}}>
-      <PaperGround id={`eg${id}`} />
+      <PaperStage theme={theme} frame={frame} />
       <div style={{position: 'absolute', left: win.x, top: win.y, width: win.w, height: win.h,
-        overflow: framed ? 'hidden' : 'visible', background: framed && t === 'hero' ? NOTE.paperDeep : undefined,
+        overflow: framed ? 'hidden' : 'visible', background: framed && print ? pressColors(theme).paperLight : undefined,
         opacity: pIn, translate: `0 ${interpolate(pIn, [0, 1], [18, 0])}px`,
-        boxShadow: t === 'hero' ? paperShadow(2) : undefined}}>
+        border: print ? `14px solid ${pressColors(theme).paperLight}` : undefined, boxSizing: 'border-box',
+        rotate: print ? `${((seed % 7) - 3) * 0.12}deg` : undefined,
+        boxShadow: print || t === 'doc_highlight' ? paperShadow(2) : undefined}}>
         {inner}
       </div>
       <CaptionRow x={win.x} y={win.y + win.h + 6 * k} w={win.w} label={data.title} caption={data.caption}

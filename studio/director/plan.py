@@ -19,12 +19,13 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
 EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat",
-                   "assets", "treatment", "archive", "caption", "tier")   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
+                   "assets", "treatment", "archive", "caption", "tier",   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
+                   "year", "display", "quote", "cut", "w", "h")          # 디자인 v3 콜라주(연도 · 큰 글자 · 인용 · 오린 사진)
 # 증거 자료(evidence)의 트리트먼트별 기본 유지 시간(03b 14절 — 읽을 것이 있으면 길게)
-EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
+EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "collage": 5.0, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
                  "grid": 4.5, "compare_pair": 6.0, "pip": 3.0}
 EVIDENCE_ASSET_KEYS = ("src", "kind", "w", "h", "focus", "credit", "credit_full", "tier", "origin", "shows", "score",
-                       "meta", "mat_src")
+                       "meta", "mat_src", "cut")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
@@ -332,9 +333,13 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
             out["subtitle"] = ""
         if out["body"] and out["body"] == stock["purpose"]:
             out["body"] = ""
-        for k in ("src", "kind", "credit", "kenburns", "stock_url"):
+        for k in ("src", "kind", "credit", "kenburns", "stock_url", "cut", "w", "h", "treatment"):
             if g.get(k):
                 out[k] = g[k]
+        if out.get("treatment") not in (None, "collage"):
+            out.pop("treatment")
+    if tn in ("broll", "evidence"):
+        _keep_collage_text(g, out)
     if tn == "photo" and g.get("credit"):
         out["credit"] = g["credit"]
     if tn == "photo" and g.get("wiki"):
@@ -374,6 +379,17 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
             if g.get(k):
                 out[k] = str(g[k])[:120]
     return out
+
+
+def _keep_collage_text(g: dict[str, Any], out: dict[str, Any]) -> None:
+    """디자인 v3 콜라주의 화면 글: 큰 연도(숫자 4자리), 사진 뒤 큰 글자(8자), 영상 위 인용 한 줄(36자)."""
+    y = re.search(r"(1[0-9]{3}|20[0-9]{2})", str(g.get("year") or ""))
+    if y:
+        out["year"] = y.group(1)
+    for k, n in (("display", 8), ("quote", 36)):
+        v = str(g.get(k) or "").strip()
+        if v:
+            out[k] = v[:n]
 
 
 def _nearest(valid: list[int], seg: Any) -> int:

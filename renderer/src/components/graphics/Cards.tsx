@@ -3,9 +3,9 @@ import {interpolate} from 'remotion';
 import {EASE_OUT, enter, exit} from '../../lib/anim';
 import {estWidth, fitBlock, fitSize} from '../../lib/fit';
 import {FONT} from '../../design/tokens';
-import {useFontForText} from '../../design/fonts';
 import {DrawRule, MaskLine, ParenLabel} from '../layout/Editorial';
 import type {TemplateProps} from './common';
+import {PrintText} from '../press/Press';
 
 // ---------------------------------------------------------------------------
 // 챕터 카드 — Ink 표면. 거대한 번호(Anton) + 챕터 제목 + 주장(명조 기울임) + 목차(전체 챕터, 지금 챕터 강조).
@@ -93,6 +93,26 @@ export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface,
   const out = exit(frame, dur, 10);
   const year = brand.year || '2026';
   const small = data.subtitle || '';
+  // 디자인 v3 종이 콜라주: 인쇄 얼룩 큰 글자(레퍼런스 3번) + 아래 명조 한 줄 — 옛 리포트 쪽 번호·양옆 보조문은 쓰지 않는다
+  if (surface.name === 'collage' && !onBoard && layout !== 'split') {
+    return (
+      <div style={{position: 'absolute', inset: 0, opacity: out, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 30, paddingBottom: box.h * 0.04}}>
+        <div style={{overflow: 'hidden', paddingBottom: size * 0.06}}>
+          <div style={{translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>
+            <PrintText text={title} size={size} color={surface.accent} paper={surface.bg} letterSpacing="0" />
+          </div>
+        </div>
+        {small ? (
+          <MaskLine frame={frame} delay={10}>
+            <div style={{fontFamily: FONT.serif, fontSize: 46, fontWeight: 400, color: surface.fg, letterSpacing: '-0.01em'}}>
+              {small}
+            </div>
+          </MaskLine>
+        ) : null}
+      </div>
+    );
+  }
   const edge = (txt: string, side: 'left' | 'right', top: number) => (
     <div style={{position: 'absolute', [side]: 0, top, fontFamily: FONT.sans, fontSize: 20, fontWeight: 500,
       color: surface.dim, opacity: enter(frame, 6, 12)}}>{txt}</div>
@@ -142,7 +162,9 @@ export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface,
               whiteSpace: 'nowrap',
             }}
           >
-            {title}
+            {surface.name === 'collage'
+              ? <PrintText text={title} size={size} color={surface.accent} paper={surface.bg} letterSpacing="0" />
+              : title}
           </div>
         </div>
         {onBoard ? (
@@ -211,17 +233,16 @@ export const DefinitionCard: React.FC<TemplateProps> = ({data, frame, surface, b
 // ---------------------------------------------------------------------------
 export const QuoteCard: React.FC<TemplateProps> = ({data, frame, surface, box}) => {
   const text = data.body || '';
-  useFontForText('500 60px "Noto Serif KR"', text);
   const {size, lines} = fitBlock(text, box.w * 0.8, box.h * 0.6, 72, 40, 1.5, 5);
   const who = [data.author, data.source].filter(Boolean).join(' — ');
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',
       paddingLeft: box.w * 0.08}}>
-      <div style={{position: 'absolute', left: 0, top: box.h * 0.02, fontFamily: FONT.latin, fontSize: 300,
-        lineHeight: 1, color: surface.accent, opacity: enter(frame, 0, 12)}}>“</div>
+      <div style={{position: 'absolute', left: 0, top: box.h * 0.02, fontFamily: FONT.numeral, fontStyle: 'italic',
+        fontWeight: 900, fontSize: 300, lineHeight: 1, color: surface.accent, opacity: enter(frame, 0, 12)}}>“</div>
       {lines.map((l, i) => (
         <MaskLine key={i} frame={frame} delay={4 + i * 4} dur={20}>
-          <div style={{fontFamily: FONT.serif, fontWeight: 500, fontSize: size, lineHeight: 1.5, color: surface.fg,
+          <div style={{fontFamily: FONT.serif, fontWeight: 400, fontSize: size, lineHeight: 1.5, color: surface.fg,
             letterSpacing: '-0.01em'}}>{l}</div>
         </MaskLine>
       ))}
@@ -245,18 +266,19 @@ export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box}) =
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', gap: box.w * 0.05}}>
       <div style={{overflow: 'hidden'}}>
-        <div style={{fontFamily: FONT.latin, fontSize: numSize, lineHeight: 1, color: surface.name === 'overlay' ?
-          surface.accent : surface.fg, translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>{num}</div>
+        <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: numSize * 0.86, lineHeight: 1.05,
+          paddingRight: numSize * 0.08, color: surface.name === 'overlay' ? surface.accent : surface.accent,
+          translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>{num}</div>
       </div>
       <div style={{display: 'flex', flexDirection: 'column', gap: 18}}>
         {body.lines.map((l, i) => (
           <MaskLine key={i} frame={frame} delay={8 + i * 3}>
-            <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: body.size, lineHeight: 1.35,
+            <div style={{fontFamily: FONT.serif, fontWeight: 700, fontSize: body.size, lineHeight: 1.35,
               color: surface.name === 'signal' ? '#111' : surface.fg}}>{l}</div>
           </MaskLine>
         ))}
         {data.subtitle ? (
-          <div style={{fontFamily: FONT.sans, fontSize: 22, color: surface.dim, opacity: enter(frame, 16, 12)}}>
+          <div style={{fontFamily: FONT.italic, fontStyle: 'italic', fontSize: 40, color: surface.dim, opacity: enter(frame, 16, 12)}}>
             {data.subtitle}
           </div>
         ) : null}

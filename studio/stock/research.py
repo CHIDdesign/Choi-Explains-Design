@@ -242,6 +242,8 @@ class StockResearcher:
                     # 하우스 트리트먼트(07b): 놓이는 곳(전면 · 종이 위)에 맞춰 [잉크, 종이] 안으로 — 캐시는 원본 그대로 두고
                     # 그래픽마다 처리한 사본을 쓴다(파일 이름에 처리·판)
                     g["src"] = self._house(res["src"], "photo", "full" if g.get("layout") == "fullscreen" else "paper")
+                    if g.get("layout") == "fullscreen":
+                        self._collage_extras(g)
                 keep.append(g)
                 if res["src"] not in used:
                     used.add(res["src"])
@@ -325,6 +327,22 @@ class StockResearcher:
                 self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
         self.log(f"🖼 '{query}'({kind}) 이미지 없음 → 그 요소만 뺌")
         return None
+
+    def _collage_extras(self, g: dict[str, Any]) -> None:
+        """디자인 v3: 전면 스톡 사진의 크기와, 바탕이 고르면 오린 PNG(→ 종이 무대 위 콜라주). 실패해도 그대로 둔다."""
+        from PIL import Image
+        from ..assets.cutout import cutout
+        p = self.public / g["src"]
+        try:
+            with Image.open(p) as im:
+                g["w"], g["h"] = im.size
+            c = cutout(p)
+        except Exception:  # noqa: BLE001 - 콜라주는 덤
+            return
+        if c is not None and c.is_relative_to(self.public):
+            g["cut"] = c.relative_to(self.public).as_posix()
+            g["treatment"] = "collage"
+            self.stats["cutout"] = self.stats.get("cutout", 0) + 1
 
     def _house(self, src: str, kind: str, surface: str, treatment: str = "auto") -> str:
         """public 기준 경로 → 하우스 트리트먼트를 거친 사본의 경로(`이름.표면.h판.jpg|png`). 실패하면 원본 그대로."""

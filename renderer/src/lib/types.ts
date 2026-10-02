@@ -29,7 +29,7 @@ export type Layout = 'fullscreen' | 'split' | 'overlay' | 'pip';
 
 // 증거 자료(docs/upgrade/03b 1절) — studio/assets/ladder.py 가 채운다
 export type Treatment = 'hero' | 'full' | 'pip' | 'archive_card' | 'doc_highlight' | 'browser_frame' | 'grid'
-  | 'compare_pair';
+  | 'compare_pair' | 'collage';
 export type NBox = [number, number, number, number]; // x, y, w, h — 0~1, 이미지 기준
 export type EvidenceAsset = {
   src: string; // public 기준 경로
@@ -40,6 +40,7 @@ export type EvidenceAsset = {
   credit?: string; // credit_short
   tier?: string; // own | made | A | A-sa | stock | B | C
   meta?: {title?: string; creator?: string; year?: string; ref?: string};
+  cut?: string; // 배경을 오려 낸 PNG(studio/assets/cutout.py) — 콜라주에서 바닥 타원 위에 선다
 };
 export type Archive = {
   variant: 'photo' | 'source' | 'type'; // 자료 카드 · 출처 카드(논문·책) · 타이포 자료 카드
@@ -72,6 +73,9 @@ export type GraphicData = {
   mat?: boolean; // photo: 세로 사진을 크림 종이 여백 액자(1600×1000)에 넣은 것 — 로고 카드처럼 그린다
   src?: string; // broll: public 기준 경로
   kenburns?: 'in' | 'out' | 'left' | 'right'; // broll 사진 움직임
+  w?: number; // broll 사진 원본 크기(콜라주 배치용)
+  h?: number;
+  cut?: string; // 배경을 오려 낸 PNG(콜라주)
   accent?: string; // 개념 카드·사진 액자 글(두 스킨): 헤드라인에서 주황으로 칠할 낱말(없으면 마지막 어절)
   // 전면 사진·스톡 위 키워드 슬램(studio/render/props.py fold_keywords_into_media): keyword_at 초부터 사진이 어두워지며
   // 큰 키워드 + 아랫줄(keyword_sub, 예: "수렵·채집 → 농경")
@@ -83,6 +87,9 @@ export type GraphicData = {
   treatment?: Treatment;
   archive?: Archive;
   caption?: string; // 사실 캡션(연도·작가·출처)
+  year?: string; // 콜라주의 이탤릭 세리프 연도(레퍼런스 '1853') — 4자리
+  display?: string; // 콜라주의 큰 인쇄 글자(2~6자, 레퍼런스 '설계안 채택')
+  quote?: string; // 영상·사진 위 명조 인용(줄바꿈 \n, 40자 이내)
   tier?: string;
   lines?: NBox[]; // doc_highlight: 밑줄 칠 줄
 };
@@ -128,7 +135,8 @@ export type MotionText = MotionElBase & {
   text: string;
   size: number; // 장면 높이 대비 %
   weight?: number;
-  font?: 'sans' | 'display' | 'serif' | 'latin' | 'heavy' | 'round' | 'hand'; // heavy=Black Han Sans(한 방) round=Jua(메모) hand=손글씨
+  // 디자인 v3: display=고운바탕 700 명조 · serif=고운바탕 · poster=송명 · italic=Instrument Serif · heavy=Black Han Sans · round=도장 명조 · hand=손글씨
+  font?: 'sans' | 'display' | 'serif' | 'poster' | 'italic' | 'latin' | 'heavy' | 'round' | 'hand';
   maxWidth?: number; // %
   align?: 'left' | 'center' | 'right';
   highlight?: string; // 강조색으로 칠할 부분 문자열
@@ -251,6 +259,8 @@ export type Brand = {
   ink: string;
   paper: string;
   year: string;
+  deep?: string; // 디자인 팔레트의 짙은 색(큰 글자·연도) — 없으면 accent 에서
+  tint?: string; // 디자인 팔레트의 옅은 색(형광펜·바닥 타원·이름표) — 없으면 accent 에서
 };
 
 export type Episode = {title: string; number: string; subtitle: string; series: string};

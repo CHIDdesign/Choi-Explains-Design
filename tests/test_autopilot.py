@@ -612,7 +612,20 @@ def test_stack_captions_are_rare_and_skip_busy_or_hidden():
     assert [c.get("style") for c in cues] == ["stack", None, "stack", None, None, None, "impact", None] and n == 2
 
 
-def test_hybrid_looks_follow_content_and_always_mix():
+def test_design_v3_is_one_collage_look():
+    """디자인 v3: 한 재질 — 모든 챕터·타이틀이 같은 콜라주 렌더러(classic 경로), 짙은 종이 구성은 섞지 않는다."""
+    from studio.edit import style
+    g = lambda i, tpl, a, layout="split": {"id": i, "template": tpl, "layout": layout, "start": a, "end": a + 4, "data": {}}
+    chapters = [{"start": 0.0, "title": "들어가며", "number": "01"}, {"start": 60.0, "title": "구조", "number": "02"}]
+    plan = style.choose_looks([g("t", "title", 0.2, "fullscreen"), g("k", "keyword", 10), g("pr", "process", 70)],
+                              chapters, 120.0, lambda a, b: "제가 경험을 예를 들어")
+    assert [c["look"] for c in plan.chapters] == ["classic", "classic"] and set(plan.graphic_skins.values()) == {"classic"}
+    assert plan.paper_ranges() == [] and "콜라주" in plan.summary()
+
+
+def test_hybrid_looks_follow_content_and_always_mix(monkeypatch):
+    from studio.edit import style
+    monkeypatch.setattr(style, "STYLE_MIX", True)                 # 예전 하이브리드(개발·시험용)
     from studio.edit.style import apply_looks, choose_looks
     g = lambda i, tpl, a, layout="split": {"id": i, "template": tpl, "layout": layout, "start": a, "end": a + 4,
                                            "data": {}}

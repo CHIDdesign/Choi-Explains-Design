@@ -40,9 +40,12 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--font-serif': FONT.serif,
   '--font-latin': FONT.latin,
   '--font-heavy': FONT.heavy,
-  '--font-round': FONT.round,
+  '--font-round': FONT.memo,
   '--font-hand': FONT.hand,
   '--font-numeral': FONT.numeral,
+  '--font-editorial': FONT.editorial,
+  '--font-poster': FONT.poster,
+  '--font-italic': FONT.italic,
   '--font-mono': FONT.mono,
 });
 
@@ -52,12 +55,16 @@ export const wrapCard = (card: CardSpec): string =>
   `.card[data-card-id="${card.id}"] *{box-sizing:border-box}${card.css}</style>${card.html}</div>`;
 
 const FAMILIES: [RegExp, string][] = [
-  [/pretendard|--font-head|--font-body|--font-mono/i, 'Pretendard'],
+  [/pretendard|--font-body|--font-mono/i, 'Pretendard'],
   [/black han sans|--font-heavy/i, 'Black Han Sans'],
   [/jua|--font-round/i, 'Jua'],
   [/nanum pen script|--font-hand/i, 'Nanum Pen Script'],
   [/playfair display|--font-numeral/i, 'Playfair Display'],
-  [/noto serif kr|--font-serif|serif/i, 'Noto Serif KR'],
+  [/instrument serif|--font-italic/i, 'Instrument Serif'],
+  [/hahmlet/i, 'Hahmlet'],
+  [/song myung|--font-poster|--font-editorial/i, 'Song Myung'],
+  [/gowun batang|--font-serif|--font-head/i, 'Gowun Batang'],
+  [/noto serif kr|serif/i, 'Noto Serif KR'],
   [/anton|--font-latin/i, 'Anton'],
 ];
 

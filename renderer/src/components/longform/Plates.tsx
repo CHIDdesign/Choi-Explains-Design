@@ -9,7 +9,7 @@ import {Credit} from '../layout/Editorial';
 import {pipBoxes} from '../paper/Collage';
 import {hashSeed} from '../paper/Paper';
 import type {Box} from '../paper/Paper';
-import {Badge, PaperNote, ReverseLine} from './Note';
+import {PaperNote, ReverseLine} from './Note';
 import {Annotated, Numerals, RiseLine, Rule} from './Stage';
 
 /**
@@ -58,6 +58,13 @@ type ContentProps = {
   label?: string; // 배지에 쓸 역할 라벨(없으면 템플릿 역할)
 };
 
+/** 역할 라벨(디자인 v3 — 레퍼런스 3번 이름표의 작은 판): 옅은 강조색 상자 + 짙은 강조색 글자. 검은 알약 배지는 쓰지 않는다 */
+export const Kicker: React.FC<{text: string; size: number; theme: Theme}> = ({text, size, theme}) => (
+  <span style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: 700, fontSize: size, lineHeight: 1.2,
+    letterSpacing: '-0.005em', whiteSpace: 'nowrap', color: theme.accentDeep, background: theme.accentTint,
+    padding: `${size * 0.18}px ${size * 0.5}px ${size * 0.24}px`}}>{text}</span>
+);
+
 /** 개념 내용(키워드·정의·숫자·인용) — 메모와 보드가 같이 쓴다. 색은 종이 위 잉크, 강조는 시그널 한 곳 */
 export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, dur, theme, w, h, s, mode, label}) => {
   const fg = NOTE.ink;
@@ -78,7 +85,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
     justifyContent: 'center', opacity: out};
   const header = (
     <div style={{display: 'flex', alignItems: 'center', gap: 12 * s, opacity: tween(frame, 2, 10)}}>
-      <Badge text={chip} size={chipSize} />
+      <Kicker text={chip} size={chipSize} theme={theme} />
     </div>
   );
   const ruleEl = <div style={{marginTop: gapS}}><Rule frame={frame} delay={4} color={rule} /></div>;
@@ -102,8 +109,9 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
       <div style={col}>
         {header}
         <div style={{display: 'flex', alignItems: 'center', gap: 28 * s, marginTop: gapS}}>
-          <div style={{fontFamily: FONT.latin, fontSize: numSize, lineHeight: 1, color: accent,
-            letterSpacing: '0.005em', fontVariantNumeric: 'tabular-nums', scale: `${land}`, transformOrigin: '0% 60%',
+          <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: numSize * 0.86, lineHeight: 1.05,
+            paddingRight: numSize * 0.06, color: accent, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums',
+            scale: `${land}`, transformOrigin: '0% 60%',
             opacity: tween(frame, 3, 8), whiteSpace: 'nowrap'}}>{shown}</div>
           <div style={{display: 'flex', flexDirection: 'column'}}>
             {body.lines.map((l, i) => (
@@ -204,7 +212,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
         <div style={{marginTop: gapS, display: 'flex', flexDirection: 'column'}}>
           {bodyLines.map((l, i) => (
             <RiseLine key={i} frame={frame} delay={12 + nHead * 3 + i * 3}>
-              <div style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: bodySize, lineHeight: 1.45, color: dim,
+              <div style={{fontFamily: FONT.serif, fontWeight: 400, fontSize: bodySize, lineHeight: 1.5, color: dim,
                 letterSpacing: '-0.01em', whiteSpace: 'nowrap'}}>{l}</div>
             </RiseLine>
           ))}

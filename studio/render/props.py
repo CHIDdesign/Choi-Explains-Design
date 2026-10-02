@@ -21,9 +21,15 @@ LONG_PRESETS = ("paper", "editorial", "documentary", "glass", "boxed")
 SHORT_PRESETS = ("paper", "kinetic", "clean", "boxed", "bar")
 
 
+# 디자인 v3 팔레트(운영자 레퍼런스 프레임에서 잰 색): 중간 · 짙은(큰 글자·연도) · 옅은(형광펜·바닥 타원·이름표)
+PALETTES = {"forest": {"accent": "#2B8A64", "deep": "#1E6B4F", "tint": "#86D9B5"}}
+
+
 def brand_props(b: Brand) -> dict[str, Any]:
-    return {"name": b.name, "shortName": b.short_name, "handle": b.handle, "presenter": b.presenter,
-            "presenterTitle": b.presenter_title, "accent": b.accent, "ink": b.ink, "paper": b.paper, "year": b.year}
+    d = {"name": b.name, "shortName": b.short_name, "handle": b.handle, "presenter": b.presenter,
+         "presenterTitle": b.presenter_title, "accent": b.accent, "ink": b.ink, "paper": b.paper, "year": b.year}
+    d.update(PALETTES.get(getattr(b, "palette", "forest"), {}))      # brand 면 강조색 그대로(renderer 가 짙은·옅은 색 계산)
+    return d
 
 
 @dataclass

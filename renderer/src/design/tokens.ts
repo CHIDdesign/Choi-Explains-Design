@@ -23,8 +23,10 @@ export const mix = (a: string, b: string, t: number) => {
 
 export const makeTheme = (brand: Brand) => ({
   accent: brand.accent,
-  // 표지처럼 같은 색 위에 올리는 짙은 강조색
-  accentDeep: mix(brand.accent, '#000000', 0.32),
+  // 표지처럼 같은 색 위에 올리는 짙은 강조색(디자인 팔레트가 정해 주면 그 값 — 레퍼런스의 짙은 초록 큰 글자)
+  accentDeep: brand.deep || mix(brand.accent, '#000000', 0.32),
+  // 형광펜·바닥 타원·이름표(디자인 v3 종이 콜라주 — 레퍼런스의 민트)
+  accentTint: brand.tint || mix(brand.accent, '#ffffff', 0.5),
   // 어두운 배경에서 읽히는 밝은 강조색
   accentLight: mix(brand.accent, '#ffffff', 0.18),
   ink: brand.ink,
@@ -63,15 +65,28 @@ export const NOTE = {
  *  latin   Anton                큰 숫자: 챕터 번호·카운터·순번
  *  numeral Playfair Display     이탤릭 세리프 숫자·영문(본문 옆 작은 것): 연도·영문 원어·단위 — <Numerals> 가 자동으로 감싼다
  *  hand    Nanum Pen Script     손글씨 주석(26px 이상, 종이 위에만): 메모 각주·사진 캡션 설명·엔드카드 메모
+ * 디자인 v3(종이 콜라주 — 운영자 레퍼런스: 이탤릭 세리프 연도 · 인쇄 질감 한 방 · 명조 인용):
+ *  serif     Gowun Batang(고운바탕) 문장·인용·주장·개념 제목 — 예전 Noto Serif KR 은 대체 글꼴로만
+ *  display   Gowun Batang 700 — 제목(정의·도식·목록·모션 장면 제목). 함렛은 굵으면 고딕처럼 보여 역할에서 뺐다
+ *  editorial Song Myung(송명) 예술적인 큰 명조 제목(타이틀·챕터 제목) — 굵기 하나(400, 가짜 굵게 금지)
+ *  poster    Song Myung(송명) 포스터 같은 명조 한 방(짧은 낱말, 120px 이상)
+ *  numeral   Playfair Display 이탤릭 400·700·900 — 연도·큰 숫자(레퍼런스의 '1853')
+ *  italic    Instrument Serif(이탤릭) 영문 원어·인용 출처·작은 킥커
  */
 export const FONT = {
   sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-  display: '"Pretendard", "Malgun Gothic", sans-serif',
+  // 디자인 v3: 제목도 명조(고운바탕 700) — 도식·정의·목록·모션 제목. 읽는 글·작은 라벨은 여전히 sans
+  display: '"Gowun Batang", "Noto Serif KR", "Pretendard", serif',
   latin: '"Anton", "Pretendard", sans-serif',
-  serif: '"Noto Serif KR", "Nanum Myeongjo", serif',
+  serif: '"Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", serif',
+  editorial: '"Song Myung", "Gowun Batang", "Noto Serif KR", serif',
+  poster: '"Song Myung", "Gowun Batang", serif',
+  italic: '"Instrument Serif", "Playfair Display", serif',
   heavy: '"Black Han Sans", "Pretendard", sans-serif',
-  round: '"Jua", "Pretendard", sans-serif',
-  numeral: '"Playfair Display", "Noto Serif KR", serif',
+  // 디자인 v3: 말하듯 붙인 메모·콜아웃·소제목 바도 명조(고운바탕 굵게 — 'Press Serif' 는 굵은 면만 등록한 이름)
+  round: '"Press Serif", "Gowun Batang", serif',
+  memo: '"Jua", "Pretendard", sans-serif', // 예전 둥근 메모체(카드 --font-round 가 쓴다)
+  numeral: '"Playfair Display", "Gowun Batang", serif',
   hand: '"Nanum Pen Script", "Pretendard", cursive',
   mono: '"Pretendard", monospace',
 };

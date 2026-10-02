@@ -1,16 +1,16 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {LONG, tween, tweenOut} from '../../design/motion';
-import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
+import {surface as mkSurface} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
 import {FONT, NOTE, paperShadow} from '../../design/tokens';
 import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
 import {Credit} from '../layout/Editorial';
-import {Badge, Halftone, PaperFiber} from './Note';
-import {CONCEPT_TEMPLATES, ConceptContent, MediaContent} from './Plates';
-import {boardCard, DotGrid, RiseLine, Rule, slideIn, slideOut, STAGE} from './Stage';
+import {Halftone, PaperFiber} from './Note';
+import {CONCEPT_TEMPLATES, ConceptContent, Kicker, MediaContent} from './Plates';
+import {boardCard, RiseLine, Rule, slideIn, slideOut, STAGE} from './Stage';
 
 /**
  * 보드 판(롱폼 무대의 split, classic 챕터) — 화자 판 옆 작업대 열에 놓이는 **크림 종이 판**(재질 v2).
@@ -42,19 +42,13 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
         boxShadow: paperShadow(2)}}>
         <Halftone opacity={0.5} />
         <PaperFiber id={`board-${g.id}`} opacity={0.12} />
-        <DotGrid opacity={tween(frame, 6, 16) * 0.9} color={NOTE.dots} />
-        <div style={{position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, background: theme.accent,
-          transformOrigin: 'top', scale: `1 ${tween(frame, 4, 16, 'outQuint')}`}} />
       </div>
-      {/* 머리줄: 챕터 배지 · 템플릿 라벨 */}
+      {/* 머리줄(디자인 v3): 챕터 이름만 명조로 작게 — 브랜드 배지·템플릿 라벨은 내지 않는다 */}
       <div style={{position: 'absolute', left: innerX, right: pad, top: pad, height: headH, display: 'flex',
         alignItems: 'center', justifyContent: 'space-between', opacity: tween(frame, 4, 10)}}>
-        <Badge text={chapterTag || brand.name} size={20} />
-        {TEMPLATE_LABEL[g.template] ? (
-          <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 18, color: s.dim, letterSpacing: '0.02em'}}>
-            ( {TEMPLATE_LABEL[g.template]} )
-          </span>
-        ) : null}
+        <span style={{fontFamily: FONT.serif, fontWeight: 400, fontSize: 22, color: s.dim, letterSpacing: '-0.005em'}}>
+          {chapterTag}
+        </span>
       </div>
       <div style={{position: 'absolute', left: innerX, width: innerW, top: pad + headH + 12}}>
         <Rule frame={frame} delay={6} color={s.rule} />
@@ -77,9 +71,7 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
       {/* 바닥줄 */}
       <div style={{position: 'absolute', left: innerX, right: pad, bottom: pad - 8, height: footH, display: 'flex',
         alignItems: 'center', justifyContent: 'space-between', opacity: tween(frame, 10, 12)}}>
-        <span style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 16, color: s.dim, letterSpacing: '0.04em'}}>
-          {brand.name}
-        </span>
+        <span />
         {credit && !media ? <Credit text={credit} color={s.dim} size={15} /> : null}
       </div>
     </div>
@@ -102,7 +94,7 @@ export const RecapBoard: React.FC<TemplateProps> = ({data, frame, dur, surface, 
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',
       opacity: out}}>
-      <div style={{opacity: tween(frame, 2, 10)}}><Badge text={label} size={22} accent={theme.accent} /></div>
+      <div style={{opacity: tween(frame, 2, 10)}}><Kicker text={label} size={22} theme={theme} /></div>
       <div style={{marginTop: 18, display: 'flex', flexDirection: 'column'}}>
         {hb.lines.map((l, i) => (
           <RiseLine key={i} frame={frame} delay={5 + i * 3}>

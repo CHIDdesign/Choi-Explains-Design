@@ -21,7 +21,7 @@
 - `keys`: 이동 키프레임 `[{t, x?, y?, scale?, rotate?, opacity?}]`. 첫 상태는 요소의 x/y 가 자동으로 들어가며, 화면 안 이동은 자동으로 ease-in-out.
 
 요소 타입:
-- `text`: {text, size(장면 높이 대비 %, 제목 9~12 · 본문 5~6 · 라벨 4 이상 — 최종 화면 본문 34px · 라벨 28px 이상), weight, font: sans|display|serif|latin|heavy|round|hand(heavy=Black Han Sans 한 방 · round=Jua 둥근 메모체 · hand=손글씨 주석, 셋은 굵기 하나), maxWidth, align, highlight(강조할 단어), reveal: words|chars|lines|none}. 기본 등장은 마스크 리빌. 줄바꿈은 `\n`.
+- `text`: {text, size(장면 높이 대비 %, 제목 9~12 · 본문 5~6 · 라벨 4 이상 — 최종 화면 본문 34px · 라벨 28px 이상), weight, font: sans|display|serif|poster|italic|latin|heavy|round|hand(디자인 v3 종이 콜라주: display=고운바탕 700 명조 제목(기본) · serif=고운바탕 본문 명조 · poster=송명 포스터 명조(굵기 하나) · italic=Instrument Serif 이탤릭(영문·연도·숫자, 굵기 하나) · heavy=Black Han Sans 한 방 · round=도장 명조(고운바탕 700) · hand=손글씨 주석 — 한 장면에 세 가족까지, 고딕(sans)은 라벨·작은 본문만), maxWidth, align, highlight(강조할 단어), reveal: words|chars|lines|none}. 기본 등장은 마스크 리빌. 줄바꿈은 `\n`.
 - `rect`: {w, h, radius, fill, stroke, strokeWidth}. enter:"draw" 면 외곽선이 그려진다.
 - `circle`: {r(가로 대비 %), fill, stroke}
 - `line` / `arrow`: {x2, y2, curve(-1~1 휘어짐), dashed, strokeWidth}. 기본 등장은 그리기.

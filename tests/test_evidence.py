@@ -415,7 +415,8 @@ def test_b_gates_measure_real_media_and_promote_hero():
           _tg(2, "photo", "pip", 100, 104, image="images/l.svg", logo=True)]
     b1 = gate.b1_media_ratio(gs, 200.0)
     assert not b1.ok and b1.measured["seconds"] == 4.0                       # 로고 카드는 실물이 아니다
-    assert gate.b1_media_ratio(gs + [_tg(3, "broll", "fullscreen", 30, 60, src="b.mp4")], 200.0).ok
+    assert not gate.b1_media_ratio(gs + [_tg(3, "broll", "fullscreen", 30, 60, src="b.mp4")], 200.0).ok   # 17% < 30%
+    assert gate.b1_media_ratio(gs + [_tg(3, "broll", "fullscreen", 30, 90, src="b.mp4")], 200.0).ok
     chapters = [{"start": 0.0}, {"start": 90.0}]
     b2 = gate.b2_hero_per_chapter(gs, chapters, 200.0)
     assert not b2.ok and b2.measured["lacking"] == [[0.0, 90.0]]

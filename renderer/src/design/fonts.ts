@@ -32,6 +32,27 @@ export const ensureFonts = () => {
   loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-Bold.woff2'), weight: '700'});
   loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-BoldItalic.woff2'), weight: '700',
     style: 'italic'});
+  // 디자인 v3(종이 콜라주) — 예술적인 세리프
+  loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-Italic.woff2'), weight: '400', style: 'italic'});
+  loadFont({family: 'Playfair Display', url: staticFile('fonts/PlayfairDisplay-BlackItalic.woff2'), weight: '900',
+    style: 'italic'});
+  loadFont({family: 'Instrument Serif', url: staticFile('fonts/InstrumentSerif-Regular.woff2'), weight: '400'});
+  loadFont({family: 'Instrument Serif', url: staticFile('fonts/InstrumentSerif-Italic.woff2'), weight: '400', style: 'italic'});
+  for (const w of ['400', '700']) {
+    loadFont({family: 'Gowun Batang', url: staticFile(`fonts/GowunBatang-${w}-korean.woff2`), weight: w});
+    loadFont({family: 'Gowun Batang', url: staticFile(`fonts/GowunBatang-${w}-latin.woff2`), weight: w, unicodeRange: LATIN});
+  }
+  for (const w of ['300', '700', '800']) {
+    loadFont({family: 'Hahmlet', url: staticFile(`fonts/Hahmlet-${w}-korean.woff2`), weight: w});
+    loadFont({family: 'Hahmlet', url: staticFile(`fonts/Hahmlet-${w}-latin.woff2`), weight: w, unicodeRange: LATIN});
+  }
+  // 'Press Serif' = 고운바탕 700 을 모든 굵기에 — 굵기를 따로 주지 않던 메모·콜아웃 자리가 가는 명조로 떨어지지 않게
+  for (const w of ['400', '700']) {
+    loadFont({family: 'Press Serif', url: staticFile('fonts/GowunBatang-700-korean.woff2'), weight: w});
+    loadFont({family: 'Press Serif', url: staticFile('fonts/GowunBatang-700-latin.woff2'), weight: w, unicodeRange: LATIN});
+  }
+  loadFont({family: 'Song Myung', url: staticFile('fonts/SongMyung-korean.woff2'), weight: '400'});
+  loadFont({family: 'Song Myung', url: staticFile('fonts/SongMyung-latin.woff2'), weight: '400', unicodeRange: LATIN});
 };
 
 /**
@@ -58,7 +79,8 @@ export const useFontGuard = () => {
       return ok;
     };
     // loadFont 는 비동기로 FontFace 를 만들므로 document.fonts.ready 만 믿으면 아직 등록 전일 수 있다 → 폴링
-    const want = ['Pretendard', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display'];
+    const want = ['Pretendard', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display', 'Instrument Serif',
+      'Gowun Batang', 'Hahmlet', 'Song Myung', 'Press Serif'];
     const started = Date.now();
     const tick = () => {
       const missing = want.filter((f) => !loaded(f));

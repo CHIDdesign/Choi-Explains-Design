@@ -29,6 +29,22 @@ fs4('nanum-pen-script', 'nanum-pen-script-korean-400-normal.woff2', 'NanumPenScr
 fs4('nanum-pen-script', 'nanum-pen-script-latin-400-normal.woff2', 'NanumPenScript-latin.woff2');
 fs4('playfair-display', 'playfair-display-latin-700-italic.woff2', 'PlayfairDisplay-BoldItalic.woff2');
 fs4('playfair-display', 'playfair-display-latin-700-normal.woff2', 'PlayfairDisplay-Bold.woff2');
+// 디자인 v3(종이 콜라주): 예술적인 세리프 — 이탤릭 연도(Playfair 400·900 italic) · 영문 이탤릭(Instrument Serif) ·
+// 한글 명조(고운바탕 = 문장·인용·제목, 함렛 = 정밀한 큰 제목, 송명 = 포스터 같은 한 방). 모두 OFL
+fs4('playfair-display', 'playfair-display-latin-400-italic.woff2', 'PlayfairDisplay-Italic.woff2');
+fs4('playfair-display', 'playfair-display-latin-900-italic.woff2', 'PlayfairDisplay-BlackItalic.woff2');
+fs4('instrument-serif', 'instrument-serif-latin-400-normal.woff2', 'InstrumentSerif-Regular.woff2');
+fs4('instrument-serif', 'instrument-serif-latin-400-italic.woff2', 'InstrumentSerif-Italic.woff2');
+for (const w of ['400', '700']) {
+  fs4('gowun-batang', `gowun-batang-korean-${w}-normal.woff2`, `GowunBatang-${w}-korean.woff2`);
+  fs4('gowun-batang', `gowun-batang-latin-${w}-normal.woff2`, `GowunBatang-${w}-latin.woff2`);
+}
+for (const w of ['300', '700', '800']) {
+  fs4('hahmlet', `hahmlet-korean-${w}-normal.woff2`, `Hahmlet-${w}-korean.woff2`);
+  fs4('hahmlet', `hahmlet-latin-${w}-normal.woff2`, `Hahmlet-${w}-latin.woff2`);
+}
+fs4('song-myung', 'song-myung-korean-400-normal.woff2', 'SongMyung-korean.woff2');
+fs4('song-myung', 'song-myung-latin-400-normal.woff2', 'SongMyung-latin.woff2');
 
 // 데스크톱 프로그램(PySide6) 화면용 OTF — Qt 는 woff2 를 읽지 못한다
 const uiOut = path.join(out, 'ui');
