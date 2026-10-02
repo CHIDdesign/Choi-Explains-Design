@@ -17,6 +17,7 @@ BOXES = {"fullscreen": (1728, 838), "split": (1069, 644), "paper": (860, 644), "
 P = {
     "first_visible_s": 0.3, "open_ink_share": 0.35, "open_min_elements": 2,     # 06 4-1, motion_craft 2 (게이트 C4)
     "overlap_share": 0.12,                                                     # L27 요소 겹침(작은 쪽 넓이 대비)
+    "caption_zone": 0.90,                                                      # L28 전면 무대 아래 10% 는 자막이 올라오는 자리
     "stage_by_s": 1.5, "stage_share": 0.5,
     "same_frame_s": 0.1, "same_frame_max": 2,                                   # motion_craft 3
     "burst_window_s": 0.5, "burst_max": 3,
@@ -373,6 +374,12 @@ def lint(spec: dict, dur: float, words=None, box=BOXES["paper"]) -> list[Issue]:
             level = "warn" if "image" in pair and "text" in pair else "error"
             add("L27_overlap", level, f'요소가 겹친다({inter / small:.0%} - 기준 {P["overlap_share"]:.0%} 이하) - 자리를 옮기거나 등장·퇴장 시각을 나눈다',
                 [_name(i, els[i]), _name(j, els[j])])
+    # ── 자막 자리(L28, E2E 10/2: y=95 글자가 자막 상자와 겹쳤다) — 전면 무대 아래 10% 에는 글·숫자·칩·말풍선을 두지 않는다
+    if box == BOXES["fullscreen"]:
+        for i in range(n):
+            if els[i]["type"] in solid and bbs[i][3] > P["caption_zone"] * H:
+                add("L28_caption_zone", "error", f'아래 {100 - P["caption_zone"] * 100:.0f}% 는 자막 자리(y {els[i]["y"]:.0f} → 아래 끝 {bbs[i][3] / H:.0%}) - y 를 올린다',
+                    [_name(i, els[i])])
 
     # ── 진입 어휘·움직임 ─────────────────────────────────────────────
     kinds = [enter_of(e) for e in els]

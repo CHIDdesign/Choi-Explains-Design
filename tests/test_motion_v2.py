@@ -140,3 +140,16 @@ def test_v4_modern_elements_clean_and_lint():
     for e in out["elements"]:
         x0, y0, x1, y1 = lint.bbox(e, 1728, 838)
         assert x1 > x0 and y1 > y0, e["type"]
+
+
+def test_l28_caption_zone_text_is_an_error_only_on_the_fullscreen_stage():
+    """E2E 10/2: 전면 무대 y=95 글자가 자막 상자와 겹쳤다 — 아래 10% 는 자막 자리."""
+    spec = {"bg": "paper", "elements": [
+        {"type": "rect", "x": 50, "y": 50, "w": 90, "h": 80, "fill": "white", "at": 0},
+        {"type": "text", "x": 50, "y": 30, "size": 6, "text": "제목이 먼저", "at": 0},
+        {"type": "text", "x": 50, "y": 95, "size": 5, "text": "그래도 닮았다", "at": 0.6}]}
+    c = clean_spec(json.loads(json.dumps(spec)), 4.0)
+    full = [i.rule for i in lint.lint(c, 4.0, box=lint.BOXES["fullscreen"])]
+    assert "L28_caption_zone" in full
+    split = [i.rule for i in lint.lint(c, 4.0, box=lint.BOXES["split"])]
+    assert "L28_caption_zone" not in split
