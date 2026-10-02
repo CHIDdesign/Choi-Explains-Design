@@ -402,6 +402,7 @@ __all__ = ["RESEARCH", "SETPIECE", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MU
 CUT_REVIEW = _obj({
     "utterances": {"type": "array", "items": _obj({"id": INT, "keep": BOOL, "reason": STR})},
     "removals": {"type": "array", "items": _obj({"id": INT, "keep_removed": BOOL, "reason": STR})},
+    "audio_events": {"type": "array", "items": _obj({"id": INT, "cut": BOOL, "reason": STR})},   # 비언어 소리(기침 등)
     "notes": STR,
 })
 

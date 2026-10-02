@@ -253,7 +253,7 @@ class ScriptAligner:
             if not un:
                 u.status = "noise"
                 continue
-            if u.script_span and u.score >= 80:
+            if u.script_span and u.score >= self.match_threshold:   # 대본에 맞은 발화는 NG 패턴이 있어도 둔다(예전 80 → 66)
                 continue
             if un in FILLER_ONLY:
                 u.status = "meta"

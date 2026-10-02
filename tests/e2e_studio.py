@@ -95,7 +95,7 @@ def _seg_with(segs: dict[int, str], word: str) -> int:
 def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict:
     if agent == "cut_editor":  # 대본 + 컷 초안을 받는다(그림 없음)
         assert n_images == 0 and "# 전사와 컷 초안" in json.dumps(body, ensure_ascii=False)
-        return {"utterances": [], "removals": [], "notes": "초안 그대로"}
+        return {"utterances": [], "removals": [], "audio_events": [], "notes": "초안 그대로"}
     if agent == "colorist":  # 전사본 없이 비교 시트 + 원본 스코프 시트 두 장
         assert n_images == 2, n_images
         return {"look": "warm_film", "strength": 0.7, "exposure": 0.0, "warmth": 0.05, "saturation": 1.0,

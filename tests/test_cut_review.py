@@ -37,3 +37,40 @@ def test_apply_restores_wrong_cuts_and_cuts_what_rules_missed():
     assert remaining == removals[1:]                                    # 되살린 말은 지운 목록에서 빠진다
     assert [w.text for w in keep.words][:3] == ["좋은", "디자인은", "단순합니다."]   # 그 시각의 발화에 단어가 돌아왔다
     assert keep.start == 0.0 and rv.summary() == "되살린 발화 1 · 더 뺀 발화 1 · 되살린 말 1"
+
+
+def test_vocal_events_find_cough_between_words_and_default_cut_is_conservative():
+    """기침: VAD 말소리는 있는데 인식 단어가 없는 토막. 또렷이 떨어진 파열음만 AI 없이 자른다."""
+    import numpy as np
+    from studio.media.vocal_events import as_removals, default_cuts, vocal_events
+    sr = 16000
+    audio = np.zeros(sr * 6, dtype=np.float32)
+    rng = np.random.default_rng(1)
+    audio[int(1.0 * sr):int(1.8 * sr)] = 0.05 * np.sin(np.arange(int(0.8 * sr)) * 2 * np.pi * 180 / sr)   # 말 1
+    audio[int(2.4 * sr):int(2.7 * sr)] = 0.3 * rng.standard_normal(int(0.3 * sr)).astype(np.float32)        # 기침(큰 파열음)
+    audio[int(3.4 * sr):int(4.2 * sr)] = 0.05 * np.sin(np.arange(int(0.8 * sr)) * 2 * np.pi * 180 / sr)   # 말 2
+    audio[int(4.25 * sr):int(4.45 * sr)] = 0.004 * rng.standard_normal(int(0.2 * sr)).astype(np.float32)   # 말 끝의 숨(약함)
+    vad = [(1.0, 1.8), (2.4, 2.7), (3.4, 4.45)]
+    words = [Word("디자인은", 1.0, 1.4), Word("과정이다", 1.4, 1.8), Word("결과가", 3.4, 3.8), Word("전부가", 3.8, 4.2)]
+    ev = vocal_events(audio, vad, words)
+    kinds = {(e["start"], e["kind"]) for e in ev}
+    assert (2.4, "burst") in kinds, ev
+    cough = next(e for e in ev if e["start"] == 2.4)
+    assert cough["prev"] == "과정이다" and cough["next"] == "결과가" and cough["gap_prev"] > 0.5
+    assert default_cuts(ev) == [cough["id"]]                                   # 숨(약한 소리·말에 붙음)은 두고 기침만
+    rem = as_removals(ev, [cough["id"]], {cough["id"]: "헛기침"})
+    assert rem and rem[0]["start"] == 2.4 and rem[0]["reason"].startswith("비언어 소리")
+
+
+def test_draft_lists_events_and_apply_returns_event_cuts():
+    raw = _ws("좋은 디자인은 정직합니다.", 0.0)
+    u0 = Utterance(0, 0.0, 0.85, "좋은 디자인은 정직합니다.", "좋은 디자인은 정직합니다.", raw, script_span=(0, 10), score=91)
+    events = [{"id": 0, "start": 1.2, "end": 1.5, "dur": 0.3, "dbfs": -22.0, "kind": "burst", "prev": "정직합니다.", "next": "",
+               "gap_prev": 0.35, "gap_next": 9.9}]
+    text = cut_review.draft_text(parse_script("좋은 디자인은 정직합니다.").sentences, [u0], [], raw, events, {0: 0})
+    assert "# 비언어 소리" in text and "A0" in text and "파열음" in text and "(대본 91)" in text
+    res = {"utterances": [{"id": 0, "keep": True, "reason": "대본 문장"}], "removals": [],
+           "audio_events": [{"id": 0, "cut": True, "reason": "헛기침"}, {"id": 7, "cut": True, "reason": "없는 id"}], "notes": ""}
+    rv, remaining = cut_review.apply(res, [u0], [], raw)
+    assert u0.kept and rv.summary() == "초안 그대로"
+    assert cut_review.event_cuts(res, events) == ([0], {0: "헛기침"})

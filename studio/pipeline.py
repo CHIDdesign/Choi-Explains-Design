@@ -780,7 +780,7 @@ class Pipeline:
         self.utts, self.tags, rep = aligner.run(utts)
         self.align_report = rep.to_dict()
         self._note_passes(rep)
-        self._cut_review(parsed, [Word.from_dict(w) for w in tr.get("words", [])])
+        self._cut_review(parsed, [Word.from_dict(w) for w in tr.get("words", [])], audio, aligner)
         self.align_report["words_removed"] = self.removed
         write_json(self.work / "align.json", {"utterances": [u.to_dict() for u in self.utts],
                                               "tags": [t.to_dict() for t in self.tags],
@@ -817,15 +817,24 @@ class Pipeline:
             src["roles"] = roles
             write_json(self.work / "sources.json", src)
 
-    def _cut_review(self, parsed, raw: list[Word]) -> None:
-        """✂️ 컷 편집 총괄(Opus): 규칙이 만든 컷 초안(발화 남김/뺌 · 단어 정리)을 대본과 함께 보고 틀린 판단만 고친다.
-        AI 가 없거나 실패하면 규칙 초안 그대로(대본 충실 보증은 그대로 뒤에서 지킨다). 결과는 work/cut_review.json 캐시."""
+    def _cut_review(self, parsed, raw: list[Word], audio=None, aligner=None) -> None:
+        """✂️ 컷 편집 총괄(Opus) v2: 규칙이 만든 컷 초안(발화 남김/뺌 · 단어 정리)과 비언어 소리(기침·헛기침)를 대본과 함께
+        보고 발화마다 최종 결정을 쓴다. AI 가 없거나 실패하면 규칙 초안 그대로 + 또렷이 떨어진 파열음만 자른다(대본 충실 보증은
+        그대로 뒤에서 지킨다). 결과는 work/cut_review.json 캐시."""
+        from .media.vocal_events import as_removals, default_cuts, vocal_events
         from .text import cut_review
+        events = vocal_events(audio, self.vad, raw) if audio is not None else []
+        self.align_report["vocal_events"] = len(events)
         studio = self._ensure_studio()
         if studio is None:
+            ids = default_cuts(events)
+            if ids:
+                self.removed += as_removals(events, ids)
+                self.log(f"✂️ 비언어 소리 {len(events)}곳 중 또렷이 떨어진 파열음 {len(ids)}곳 삭제(AI 없음 — 나머지는 둠)")
             return
-        draft = cut_review.draft_text(parsed.sentences, self.utts, self.removed, raw)
-        key = text_hash(draft, "cut-v1")
+        pass_of = getattr(aligner, "_pass_of", None) if aligner is not None else None
+        draft = cut_review.draft_text(parsed.sentences, self.utts, self.removed, raw, events, pass_of)
+        key = text_hash(draft, "cut-v2")
         cached = read_json(self.work / "cut_review.json", {})
         res = cached.get("result") if cached.get("key") == key else None
         if res is None:
@@ -841,9 +850,13 @@ class Pipeline:
                 return
             write_json(self.work / "cut_review.json", {"key": key, "result": res})
         rv, self.removed = cut_review.apply(res, self.utts, self.removed, raw)
+        ids, reasons = cut_review.event_cuts(res, events)
+        if ids:
+            self.removed += as_removals(events, ids, reasons)
         self.align_report["cut_review"] = {"restored_utts": rv.restored_utts, "cut_utts": rv.cut_utts,
-                                           "restored_removals": rv.restored_removals, "notes": rv.notes}
-        self.log(f"✂️ 컷 편집 총괄: {rv.summary()}" + (f" — {rv.notes}" if rv.notes and rv.notes != rv.summary() else ""))
+                                           "restored_removals": rv.restored_removals, "event_cuts": ids, "notes": rv.notes}
+        self.log(f"✂️ 컷 편집 총괄: {rv.summary()}" + (f" · 비언어 소리 {len(ids)}/{len(events)}곳 삭제" if events else "")
+                 + (f" — {rv.notes}" if rv.notes and rv.notes != rv.summary() else ""))
 
     def stage_face(self) -> None:
         """얼굴 추적 + 화면 품질 표본 — 카메라마다. 원본이 여러 개면 얼굴 트랙은 묶음 기준 카메라를 따라 잇는다
