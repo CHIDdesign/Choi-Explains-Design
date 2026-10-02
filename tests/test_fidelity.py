@@ -54,7 +54,7 @@ def test_restore_prefers_the_take_between_neighbors_then_the_later_take():
 def _fake(utts, keeps_words=None):
     logs: list[str] = []
     me = SimpleNamespace(spec=SimpleNamespace(script=SCRIPT), utts=utts, align_report={}, log=logs.append,
-                         info=SimpleNamespace(duration=60.0), fps=30.0,
+                         info=SimpleNamespace(duration=60.0), fps=30.0, vad=[],
                          smap=SimpleNamespace(clamp_keeps=lambda k, fps: k))
     me._script_sents = lambda: fidelity.sentences_of(parse_script(SCRIPT).sentences)
     raw = [w for u in utts for w in u.words] if keeps_words is None else keeps_words
@@ -141,3 +141,50 @@ def test_speech_recognized_as_another_take_is_not_inserted():
     out = Pipeline._ensure_script_keeps(me, [Span(0.0, 11.0), Span(15.9, 19.0)])
     assert out == [Span(0.0, 11.0), Span(15.9, 19.0)]
     assert me.fidelity["missing"] == ["셋째, 여백은 시선이 쉴 자리를 만듭니다."]
+
+
+def test_duplicate_script_sentence_shares_coverage_and_is_never_restored():
+    """대본에 전사 흔적으로 같은 문장이 두 번(실제 실행 10/2) — 앞 문장과 같은 것으로 보고 다른 테이크를 또 넣지 않는다."""
+    script = SCRIPT.replace("둘째, 형태는 기능을 따라야 합니다. ", "둘째, 형태는 기능을 따라야 합니다. 둘째, 형태는 기능을 따라야 합니다. ")
+    sents = fidelity.sentences_of(parse_script(script).sentences)
+    assert sents[3].dup_of == 2 and not fidelity.restorable(sents[3]) and fidelity.restorable(sents[2])
+    edit = [w for t, t0 in SAID for w in _words(t, t0)]                 # 한 번만 말한 녹음
+    cov = fidelity.coverage(sents, edit)
+    assert cov[3] == cov[2] >= fidelity.COVERED and all(c >= fidelity.COVERED for c in cov), cov
+    # 비슷하지만 다른 문장은 중복이 아니다
+    s2 = fidelity.sentences_of(parse_script("좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.").sentences)
+    assert s2[1].dup_of is None
+
+
+def test_cut_editor_script_issues_make_sentences_optional():
+    sents = fidelity.sentences_of(parse_script(SCRIPT).sentences)
+    notes = fidelity.apply_script_issues(sents, [{"sentence": 4, "kind": "mangled", "of": 0, "note": "말이 끊김"},
+                                                 {"sentence": 3, "kind": "duplicate", "of": 2, "note": ""},
+                                                 {"sentence": 99, "kind": "fragment", "of": 0, "note": ""}])
+    assert sents[3].optional and sents[2].dup_of == 1 and len(notes) == 2
+    utts = [_utt(i, t, t0) for i, (t, t0) in enumerate(SAID) if i != 3]      # 넷째 문장을 아예 말하지 않았다
+    me, _ = _fake(utts)
+    me._script_sents = lambda: sents
+    out = Pipeline._ensure_script_keeps(me, [Span(0.0, 19.5)])
+    assert out == [Span(0.0, 19.5)] and me.fidelity["missing"] == [] and sents[3].text in me.fidelity["script_issues"]
+
+
+def test_editor_cut_take_is_not_restored_when_the_sentence_is_partly_covered():
+    """✂️ 컷 총괄이 다른 테이크(말이 조금 다른 완성 테이크)를 고르고 verbatim 테이크를 뺐다 — 규칙이 뺀 테이크를 되돌려
+    같은 말을 두 번 넣지 않는다. 그 문장이 거의 없을 때(30% 미만)만 안전망으로 되살린다."""
+    said = list(SAID)
+    said[2] = ("둘째 모양은 쓰임을 따라가죠", 8.0)                              # 총괄이 고른 테이크(대본과 조금 다름)
+    utts = [_utt(i, t, t0) for i, (t, t0) in enumerate(said)]
+    cut = _utt(9, "둘째 형태는 기능을 따라야 합니다", 30.0, status="editor_cut")   # 총괄이 뺀 verbatim 테이크
+    raw = [w for u in utts + [cut] for w in u.words]
+    me, _ = _fake(utts + [cut], raw)
+    sents = fidelity.sentences_of(parse_script(SCRIPT).sentences)
+    cov = fidelity.coverage(sents, [w for u in utts for w in u.words])
+    assert 0.3 <= cov[2] < fidelity.COVERED, cov
+    out = Pipeline._ensure_script_keeps(me, [Span(0.0, 19.5)])
+    assert out == [Span(0.0, 19.5)] and me.fidelity["restored"] == []
+    # 그 문장이 아예 없으면(30% 미만) 총괄이 뺀 테이크라도 되살린다(안전망)
+    utts2 = [_utt(i, t, t0) for i, (t, t0) in enumerate(SAID) if i != 2]
+    me2, _ = _fake(utts2 + [cut], [w for u in utts2 + [cut] for w in u.words])
+    out2 = Pipeline._ensure_script_keeps(me2, [Span(0.0, 19.5)])
+    assert any(k.start <= 30.1 and k.end >= 31.5 for k in out2), out2

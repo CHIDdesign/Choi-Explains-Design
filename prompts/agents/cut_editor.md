@@ -32,4 +32,7 @@
 - `utterances`: **모든 U** 에 대해 [{id, keep: true/false, reason}] (초안과 같아도 적는다 — 한 줄 이유면 된다. 빠진 U 는 초안대로).
 - `removals`: [{id: R번호, keep_removed: true(되살림)/false(지운 대로), reason}] — 되살릴 것만 적어도 된다.
 - `audio_events`: [{id: A번호, cut: true/false, reason}] — 자를 것만 적어도 된다.
+- `script_issues`: 대본 **자체**의 문제 [{sentence: 대본 번호, kind: duplicate|mangled|fragment, of: duplicate 면 같은 앞 문장 번호(아니면 0), note}].
+  대본에 전사 흔적이 남아 같은 문장이 두 번 있거나(duplicate) 뭉개진·끊긴 문장(mangled·fragment)이 있으면 적는다 — 앱의 대본
+  충실 검사가 그 문장을 '빠졌다'고 보고 다른 테이크를 또 넣지 않도록. 없으면 [].
 - `notes`: 한두 줄(무엇을 고쳤는지, 대본에서 빠진 대목이 있으면 어디인지).

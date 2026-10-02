@@ -403,6 +403,8 @@ CUT_REVIEW = _obj({
     "utterances": {"type": "array", "items": _obj({"id": INT, "keep": BOOL, "reason": STR})},
     "removals": {"type": "array", "items": _obj({"id": INT, "keep_removed": BOOL, "reason": STR})},
     "audio_events": {"type": "array", "items": _obj({"id": INT, "cut": BOOL, "reason": STR})},   # 비언어 소리(기침 등)
+    # 대본 자체의 문제(전사 흔적): duplicate(of = 같은 앞 문장 번호) · mangled · fragment → 그 문장은 복원하지 않는다
+    "script_issues": {"type": "array", "items": _obj({"sentence": INT, "kind": STR, "of": INT, "note": STR})},
     "notes": STR,
 })
 

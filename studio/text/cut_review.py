@@ -29,6 +29,7 @@ class CutReview:
     restored_removals: list[int] = field(default_factory=list)
     notes: str = ""
     reasons: dict[str, str] = field(default_factory=dict)
+    script_issues: list[dict] = field(default_factory=list)   # 대본 자체의 문제(duplicate·mangled·fragment) → fidelity.apply_script_issues
 
     def summary(self) -> str:
         parts = []
@@ -95,6 +96,7 @@ def apply(result: dict[str, Any], utts: list[Utterance], removals: list[dict], r
     """Opus 의 판단을 적용한다. 반환: (요약, 남은 단어 정리 목록). 되살린 말의 단어는 그 시각의 발화에 끼워 넣는다.
     v2: 답에 모든 발화가 올 수 있다(초안과 같은 판단은 그대로, 다른 것만 바뀐다)."""
     rv = CutReview(notes=str(result.get("notes", ""))[:300])
+    rv.script_issues = [i for i in (result.get("script_issues") or []) if isinstance(i, dict)][:40]
     by_id = {u.id: u for u in utts}
     for d in result.get("utterances", []) or []:
         u = by_id.get(int(d.get("id", -1)))

@@ -23,6 +23,7 @@ from .align import norm
 COVERED = 0.7          # 이만큼 들리면 그 문장은 편집본에 있다(인식 오차 감안 — 온전한 문장은 보통 0.85 이상)
 MIN_GAIN = 0.25        # 되살린 뒤 이만큼은 더 들려야 되살린다(엉뚱한 곳을 붙이지 않게)
 MIN_CHARS = 5          # 이보다 짧은 문장(“네.”)은 따지지 않는다
+DUP_RATIO = 92         # 대본에 바로 앞 문장과 이만큼 같은 문장이 또 있으면 전사 흔적(같은 문장 두 번) — 앞 문장과 같은 것으로 본다
 
 
 @dataclass
@@ -30,6 +31,8 @@ class Sentence:
     idx: int
     text: str
     n: str                              # norm(text)
+    dup_of: Optional[int] = None        # 대본에 같은 문장이 연달아 있을 때(전사 흔적) 앞 문장의 목록 위치 — 따로 찾지도 되살리지도 않는다
+    optional: bool = False              # 뭉개진·끊긴 대본 문장(✂️ 컷 총괄이 표시) — 빠져도 복원하지 않는다(보고만)
 
 
 @dataclass
@@ -43,12 +46,54 @@ class Restore:
 
 
 def sentences_of(sentences: Iterable[tuple[int, int, str]]) -> list[Sentence]:
-    out = []
+    out: list[Sentence] = []
     for i, (_, _, text) in enumerate(sentences):
         n = norm(text)
         if len(n) >= MIN_CHARS:
-            out.append(Sentence(i, text.strip(), n))
+            s = Sentence(i, text.strip(), n)
+            if out and fuzz.ratio(out[-1].n, n) >= DUP_RATIO:       # 실제 실행 10/2: 대본에 같은 문장이 두 번 → 끊긴 테이크를 또 넣었다
+                s.dup_of = len(out) - 1
+            out.append(s)
     return out
+
+
+def restorable(s: Sentence) -> bool:
+    """복원 대상인 문장 — 중복(앞 문장과 같음)·뭉개진 문장은 아니다."""
+    return s.dup_of is None and not s.optional
+
+
+def apply_script_issues(sents: list[Sentence], issues: Iterable[dict]) -> list[str]:
+    """✂️ 컷 총괄(Claude)이 대본 자체에서 본 문제를 반영한다: duplicate(of = 같은 앞 문장 번호) → 앞 문장과 같은 것으로,
+    mangled·fragment → 빠져도 복원하지 않는다. 번호는 프롬프트의 [n](1부터, 대본 문장 순서). 반환: 로그용 한 줄들."""
+    by_idx = {s.idx: k for k, s in enumerate(sents)}
+    notes: list[str] = []
+    for it in issues or []:
+        if not isinstance(it, dict):
+            continue
+        try:
+            k = by_idx.get(int(it.get("sentence", 0)) - 1)
+        except (TypeError, ValueError):
+            continue
+        if k is None:
+            continue
+        kind = str(it.get("kind", "")).strip()
+        if kind == "duplicate":
+            try:
+                j = by_idx.get(int(it.get("of") or 0) - 1)
+            except (TypeError, ValueError):
+                j = None
+            if j is None:
+                j = k - 1 if k > 0 else None
+            if j is not None and j < k:
+                sents[k].dup_of = j
+            else:
+                sents[k].optional = True
+        elif kind in ("mangled", "fragment"):
+            sents[k].optional = True
+        else:
+            continue
+        notes.append(f"[{sents[k].idx + 1}] {kind}" + (f": {str(it.get('note', ''))[:50]}" if it.get("note") else ""))
+    return notes
 
 
 def _stream(words: Sequence[Word]) -> tuple[str, list[int]]:
@@ -82,6 +127,9 @@ def coverage(sents: list[Sentence], words: Sequence[Word]) -> list[float]:
     out: list[float] = []
     cursor = 0
     for s in sents:
+        if s.dup_of is not None and s.dup_of < len(out):      # 앞 문장과 같은 문장 — 같은 만큼 들린 것(따로 찾으면 다른 테이크를 또 넣는다)
+            out.append(out[s.dup_of])
+            continue
         best, best_end = 0.0, cursor
         windows = [(max(0, cursor - 60), min(len(text), cursor + 4 * len(s.n) + 400), COVERED),
                    (0, len(text), GLOBAL)]

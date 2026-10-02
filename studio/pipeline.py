@@ -853,8 +853,12 @@ class Pipeline:
         ids, reasons = cut_review.event_cuts(res, events)
         if ids:
             self.removed += as_removals(events, ids, reasons)
+        issues = fidelity.apply_script_issues(self._script_sents(), rv.script_issues)
+        if issues:
+            self.log("📜 컷 총괄이 본 대본 자체의 문제(그 문장은 다시 넣지 않음): " + " · ".join(issues[:4]))
         self.align_report["cut_review"] = {"restored_utts": rv.restored_utts, "cut_utts": rv.cut_utts,
-                                           "restored_removals": rv.restored_removals, "event_cuts": ids, "notes": rv.notes}
+                                           "restored_removals": rv.restored_removals, "event_cuts": ids, "notes": rv.notes,
+                                           "script_issues": rv.script_issues}
         self.log(f"✂️ 컷 편집 총괄: {rv.summary()}" + (f" · 비언어 소리 {len(ids)}/{len(events)}곳 삭제" if events else "")
                  + (f" — {rv.notes}" if rv.notes and rv.notes != rv.summary() else ""))
 
@@ -1957,7 +1961,7 @@ class Pipeline:
             runs = fidelity.runs_of([u.words for u in cands])
             changed = False
             for i, s in enumerate(sents):
-                if cov[i] >= 0.35:
+                if cov[i] >= 0.35 or not fidelity.restorable(s):
                     continue
                 after, before = fidelity.neighbors(i, cov, times)
                 r = fidelity.find_restore(s, runs, in_edit=lambda w: False, after=after, before=before)
@@ -2015,13 +2019,22 @@ class Pipeline:
         cov = fidelity.coverage(sents, edit_words)
         times = fidelity.sentence_times(sents, edit_words)
         runs = fidelity.runs_of([u.words for u in build_utterances(raw)])
+        # ✂️ 컷 총괄이 뺀 발화는 그 문장이 거의 없을 때(30% 미만)만 복원 후보 — 총괄이 다른 테이크를 골랐는데 규칙이 되돌려
+        # 같은 말이 두 번 나오던 것(실제 실행 10/2, 검수 R18)
+        ec = [(u.start - 0.05, u.end + 0.05) for u in self.utts if u.status == "editor_cut"]
+
+        def in_ec(w: Word) -> bool:
+            m = (w.start + w.end) / 2
+            return any(a <= m <= b for a, b in ec)
+
+        runs_strict = [[w for w in run if not in_ec(w)] for run in runs] if ec else runs
         adds: list[Span] = []
         restores: list[fidelity.Restore] = []
         for i, s in enumerate(sents):
-            if cov[i] >= fidelity.COVERED:
+            if cov[i] >= fidelity.COVERED or not fidelity.restorable(s):
                 continue
             after, before = fidelity.neighbors(i, cov, times)
-            r = fidelity.find_restore(s, runs, in_edit=in_edit, after=after, before=before)
+            r = fidelity.find_restore(s, runs if cov[i] < 0.3 else runs_strict, in_edit=in_edit, after=after, before=before)
             if r is None or r.ratio - cov[i] < fidelity.MIN_GAIN:
                 continue
             adds.append(Span(max(0.0, r.start - 0.06), min(self.info.duration, r.end + 0.12)))
@@ -2030,7 +2043,7 @@ class Pipeline:
         # 빠졌으면 묶어서)의 앞뒤 문장이 편집본에 있고, 그 사이 원본에 편집본에 없는 말소리(VAD)가 그 문장들을 말할 만한
         # 길이로 있으면 그 말소리를 넣고 자막은 대본 문장으로
         rate = sum(len(norm(w.text)) for w in edit_words) / max(1.0, sum(w.end - w.start for w in edit_words))
-        lost = [i for i, s in enumerate(sents) if cov[i] < fidelity.COVERED
+        lost = [i for i, s in enumerate(sents) if cov[i] < fidelity.COVERED and fidelity.restorable(s)
                 and not any(r.sentence == s.idx for r in restores)]
         groups: list[list[int]] = []
         for i in lost:
@@ -2067,7 +2080,7 @@ class Pipeline:
                 t += dur
             self.log(f"📜 인식기가 받아 적지 못한 말소리 {d:.1f}초를 대본 문장 "
                      + " · ".join(f"「{sents[i].text[:20]}」" for i in g) + " 자리로 넣습니다")
-        unresolved = [(i, s) for i, s in enumerate(sents) if cov[i] < fidelity.COVERED
+        unresolved = [(i, s) for i, s in enumerate(sents) if cov[i] < fidelity.COVERED and fidelity.restorable(s)
                       and not any(r.sentence == s.idx for r in restores)]
         # 그 문장 자리(앞뒤 문장 사이)의 편집본 발화가 문장을 절반 넘게 담으면 '인식이 달라 확인 못 함'(소리는 들어 있다)
         uncertain = [s.text for i, s in unresolved
@@ -2077,6 +2090,7 @@ class Pipeline:
         missing = [s.text for s in unresolved if s.text not in uncertain]
         self.fidelity = {"sentences": len(sents), "restored": [r.text for r in restores], "missing": missing,
                          "uncertain": uncertain,
+                         "script_issues": [s.text for s in sents if not fidelity.restorable(s)],   # 대본 자체의 중복·뭉개짐
                          "coverage": round(sum(min(1.0, c) for c in cov) / max(1, len(cov)), 3)}
         self.align_report["fidelity"] = self.fidelity
         if missing and not getattr(self, "_fid_logged", False):
