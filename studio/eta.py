@@ -27,7 +27,8 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "align@ai": lambda f: 60 + 8 * f["m"],     # ✂️ 컷 편집 총괄(Opus)이 초안을 검토
     "face": lambda f: 10 + 8 * f.get("mv", f["m"]) * f["k"],        # mv: 원본 영상 길이 합(다시점이면 카메라 수만큼)
     "grade": lambda f: 25 + 3 * f.get("mv", f["m"]),
-    "director@ai": lambda f: 150 + 20 * f["m"],
+    # 자료 조달(사다리)이 모션 디자이너 앞으로 왔다(13 문서 2-2) — 병렬이 직렬로 바뀌어 약 2~3분 늘어난다
+    "director@ai": lambda f: 300 + 20 * f["m"],
     "director@rule": lambda f: 15,
     "proxy": lambda f: 15 + 25 * f.get("mv", f["m"]) * f["k"],
     "verify@gpu": lambda f: 30 + 12 * f["out_s"] / 60,     # 편집된 목소리 다시 인식(최대 2차)

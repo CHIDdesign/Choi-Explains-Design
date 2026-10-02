@@ -12,6 +12,7 @@ import {CycleDiagram, DoubleDiamond, MatrixDiagram, ProcessDiagram, PyramidDiagr
 import {CompareCard, ListCard, TimelineCard} from './Lists';
 import {PhotoCard} from './Photo';
 import {BrollCard} from './Broll';
+import {EvidenceCard} from '../longform/Evidence';
 import {MotionScene} from '../motion/MotionScene';
 import {HtmlCard} from '../card/HtmlCard';
 import {PaperGraphic, referenceGraphic} from '../paper/PaperGraphic';
@@ -40,6 +41,7 @@ export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> 
     surface={p.surface} id={p.id} /> : null),
   card: HtmlCard,
   broll: BrollCard,
+  evidence: EvidenceCard,
   title: TitleCard,
   lower_third: LowerThird,
   recap: RecapBoard,
@@ -75,6 +77,16 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   skin, paperTexture, chapterTag = '', faceX = 0.5}) => {
   const Comp = TEMPLATE_COMPONENTS[g.template];
   if (!Comp) return null;
+  // 증거 자료는 자기 종이·창·캡션을 다 가진 전면 그래픽 — 스킨·레이아웃과 무관하게 화면 전체(03b 3절 EvidenceFrame)
+  if (g.template === 'evidence') {
+    const s0 = mkSurface(theme, 'paper');
+    return (
+      <AbsoluteFill>
+        <Comp id={g.id} data={g.data} fps={fps} theme={theme} brand={brand} episode={episode} layout={g.layout}
+          surface={s0} frame={frame} dur={dur} box={{w: W, h: H}} />
+      </AbsoluteFill>
+    );
+  }
   // 자유 HTML 카드는 자기 배경·타이포를 다 가지고 있으니 스킨과 무관하게 아래 풀스크린/패널 경로로
   if (g.template !== 'card' && (g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
     return <PaperGraphic g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand}

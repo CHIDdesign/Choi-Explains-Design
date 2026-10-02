@@ -21,7 +21,7 @@ from ..director.claude import ClaudeClient, DirectorError, extract_json
 from ..director.context import JobBrief, load_prompt, shorts_instruction
 from ..motion.card import STYLES, clean_card, fragment
 from ..motion.spec import clean_spec
-from ..util import CancelToken, LogFn, noop_log
+from ..util import Cancelled, CancelToken, LogFn, noop_log
 from . import schemas as S
 
 
@@ -40,11 +40,12 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("cut_editor", "✂️ 컷 편집 총괄", "cut_editor", S.CUT_REVIEW, "high", 16000),
     Agent("editor", "✂️ 편집 감독", "editor", S.EDITOR, "medium", 16000),
     Agent("motion", "🎨 모션 디자이너", "motion", S.MOTION, "high", 48000),
-    Agent("stock", "🎞 자료 리서처", "stock", S.STOCK, "medium", 16000),
+    # 자료 리서처 v2: 증거 계획(need·트리트먼트) — 증거 설계가 영상의 인상을 좌우한다(13 문서 3절: medium → high)
+    Agent("stock", "🎞 자료 리서처", "visual_researcher", S.EVIDENCE, "high", 24000),
     Agent("captions", "🔤 자막 디자이너", "captions", S.CAPTIONS, "medium", 24000),
     Agent("shorts", "📱 숏폼 PD", "shorts", S.SHORTS, "high", 32000),
     Agent("copy", "✍️ 카피라이터", "copy", S.COPY, "medium", 16000),
-    Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick", S.STOCK_PICK, "low", 8000),
+    Agent("stock_pick", "🎞 자료 리서처(선택)", "stock_pick_v2", S.EVIDENCE_PICK, "low", 8000),
     Agent("portrait_pick", "📷 자료 리서처(인물 사진)", "portrait_pick", S.STOCK_PICK, "low", 8000),
     Agent("art_director", "🧐 아트 디렉터", "art_director", S.QA, "high", 24000),
     Agent("motion_revise", "🎨 모션 디자이너(수정)", "motion_revise", S.MOTION_REVISE, "high", 24000),
@@ -151,6 +152,35 @@ def _g(template: str, layout: str, start: int, end: int, word: str = "", **kw: A
     return g
 
 
+def legacy_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """조달 결과가 없을 때 증거 항목 → 예전 그래픽: 고유명사 → photo(wiki), 화자 자료 → photo(자료 폴더 이름으로 찾음),
+    스톡 → broll. 1차 자료·화면·재현은 조달 없이는 만들 수 없어 뺀다(로그는 사다리 쪽)."""
+    out = []
+    for it in items:
+        s = it.get("subject") if isinstance(it.get("subject"), dict) else {}
+        name = str(s.get("name_ko") or s.get("name_en") or "").strip()
+        need, tr = it.get("need"), it.get("treatment") or "hero"
+        layout = "pip" if tr == "pip" else "fullscreen"
+        seg, end, word = it.get("start_seg", -1), it.get("end_seg", it.get("start_seg", -1)), it.get("start_word", "")
+        if need == "entity" and name:
+            kind = {"site_app": "brand", "brand": "brand", "person": "person"}.get(str(s.get("kind") or ""), "")
+            out.append(_g("photo", layout, seg, seg, word, title=it.get("label") or name, image=name, subtitle="",
+                          body="", reason="자료 리서처: " + str(it.get("claim", ""))[:60], wiki=True, entity=kind,
+                          name_en=str(s.get("name_en") or "")))
+        elif need == "own_material" and (it.get("local_file") or name):
+            out.append(_g("photo", layout, seg, seg, word, title=it.get("label") or "", image=it.get("local_file") or name,
+                          reason="자료 리서처(화자 자료): " + str(it.get("claim", ""))[:60], wiki=True))
+        elif need == "stock":
+            st = it.get("stock") if isinstance(it.get("stock"), dict) else {}
+            if st.get("query_en") or st.get("query_ko"):
+                out.append(_g("broll", layout, seg, end, word, title=str(it.get("label") or "")[:14],
+                              image=st.get("query_en", ""), reason="자료 리서처: " + str(it.get("claim", ""))[:60],
+                              stock={"kind": st.get("kind") or "photo", "query_en": st.get("query_en", ""),
+                                     "query_ko": st.get("query_ko", ""), "purpose": str(it.get("claim", ""))[:60],
+                                     "must_show": it.get("must_show", "")}))
+    return out
+
+
 def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[str, Any], dict[str, Any]]:
     """에이전트 결과 → (raw_long, raw_shorts). 없는 결과는 빈 값으로."""
     brief = results.get("director") or {}
@@ -191,7 +221,17 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
                            reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card,
                            sequence_id=str(cd.get("sequence_id") or "")))
         n_card += 1
-    # 📷 고유명사 자료 사진 — 위키백과 문서의 대표 이미지(인물·작품·사물·브랜드·장소·종교). 없으면 스톡으로 넘기지 않는다
+    # 🎞 자료 리서처 v2 — 증거 항목(need·트리트먼트) + 조달 결과(사다리) → 그래픽(studio/assets/graphics.py)
+    ev_items = [it for it in stock.get("items", []) or [] if isinstance(it, dict)]
+    if ev_items:
+        outcomes = results.get("evidence_outcomes")
+        if isinstance(outcomes, list) and len(outcomes) == len(ev_items):
+            from ..assets.graphics import to_graphics
+            g_ev, _drawn = to_graphics(ev_items, outcomes, log=log)
+            graphics += g_ev
+        else:
+            graphics += legacy_evidence(ev_items)      # 조달 전(콜백 없음·실패): 예전 경로(자료 사진·스톡 단계)가 찾는다
+    # 📷 고유명사 자료 사진(v1 스키마 — 저장된 계획 재실행용) — 위키백과 문서의 대표 이미지. 없으면 스톡으로 넘기지 않는다
     for ph in stock.get("photos", []) or []:
         if not isinstance(ph, dict):
             continue
@@ -260,6 +300,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "pacing_notes": editor.get("pacing_notes", ""), "caption_notes": caps.get("notes", ""),
             "motion_scenes": n_scene, "cards": n_card, "stock_requests": len(stock.get("requests", []) or []),
             "wiki_photos": len(stock.get("photos", []) or []),
+            "evidence_items": len(ev_items), "evidence_notes": str(stock.get("notes", "") or "")[:400],
             "integrity": brief.get("integrity") or {},
         },
     }
@@ -286,6 +327,8 @@ class Studio:
         self.system = studio_system_prompt()
         self.results: dict[str, Any] = {}
         self.errors: dict[str, str] = {}
+        self.materials: tuple[str, Optional[bytes]] = ("", None)        # ④ 자료 폴더 목록 + 썸네일 시트(자료 리서처에게)
+        self.evidence: tuple[str, Optional[bytes]] = ("", None)         # 확보 목록 + 컨택트 시트(모션 디자이너에게)
 
     # ------------------------------------------------------------------
     def call(self, key: str, ctx: str, instruction: str, *, images=None) -> dict[str, Any]:
@@ -301,7 +344,9 @@ class Studio:
         text = (text.replace("{{title}}", brief.title)
                 .replace("{{brief}}", compact_brief(director))
                 .replace("{{caption_direction}}", str(director.get("caption_direction", "")) or "절제된 에디토리얼")
-                .replace("{{user_direction}}", direction_block(self.direction)))
+                .replace("{{user_direction}}", direction_block(self.direction))
+                .replace("{{materials}}", self.materials[0] or "(자료 폴더 없음)")
+                .replace("{{evidence}}", self.evidence[0] or "(자료 리서처의 확보 목록 없음 — 이번에는 자료 조달이 모션보다 먼저 끝나지 않았다)"))
         if key == "shorts":
             ideas = json.dumps(director.get("shorts_ideas", []), ensure_ascii=False)
             text = (shorts_instruction(brief) + f"\n\n## 총괄 감독의 숏폼 아이디어(참고)\n{ideas}\n"
@@ -311,8 +356,13 @@ class Studio:
         return text
 
     def plan(self, brief: JobBrief, ctx: str, *, shorts_count: int,
-             progress: Callable[[float], None] = lambda f: None) -> tuple[dict[str, Any], dict[str, Any]]:
-        """🎬 → 병렬 전문가 → 합치기. 총괄 감독이 실패하면 DirectorError."""
+             progress: Callable[[float], None] = lambda f: None,
+             procure: Optional[Callable[[dict[str, Any], int], dict[str, Any]]] = None,
+             materials: tuple[str, Optional[bytes]] = ("", None)) -> tuple[dict[str, Any], dict[str, Any]]:
+        """🎬 → 전문가들. 자료가 먼저, 모션이 나중(13 문서 2-2): 🎞 자료 리서처(증거 계획) → procure(조달 사다리 →
+        확보 목록·컨택트 시트, 부족하면 보충 요청 블록) → 🎨 모션 디자이너(확보한 자료를 받고 설계). 나머지 전문가는 그동안
+        동시에. 총괄 감독이 실패하면 DirectorError."""
+        self.materials = materials
         self.log("🎬 총괄 감독: 전사본을 읽고 크리에이티브 브리프 작성")
         director = self.call("director", ctx, load_prompt("agents/director.md")
                              .replace("{{title}}", brief.title)
@@ -325,31 +375,78 @@ class Studio:
 
         jobs = [k for k in SPECIALISTS if not (k == "stock" and not self.use_stock)
                 and not (k == "shorts" and shorts_count <= 0)]
+        chain = procure is not None and "stock" in jobs and "motion" in jobs
         done = [0]
 
-        def run(key: str) -> tuple[str, Optional[dict[str, Any]]]:
+        def run(key: str, extra: str = "") -> tuple[str, Optional[dict[str, Any]]]:
             if self.cancel:
                 self.cancel.check()
+            imgs = None
+            if key == "stock" and self.materials[1]:
+                imgs = [("자료폴더", self.materials[1], "image/jpeg")]
+            if key == "motion" and self.evidence[1]:
+                imgs = [("확보자료", self.evidence[1], "image/jpeg")]
             try:
-                res = self.call(key, ctx, self._instruction(key, brief, director))
+                res = self.call(key, ctx, self._instruction(key, brief, director) + extra, images=imgs)
                 return key, res
             except DirectorError as e:
                 self.errors[key] = str(e)
                 self.log(f"{AGENTS[key].label}: 실패({e}) → 이 파트 없이 진행")
                 return key, None
             finally:
-                done[0] += 1
-                progress(0.3 + 0.7 * done[0] / max(1, len(jobs)))
+                if not extra:
+                    done[0] += 1
+                    progress(0.3 + 0.7 * done[0] / max(1, len(jobs)))
 
-        self.log("동시 작업: " + " · ".join(AGENTS[k].label for k in jobs))
+        def research_then_motion() -> list[tuple[str, Optional[dict[str, Any]]]]:
+            out = [run("stock")]
+            res = out[0][1]
+            if res is not None and procure is not None:
+                try:
+                    self._procure(res, procure, run)
+                except Cancelled:
+                    raise
+                except Exception as e:  # noqa: BLE001 - 조달이 실패해도 모션은 계속(자료는 예전 단계가 찾는다)
+                    self.log(f"🎞 자료 조달 실패 → 모션 디자이너는 확보 목록 없이: {e}")
+                    self.results.pop("evidence_outcomes", None)
+            out.append(run("motion"))
+            return out
+
+        self.log("동시 작업: " + " · ".join(AGENTS[k].label for k in jobs)
+                 + (" (🎞 자료 → 조달 → 🎨 모션은 차례로)" if chain else ""))
         with ThreadPoolExecutor(max_workers=min(self.workers, len(jobs) or 1)) as pool:
-            for key, res in pool.map(run, jobs):
-                if res is not None:
-                    self.results[key] = res
+            futs = [pool.submit(run, k) for k in jobs if not (chain and k in ("stock", "motion"))]
+            if chain:
+                futs.append(pool.submit(research_then_motion))
+            for f in futs:
+                r = f.result()
+                for key, res in (r if isinstance(r, list) else [r]):
+                    if res is not None:
+                        self.results[key] = res
         if self.cancel:
             self.cancel.check()
         self._report()
         return merge_plan(self.results, log=self.log)
+
+    def _procure(self, res: dict[str, Any], procure: Callable[[dict[str, Any], int], dict[str, Any]],
+                 run: Callable[..., tuple[str, Optional[dict[str, Any]]]]) -> None:
+        """조달 1회 → (부족하면) 자료 리서처 보충 호출 1회 → 조달 → 확보 목록. 보충분은 res["items"] 뒤에 붙는다."""
+        pr = procure(res, 1)
+        outcomes = list(pr.get("outcomes") or [])
+        back = str(pr.get("backfill") or "").strip()
+        if back:
+            self.log("🎞 자료가 부족합니다 → 자료 리서처 보충 호출(1회): " + back.splitlines()[0][:80])
+            _, more = run("stock", "\n\n" + back)
+            add = [it for it in (more or {}).get("items", []) or [] if isinstance(it, dict)]
+            if add:
+                pr2 = procure({"items": add, "notes": (more or {}).get("notes", "")}, 2)
+                res["items"] = list(res.get("items") or []) + add
+                outcomes += list(pr2.get("outcomes") or [])
+                pr = {**pr, "brief": pr2.get("brief") or pr.get("brief"), "sheet": pr2.get("sheet") or pr.get("sheet")}
+        for n, o in enumerate(outcomes):
+            o["i"] = n
+        self.results["evidence_outcomes"] = outcomes
+        self.evidence = (str(pr.get("brief") or ""), pr.get("sheet"))
 
     def _report(self) -> None:
         r = self.results
@@ -359,7 +456,14 @@ class Studio:
         if "motion" in r:
             parts.append(f"🎨 그래픽 {len(r['motion'].get('graphics', []))} · 모션 장면 {len(r['motion'].get('scenes', []))}")
         if "stock" in r:
-            parts.append(f"🎞 스톡 요청 {len(r['stock'].get('requests', []))}")
+            items = r["stock"].get("items", []) or []
+            if items:
+                needs: dict[str, int] = {}
+                for it in items:
+                    needs[str(it.get("need"))] = needs.get(str(it.get("need")), 0) + 1
+                parts.append(f"🎞 증거 {len(items)}건(" + " · ".join(f"{k} {v}" for k, v in needs.items()) + ")")
+            else:
+                parts.append(f"🎞 스톡 요청 {len(r['stock'].get('requests', []))}")
         if "captions" in r:
             parts.append(f"🔤 강조 {len(r['captions'].get('emphasis', []))}")
         if "shorts" in r:
@@ -370,10 +474,26 @@ class Studio:
             self.log(p)
 
     # ------------------------------------------------------------------
-    def pick_stock(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
-        instr = load_prompt("agents/stock_pick.md").replace("{{requests}}", requests_text)
+    def pick_evidence(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
+        """🎞 후보 시트를 보고 0~3점 채점(EVIDENCE_PICK) — 2점 이상만 쓴다(게이트 B6). 고르는 규칙은 assets/ladder.choose."""
+        instr = load_prompt("agents/stock_pick_v2.md").replace("{{requests}}", requests_text)
         res = self.call("stock_pick", ctx, instr, images=sheets)
         return res.get("picks", []) or []
+
+    def pick_stock(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
+        """스톡 후보 선택(StockResearcher 용 모양: request · candidate · reason). 채점은 v2(EVIDENCE_PICK) — 2점 이상 중 최고점,
+        뻔한 스톡은 1점 상한이라 빠진다. 2점 이상이 없으면 candidate -1(그 요청은 쓰지 않는다)."""
+        from ..assets.ladder import choose
+        out = []
+        for pk in self.pick_evidence(ctx, requests_text, sheets):
+            if "choices" not in pk:              # 예전 모양(가짜·저장된 응답)
+                out.append(pk)
+                continue
+            n = max([int(c.get("candidate", 0) or 0) for c in pk.get("choices") or []] + [0])
+            best = choose(pk, n, 1, "")
+            out.append({"request": pk.get("request"), "candidate": best[0][0] + 1 if best else -1,
+                        "reason": pk.get("reason", ""), "shows": best[0][1].get("shows", "") if best else ""})
+        return out
 
     def pick_portrait(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
         """📷 인물마다 후보 시트를 보고 가장 품위 있게 나온 사진을 고른다(스키마는 stock_pick 과 같다)."""

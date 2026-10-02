@@ -96,11 +96,19 @@ TEMPLATES: dict[str, Template] = {t.name: t for t in [
              "구체적 장면·사물·분위기를 실제 영상/사진으로 보여줄 때(무료 스톡: Pixabay·Unsplash·Coverr·Pexels). 고유명사 실물은 photo(위키미디어) 우선.",
              "image=영어 검색어(구체적 명사·장면), title=한국어 검색어(화면 라벨로도 씀), subtitle=video|photo, body=이 장면의 목적",
              ("fullscreen", "split", "pip"), 2.5, 7.0, 6),
+    Template("evidence", "증거 자료",
+             "자료 리서처 전용 — 화자가 말한 대상·출처·화면을 실물로(사진 여러 장·출처 카드·화면 캡처·화자 자료). 앱이 조달해 채운다."
+             " 모션 디자이너는 쓰지 않는다.",
+             "(앱이 채움) assets · treatment(hero|full|archive_card|doc_highlight|browser_frame|grid|compare_pair) · "
+             "title=주장 한 조각(label) · body=사실 캡션",
+             ("fullscreen", "split", "pip"), 2.5, 12.0, 8),
 ]}
 
 TEMPLATE_NAMES = tuple(TEMPLATES.keys())
 # 디렉터가 고르지 않는 자동 템플릿(types.ts TemplateName 에도 있다): 타이틀 · 로어서드 · 챕터 끝 정리 보드(props.chapter_recaps)
 AUTO_TEMPLATES = ("title", "lower_third", "recap")
+# 디렉터·모션 디자이너가 고르지 않고 자료 리서처의 증거 계획에서만 나오는 템플릿(카탈로그 표에서 뺀다)
+RESEARCHER_TEMPLATES = ("evidence",)
 
 # 대본 태그 종류 → 템플릿
 TAG_TO_TEMPLATE = {
@@ -136,6 +144,8 @@ PRESET_DIAGRAMS = {
 def catalog_markdown() -> str:
     lines = ["| template | 이름 | 언제 | 필드 | 레이아웃 | 길이(초) |", "|---|---|---|---|---|---|"]
     for t in TEMPLATES.values():
+        if t.name in RESEARCHER_TEMPLATES:
+            continue
         lines.append(f"| `{t.name}` | {t.label} | {t.use} | {t.fields} | {'/'.join(t.layouts)} | "
                      f"{t.min_dur:g}–{t.max_dur:g} |")
     return "\n".join(lines)

@@ -441,7 +441,7 @@ def a17_monotony(graphics: list[dict], *, cv_warn: float = 0.45) -> GateResult:
 # 게이트 B — 화면 글자 위생(렌더 props 확정 뒤)
 # ---------------------------------------------------------------------------
 
-TEXT_FIELDS = ("title", "subtitle", "body", "title_b", "highlight", "author", "label", "keyword", "keyword_sub")
+TEXT_FIELDS = ("title", "subtitle", "body", "title_b", "highlight", "author", "label", "keyword", "keyword_sub", "caption")
 LIST_FIELDS = ("items", "items_b")
 TEXT_TEMPLATES = ("keyword", "definition", "quote", "stat")
 
@@ -471,6 +471,14 @@ def _fields(g: dict) -> list[tuple[str, Any, str]]:
                     for kk in ("title", "body", "label", "text"):
                         if isinstance(it.get(kk), str) and it[kk].strip():
                             out.append((f"{k}[{i}].{kk}", it, kk))
+    arc = d.get("archive") if isinstance(d.get("archive"), dict) else None      # 증거 자료의 자료·출처 카드
+    if arc:
+        for kk in ("title", "label", "quote"):
+            if isinstance(arc.get(kk), str) and arc[kk].strip():
+                out.append((f"archive.{kk}", arc, kk))
+        for i, r in enumerate(arc.get("rows") or []):
+            if isinstance(r, dict) and isinstance(r.get("v"), str) and r["v"].strip():
+                out.append((f"archive.rows[{i}]", r, "v"))
     return out
 
 
@@ -519,6 +527,102 @@ def _is_query_label(title: str, queries: list[str]) -> bool:
     words = {w for q in queries for w in re.findall(r"[0-9A-Za-z가-힣]+", q.lower())}
     tw = re.findall(r"[0-9A-Za-z가-힣]+", title.lower())
     return any(t == _plain(q) for q in queries) or (bool(tw) and all(w in words for w in tw))
+
+
+# --- 자료(03 문서 9절 되메우기 루프의 B1·B2·B6) --------------------------------------------------------------
+
+def _d(g: dict) -> dict:
+    return g.get("data") if isinstance(g.get("data"), dict) else g
+
+
+def is_real_media(g: dict) -> bool:
+    """실물 이미지인가 — 사진·스톡·화면 캡처·문서(B1). 코드로 그린 것·로고 카드·출처 카드·자료(타이포) 카드는 아니다."""
+    d = _d(g)
+    t = g.get("template")
+    if t == "photo":
+        return bool(d.get("image")) and not d.get("logo")
+    if t == "broll":
+        return bool(d.get("src"))
+    if t == "evidence":
+        return any(a.get("kind") in ("photo", "video", "screen", "document") for a in d.get("assets") or [])
+    return False
+
+
+def is_hero_media(g: dict) -> bool:
+    """전면 실물(풀블리드 또는 화면의 55% 이상 — 증거 hero 는 1728×724 ≈ 60%)."""
+    return is_real_media(g) and (g.get("layout") == "fullscreen" or g.get("template") == "evidence")
+
+
+def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.15) -> GateResult:
+    """실물 자료가 보이는 시간 / 본편 ≥ 15%(목표 25~30%). 짧은 영상(90초 미만)은 건너뛴다."""
+    secs = sum(max(0.0, float(g["end"]) - float(g["start"])) for g in graphics if is_real_media(g) and "end" in g)
+    ratio = secs / total if total else 0.0
+    m = {"seconds": round(secs, 1), "ratio": round(ratio, 3), "target": [0.25, 0.30], "min": min_ratio}
+    if total < 90:
+        r = _ok("B1_media_ratio", "warn", m, f"실물 자료 {ratio:.0%}(짧은 영상 — 건너뜀)")
+        r.skipped = True
+        return r
+    if ratio < min_ratio:
+        return _bad("B1_media_ratio", "warn", m, f"실물 자료가 보이는 시간 {ratio:.0%}(최소 {min_ratio:.0%}, 목표 25~30%) — "
+                    "과제물·스케치·화면 캡처를 ④ 자료 폴더에 넣으면 채워진다")
+    return _ok("B1_media_ratio", "warn", m, f"실물 자료 {ratio:.0%}")
+
+
+def b2_hero_per_chapter(graphics: list[dict], chapters: list[dict], total: float, *, min_len: float = 45.0) -> GateResult:
+    """실물 자료가 있는 챕터(45초 이상)마다 전면 실물이 한 번 이상 — 얼굴 옆 작은 액자(pip)만으로 끝나는 챕터가 없다.
+    chapters: [{start, end?}] (끝이 없으면 다음 챕터 시작·전체 끝). 수리 promote_hero."""
+    cs = sorted(chapters, key=lambda c: float(c.get("start", 0)))
+    spans = [(float(c.get("start", 0)), float(c.get("end") or (cs[i + 1]["start"] if i + 1 < len(cs) else total)))
+             for i, c in enumerate(cs)] or [(0.0, total)]
+    lacking = []
+    for a, b in spans:
+        if b - a < min_len:
+            continue
+        inside = [g for g in graphics if is_real_media(g) and a <= float(g.get("start", -1)) < b]
+        if inside and not any(is_hero_media(g) for g in inside):
+            lacking.append([round(a, 1), round(b, 1)])
+    m = {"lacking": lacking}
+    if lacking:
+        return _bad("B2_hero", "repair", m, f"전면 실물 자료가 없는 챕터 {len(lacking)}개(얼굴 옆 작은 액자뿐)", "promote_hero")
+    return _ok("B2_hero", "repair", m, "자료가 있는 챕터마다 전면 자료가 있다")
+
+
+def promote_hero(plan_graphics: list[dict], timed: list[dict], lacking: list[list[float]]) -> int:
+    """B2 수리: 그 챕터의 실물 사진 중 가장 큰(해상도) 것을 전면으로. timed(props 그래픽)로 챕터 안에 있는 것을 찾고,
+    plan_graphics(계획) 의 같은 그래픽 layout 을 fullscreen 으로 바꾼다. 반환: 올린 수."""
+    n = 0
+    by_id = {f"g{i}": g for i, g in enumerate(plan_graphics)}
+    for a, b in lacking:
+        cands = [g for g in timed if is_real_media(g) and a <= float(g.get("start", -1)) < b and g.get("id") in by_id
+                 and g.get("template") in ("photo", "broll")]
+        if not cands:
+            continue
+
+        def size(g: dict) -> float:
+            pg = by_id[g["id"]]
+            ev = [x for x in (pg.get("assets") or []) if isinstance(x, dict)]
+            return max([float(x.get("w", 0) or 0) * float(x.get("h", 0) or 0) for x in ev] + [float(g["end"]) - float(g["start"])])
+        best = max(cands, key=size)
+        pg = by_id[best["id"]]
+        if pg.get("layout") != "fullscreen":
+            pg["layout"] = "fullscreen"
+            pg["promoted"] = "B2"
+            n += 1
+    return n
+
+
+def b6_pick_scores(graphics: list[dict]) -> GateResult:
+    """비전 선택 점수(0~3)가 2 미만인 자료가 화면에 없다(사다리가 2점 이상만 쓴다 — 안전망)."""
+    low = []
+    for g in graphics:
+        for a in _d(g).get("assets") or []:
+            sc = a.get("score", -1) if isinstance(a, dict) else -1
+            if isinstance(sc, (int, float)) and 0 <= sc < 2:
+                low.append({"graphic": _gid(g), "src": a.get("src", ""), "score": sc})
+    m = {"low": low}
+    if low:
+        return _bad("B6_relevance", "warn", m, f"관련도 2점 미만 자료 {len(low)}장이 화면에 있다")
+    return _ok("B6_relevance", "warn", m, "화면의 자료는 모두 관련도 2점 이상(또는 화자 자료·규칙 선택)")
 
 
 def b3_query_labels(graphics: list[dict]) -> GateResult:

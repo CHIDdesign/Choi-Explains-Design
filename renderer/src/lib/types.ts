@@ -19,12 +19,36 @@ export type TemplateName =
   | 'motion' // 모션 디자이너 에이전트가 설계한 장면(MotionSpec)
   | 'card' // 자유 HTML 카드(HyperFrames 카드 규약 호환, components/card/HtmlCard.tsx)
   | 'broll' // 스톡 영상/사진(Pixabay·Unsplash·Coverr·Pexels)
+  | 'evidence' // 증거 자료(자료 리서처 → 조달 사다리, components/longform/Evidence.tsx — 03b)
   // 자동 템플릿(디렉터가 직접 고르지 않음)
   | 'title'
   | 'lower_third'
   | 'recap'; // 챕터 끝 정리 보드(studio/render/props.py chapter_recaps — 그 챕터의 핵심 개념 2~4개)
 
 export type Layout = 'fullscreen' | 'split' | 'overlay' | 'pip';
+
+// 증거 자료(docs/upgrade/03b 1절) — studio/assets/ladder.py 가 채운다
+export type Treatment = 'hero' | 'full' | 'pip' | 'archive_card' | 'doc_highlight' | 'browser_frame' | 'grid'
+  | 'compare_pair';
+export type NBox = [number, number, number, number]; // x, y, w, h — 0~1, 이미지 기준
+export type EvidenceAsset = {
+  src: string; // public 기준 경로
+  kind: 'photo' | 'video' | 'screen' | 'document' | 'logo';
+  w: number;
+  h: number; // 원본 픽셀
+  focus?: NBox | null; // 비전 선택이 준 초점 상자
+  credit?: string; // credit_short
+  tier?: string; // own | made | A | A-sa | stock | B | C
+  meta?: {title?: string; creator?: string; year?: string; ref?: string};
+};
+export type Archive = {
+  variant: 'photo' | 'source' | 'type'; // 자료 카드 · 출처 카드(논문·책) · 타이포 자료 카드
+  title: string;
+  rows?: {k: string; v: string}[];
+  label?: string;
+  quote?: string;
+  ref?: string;
+};
 
 export type GraphicData = {
   title?: string;
@@ -54,6 +78,13 @@ export type GraphicData = {
   keyword?: string;
   keyword_sub?: string;
   keyword_at?: number;
+  // evidence
+  assets?: EvidenceAsset[];
+  treatment?: Treatment;
+  archive?: Archive;
+  caption?: string; // 사실 캡션(연도·작가·출처)
+  tier?: string;
+  lines?: NBox[]; // doc_highlight: 밑줄 칠 줄
 };
 
 // 화면 스킨(기본 classic):

@@ -142,6 +142,9 @@ class SettingsDialog(QDialog):
         fs.addRow("Unsplash", self.unsplash)
         fs.addRow("Coverr", self.coverr)
         fs.addRow("Pexels", self.pexels)
+        self.quote = QCheckBox("인용 자료 쓰기(웹·앱 화면 캡처 · 논문 첫 화면) — C 등급")
+        self.quote.setChecked(bool(getattr(s, "allow_quote", False)))
+        fs.addRow("", self.quote)
         fs.addRow("", hint("키를 넣은 곳을 모두 검색해 후보를 섞고, 🎞 자료 리서처가 썸네일을 보고 고릅니다. "
                            "Pixabay 하나면 충분합니다(사진+영상+모션 그래픽용 벡터·일러스트, 한국어 검색). 키가 없어도 Openverse(CC 사진)는 "
                            "검색합니다. 출처는 화면 ▣ 와 설명란에 자동 표기."))
@@ -293,6 +296,7 @@ class SettingsDialog(QDialog):
         s.render.concurrency = self.concurrency.value()
         s.render.crf = self.crf.value()
         s.wikimedia_contact = self.wm.text().strip()
+        s.allow_quote = self.quote.isChecked()
         s.sfx_enabled = self.sfx.isChecked()
         s.music_mode = self.music.currentData() or "mine"
         s.music_dir = self.music_dir.text().strip()

@@ -87,6 +87,7 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   motion: '',
   card: '',
   broll: '',
+  evidence: '',
   title: '',
   lower_third: '',
   recap: '정리',

@@ -6,7 +6,8 @@ from ..director.schema import BOOL, GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHO
 
 INTENTS = ["hook", "context", "explain", "example", "name_concept", "story", "data", "compare", "transition",
            "return_to_life", "payoff"]
-VISUALS = ["none", "template", "motion", "stock_video", "stock_photo", "photo", "keyword"]
+VISUALS = ["none", "template", "motion", "evidence", "keyword",
+           "stock_video", "stock_photo", "photo"]      # 뒤 셋은 저장된 계획 호환용 — 프롬프트에서는 evidence 만 안내
 # ✂️ 편집 감독이 표시하는 '강조 순간' — 편집 문법 엔진(studio/edit/grammar.py)이 강조 글라이드·콜아웃·강조 자막·효과음으로 옮긴다
 MOMENT_KINDS = ["punchline", "reveal", "shift", "conclusion", "question", "number", "joke"]
 BGM_MOODS = ["minimal", "calm", "ambient", "lofi", "piano", "inspiring", "upbeat"]
@@ -167,6 +168,70 @@ STOCK_PICK = _obj({
     "picks": {"type": "array", "items": _obj({"request": INT, "candidate": INT, "reason": STR})},
 })
 
+# 🎞 자료 리서처 v2 — 증거 계획(docs/upgrade/03_자료_조달_엔진_v2.md 6-1). 문장마다 '무엇을 봐야 하는가'(need)를 먼저 정하고
+# 앱이 need 별 사다리로 조달한다(studio/assets/ladder.py). STOCK·STOCK_PICK 은 저장된 plan.json 재실행용으로 한 버전 남긴다
+NEEDS = ["own_material", "entity", "primary_source", "screenshot", "code_drawn", "stock"]
+EV_ROLES = ["proof", "example", "context", "process", "mood"]
+EV_KINDS = ["person", "work", "product", "brand", "site_app", "place", "organization", "publication", "other"]
+EV_SHOTS = ["subject", "screen", "logo", "portrait", "detail", "context", "first_page", "figure", "cover"]
+TREATMENTS = ["hero", "full", "pip", "sequence", "grid", "stack", "cutout", "archive_card",
+              "doc_highlight", "browser_frame", "detail_zoom", "annotate", "compare_pair"]
+TIERS = ["A", "B", "C"]
+FALLBACKS = ["type_card", "code_drawn", "stock", "face"]
+
+EVIDENCE = _obj({
+    "items": {"type": "array", "items": _obj({
+        "start_seg": INT, "end_seg": INT, "start_word": STR,
+        "claim": STR,                    # 이 자료가 뒷받침하는 화자의 말(40자 이내)
+        "need": {"type": "string", "enum": NEEDS},
+        "role": {"type": "string", "enum": EV_ROLES},
+        "subject": _obj({
+            "name_ko": STR, "name_en": STR,              # 대본 표기 / 원어 표기(모르면 "")
+            "kind": {"type": "string", "enum": EV_KINDS},
+            "shot": {"type": "string", "enum": EV_SHOTS},
+            "creator_en": STR, "year": STR, "qid": STR,  # 모르면 ""
+        }),
+        "source": _obj({                 # primary_source·screenshot 일 때만, 아니면 전부 ""
+            "citation": STR, "doi": STR, "url": STR,
+            "as_of": STR,                # "2012-03" — 과거 시점 화면
+            "locator": STR,              # 밑줄 칠 문장·그림 번호
+        }),
+        "stock": _obj({"kind": {"type": "string", "enum": ["video", "photo"]}, "query_en": STR, "query_ko": STR}),
+        "local_file": STR,               # own_material: 자료 폴더의 파일명(없으면 "")
+        "must_show": STR, "avoid": STR,
+        "count": INT,                    # 1~5
+        "label": STR,                    # 화면 제목(14자 이내, 주장의 한 조각). 없으면 ""
+        "caption": STR,                  # 사실 캡션(24자 이내: 연도·작가·출처). 없으면 ""
+        "treatment": {"type": "string", "enum": TREATMENTS},
+        "focus": STR,                    # detail_zoom·annotate 대상(말로)
+        "annotations": {"type": "array", "items": _obj({
+            "type": {"type": "string", "enum": ["circle", "arrow", "underline", "bracket", "label"]},
+            "target": STR, "text": STR, "at_word": STR})},
+        "pair": _obj({"name_ko": STR, "name_en": STR, "label": STR}),   # compare_pair 가 아니면 전부 ""
+        "tier_max": {"type": "string", "enum": TIERS},
+        "fallback": {"type": "string", "enum": FALLBACKS},
+        "priority": INT,                 # 1(필수) ~ 3
+        "sequence_id": STR,              # 05 문서: 속한 시퀀스("" = 단발)
+    })},
+    "notes": STR,
+})
+
+# 🎞 자료 리서처(후보 고르기 v2) — 0~3점 채점, 2점 이상만 쓴다(게이트 B6)
+EVIDENCE_PICK = _obj({
+    "picks": {"type": "array", "items": _obj({
+        "request": INT,
+        "choices": {"type": "array", "items": _obj({
+            "candidate": INT,
+            "score": INT,                                 # 0~3
+            "main_subject": BOOL,
+            "cliche": BOOL,
+            "shows": STR,                                 # 실제로 보이는 것 한 줄
+            "focus_box": {"type": "array", "items": NUM},  # [x, y, w, h] 0~1, 없으면 []
+        })},
+        "reason": STR,
+    })},
+})
+
 # 🔤 자막 디자이너
 CAPTIONS = _obj({
     "emphasis": {"type": "array", "items": _obj({
@@ -206,7 +271,7 @@ CARD_REVISE = _obj({"html": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

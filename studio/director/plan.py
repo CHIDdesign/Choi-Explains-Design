@@ -18,7 +18,13 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
-EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat")
+EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat",
+                   "assets", "treatment", "archive", "caption", "tier")   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
+# 증거 자료(evidence)의 트리트먼트별 기본 유지 시간(03b 14절 — 읽을 것이 있으면 길게)
+EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
+                 "grid": 4.5, "compare_pair": 6.0, "pip": 3.0}
+EVIDENCE_ASSET_KEYS = ("src", "kind", "w", "h", "focus", "credit", "credit_full", "tier", "origin", "shows", "score",
+                       "meta", "mat_src")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
@@ -342,8 +348,31 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
             out["logo"] = True
         if g.get("mat"):
             out["mat"] = True        # 세로 사진을 크림 종이 여백 액자에 넣은 것(로고 카드처럼 그린다)
-    if tn == "photo" and g.get("subtitle") and "image" in out and not out.get("image_en"):
-        pass
+    if tn in ("photo", "broll", "evidence", "keyword") and isinstance(g.get("evidence"), dict):
+        out["evidence"] = {k: v for k, v in g["evidence"].items() if isinstance(k, str)}   # 리서처의 원 요청(화면에 안 나감)
+    if tn == "photo" and g.get("resolved"):
+        out["resolved"] = True       # 조달 사다리가 이미 파일로 바꾼 것(image = public 기준 경로)
+    if tn == "keyword" and g.get("fallback"):
+        out["fallback"] = str(g["fallback"])[:16]
+    if tn == "evidence":
+        assets = [{k: a[k] for k in EVIDENCE_ASSET_KEYS if k in a} for a in g.get("assets") or []
+                  if isinstance(a, dict) and a.get("src")][:5]
+        archive = g.get("archive") if isinstance(g.get("archive"), dict) else None
+        if not assets and not archive:
+            return None      # 조달 전·실패한 증거는 계획에 남기지 않는다(사다리가 이미 자료 카드·code_drawn 으로 바꿨다)
+        out["assets"] = assets
+        if archive:
+            out["archive"] = {"variant": str(archive.get("variant") or "source"),
+                              "title": str(archive.get("title") or "")[:90],
+                              "rows": [{"k": str(r.get("k", ""))[:8], "v": str(r.get("v", ""))[:60]}
+                                       for r in archive.get("rows") or [] if isinstance(r, dict)][:4],
+                              "label": str(archive.get("label") or "")[:14], "quote": str(archive.get("quote") or "")[:60],
+                              "ref": str(archive.get("ref") or "")[:200]}
+        tr = str(g.get("treatment") or "hero")
+        out["treatment"] = tr if tr in EVIDENCE_HOLD else "hero"
+        for k in ("tier", "caption", "credit"):
+            if g.get(k):
+                out[k] = str(g[k])[:120]
     return out
 
 
@@ -745,6 +774,10 @@ def reading_chars(g: dict[str, Any]) -> int:
         parts.append(card_text(g["card"]).replace(" ", "")[:60])
     if g.get("template") in ("broll", "photo"):
         return 0
+    if g.get("template") == "evidence":
+        arc = g.get("archive") or {}
+        parts = [g.get("title") or "", g.get("caption") or g.get("body") or "", arc.get("title") or "",
+                 arc.get("quote") or ""] + [str(r.get("v", "")) for r in arc.get("rows") or []][:2]
     return sum(len(p.replace(" ", "")) for p in parts)
 
 
@@ -799,6 +832,11 @@ def time_graphics(
             want = max(want, spec_settle_time(g["spec"]) + 1.2)
         if g["template"] == "card" and isinstance(g.get("card"), dict):
             want = max(want, card_settle_time(g["card"]) + 1.2)
+        if g["template"] == "evidence":
+            # 트리트먼트별 유지 + 여러 장이면 장마다 1.8초(03 문서 6-2)
+            n_assets = len(g.get("assets") or [])
+            want = max(want, EVIDENCE_HOLD.get(g.get("treatment", "hero"), 4.0)
+                       + 1.8 * max(0, n_assets - 1) * (g.get("treatment") in ("hero", "full")))
         end = max(end, start + want)
         # 목표 길이에 맞게 다음 발화들까지 자연스럽게 연장
         if end - start < want and s_seg in order:
@@ -807,6 +845,8 @@ def time_graphics(
                 k += 1
             end = max(end, seg_t[order[k]][1])
         end = min(end, start + t.max_dur, total - 0.3)
+        if g["template"] == "evidence" and g.get("tier") == "C":
+            end = min(end, start + 6.0)          # 인용(C 등급)은 한 번에 6초 이내(저작권 정책 4절 2)
         # 진입·퇴장은 역할마다(docs/upgrade/05 3장 — 예전엔 모든 그래픽이 문장보다 0.45초 먼저): 얼굴 옆 자료는 그 낱말 −3f,
         # 보드는 절 시작 −9f, 전면은 말이 먼저(화자가 문장을 얼굴로 시작하고 그 낱말에서 컷, −2f). 퇴장은 문장 끝 +6~8f
         lead, tail = ENTER_EXIT.get(g.get("layout", ""), (0.3, 0.27))
@@ -831,6 +871,8 @@ def time_graphics(
                     end = min(end, total - 0.3)
         if g["template"] == "broll" and not g.get("src"):
             continue  # 소재를 못 구한 B-roll 은 버린다(틀린 B-roll 보다 없는 게 낫다)
+        if g["template"] == "evidence" and not (g.get("assets") or g.get("archive")):
+            continue
         if g["template"] == "motion":
             spec = clean_spec(g.get("spec"), end - start)
             if not spec:
@@ -840,15 +882,17 @@ def time_graphics(
             if not isinstance(g.get("card"), dict):
                 continue
             data["card"] = g["card"]
+        # 증거의 역할: 근거·사례는 우선순위 그대로(8), 맥락·분위기는 6(03 문서 6-2)
+        role_pen = 2 if (g.get("evidence") or {}).get("role") in ("context", "mood") else 0
         timed.append(TimedGraphic(f"{id_prefix}{i}", g["template"], g["layout"], start, end, data,
-                                  t.priority + (3 if "태그" in (g.get("reason") or "") else 0),
+                                  t.priority - role_pen + (3 if "태그" in (g.get("reason") or "") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))
     return resolve_overlaps(timed + list(reserved or []), total=total)
 
 
 # (진입 선행, 퇴장 꼬리) 초 — 30fps 기준 pip −3f/+6f · split −9f/+8f · 전면 −2f/+8f
 ENTER_EXIT = {"pip": (0.10, 0.20), "overlay": (0.10, 0.20), "split": (0.30, 0.27), "fullscreen": (0.07, 0.27)}
-EVIDENCE = ("photo", "broll")      # 실물 자료(사진·스톡) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
+EVIDENCE = ("photo", "broll", "evidence")      # 실물 자료(사진·스톡·증거) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
 
 
 def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optional[float] = None,

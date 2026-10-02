@@ -55,6 +55,9 @@ class Settings:
     coverr_api_key: str = ""         # https://coverr.co/developers (영상 전용, 데모 시간당 50회)
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
+    # C 등급(인용) 자료 — 웹·앱 화면 캡처, 논문 첫 화면, 비자유 대표 이미지. 그 대상을 설명하는 문장에서만 6초 이내·종이 위.
+    # 기본 끔(작업지시서 WP7) — 켜면 자료 대장·검토 시트에 인용 목록이 남는다(docs/upgrade/저작권_위험등급_정책.md)
+    allow_quote: bool = False
     download_sounds: bool = True     # 효과음·배경음악(Pixabay 등)을 처음 실행 때 내려받기
     # 🔊 소리 — 채널 주인: "효과음과 음원이 싹 다 별로". 이상한 소리를 넣느니 넣지 않는다
     sfx_enabled: bool = False        # 효과음(기본 끔)

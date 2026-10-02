@@ -294,6 +294,8 @@ class Pipeline:
         self.studio: Optional[Studio] = None
         self.ctx = ""
         self.broll_log: list[dict] = []
+        self.evidence_stats: dict[str, Any] = {}      # 자료 조달 깔때기(work/evidence.json)
+        self._materials: list = []                    # ④ 자료 폴더 색인(studio/assets/local.py)
         self.qa_log: list[dict] = []
         self.grade_info: dict = {}
         self.look_plan: Optional[LookPlan] = None
@@ -1046,8 +1048,14 @@ class Pipeline:
             self.director_name = f"AI 스튜디오 · {self._ai_label()} ({self.settings.claude_model})"
             self.log("🎬 AI 스튜디오 가동: 총괄 감독 → 전문 에이전트 병렬 작업")
             try:
+                from .assets import local as local_assets
+                mats = local_assets.index(self.spec.images_dir)
+                self._materials = mats
                 raw_long, raw_shorts = studio.plan(brief, ctx, shorts_count=self.spec.shorts_count,
-                                                   progress=lambda f: self._stage("director", 0.95 * f))
+                                                   progress=lambda f: self._stage("director", 0.95 * f),
+                                                   procure=self._procure_evidence
+                                                   if (self.spec.fetch_broll or self._stock_enabled()) else None,
+                                                   materials=(local_assets.listing(mats), local_assets.sheet(mats)))
                 # 숏폼 PD 가 한 편도 못 냈을 때만 규칙으로 채운다 — 둘째 편을 억지로 채우지 않는다(제대로 된 한 편이 우선)
                 if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
                     raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1,
@@ -1399,7 +1407,11 @@ class Pipeline:
                 gate.a14_hold_guard(gs, holds, ed.callouts, ed.sfx),
                 gate.a15_step_sync(gs),
                 gate.a16_hold_presence(gs, lp.get("chapters", []), total, ed.callouts),
-                gate.a17_monotony(gs)]
+                gate.a17_monotony(gs),
+                # 자료(03 문서 9절): 실물 비율 · 챕터마다 전면 자료 · 관련도
+                gate.b1_media_ratio(gs, total),
+                gate.b2_hero_per_chapter(gs, lp.get("chapters", []), total),
+                gate.b6_pick_scores(gs)]
 
     def _gate_screen(self, lp: dict, ed: EditDecisions) -> tuple[dict, EditDecisions]:
         """렌더 props 확정 뒤: 그래픽 없는 칸·긴 맨얼굴은 그 자리의 핵심어 카드로 채우고, 늦은 타이틀은 앞으로 → props 다시."""
@@ -1413,11 +1425,17 @@ class Pipeline:
             trimmed = self._trim_chains(lp)
         if any(not r.ok and r.repair == "merge_steps" for r in res):
             merged = merge_step_runs(self.plan_long.get("graphics", []))
-        if added or moved or trimmed or merged:
+        promoted = 0
+        b2 = next((r for r in res if r.id == "B2_hero" and not r.ok), None)
+        if b2 is not None:
+            promoted = gate.promote_hero(self.plan_long.get("graphics", []), lp.get("graphics", []),
+                                         b2.measured.get("lacking", []))
+        if added or moved or trimmed or merged or promoted:
             self.log(f"🚦 게이트 A 수리: " + " · ".join(x for x in [f"빈 구간에 핵심어 카드 {added}개" if added else "",
                                                                "타이틀을 앞으로" if moved else "",
                                                                f"이어 붙은 글자 카드 {trimmed}개 뺌" if trimmed else "",
-                                                               f"단계 그래픽 {merged}개 합침" if merged else ""] if x))
+                                                               f"단계 그래픽 {merged}개 합침" if merged else "",
+                                                               f"자료 {promoted}장을 전면으로" if promoted else ""] if x))
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
             lp, ed = self._final_long_props(graphics, chapters)
@@ -1922,7 +1940,8 @@ class Pipeline:
         resolver = MediaResolver(local=local, dst_dir=img_dir, work_dir=self.work / "wm_cache", wikimedia=wm,
                                  wikipedia=wp, logos=logos, log=self.log)
         graphic_lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
-        photos = [g for gl in graphic_lists for g in gl if g["template"] == "photo"]
+        # 조달 사다리가 이미 파일로 바꾼 자료(resolved)는 다시 찾지 않는다
+        photos = [g for gl in graphic_lists for g in gl if g["template"] == "photo" and not g.get("resolved")]
         total = len(photos) or 1
         plans: dict[str, MediaPlan] = {}
         for n, g in enumerate(photos):
@@ -1942,7 +1961,7 @@ class Pipeline:
         for gl in graphic_lists:
             keep = []
             for g in gl:
-                if g["template"] != "photo":
+                if g["template"] != "photo" or g.get("resolved"):
                     keep.append(g)
                     continue
                 q = g.get("image", "").strip()
@@ -1990,6 +2009,156 @@ class Pipeline:
                 keep.append(g)
             gl[:] = keep
         self._stage("broll", 1.0)
+
+    # ------------------------------------------------------------------
+    # 🎞 자료 조달 v2 — 자료 리서처의 증거 계획 → 사다리 → 확보 목록(모션 디자이너 앞, 13 문서 2-2)
+    # ------------------------------------------------------------------
+    def _procure_evidence(self, res: dict[str, Any], rnd: int = 1) -> dict[str, Any]:
+        """Studio.plan 의 콜백: EVIDENCE 결과 → 조달(studio/assets/ladder.py) → {outcomes, brief(확보 목록), sheet(컨택트 시트),
+        backfill(1회차에서 실물 비율이 모자라면 자료 리서처 보충 요청 블록)}. work/evidence.json 에 기록."""
+        from .assets import graphics as ev_graphics
+        from .assets.ladder import Ladder, clean_item, summary
+        items = [it for it in res.get("items", []) or [] if isinstance(it, dict)]
+        if not items:
+            return {"outcomes": [], "brief": "", "sheet": None, "backfill": ""}
+        self.log(f"🎞 자료 조달 {rnd}회차: 증거 {len(items)}건 — 화자 자료 → 고유명사·출처 → 화면 → 스톡 순서로")
+        ladder = Ladder(self._evidence_deps(), public=self.public, work=self.work, log=self.log)
+        outcomes = ladder.run(items)
+        st = summary([clean_item(i) for i in items], outcomes)
+        self.log("🎞 조달: " + f"{st['acquired']}/{st['requests']}건 확보 · "
+                 + " · ".join(f"{k} {v}" for k, v in sorted(st["rungs"].items())))
+        _, drawn = ev_graphics.to_graphics(items, outcomes)
+        old = read_json(self.work / "evidence.json", {})
+        rounds = (old.get("rounds") if isinstance(old, dict) and rnd > 1 else None) or []
+        rounds.append({"round": rnd, "items": items, "outcomes": outcomes, "summary": st, "notes": res.get("notes", "")})
+        write_json(self.work / "evidence.json", {"rounds": rounds})
+        self.evidence_stats = st
+        back = self._backfill_block(items, outcomes) if rnd == 1 else ""
+        return {"outcomes": outcomes, "brief": ev_graphics.brief_for_motion(items, outcomes, drawn),
+                "sheet": self._evidence_sheet(outcomes), "backfill": back}
+
+    def _evidence_deps(self) -> "Deps":
+        from .assets.commons import EntityMedia
+        from .assets.ladder import Deps
+        from .assets.library import AssetLibrary
+        from .assets.scholar import Scholar
+        online = self.spec.fetch_broll
+        cache = self.work / "wm_cache"
+        wm = Wikimedia(self.settings.wikimedia_contact, log=self.log, cache_dir=cache) if online else None
+        wp = WikipediaImages(self.settings.wikimedia_contact, log=self.log, cache_dir=cache) if online else None
+        logos = SimpleIcons(USER_DIR / "cache", log=self.log) if online else None
+        resolver = MediaResolver(local=list_local_images(self.spec.images_dir), dst_dir=self.public / "images",
+                                 work_dir=cache, wikimedia=wm, wikipedia=wp, logos=logos, log=self.log) if online else None
+        allow_quote = bool(getattr(self.settings, "allow_quote", False))
+        studio = self._ensure_studio()
+        capture = None
+        if allow_quote and online:
+            from .assets.screenshot import capture as shot
+            rs = self.settings.render
+            capture = lambda shots: shot(shots, node=find_node(self.settings.node_path), work=self.work,  # noqa: E731
+                                         browser_executable=rs.browser_executable, gl=rs.gl, log=self.log)
+        return Deps(resolver=resolver, media=EntityMedia(wp, log=self.log, allow_quote=allow_quote) if wp else None,
+                    scholar=Scholar(cache_dir=cache, log=self.log) if online else None,
+                    local=tuple(getattr(self, "_materials", None) or ()),
+                    library=AssetLibrary(USER_DIR / "asset_library") if online else None,
+                    openverse=self._openverse_named if online else None, capture=capture,
+                    pick=(lambda text, sheets: studio.pick_evidence(self.ctx, text, sheets)) if studio else None,
+                    pick_portraits=self._pick_portraits,
+                    stock=self._stock_batch if self._stock_enabled() else None, allow_quote=allow_quote)
+
+    def _stock_batch(self, reqs: list[dict[str, Any]]) -> list[Optional[dict[str, Any]]]:
+        """스톡 요청 묶음 → StockResearcher(검색 → 비전 선택 → 받기·정리, work/stock.json 캐시) → 요청마다 {src, kind, credit, url}."""
+        hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
+        tmp = [{"template": "broll", "start_seg": -1, "title": "", "stock": dict(r)} for r in reqs]
+        studio = self._ensure_studio()
+        pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
+        res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick, log=self.log,
+                              cancel=self.cancel)
+        lists = [tmp]
+        res.run(lists)
+        self.broll_log += res.credits
+        out: list[Optional[dict[str, Any]]] = []
+        by_key = {id(g): g for g in lists[0]}
+        for g in tmp:
+            g2 = by_key.get(id(g))
+            if g2 is not None and g2.get("src") and g2.get("template") == "broll":
+                out.append({"src": g2["src"], "kind": g2.get("kind", "photo"), "credit": g2.get("credit", ""),
+                            "url": g2.get("stock_url", "")})
+            else:
+                out.append(None)
+        return out
+
+    def _evidence_sheet(self, outcomes: list[dict[str, Any]]) -> Optional[bytes]:
+        """확보한 자료의 컨택트 시트(E번호) — 모션 디자이너가 무엇이 있는지 눈으로 본다."""
+        cells: list[tuple[str, Optional[bytes]]] = []
+        for n, o in enumerate(outcomes, start=1):
+            a = (o.get("assets") or [None])[0]
+            src = a.get("src") if a else ((o.get("stock") or {}).get("src") if (o.get("stock") or {}).get("kind") == "photo"
+                                          else "")
+            if not src:
+                continue
+            p = self.public / src
+            try:
+                from PIL import Image
+                import io
+                with Image.open(p) as im:
+                    im = im.convert("RGB")
+                    im.thumbnail((400, 400))
+                    buf = io.BytesIO()
+                    im.save(buf, "JPEG", quality=80)
+                    cells.append((f"E{n}", buf.getvalue()))
+            except Exception:  # noqa: BLE001 - SVG 로고 등은 시트에서 뺀다
+                continue
+            if len(cells) >= 18:
+                break
+        return contact_sheet(cells, contain=True) if cells else None
+
+    def _backfill_block(self, items: list[dict[str, Any]], outcomes: list[dict[str, Any]]) -> str:
+        """게이트 B1(실물 자료 화면 비율 ≥ 15%)을 기획 단계에서 어림 — 모자라면 자료 리서처 보충 요청 블록(13 문서 2-3).
+        어림: 확보한 증거마다 트리트먼트 유지 시간(EVIDENCE_HOLD)을 그 발화 구간 길이로 자른 합 / 남긴 발화 길이."""
+        from .director.plan import EVIDENCE_HOLD
+        kept = [u for u in self.utts if u.kept]
+        if not kept:
+            return ""
+        total = sum(u.end - u.start for u in kept)
+        by_id = {u.id: u for u in kept}
+        t_of = {u.id: u.start for u in kept}
+        got_t: list[float] = []
+        shown = 0.0
+        for it, o in zip(items, outcomes):
+            if not (o.get("assets") or o.get("stock")):
+                continue
+            a, b = by_id.get(it.get("start_seg")), by_id.get(it.get("end_seg", it.get("start_seg")))
+            span = (b.end - a.start) if a and b and b.end > a.start else (a.end - a.start if a else 3.0)
+            shown += min(max(span, 2.5), EVIDENCE_HOLD.get(str(it.get("treatment") or "hero"), 4.0) + 2.0)
+            if a:
+                got_t.append(a.start)
+        ratio = shown / max(1.0, total)
+        if ratio >= 0.15 or total < 90:
+            return ""
+        gaps = []
+        marks = sorted([kept[0].start] + got_t + [kept[-1].end])
+        for x, y in zip(marks, marks[1:]):
+            if y - x >= 45:
+                segs = [u.id for u in kept if x <= u.start < y]
+                if segs:
+                    gaps.append(f"- [B1] {int(x // 60):02d}:{int(x % 60):02d}–{int(y // 60):02d}:{int(y % 60):02d}"
+                                f"(S{segs[0]}–S{segs[-1]}): 실물 자료 0개")
+        lost = []
+        for it, o in zip(items, outcomes):
+            if not (o.get("assets") or o.get("stock") or o.get("archive")) and o.get("rung") != "code_drawn":
+                subj = it.get("subject") or {}
+                lost.append(f"- [B6] S{it.get('start_seg')} 「{subj.get('name_ko') or it.get('label') or it.get('claim', '')[:20]}」"
+                            f"({it.get('need')}): {o.get('why') or '못 구함'} — 다른 need·대상으로")
+        used = {str(it.get("local_file") or "") for it in items}
+        left = [m for m in getattr(self, "_materials", []) or [] if m.name not in used and m.key not in used]
+        lines = ["## 이번 호출은 보충이다",
+                 "아래 구간·항목만 낸다. 이미 낸 것은 다시 내지 않는다(같은 문장에 같은 자료를 또 내지 않는다).",
+                 f"- [B1] 실물 자료가 보이는 시간 어림 {ratio:.0%}(목표 25~30%, 최소 15%)."]
+        lines += gaps[:6] + lost[:8]
+        if left:
+            lines.append("- 자료 폴더에 아직 쓰지 않은 파일: " + ", ".join(f"{m.key} `{m.name}`" for m in left[:12]))
+        return "\n".join(lines)
 
     def _openverse_named(self, name: str, alt: str, dst_dir: Path) -> Optional["ImageResult"]:
         """고유명사(작품·사물·장소)를 Openverse 에서 한 번 — 상업·변형 허용 라이선스이고 제목에 그 이름(원어 이름 우선)이
@@ -3007,6 +3176,21 @@ class Pipeline:
         credits = sorted({(b.get("attribution") if b.get("attribution") and b.get("attribution") != b.get("credit")
                            else b["credit"] + (f" ({b['url']})" if b.get("url") else "")) for b in self.broll_log
                           if b.get("credit")})
+        # 🎞 자료 조달 v2 의 증거 자료(설명란 전문 출처) + 자료 대장(화면에 실제로 나간 자료만)
+        from .assets.graphics import ledger_rows, props_credits
+        from .assets.license import write_ledger
+        all_props = ([("롱폼", self.long_props)] if self.long_props else []) + \
+            [(f"숏폼{i}", sp) for i, sp in enumerate(self.short_props, 1)]
+        logged = {b.get("credit") for b in self.broll_log}
+        for _, pp in all_props:
+            credits += [c for c in props_credits(pp.get("graphics", [])) if c not in credits]
+            credits += [g["data"]["credit"] for g in pp.get("graphics", []) if g.get("template") == "photo"
+                        and (g.get("data") or {}).get("credit") and g["data"]["credit"] not in logged
+                        and g["data"]["credit"] not in credits]
+        credits = sorted(set(credits))
+        ledger = [r for where, pp in all_props for r in ledger_rows(pp.get("graphics", []), where)]
+        if ledger:
+            write_ledger(self.extras / "자료_대장.csv", ledger)
         music = sorted({m.get("bgm_title", "") for m in self.masters if m.get("bgm_title")})
         sfx_credits = sorted({c for m in self.masters for c in m.get("sfx_credits", []) or []})
         chapters = getattr(self, "long_chapters", [])
@@ -3193,6 +3377,28 @@ def short_retype(g: dict) -> Optional[dict]:
     """롱폼 그래픽을 숏폼 위 카드(880×610)에 옮길 때: 1920×1080 으로 짠 자유 카드·모션 장면은 0.46배로 줄면 36px 본문이
     16px 가 된다(10/1) — 줄여 넣지 않고 숏폼의 개념 카드로 다시 짠다(제목 + 핵심 한 줄). 도식·사진·스톡·글자 그래픽은
     상자에 맞춰 스스로 배치하므로 그대로. 다시 짤 글이 없으면 None(넣지 않음)."""
+    if g.get("template") == "evidence":
+        # 증거 자료: 숏폼은 기존 사진 경로로(위 카드에 사진·로고) — 사진이 없는 출처 카드는 개념 카드(제목 + 저자·연도)로
+        c = copy.deepcopy(g)
+        a = next((x for x in g.get("assets") or [] if x.get("kind") in ("photo", "logo", "screen", "document")), None)
+        for k in ("assets", "archive", "treatment", "tier", "caption"):
+            c.pop(k, None)
+        if a is not None:
+            c.update(template="photo", layout="pip", image=a.get("mat_src") or a["src"], credit=a.get("credit", ""),
+                     title=(g.get("title") or "")[:14], body=(g.get("caption") or g.get("body") or "")[:24], resolved=True)
+            if a.get("kind") == "logo":
+                c["logo"] = True
+            if a.get("mat_src"):
+                c["mat"] = True
+            return c
+        arc = g.get("archive") or {}
+        title = str(g.get("title") or arc.get("title") or "").strip()
+        if not title:
+            return None
+        sub = " · ".join(str(r.get("v", "")) for r in (arc.get("rows") or [])[:2] if r.get("v"))
+        # 한글 제목은 14자, 영문(논문 제목)은 24자까지 — 'Design fixation' 이 잘리지 않게
+        c.update(template="keyword", layout="split", title=title[:24 if title.isascii() else 14], subtitle=sub[:40], body="")
+        return c
     if g.get("template") not in ("card", "motion"):
         return copy.deepcopy(g)
     texts: list[str] = []

@@ -155,6 +155,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                            {"seg": last, "reason": "결론"}],
             "pacing_notes": "차분하게"}
     if agent == "motion":
+        # 자료가 먼저, 모션이 나중(13 문서 2-2): 확보 목록 + 재현 요청 + 컨택트 시트를 받는다
+        assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images == 1, (n_images, instruction[:300])
         spec = copy.deepcopy(EXAMPLES["proximity"])
         card = CARD_EXAMPLES["slam_minimal"]["html"]   # 글자가 적어(35자) 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
@@ -167,15 +169,40 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
         return {"html": m.group(1) if m else "", "changes": "지적대로 수정"}
     if agent == "stock":
-        return {"requests": [
-            {"start_seg": s_sketch, "end_seg": s_sketch, "start_word": "", "kind": "video", "query_en": "student sketching",
-             "query_ko": "스케치하는 학생", "layout": "fullscreen", "purpose": "해결책부터 그리는 모습", "must_show": "손과 연필"},
-            {"start_seg": s_trip, "end_seg": s_trip, "start_word": "", "kind": "photo", "query_en": "question mark notebook",
-             "query_ko": "질문", "layout": "split", "purpose": "질문의 상징", "must_show": "물음표"}],
-                "photos": []}
+        # 🎞 자료 리서처 v2(EVIDENCE): 화자 자료 · 1차 자료 · 재현 · 스톡 — ④ 자료 폴더 목록과 썸네일 시트를 받는다
+        assert "M1 `해결책_스케치.jpg`" in instruction and n_images == 1, (n_images, instruction[:400])
+        s_draw = _seg_with(segs, "해결책부터")
+
+        def ev(seg, need, **kw):
+            it = {"start_seg": seg, "end_seg": seg, "start_word": "", "claim": "", "need": need, "role": "example",
+                  "subject": {"name_ko": "", "name_en": "", "kind": "other", "shot": "subject", "creator_en": "",
+                              "year": "", "qid": ""},
+                  "source": {"citation": "", "doi": "", "url": "", "as_of": "", "locator": ""},
+                  "stock": {"kind": "photo", "query_en": "", "query_ko": ""}, "local_file": "", "must_show": "",
+                  "avoid": "", "count": 1, "label": "", "caption": "", "treatment": "hero", "focus": "", "annotations": [],
+                  "pair": {"name_ko": "", "name_en": "", "label": ""}, "tier_max": "A", "fallback": "face",
+                  "priority": 1, "sequence_id": ""}
+            it.update(kw)
+            return it
+        return {"items": [
+            ev(s_sketch, "stock", claim="스케치가 가득한 책상", treatment="full", sequence_id="q1",
+               stock={"kind": "video", "query_en": "student sketching", "query_ko": "스케치하는 학생"}, must_show="손과 연필"),
+            ev(s_trip, "stock", claim="방향 없는 여행", treatment="pip",
+               stock={"kind": "photo", "query_en": "question mark notebook", "query_ko": "물음표 노트"}, must_show="물음표"),
+            ev(s_draw, "own_material", claim="해결책부터 그린 스케치", local_file="해결책_스케치.jpg",
+               label="해결책부터 그린 손", caption="2학년 과제 · 2024"),
+            ev(s_skip, "primary_source", claim="고착 실험", role="proof", treatment="archive_card", fallback="type_card",
+               source={"citation": "Jansson & Smith (1991) Design fixation. Design Studies 12(1)", "doi": "", "url": "",
+                       "as_of": "", "locator": "예시를 본 뒤 그 형태에 묶인다"}, label="고착 실험"),
+            ev(s_gestalt, "code_drawn", claim="근접성 실험 설계", must_show="점 사이 간격을 바꾼 두 판", fallback="code_drawn")],
+            "notes": "최종 렌더링 1장이 있으면 좋다"}
     if agent == "stock_pick":
+        # 후보 고르기 v2(EVIDENCE_PICK): 0~3점, 2점 이상만 — C1 은 뻔한 스톡(1점 상한)이라 빠지고 C2 가 뽑혀야 한다
         n = len(re.findall(r"^- R\d+", instruction, re.M))
-        return {"picks": [{"request": i + 1, "candidate": 2, "reason": "톤이 맞음"} for i in range(n)]}
+        return {"picks": [{"request": i + 1, "reason": "톤이 맞음", "choices": [
+            {"candidate": 1, "score": 3, "main_subject": True, "cliche": True, "shows": "노트북 자판 위 손", "focus_box": []},
+            {"candidate": 2, "score": 3, "main_subject": True, "cliche": False, "shows": "손과 연필",
+             "focus_box": [0.2, 0.2, 0.5, 0.5]}]} for i in range(n)]}
     if agent == "captions":
         return {"emphasis": [{"seg": s_aff, "word": "어포던스라는", "type": "term"},
                              {"seg": s_q, "word": "세", "type": "number"}],
@@ -226,7 +253,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
     for key, marker in (("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
-                        ("stock", "requests"),
+                        ("stock", "requests"), ("stock", "items"),
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
@@ -399,9 +426,36 @@ def main() -> int:
         shim.chmod(0o755)
         settings.claude_code_path = str(shim)
         os.environ["ANTHROPIC_API_KEY"] = "sk-should-be-stripped"  # 구독 모드에서는 자식 프로세스에 넘어가면 안 된다
+    # ④ 자료 폴더(화자 자료) — 자료 리서처가 own_material 로 고르고 사다리가 hero 로 넣는다
+    mats = work / "materials"
+    mats.mkdir(parents=True, exist_ok=True)
+    from PIL import Image, ImageDraw
+    sk = Image.new("RGB", (1800, 1200), (238, 232, 220))
+    dr = ImageDraw.Draw(sk)
+    for i in range(14):
+        dr.line([(120 + i * 110, 200), (220 + i * 95, 1000)], fill=(60, 50, 45), width=6)
+    dr.ellipse([700, 380, 1100, 780], outline=(232, 104, 44), width=12)
+    sk.save(mats / "해결책_스케치.jpg", quality=90)
+
+    # 1차 자료의 서지 확인(Crossref)은 네트워크 없이 — 같은 메타를 돌려주는 가짜
+    from studio.assets import scholar as sch_mod
+    real_deps = pl.Pipeline._evidence_deps
+
+    class FakeScholar:
+        def resolve(self, citation, doi=""):
+            return sch_mod._meta({"DOI": "10.1016/0142-694X(91)90003-F", "title": ["Design fixation"],
+                                  "author": [{"family": "Jansson"}, {"family": "Smith"}],
+                                  "container-title": ["Design Studies"], "issued": {"date-parts": [[1991]]},
+                                  "volume": "12", "issue": "1", "page": "3-11"}) if "Jansson" in citation else None
+
+    def deps_with_fake_scholar(self):
+        d = real_deps(self)
+        d.scholar = FakeScholar()
+        return d
+    pl.Pipeline._evidence_deps = deps_with_fake_scholar
     spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다 — 디자인 전공 1~2학년 대상", episode="01",
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
-                      direction="모션 장면은 크게")
+                      direction="모션 장면은 크게", images_dir=str(mats))
     job = work / "job"
     previews: list[str] = []
     res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
@@ -521,6 +575,19 @@ def main() -> int:
     assert StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계
     report = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
     assert "AI 스튜디오 브리프" in report and "아트 디렉터 검수" in report and "자동 후반 작업" in report
+    # 🎞 자료 조달 v2(WP7): 자료 리서처 → 사다리(화자 자료 · 출처 카드 · 스톡 · 재현) → 확보 목록 → 모션 디자이너
+    evj = json.loads((job / "work" / "evidence.json").read_text(encoding="utf-8"))
+    st = evj["rounds"][0]["summary"]
+    assert st["requests"] == 5 and st["rungs"].get("local") == 1 and st["rungs"].get("scholar") == 1 \
+        and st["rungs"].get("code_drawn") == 1 and st["rungs"].get("stock") == 2, st
+    evs = [g for g in lp["graphics"] if g["template"] == "evidence"]
+    print("증거 그래픽:", [(g["id"], g["data"].get("treatment"), round(g["start"], 1), round(g["end"], 1)) for g in evs])
+    hero = next(g for g in evs if g["data"].get("treatment") == "hero")
+    a0 = hero["data"]["assets"][0]
+    assert (job / "render" / "public_src" / a0["src"]).exists() and a0["tier"] == "own", hero
+    assert hero["data"]["title"] == "해결책부터 그린 손" and hero["data"]["caption"] == "2학년 과제 · 2024", hero["data"]
+    assert any(g["data"].get("archive", {}).get("variant") == "source" for g in evs), evs
+    assert (out / "부가자료" / "자료_대장.csv").exists() and "Jansson" in upload, upload[-600:]
     longs = [f for f in files if f.startswith("1_롱폼") and f.endswith(".mp4")]
     shorts = [f for f in files if "숏폼" in f and f.endswith(".mp4")]
     assert len(longs) == 1 and len(shorts) == 2, files

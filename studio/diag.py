@@ -49,6 +49,11 @@ def write(pipeline: Any, error: str = "") -> Path | None:
             lines += ["## 효과음·배경음악",
                       f"- 받은 효과음 {len(real)}개 · 대체(합성) 효과음 {len(snd.sfx) - len(real)}개 · 배경음악 {len(snd.bgm)}곡",
                       f"- 받지 못한 것 {len(getattr(snd, 'failed', []))}개: " + ", ".join(getattr(snd, "failed", [])[:12]), ""]
+        ev = getattr(p, "evidence_stats", None)
+        if ev:      # 자료 조달 깔때기(03 문서 11절 P0): need 별 요청·확보, 끝난 칸
+            lines += ["## 자료 조달(증거)", f"- 요청 {ev.get('requests', 0)} · 확보 {ev.get('acquired', 0)}",
+                      "- need 별: " + " · ".join(f"{k} {v['got']}/{v['n']}" for k, v in (ev.get("by_need") or {}).items()),
+                      "- 끝난 칸: " + " · ".join(f"{k} {v}" for k, v in sorted((ev.get("rungs") or {}).items())), ""]
         st = getattr(p, "stock_stats", None)
         if st:
             lines += ["## 스톡(B-roll)", "- " + " · ".join(f"{k} {v}" for k, v in st.items()), ""]
