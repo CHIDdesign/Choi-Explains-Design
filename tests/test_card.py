@@ -147,3 +147,21 @@ def test_card_pure_white_and_black_backgrounds_become_house_paper_and_ink():
     assert "color:#000" in c["css"].replace(" ", "") and "color:#fff" in c["css"].replace(" ", "")
     tsx = (ROOT / "renderer" / "src" / "components" / "card" / "HtmlCard.tsx").read_text(encoding="utf-8")
     assert "'--white': MODERN.card" in tsx and "'--ink': MODERN.ink" in tsx      # 디자인 v4: 흰 카드는 룩이다
+
+
+def test_card_timeline_is_kept_and_forbidden_tokens_reject_it():
+    """디자인 v4 — 직접 쓴 GSAP 타임라인(card_dsl.md 7절): 트윈만 쓰면 남고, 전역·시계·난수·콜백·타이머는 거절."""
+    from studio.motion.card import clean_card, card_settle_time
+    html = '<div class="card" data-card-id="t"><style>.card[data-card-id="t"] .root{background:var(--paper)}</style>' \
+           '<div class="root"><h1 class="w">하나</h1><h1 class="w">둘</h1></div></div>'
+    good = "tl.set(q('.w'), {opacity: 0});\ntl.to(q('.w'), {opacity: 1, duration: 0.5, stagger: 0.06}, 0.1);"
+    c = clean_card({"html": html, "timeline": good}, card_id="t")
+    assert c and c["timeline"] == good and "problems" not in c
+    for bad in ("setTimeout(() => {}, 1);", "const d = Date.now();", "tl.to(q('.w'), {onUpdate: () => {}});",
+                "window.alert(1);", "fetch('x');", "Math.random();", "tl.call(() => {});", "while (true) {}"):
+        c2 = clean_card({"html": html, "timeline": good + "\n" + bad}, card_id="t")
+        assert c2 and "timeline" not in c2 and any(p.startswith("timeline_forbidden") for p in c2.get("problems", [])), bad
+    c3 = clean_card({"html": html, "timeline": "const x = 1;"}, card_id="t")
+    assert c3 and "timeline" not in c3 and "timeline_no_tweens" in c3.get("problems", [])
+    c4 = clean_card({"html": html, "timeline": good, "settle_s": 2.4}, card_id="t")
+    assert c4 and c4["settle_s"] == 2.4 and card_settle_time(c4) >= 2.4

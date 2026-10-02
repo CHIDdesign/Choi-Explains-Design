@@ -182,7 +182,8 @@ export type MotionSpec = {
 
 // 자유 HTML 카드(studio/motion/card.py clean_card 가 정리한 것만 들어온다):
 // html = .card 안쪽 조각, css = `.card[data-card-id="id"]` 로 스코프된 규칙, w×h = 작성 캔버스(렌더러가 상자에 맞춰 축소)
-export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string};
+// timeline: 모션 디자이너가 직접 쓴 GSAP 타임라인 코드(card_dsl.md 7절) — fn(tl, q, gsap, ctx) 본문, 결정적(seek 로만)
+export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string; timeline?: string};
 
 // 얼굴 옆 액자·개념 텍스트의 자리(studio/render/props.py face_safe_layouts): 얼굴 트랙으로 고른 빈 쪽 + 여유에 맞춘 크기.
 // side 'top' = 짧은 키워드를 화면 위 소제목 바(종이 띠 + '!' 배지)로 — 머리 위가 비어 있을 때만

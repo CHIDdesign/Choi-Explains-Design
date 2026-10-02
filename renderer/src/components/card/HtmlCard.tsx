@@ -83,7 +83,7 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
     const el = hostRef.current;
     if (!el) return;
     el.innerHTML = html;
-    compiled.current = compileCard(gsap, el, {fps, duration: dur / fps});
+    compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || ''});
     compiled.current.seek(frame / fps);
     // 카드 글꼴(분할 웹폰트 포함)이 이 글자들을 다 받을 때까지 첫 프레임을 멈춘다 — 조용한 폴백 글꼴 렌더 방지
     const text = el.textContent || '가';

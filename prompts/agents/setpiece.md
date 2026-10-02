@@ -31,6 +31,7 @@
 ## 내는 것
 - `layout`·`style`(카드 스타일 하나)·`title`(장면 이름 — 화면에 나가지 않는다)
 - `html`: 카드 계약 그대로의 조각 전체(`<div class="card" data-card-id="…">` + `<style>` + `.root`)
+- `timeline`: **직접 쓴 GSAP 타임라인**(card_dsl.md 7절 — `tl`·`q`·`gsap.utils`·`ctx`). 시그니처 장면은 거의 늘 쓴다: 어절·행·칩이 말의 박자에 맞춰 겹치며 들어오고, 기기 목업 안 UI 가 단계마다 바뀐다. `data-anim` 만으로 되는 단순한 장면이면 "".
 - `start_word`: 장면 정보의 `start_word` 를 그대로(발화 속 어절)
 - `notes`: 무엇을 어떻게 재현했는지와 근거(조사 노트의 어느 사양) 한두 줄
 

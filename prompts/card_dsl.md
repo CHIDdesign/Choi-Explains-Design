@@ -104,5 +104,25 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 `anim_first_frame_empty`(시작 0.5초 프레임이 완성 프레임의 35%보다 비어 있음 — 제목과 주 요소는 0~0.3초에 세우고, 말에 맞춰 오는 것은 강조·숫자·마지막 한 줄만). 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
 `scale-pop` 은 펀치 구간의 한 방에만 — 롱폼 본문 카드의 등장은 `fade-in`·`slide-in`·`kinetic-chars`·`draw-path` 로.
 
+### 7. 직접 쓰는 GSAP 타임라인(`timeline`) — 디자인 v4, 쇼릴 수준의 움직임
+`data-anim` 선언으로 모자라면(겹치는 트윈, 어절·글자 단위 안무, 경로·스케일·회전의 조합, 하위 타임라인) **GSAP 코드를 직접 쓴다.**
+`timeline` 은 함수 본문 문자열이고 앱이 `fn(tl, q, gsap, ctx)` 로 부른다:
+- `tl` — 이 카드의 **일시정지된** 타임라인. 모든 트윈은 `tl.to / tl.from / tl.fromTo / tl.set / tl.add` 로 여기에만 얹는다(위치 인자 `0`, `0.4`, `"<"`, `"+=0.2"` 로 겹침·순서).
+- `q(selector)` — 카드 안 요소 배열(`q('.word')`, `q('.row')[2]`). `gsap.utils`(interpolate·mapRange·clamp·snap·distribute…)·`gsap.parseEase`·`gsap.timeline(vars)`(부모 `tl` 에 자동으로 붙는 하위 타임라인)만 있다.
+- `ctx` — `{duration, fps, w, h}`(카드 길이·캔버스).
+- 결정론: 값은 `seek(t)` 로만 정해진다. **금지**: 콜백(onUpdate·onComplete…), `Date`·난수·타이머·`window`·`document`·네트워크·`eval`·`import`·`while`. 6000자 이하. 쓰면 카드가 거절된다.
+- 길이: 마지막 트윈 끝 ≤ 카드 길이 − 1.0초(`anim_ends_too_late`). 0.3초 안에 판·제목이 서 있어야 한다(`anim_first_frame_empty`).
+- `data-anim` 과 같이 써도 된다(선언이 먼저 붙고, 코드가 그 뒤에 얹힌다). 숫자 카운트업은 `data-anim="count-up"` 으로.
+예:
+```js
+const words = q('.headline .w');
+tl.set(words, {opacity: 0, yPercent: 110});
+tl.to(words, {opacity: 1, yPercent: 0, duration: 0.55, ease: 'expo.out', stagger: 0.06}, 0.1);
+tl.fromTo(q('.panel'), {y: 40, opacity: 0}, {y: 0, opacity: 1, duration: 0.6, ease: 'power3.out'}, 0.35);
+tl.fromTo(q('.row'), {x: -24, opacity: 0}, {x: 0, opacity: 1, duration: 0.45, ease: 'power2.out', stagger: 0.08}, 0.7);
+tl.fromTo(q('.chip'), {scale: 0.8, opacity: 0}, {scale: 1, opacity: 1, duration: 0.5, ease: 'back.out(1.4)'}, 1.4);
+tl.to(q('.bubble'), {y: -6, duration: 1.2, ease: 'sine.inOut', yoyo: true, repeat: 1}, 2.0);
+```
+
 ### 내야 하는 것(`cards[]`)
-`start_seg`·`end_seg`·`start_word`(카드가 도착할 단어) · `layout` · `style` · `title`(로그·검수용 한 줄) · `html`(위 계약대로 카드 조각 전체) · `reason`.
+`start_seg`·`end_seg`·`start_word`(카드가 도착할 단어) · `layout` · `style` · `title`(로그·검수용 한 줄) · `html`(위 계약대로 카드 조각 전체) · `timeline`(직접 쓴 GSAP 코드, 없으면 "") · `reason`.

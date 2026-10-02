@@ -1437,7 +1437,21 @@ class Pipeline:
                 self.log(f"🃏 카드 검사를 못 했습니다({str(e)[:200]}) — 검사 없이 진행")
                 return
             results.update(res)
+            for g in todo:
+                tl_s = (res.get(g["card"]["id"], {}).get("metrics") or {}).get("timeline")
+                if g["card"].get("timeline") and isinstance(tl_s, (int, float)) and tl_s > 0:
+                    g["card"]["settle_s"] = round(float(tl_s), 2)      # 직접 쓴 타임라인의 정착 시각(검수 스틸·읽기 시간)
             failed = [g for g in todo if not res.get(g["card"]["id"], {}).get("ok")]
+            # 글꼴 파일을 못 읽은 것(font load NetworkError · font_not_loaded 만)은 카드가 아니라 설치·환경 문제 — 디자이너에게
+            # 고치라고 보내지도, 키워드 카드로 바꾸지도 않는다(2026-10-02 실제 실행: 5개 카드가 전부 이 이유로 두 번 실패할 뻔)
+            env_only = failed and all(
+                all(str(p.get("code", "")) in ("font_not_loaded", "font_family_not_bundled") or "font load" in str(p.get("detail", ""))
+                    for p in res.get(g["card"]["id"], {}).get("problems", [])) for g in failed)
+            if env_only:
+                self.log("🃏 카드 검사: 글꼴 파일을 읽지 못했습니다(설치 문제 — renderer/assets/fonts 확인). 카드는 그대로 두고 진행")
+                for g in failed:
+                    results[g["card"]["id"]] = dict(res[g["card"]["id"]], ok=True, problems=[])
+                break
             if not failed or rnd == 1 or studio is None:
                 break
             for g in failed:

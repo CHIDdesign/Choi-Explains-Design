@@ -22,6 +22,14 @@ STYLES = ("editorial", "academic", "whiteboard", "swiss", "minimal", "board")
 
 MAX_HTML = 24000
 MAX_CSS = 24000
+MAX_TIMELINE = 6000   # 직접 쓴 GSAP 타임라인 코드(글자 수)
+# 타임라인 코드에서 금지: 전역·네트워크·시계·난수·콜백·동적 코드 — 결정론(seek 로만 그려진다)과 격리를 지킨다
+TIMELINE_FORBIDDEN = re.compile(
+    r"\b(?:fetch|XMLHttpRequest|WebSocket|importScripts|import|eval|Function|setTimeout|setInterval|requestAnimationFrame|"
+    r"Date|window|document|globalThis|self|location|navigator|localStorage|sessionStorage|indexedDB|parent|top|postMessage|"
+    r"onUpdate|onComplete|onStart|onRepeat|onReverseComplete|call|eventCallback|random|innerHTML|outerHTML|insertAdjacentHTML|"
+    r"createElement|appendChild|remove|while|do|with|async|await|Promise|then|constructor|prototype|__proto__)\b|<\/?script|=>\s*\{[^}]*\bthis\b",
+    re.I)
 MAX_ELEMENTS = 260
 
 ANIM_KINDS = {"fade-in", "fade-out", "slide-in", "kinetic-chars", "typewriter", "count-up", "draw-path", "grow-x", "grow-y",
@@ -448,9 +456,35 @@ def clean_card(card: Any, *, layout: str = "fullscreen", card_id: str = "", stri
         pass
     style = str(card.get("style") or "")
     out = {"id": cid, "html": inner, "css": css, "w": w, "h": h, "style": style if style in STYLES else ""}
+    tl = clean_timeline(card.get("timeline"), problems)
+    if tl:
+        out["timeline"] = tl
+    if card.get("settle_s") is not None:
+        try:
+            out["settle_s"] = float(card["settle_s"])
+        except (TypeError, ValueError):
+            pass
     if problems:
         out["problems"] = sorted(set(problems))
     return out
+
+
+def clean_timeline(code: Any, problems: list[str]) -> str:
+    """직접 쓴 GSAP 타임라인 코드(fn(tl, q, gsap, ctx) 의 본문) — 크기·금지 토큰 검사. 못 쓰면 '' 와 문제 기록.
+    런타임 격리(전역 이름 가리기·콜백 제거)는 card-anim.mjs runTimeline 이, 실행 오류는 check.mjs 가 잡는다."""
+    if not code or not isinstance(code, str) or not code.strip():
+        return ""
+    if len(code) > MAX_TIMELINE:
+        problems.append("timeline_too_long")
+        return ""
+    m = TIMELINE_FORBIDDEN.search(code)
+    if m:
+        problems.append(f"timeline_forbidden:{m.group(0)[:24]}")
+        return ""
+    if "tl." not in code and "gsap." not in code:
+        problems.append("timeline_no_tweens")
+        return ""
+    return code.strip()
 
 
 def card_text(card: dict[str, Any]) -> str:
@@ -462,8 +496,12 @@ def card_text(card: dict[str, Any]) -> str:
 
 
 def card_settle_time(card: dict[str, Any]) -> float:
-    """모든 data-anim 이 끝나는 시각(초) — 검수 스틸·읽기 시간 계산용."""
+    """모든 data-anim 이 끝나는 시각(초) — 검수 스틸·읽기 시간 계산용. 직접 쓴 타임라인은 렌더 전 검사가 잰 길이(settle_s)."""
     t = 0.0
+    try:
+        t = max(t, float(card.get("settle_s") or 0.0))
+    except (TypeError, ValueError):
+        pass
     for m in re.finditer(r"<[^>]*data-anim=\"([^\"]+)\"[^>]*>", card.get("html") or ""):
         tag = m.group(0)
         at = re.search(r'data-anim-at="([^"]+)"', tag)

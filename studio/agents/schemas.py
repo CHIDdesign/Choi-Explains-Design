@@ -175,6 +175,7 @@ MOTION = _obj({
         "style": {"type": "string", "enum": CARD_STYLES},
         "title": STR,
         "html": STR,
+        "timeline": STR,          # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 없으면 ""
         "sequence_id": STR,
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
         "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
@@ -381,6 +382,7 @@ SETPIECE = _obj({
     "style": {"type": "string", "enum": CARD_STYLES},
     "title": STR,
     "html": STR,
+    "timeline": STR,              # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 시그니처 장면은 거의 늘 쓴다
     "start_word": STR,
     "notes": STR,
 })
@@ -388,7 +390,7 @@ SETPIECE = _obj({
 # 🎨 모션 디자이너(수정 라운드)
 MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
 # 🃏 카드 디자이너(수정 라운드) — html 은 고친 카드 조각 전체
-CARD_REVISE = _obj({"html": STR, "changes": STR})
+CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 

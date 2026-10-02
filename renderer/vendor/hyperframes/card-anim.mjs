@@ -62,7 +62,7 @@ const splitChars = (el) => {
 /**
  * @param gsap  GSAP 전역(모듈 import 또는 window.gsap)
  * @param root  카드 루트(.card) 또는 그 조상
- * @param opts  {fps, duration}
+ * @param {{fps?: number, duration?: number, timeline?: string}} opts  timeline = 직접 쓴 GSAP 코드(fn(tl, q, gsap, ctx) 본문)
  * @returns {{timeline, duration, seek(t), kinds: string[], problems: string[]}}
  */
 function compileCard(gsap, root, opts) {
@@ -215,6 +215,12 @@ function compileCard(gsap, root, opts) {
     void i;
   });
 
+  // 디자인 v4 — 모션 디자이너·시그니처 빌더가 직접 쓴 GSAP 타임라인(docs/디자인_v4_모던모션.md 6절, card_dsl.md 7절).
+  // 같은 일시정지 타임라인 tl 위에만 트윈을 얹는다(seek 가 전부 제어 → 결정론). 전역·네트워크·시계·난수는 이름을 가려 undefined 로.
+  if (opts && typeof opts.timeline === 'string' && opts.timeline.trim()) {
+    runTimeline(gsap, tl, root, opts.timeline, {duration: opts.duration || 8, fps: opts.fps || 30,
+      w: root.getBoundingClientRect().width, h: root.getBoundingClientRect().height}, problems);
+  }
   const dur = tl.duration();
   const seek = (t) => {
     const tt = clamp(t, 0, Math.max(dur, 0.0001));
@@ -223,6 +229,54 @@ function compileCard(gsap, root, opts) {
     for (const c of counters) c.el.textContent = fmtNumber(c.o.v, c.fmt, c.prefix, c.suffix);
   };
   return {timeline: tl, duration: dur, seek, kinds, problems};
+}
+
+/** 자유 타임라인 실행: fn(tl, q, gsap, ctx). q(sel) = 카드 안 요소 배열, gsap = 안전한 부분집합(utils·parseEase·nested timeline). */
+function runTimeline(gsapLib, tl, root, code, ctx, problems) {
+  const q = (sel) => Array.from(root.querySelectorAll(sel));
+  const utils = {};
+  for (const k of ['interpolate', 'mapRange', 'clamp', 'wrap', 'wrapYoyo', 'snap', 'normalize', 'pipe', 'unitize', 'toArray',
+    'distribute', 'splitColor', 'getUnit', 'selector']) {
+    if (gsapLib.utils && typeof gsapLib.utils[k] === 'function') utils[k] = gsapLib.utils[k];
+  }
+  const safe = {
+    utils,
+    parseEase: gsapLib.parseEase,
+    // gsap.timeline() 은 부모 tl 에 붙은 하위 타임라인을 돌려준다(따로 돌아가는 전역 타임라인 금지)
+    timeline: (vars) => {
+      const v = Object.assign({}, vars || {});
+      const at = v.at;
+      delete v.at;
+      delete v.onUpdate; delete v.onComplete; delete v.onStart; delete v.onRepeat;
+      const sub = gsapLib.timeline(v);
+      tl.add(sub, at === undefined ? '+=0' : at);
+      return sub;
+    },
+    to: (...a) => tl.to(...a), from: (...a) => tl.from(...a), fromTo: (...a) => tl.fromTo(...a), set: (...a) => tl.set(...a),
+  };
+  const before = tl.duration();
+  try {
+    // strict 모드에서는 'eval'·'arguments' 를 매개변수 이름으로 못 쓴다 — eval 은 정화 단계(card.py TIMELINE_FORBIDDEN)가 막는다
+    const fn = new Function('tl', 'q', 'gsap', 'ctx', 'window', 'document', 'globalThis', 'self', 'fetch', 'XMLHttpRequest',
+      'WebSocket', 'setTimeout', 'setInterval', 'requestAnimationFrame', 'Function', 'Date', 'location', 'navigator',
+      'localStorage', 'parent', 'top', "'use strict';\n" + code);
+    fn(tl, q, safe, ctx);
+  } catch (e) {
+    problems.push('timeline_runtime_error:' + String(e && e.message ? e.message : e).slice(0, 160));
+    return;
+  }
+  // 콜백 트윈은 결정론을 깬다 — 혹시 들어왔으면 떼어 낸다
+  for (const child of tl.getChildren(true, true, true)) {
+    const v = child.vars || {};
+    for (const k of ['onUpdate', 'onComplete', 'onStart', 'onRepeat', 'onReverseComplete']) {
+      if (v[k]) {
+        v[k] = null;
+        problems.push('timeline_callback_removed:' + k);
+      }
+    }
+  }
+  if (tl.duration() === before) problems.push('timeline_added_nothing');
+  tl.pause(0, true);
 }
 
 export {compileCard, KINDS as CARD_ANIM_KINDS};

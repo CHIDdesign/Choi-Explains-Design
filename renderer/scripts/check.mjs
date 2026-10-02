@@ -39,7 +39,8 @@ const vars = {
 };
 
 const fontFaces = () => {
-  const pub = pathToFileURL(path.join(root, 'public', 'fonts') + path.sep).href;
+  // 번들 원본(assets/fonts, npm postinstall 이 채움)에서 읽는다 — public/fonts 는 렌더 번들 단계가 만드니 첫 실행의 카드 검사 때는 없다(2026-10-02 실제 실행에서 발견)
+  const pub = pathToFileURL(path.join(root, 'assets', 'fonts') + path.sep).href;
   const w = [['Regular', 400], ['Medium', 500], ['SemiBold', 600], ['Bold', 700], ['ExtraBold', 800], ['Black', 900]];
   const faces = w.map(([n, wt]) => `@font-face{font-family:"Pretendard";font-weight:${wt};src:url("${pub}Pretendard-${n}.woff2") format("woff2");}`);
   faces.push(`@font-face{font-family:"Anton";font-weight:400;src:url("${pub}Anton-Regular.woff2") format("woff2");}`);
@@ -85,7 +86,8 @@ html,body{margin:0;padding:0;background:${bg};}
 ${card.css}
 </style></head><body>
 <div id="stage"><div class="card-host"><div class="card" data-card-id="${card.id}">${card.html}</div></div></div>
-<script>window.__errors=[];window.addEventListener('error',(e)=>{window.__errors.push(String(e.message||e));});</script>
+<script>window.__errors=[];window.addEventListener('error',(e)=>{window.__errors.push(String(e.message||e));});
+window.__cardTimeline=${JSON.stringify(card.timeline || '')};</script>
 <script>${gsapSrc}</script>
 <script>${animSrc}
 window.__compileCard = (root, opts) => compileCard(window.gsap, root, opts);</script>
@@ -114,7 +116,7 @@ const audit = async (opts) => {
   // 타임라인 컴파일·seek
   let compiled = null;
   try {
-    compiled = window.__compileCard(root, {fps: opts.fps, duration: opts.duration});
+    compiled = window.__compileCard(root, {fps: opts.fps, duration: opts.duration, timeline: window.__cardTimeline || ''});
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
     compiled.seek(opts.settle);
   } catch (e) {

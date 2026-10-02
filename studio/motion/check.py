@@ -42,6 +42,7 @@ def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: i
             "fps": int(fps), "duration": float(durations.get(c["id"], 8.0)),
             "settle": min(float(durations.get(c["id"], 8.0)) - 0.2, card_settle_time(c) + 0.3),
             "layout": c.get("layout", "fullscreen"),
+            "timeline": str(c.get("timeline") or ""),      # 직접 쓴 GSAP 타임라인(card_dsl.md 7절)
         } for c in cards],
     }
     job_file = out_dir / "check_job.json"
