@@ -725,6 +725,30 @@ def strip_audio(props: dict[str, Any]) -> dict[str, Any]:
     return props
 
 
+def bridge_split_gaps(graphics: list[dict[str, Any]], *, gap: float = 1.0) -> int:
+    """F-7(docs/upgrade/06 4-4): 화자가 판으로 줄어든 동안에는 종이 판이 늘 있다 — 이어지는 split 그래픽 사이가 1.0초
+    미만이면(렌더러 buildRegionSpans 가 화자를 줄인 채 두는 간격) 앞 그래픽을 다음 시작까지 늘린다. 같은 구성(skin)끼리만.
+    10/1: 08:45·10:45 에 화자가 줄어든 채 옆이 비었다. 반환: 늘린 수."""
+    splits = sorted((g for g in graphics if g.get("layout") == "split" and g.get("template") != "title"),
+                    key=lambda g: g["start"])
+    n = 0
+    for a, b in zip(splits, splits[1:]):
+        d = b["start"] - a["end"]
+        if 0 < d < gap and a.get("skin") == b.get("skin"):
+            a["end"] = round(b["start"], 3)
+            n += 1
+    return n
+
+
+def stack_avoid_spans(props: dict[str, Any]) -> list[tuple[float, float]]:
+    """F-9: 두 층 강조 자막을 피할 구간 — 글자 그래픽 + 콜아웃 + 얼굴 옆 메모·사진(pip/overlay). 같은 순간 글자 층은 둘까지."""
+    out = text_graphic_spans(props.get("graphics") or [])
+    out += [(float(c["start"]), float(c["end"])) for c in props.get("callouts") or [] if "start" in c and "end" in c]
+    out += [(g["start"], g["end"]) for g in props.get("graphics") or []
+            if g.get("layout") in ("pip", "overlay") and g["template"] in ("broll", "photo")]
+    return sorted(out)
+
+
 def text_graphic_spans(graphics: list[dict[str, Any]]) -> list[tuple[float, float]]:
     """화면에 글자 그래픽이 떠 있는 구간(LongForm.tsx textGraphicActive 와 같은 기준)."""
     return [(g["start"], g["end"]) for g in graphics

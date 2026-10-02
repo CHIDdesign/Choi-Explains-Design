@@ -102,7 +102,9 @@ export type Look = 'paper' | 'classic';
 // 좌표는 장면 상자 기준 퍼센트(x: 0~100 가로, y: 0~100 세로), 시간은 장면 시작 기준 초.
 // ---------------------------------------------------------------------------
 export type MotionColor = 'fg' | 'dim' | 'faint' | 'accent' | 'bg' | 'white' | 'ink';
-export type MotionEnter = 'fade' | 'up' | 'down' | 'left' | 'right' | 'scale' | 'mask' | 'draw' | 'pop' | 'none';
+// v2(docs/upgrade/06 7-1): place 붙이기 · unfold 펼치기 · write 손글씨처럼 왼→오
+export type MotionEnter = 'fade' | 'up' | 'down' | 'left' | 'right' | 'scale' | 'mask' | 'draw' | 'pop' | 'none' | 'place'
+  | 'unfold' | 'write';
 export type MotionKey = {t: number; x?: number; y?: number; scale?: number; rotate?: number; opacity?: number};
 
 export type MotionElBase = {
@@ -116,8 +118,9 @@ export type MotionElBase = {
   color?: MotionColor;
   opacity?: number;
   enter?: MotionEnter;
-  ease?: 'out' | 'inOut' | 'back' | 'linear';
+  ease?: 'out' | 'inOut' | 'back' | 'linear' | 'enterLarge' | 'move' | 'settle';
   keys?: MotionKey[]; // 이동·확대·회전 키프레임
+  ghost?: boolean; // 0초부터 흐린 자리 표시(0.22)로 서 있다가 at 에 채워진다(빈 화면 금지)
 };
 
 export type MotionText = MotionElBase & {
@@ -149,16 +152,23 @@ export type MotionCounter = MotionElBase & {type: 'counter'; from: number; to: n
   suffix?: string; size: number};
 export type MotionBar = MotionElBase & {type: 'bar'; w: number; h: number; value: number; label?: string};
 // frame: torn = 찢어진 흰 액자(사진), cutout = 오려 붙인 듯 그림자만(투명 PNG 오브젝트), none = 그대로
+// print = 종이 위에 붙인 프린트(얇은 종이 테두리 + 높이 2 그림자 + 시드 각도)
+// tint: ink = 잉크 단색(컬러 클립아트 금지, 게이트 B8) · duotone = 잉크→종이 두 색
 export type MotionImage = MotionElBase & {type: 'image'; src: string; w: number; h: number; radius?: number;
-  frame?: 'torn' | 'cutout' | 'none'};
+  frame?: 'torn' | 'cutout' | 'none' | 'print'; tint?: 'none' | 'ink' | 'duotone'};
+// 손으로 친 주석 — 가리킬 상자(가운데 x, y · w, h %)에 동그라미·밑줄·화살표·괄호·취소선을 그려 넣는다
+export type MotionMark = MotionElBase & {type: 'mark'; kind: 'circle' | 'underline' | 'arrow' | 'bracket' | 'strike';
+  w: number; h: number; strokeWidth?: number};
 
 export type MotionEl = MotionText | MotionRect | MotionCircle | MotionLine | MotionPath | MotionDots | MotionCounter |
-  MotionBar | MotionImage;
+  MotionBar | MotionImage | MotionMark;
 
 export type MotionSpec = {
   bg?: 'board' | 'paper' | 'ink' | 'signal' | 'transparent';
   grid?: boolean;
   label?: string; // 괄호 라벨(예: 게슈탈트 · 근접성)
+  hero?: number; // 크게 움직이는 주 요소의 번호(린트 L26)
+  layout_intent?: 'asym';
   elements: MotionEl[];
 };
 

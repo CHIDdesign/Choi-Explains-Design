@@ -3,7 +3,7 @@ import {interpolate} from 'remotion';
 import {LONG, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, NOTE, paperShadow} from '../../design/tokens';
 import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
@@ -39,7 +39,7 @@ export const BoardPanel: React.FC<{g: Graphic; Comp: React.FC<TemplateProps>; fr
     <div style={{position: 'absolute', left: card.x, top: card.y, width: card.w, height: card.h,
       ...slideIn(frame, LONG.boardIn, from, 48), ...slideOut(frame, dur, from)}}>
       <div style={{position: 'absolute', inset: 0, borderRadius: STAGE.radius, overflow: 'hidden', background: s.bg,
-        boxShadow: '0 24px 70px rgba(0,0,0,0.38)'}}>
+        boxShadow: paperShadow(2)}}>
         <Halftone opacity={0.5} />
         <PaperFiber id={`board-${g.id}`} opacity={0.12} />
         <DotGrid opacity={tween(frame, 6, 16) * 0.9} color={NOTE.dots} />

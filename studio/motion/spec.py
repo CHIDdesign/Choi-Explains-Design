@@ -7,9 +7,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
-EL_TYPES = {"text", "rect", "circle", "line", "arrow", "path", "dots", "counter", "bar", "image"}
+EL_TYPES = {"text", "rect", "circle", "line", "arrow", "path", "dots", "counter", "bar", "image", "mark"}
 COLORS = {"fg", "dim", "faint", "accent", "bg", "white", "ink"}
-ENTERS = {"fade", "up", "down", "left", "right", "scale", "mask", "draw", "pop", "none"}
+# v2(docs/upgrade/06 7-1): place 붙이기 · unfold 펼치기 · write 손글씨처럼 왼→오(4프레임 스텝)
+ENTERS = {"fade", "up", "down", "left", "right", "scale", "mask", "draw", "pop", "none", "place", "unfold", "write"}
+EASES = {"out", "inOut", "back", "linear", "enterLarge", "move", "settle"}
+MARK_KINDS = {"circle", "underline", "arrow", "bracket", "strike"}
+TINTS = {"none", "ink", "duotone"}
+LAYOUT_NAMES = {"side", "desk", "sheet", "evidence", "stack", "strip"}
 BGS = {"board", "paper", "ink", "signal", "transparent"}
 MAX_ELEMENTS = 36
 PATH_RE = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9.,\s\-]+$")
@@ -45,8 +50,10 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
             out["out"] = o
     if el.get("enter") in ENTERS:
         out["enter"] = el["enter"]
-    if el.get("ease") in ("out", "inOut", "back", "linear"):
+    if el.get("ease") in EASES:
         out["ease"] = el["ease"]
+    if el.get("ghost") is True and t != "mark":
+        out["ghost"] = True      # 0초부터 흐린 자리 표시(0.22)로 서 있다가 at 에 채워진다 — 빈 화면 금지(06 F-6)
     if el.get("anchor") in ("center", "left", "right"):
         out["anchor"] = el["anchor"]
     c = _color(el.get("color"))
@@ -139,8 +146,22 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
         out.update(src=src[:120], w=_num(el.get("w"), 2, 100, 30), h=_num(el.get("h"), 2, 100, 30),
                    radius=_num(el.get("radius"), 0, 100, 0))
         fr = str(el.get("frame", "")).strip()
-        if fr in ("torn", "cutout", "none"):
+        if fr in ("torn", "cutout", "none", "print"):
             out["frame"] = fr
+        # 컬러 클립아트 금지(게이트 B8): 벡터·일러스트는 기본 잉크 단색
+        tint = el.get("tint")
+        if tint in TINTS:
+            out["tint"] = tint
+        elif src.startswith(("pixabay:vector:", "pixabay:illustration:")):
+            out["tint"] = "ink"
+    elif t == "mark":
+        # 손으로 친 주석: 가리킬 상자(가운데 x, y · w, h %) 둘레·아래에 그린다. 강조는 색이 아니라 mark 로
+        kind = el.get("kind")
+        if kind not in MARK_KINDS:
+            return None
+        out.update(kind=kind, w=_num(el.get("w"), 1, 100, 20), h=_num(el.get("h"), 1, 100, 8),
+                   strokeWidth=_num(el.get("strokeWidth"), 1, 12, 5))
+        out.setdefault("dur", _num(el.get("dur"), 0.2, 1.5, 0.5))
     return out
 
 
@@ -151,7 +172,7 @@ def stage_first(els: list[dict[str, Any]]) -> int:
     """0프레임 무대(docs/upgrade/06 F-6): 0.5초까지 아무것도 서지 않는 장면이면 구도를 먼저 세운다 — 판·상자(rect)와 가장 큰
     제목 글자를 0초로. 선·화살표·점·숫자·작은 글자는 말에 맞춘 시각 그대로(강조는 말에서 온다). 그래도 없으면 가장 먼저 오는
     요소를 0초로. 반환: 옮긴 요소 수."""
-    if not els or any(float(e.get("at", 0)) <= STAGE_BY for e in els):
+    if not els or any(float(e.get("at", 0)) <= STAGE_BY or e.get("ghost") for e in els):
         return 0
     moved = 0
     texts = [e for e in els if e["type"] == "text"]
@@ -176,6 +197,14 @@ def clean_spec(spec: Any, scene_dur: float) -> dict[str, Any] | None:
         return None
     stage_first(els)
     out: dict[str, Any] = {"elements": els}
+    try:
+        hero = int(spec.get("hero", -1))
+    except (TypeError, ValueError):
+        hero = -1
+    if 0 <= hero < len(els):
+        out["hero"] = hero           # 크게 움직이는 주 요소 하나(린트 L26)
+    if spec.get("layout_intent") == "asym":
+        out["layout_intent"] = "asym"
     if spec.get("bg") in BGS:
         out["bg"] = spec["bg"]
     if spec.get("grid"):

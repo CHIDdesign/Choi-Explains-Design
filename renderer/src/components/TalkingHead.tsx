@@ -1,5 +1,6 @@
 import React from 'react';
 import {Freeze, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame} from 'remotion';
+import {paperShadow} from '../design/tokens';
 import {lerp} from '../lib/anim';
 import {toFrame} from '../lib/time';
 import type {Clip, FaceSample} from '../lib/types';
@@ -91,7 +92,7 @@ export const TalkingHead: React.FC<{
         overflow: 'hidden',
         borderRadius: radius,
         outline: border,
-        boxShadow: shadow ? '0 18px 60px rgba(0,0,0,0.45)' : undefined,
+        boxShadow: shadow ? paperShadow(2) : undefined,
         background: '#000',
       }}
     >

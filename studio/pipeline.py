@@ -73,7 +73,7 @@ from .render.props import (Episode, apply_edit, caption_overlays, dedupe_caption
                            mark_sequences, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
                            short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
-                           fold_keywords_into_media)
+                           fold_keywords_into_media, bridge_split_gaps, stack_avoid_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resolve_cues
@@ -439,8 +439,8 @@ class Pipeline:
         except Cancelled:
             raise
         except Exception as e:
-            if key not in SOFT_STAGES or self.cancel.cancelled:
-                raise
+            if key not in SOFT_STAGES or self.cancel.cancelled or isinstance(e, gate.GateBlocked):
+                raise           # 품질 게이트가 멈추라고 한 것은 말단 단계라도 삼키지 않는다
             self._log_file_only(traceback.format_exc())
             self.log(f"⚠️ {STAGE_LABEL[key]} 실패 — 이 단계만 건너뛰고 계속합니다: {e}")
             self.soft_failures.append({"stage": key, "label": STAGE_LABEL[key], "error": str(e)[:300]})
@@ -1227,6 +1227,7 @@ class Pipeline:
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
         self._check_cards(tm0)
+        self._lint_motion(tm0)
         self._auto_photos()
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
@@ -1374,6 +1375,86 @@ class Pipeline:
             g["subtitle"] = card_text(g["card"])[:40]
             g.pop("card", None)
         self.plan_long["card_checks"] = {cid: {"ok": r["ok"], "problems": r["problems"][:6]} for cid, r in results.items()}
+
+    def _lint_motion(self, tm: TimeMap) -> None:
+        """🎨 모션 장면 타이밍·구도 린트(studio/motion/lint.py, docs/upgrade/06c 4장) — 렌더 전, 스펙과 실제 단어 시각만으로.
+        error(0.5초 빈 무대 · 채움 · 작은 글자 · 정지 시간 · 동시 등장 · pop · 말보다 늦음)가 있으면 모션 디자이너가 위반 목록을 받아
+        한 번 고치고(Studio.revise_scene), 그래도 남으면 규칙 보정(작은 글자 키우기)만 하고 그대로 둔다 — 결과는
+        plan.long.motion_checks(카드의 card_checks 와 같은 모양)."""
+        from .motion import lint as mlint
+        gl = self.plan_long.get("graphics", [])
+        scenes = [(i, g) for i, g in enumerate(gl) if g.get("template") == "motion" and isinstance(g.get("spec"), dict)]
+        if not scenes:
+            self.plan_long.pop("motion_checks", None)
+            return
+        kept = [u for u in self.utts if u.kept]
+        words = [(tm.src_to_edit(w.start, snap=True), tm.src_to_edit(w.end, snap=True), w.text) for u in kept for w in u.words]
+        words = [(a, b, t) for a, b, t in words if a is not None and b is not None]
+
+        def window(g: dict) -> Optional[tuple[float, float]]:
+            tg = time_graphics([g], self.utts, tm, total=tm.duration)
+            return (tg[0].start, tg[0].end) if tg else None
+
+        def check(g: dict) -> tuple[list, float, list]:
+            w = window(g)
+            if w is None:
+                return [], 0.0, []
+            dur = w[1] - w[0]
+            ws = [(a - w[0], b - w[0], t) for a, b, t in words if w[0] - 0.5 <= a <= w[1]]
+            return mlint.lint(g["spec"], dur, ws, box=mlint.box_for(g.get("layout", "fullscreen"))), dur, ws
+
+        studio = self._ensure_studio() if self.spec.studio_mode else None
+        results: dict[str, dict] = {}
+        todo = []
+        for i, g in scenes:
+            issues, dur, _ = check(g)
+            if dur and mlint.errors(issues):
+                todo.append((i, g, issues, dur))
+            else:
+                results[f"g{i}"] = {"ok": True, "errors": [], "warns": sorted({x.rule for x in issues})}
+        if todo:
+            self.log(f"🎨 모션 장면 {len(scenes)}개 타이밍 린트: 고칠 것 {len(todo)}개"
+                     + (" → 모션 디자이너 수정" if studio else " → 규칙 보정"))
+
+        def fix(item):
+            i, g, issues, dur = item
+            new = None
+            if studio is not None:
+                problem = "타이밍·구도 린트 위반(렌더 전 검사):\n" + "\n".join(f"- {x}" for x in mlint.describe(mlint.errors(issues)))
+                try:
+                    new = studio.revise_scene(self.ctx, g["spec"], dur, problem,
+                                              "위반 규칙을 고친다: 0.5초 안에 제목·주 요소(또는 ghost 자리 표시), 상자 45% 채움, "
+                                              "글자 28px 이상, 마지막 도착 뒤 정지 시간, 같은 0.1초 시작 둘까지, pop·back 금지.", None)
+                except DirectorError as e:
+                    self._log_file_only(f"   (모션 수정 실패 g{i}: {e})")
+            return i, g, issues, dur, new
+
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                done = list(ex.map(fix, todo))
+            for i, g, issues, dur, new in done:
+                if new:
+                    old_spec = g["spec"]
+                    g["spec"] = new
+                    issues2, _, _ = check(g)
+                    if len(mlint.errors(issues2)) > len(mlint.errors(issues)):
+                        g["spec"] = old_spec          # 고친 것이 더 나쁘면 되돌린다
+                    else:
+                        issues = issues2
+                if mlint.errors(issues):
+                    bumped = mlint.bump_small_text(g["spec"], mlint.box_for(g.get("layout", "fullscreen"))[1])
+                    if bumped:
+                        issues, _, _ = check(g)
+                errs = mlint.errors(issues)
+                results[f"g{i}"] = {"ok": not errs, "errors": [x.rule for x in errs],
+                                    "warns": sorted({x.rule for x in issues if x.level == "warn"}), "revised": bool(new)}
+                if errs:
+                    self._log_file_only(f"   (모션 g{i} 남은 위반: {', '.join(mlint.describe(errs))[:300]})")
+        bad = sum(1 for r in results.values() if not r["ok"])
+        self.plan_long["motion_checks"] = results
+        if todo:
+            self.log(f"🎨 모션 린트: 통과 {len(results) - bad}/{len(results)}" + (f" · 남은 위반 {bad}개(리포트)" if bad else ""))
 
     def _save_plan(self) -> None:
         prev = read_json(self.work / "plan.json", {})
@@ -1538,7 +1619,8 @@ class Pipeline:
                 # 자료(03 문서 9절): 실물 비율 · 챕터마다 전면 자료 · 관련도
                 gate.b1_media_ratio(gs, total),
                 gate.b2_hero_per_chapter(gs, lp.get("chapters", []), total),
-                gate.b6_pick_scores(gs)]
+                gate.b6_pick_scores(gs),
+                gate.b7_variety(gs)]
 
     def _gate_screen(self, lp: dict, ed: EditDecisions) -> tuple[dict, EditDecisions]:
         """렌더 props 확정 뒤: 그래픽 없는 칸·긴 맨얼굴은 그 자리의 핵심어 카드로 채우고, 늦은 타이틀은 앞으로 → props 다시."""
@@ -2517,6 +2599,7 @@ class Pipeline:
         node = find_node(self.settings.node_path)
         rs = self.settings.render
         changed: Optional[list[dict]] = None
+        escalated: list[dict] = []
         for rnd in range(1, rounds + 1):
             self.cancel.check()
             graphics, chapters = self._timed_long()
@@ -2536,6 +2619,16 @@ class Pipeline:
             shutil.rmtree(qa_dir, ignore_errors=True)
             qa_dir.mkdir(parents=True, exist_ok=True)
             frames = [(int(self._settle_time(g) * self.fps), qa_dir / f"{g.id}.jpg") for g in targets]
+            n_main = len(frames)
+            # 움직임 스트립(docs/upgrade/06c 6-1): 모션 장면·자유 카드는 +0.5초 · 15% · 40% · 안착 · 사건 · 퇴장 직전 여섯 장
+            strips: dict[str, list[tuple[float, Path]]] = {}
+            (qa_dir / "strip").mkdir(exist_ok=True)
+            for g in targets:
+                if g.template in ("motion", "card") and g.end - g.start > 1.5:
+                    for k, t in enumerate(qa_strip_times(g, self._settle_time(g))):
+                        sp = qa_dir / "strip" / f"{g.id}_{k}.jpg"
+                        frames.append((int(t * self.fps), sp))
+                        strips.setdefault(g.id, []).append((t - g.start, sp))
             if rnd == 1:
                 for j, t in enumerate(self._caption_moments(lp, graphics)):
                     frames.append((int(t * self.fps), qa_dir / f"captions{j + 1}.jpg"))
@@ -2549,13 +2642,22 @@ class Pipeline:
                        progress=lambda f: self._stage("qa", base + 0.5 * f / rounds),
                        on_peek=lambda ev, r=rnd: self._preview(
                            ev["file"], f"🧐 아트 디렉터 검수 {r}라운드 · 장면 {ev.get('k', '')}/{ev.get('n', '')}"))
-            stills = [(p.stem, p.read_bytes(), "image/jpeg") for _, p in frames if p.exists()]
+            main = [p for _, p in frames[:n_main]] + [p for _, p in frames if p.stem.startswith("captions")]
+            stills = [(p.stem, p.read_bytes(), "image/jpeg") for p in main if p.exists()]
+            for gid, items in strips.items():
+                sheet = qa_strip_sheet(items, qa_dir / f"{gid}_seq.jpg")
+                if sheet:
+                    stills.append((f"{gid}#seq", sheet.read_bytes(), "image/jpeg"))
+            phone = qa_phone_sheet([(p.stem, p) for p in main if p.exists() and not p.stem.startswith("captions")],
+                                   qa_dir / "phone.jpg")
             try:
-                res = studio.review(self.ctx, self._qa_text(targets, lp), stills)
+                res = studio.review(self.ctx, self._qa_text(targets, lp),
+                                    stills + ([("phone", phone.read_bytes(), "image/jpeg")] if phone else []))
             except DirectorError as e:
                 self.log(f"🧐 검수 실패 → 그대로 진행: {e}")
                 break
             issues = qa_actionable(res.get("issues", []) or [])
+            escalated += [i for i in res.get("issues", []) or [] if i.get("action") == "escalate_edit"]
             self.log(f"🧐 {res.get('verdict', '')}: {res.get('summary', '')}")
             for i in issues:
                 self.log(f"🧐 {i.get('target')} [{i.get('severity')}] {i.get('problem')} → {i.get('action')}")
@@ -2568,6 +2670,24 @@ class Pipeline:
                 break
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
+        self._qa_escalate(escalated)
+
+    def _qa_escalate(self, items: list[dict]) -> None:
+        """🧐 아트 디렉터가 그래픽으로 풀 수 없다고 올린 편집·컷·음향·원본 문제(escalate_edit, docs/upgrade/08 7절):
+        기록하고(리포트·work/gate_feedback.json — 게이트가 놓친 것), blocking 이면 게이트 A 를 다시 돌려 통과하지 못하면 멈춘다."""
+        if not items:
+            return
+        for i in items:
+            self.log(f"🧐 편집 지적({i.get('scope') or 'edit'}{' · 막음' if i.get('blocking') else ''}) "
+                     f"{i.get('check', '')} {i.get('problem', '')} → {i.get('direction', '')}")
+        fb = [{"from": "art_director", "gate": "A", "check": i.get("check", ""), "scope": i.get("scope", ""),
+               "blocking": bool(i.get("blocking")), "problem": i.get("problem", ""), "direction": i.get("direction", "")}
+              for i in items]
+        old = read_json(self.work / "gate_feedback.json", [])
+        write_json(self.work / "gate_feedback.json", (old if isinstance(old, list) else []) + fb)
+        self.results["qa_escalations"] = fb
+        if any(i.get("blocking") for i in items):
+            self._gate_record(self._cut_checks(), "아트 디렉터 편집 지적")
 
     def _settle_time(self, g: TimedGraphic) -> float:
         """진입 애니메이션이 끝나 화면이 '정지'한 순간(움직이는 중간 프레임을 결함으로 오판하지 않도록)."""
@@ -2935,6 +3055,9 @@ class Pipeline:
             apply_looks(lp, looks)
             self.look_plan = looks
             self.log("🎨 화면 구성(자동 · 하이브리드): " + looks.summary())
+        bridged = bridge_split_gaps(lp["graphics"])
+        if bridged:
+            self._log_file_only(f"   (판 사이 1초 미만 틈 {bridged}곳을 앞 그래픽으로 메움 — 화자가 줄어든 채 옆이 비지 않게)")
         if punch_spans:
             self.log("⚡ 펀치 구간(하드 펀치인·단어 슬램·휩·임팩트 허용): "
                      + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in punch_spans))
@@ -2953,7 +3076,7 @@ class Pipeline:
         n_seq = mark_sequences(lp, seq_types)
         if n_seq:
             self.log(f"🎞 시퀀스 {n_seq}개 — 같은 틀 안의 컷으로(둘째 샷부터 등장 애니메이션 없음)")
-        stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=text_graphic_spans(lp["graphics"]))
+        stacks = mark_stack_cues(lp["captions"], min_gap=18.0, avoid=stack_avoid_spans(lp))
         self.log(f"💬 자막: 한두 마디 {len(lp['captions'])}개 · 두 층 강조 {stacks}개"
                  + (f" · 화면 그래픽과 같은 말이라 숨김 {hid}개(SRT 에는 남김)" if hid else ""))
         strip_audio(lp)
@@ -3018,7 +3141,7 @@ class Pipeline:
                                P={**PARAMS, "framed_every": 0}, angle_cuts=angle_cuts, punch_spans=[(0.0, hd)], seed=7)
         apply_edit(hp, ed_h)
         dedupe_captions(hp["captions"], caption_overlays(hp))
-        mark_stack_cues(hp["captions"], min_gap=4.0, avoid=text_graphic_spans(hp["graphics"]))
+        mark_stack_cues(hp["captions"], min_gap=4.0, avoid=stack_avoid_spans(hp))
         strip_audio(hp)
         # 본편을 뒤로 밀고 앞에 붙인다
         shift_props(lp, hd)
@@ -3730,9 +3853,72 @@ QA_ALWAYS = ("shorten_text", "drop")    # 글자 줄이기·빼기는 싸고 안
 
 
 def qa_actionable(issues: list[dict]) -> list[dict]:
-    """아트 디렉터 지적 중 반영할 것: high·medium 은 모두, low 는 글자 줄이기·빼기만."""
-    return [i for i in issues if i.get("action") not in (None, "", "none")
+    """아트 디렉터 지적 중 그래픽에 반영할 것: high·medium 은 모두, low 는 글자 줄이기·빼기만(편집 지적은 _qa_escalate)."""
+    return [i for i in issues if i.get("action") not in (None, "", "none", "escalate_edit")
             and (i.get("severity") in ("high", "medium") or i.get("action") in QA_ALWAYS)]
+
+
+def qa_strip_times(g: TimedGraphic, settle: float) -> list[float]:
+    """움직임 스트립의 여섯 순간(docs/upgrade/06c 6-1): +0.5초(무대가 섰나) · 15%(뼈대) · 40%(채움 진행) · 안착 +2f ·
+    사건(keys·groupAt 구간 가운데, 없으면 70%) · 퇴장 직전(끝 −0.4초). 0%는 뽑지 않는다(판이 쓸려 들어오는 중)."""
+    a, b = g.start, g.end
+    d = b - a
+    ev = None
+    spec = g.data.get("spec") if g.template == "motion" else None
+    if isinstance(spec, dict):
+        ts = [k["t"] for e in spec.get("elements") or [] for k in e.get("keys") or [] if isinstance(k, dict) and "t" in k]
+        ts += [e["groupAt"] + 0.4 for e in spec.get("elements") or [] if "groupAt" in e]
+        if ts:
+            ev = a + (min(ts) + max(ts)) / 2
+    raw = [a + 0.5, a + 0.15 * d, a + 0.40 * d, settle + 2 / 30, ev if ev is not None else a + 0.70 * d, b - 0.4]
+    return [min(b - 0.1, max(a + 0.1, t)) for t in raw]
+
+
+def qa_strip_sheet(items: list[tuple[float, Path]], dst: Path, *, tile=(640, 360), cols: int = 3) -> Optional[Path]:
+    """스트립 여섯 장을 640×360 칸 3×2 로 한 장에 — 칸마다 그래픽 시작 기준 상대 시각(진행 중 프레임은 흐림·잘림이 결함이 아니다)."""
+    from PIL import Image, ImageDraw
+    ims = []
+    for rel, p in items:
+        try:
+            ims.append((rel, Image.open(p).convert("RGB").resize(tile, Image.LANCZOS)))
+        except OSError:
+            continue
+    if not ims:
+        return None
+    rows = (len(ims) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * tile[0], rows * tile[1]), (30, 27, 25))
+    d = ImageDraw.Draw(sheet)
+    for k, (rel, im) in enumerate(ims):
+        x, y = (k % cols) * tile[0], (k // cols) * tile[1]
+        sheet.paste(im, (x, y))
+        d.rectangle([x, y, x + 92, y + 22], fill=(30, 27, 25))
+        d.text((x + 6, y + 5), f"+{rel:.1f}s", fill=(245, 242, 234))
+    sheet.save(dst, quality=86)
+    return dst
+
+
+def qa_phone_sheet(stills: list[tuple[str, Path]], dst: Path, *, tile: int = 480, cols: int = 3) -> Optional[Path]:
+    """R2·R3(art_director.md): 정지 프레임을 폭 480px 로 줄여 한 장에 — 폰 화면에서 헤드라인이 읽히는가를 본다."""
+    from PIL import Image, ImageDraw
+    ims = []
+    for name, p in stills[:12]:
+        try:
+            im = Image.open(p).convert("RGB")
+        except OSError:
+            continue
+        ims.append((name, im.resize((tile, max(1, round(im.height * tile / im.width))), Image.LANCZOS)))
+    if not ims:
+        return None
+    th = max(im.height for _, im in ims) + 26
+    rows = (len(ims) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * (tile + 12) + 12, rows * (th + 12) + 12), (30, 27, 25))
+    d = ImageDraw.Draw(sheet)
+    for k, (name, im) in enumerate(ims):
+        x, y = 12 + (k % cols) * (tile + 12), 12 + (k // cols) * (th + 12)
+        d.text((x + 2, y + 4), name, fill=(245, 242, 234))
+        sheet.paste(im, (x, y + 26))
+    sheet.save(dst, quality=88)
+    return dst
 
 
 def covered_elsewhere(u: Utterance, utts: list[Utterance], drop_ids: set[int], *, need: float = 0.85) -> bool:

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Img, interpolate, OffthreadVideo, staticFile} from 'remotion';
 import {EASE, LONG, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, NOTE, paperShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {fitBlock, fitSize, wrap} from '../../lib/fit';
 import type {Graphic, GraphicData, TemplateName} from '../../lib/types';
@@ -236,7 +236,7 @@ export const MediaContent: React.FC<{data: GraphicData; template: TemplateName; 
   return (
     <div style={{position: 'absolute', inset: 0, opacity: tweenOut(frame, dur, LONG.out)}}>
       <div style={{position: 'absolute', left: 0, top: 0, width: w, height: mediaH, overflow: 'hidden',
-        borderRadius: radius ?? Math.round(4 * s), background: '#0B0B0B', boxShadow: onPaper ? '0 6px 16px rgba(0,0,0,0.22)' : undefined,
+        borderRadius: radius ?? Math.round(4 * s), background: '#0B0B0B', boxShadow: onPaper ? paperShadow(2) : undefined,
         scale: `${interpolate(p, [0, 1], [1.03, 1])}`, transformOrigin: '50% 50%'}}>
         <div style={{position: 'absolute', inset: 0, scale: `${scale}`, translate: `${tx}% 0`}}>
           {isVideo ? <OffthreadVideo src={staticFile(src)} muted style={st} /> : <Img src={staticFile(src)} style={st} />}

@@ -87,8 +87,9 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
       </AbsoluteFill>
     );
   }
-  // 자유 HTML 카드는 자기 배경·타이포를 다 가지고 있으니 스킨과 무관하게 아래 풀스크린/패널 경로로
-  if (g.template !== 'card' && (g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
+  // 자유 HTML 카드는 자기 배경·타이포를 다 가지고 있으니 스킨과 무관하게 아래 풀스크린/패널 경로로.
+  // 챕터 카드는 길잡이 부품이라 영상 안에서 한 가지 모양(F-11, docs/upgrade/06) — 종이 챕터도 같은 카드
+  if (g.template !== 'card' && g.template !== 'chapter' && (g.skin ?? (skin === 'paper' ? 'paper' : 'classic')) === 'paper') {
     return <PaperGraphic g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand}
       episode={episode} W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} faceX={faceX}
       paperTexture={paperTexture} />;

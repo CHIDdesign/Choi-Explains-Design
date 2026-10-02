@@ -94,3 +94,89 @@ export const GRID = {
   gutter: 24,
   headerH: 44,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 하우스 재질 v2(docs/upgrade/06 3장 · 06b 3·4절) — 한 영상 = 한 재질: 웜 잉크 책상 위의 크림 종이.
+// 순백·순흑·#111 전면은 쓰지 않는다. 값은 [제안](스틸로 확정).
+export const HOUSE = {
+  paper: NOTE.paper, // 모든 그래픽의 바탕
+  paperLight: '#FBF9F3', // 종이 위에 덧붙인 쪽지·사진 테두리만. 전면 금지
+  paperDeep: NOTE.paperDeep, // 겹친 아랫장·괘선 종이
+  ink: NOTE.ink, // 글자·선·배지 — 종이 위 대비 약 14:1
+  inkSoft: NOTE.inkSoft,
+  stage: '#1D1916', // 책상(무대): 화자가 줄어들 때 뒤, 챕터 카드·반전 면
+  rule: NOTE.rule,
+} as const;
+
+/** 광원은 위 왼쪽 하나. 모든 그림자는 오른쪽 아래(dx : dy = 2 : 3), 색은 웜 잉크. */
+export const LIGHT = {dx: 2, dy: 3, rgb: '38,33,30'} as const;
+
+/** 높이 3단: 1 붙음(메모·자막 상자·테이프) · 2 살짝 뜸(사진·겹친 윗장·화자 사진) · 3 들림(진입·퇴장 중) */
+export const ELEV = {
+  1: {off: 3, blur: 6, a: 0.26, contact: 0.3},
+  2: {off: 7, blur: 16, a: 0.22, contact: 0.22},
+  3: {off: 14, blur: 34, a: 0.18, contact: 0},
+} as const;
+
+const mixN = (a: number, b: number, t: number) => a + (b - a) * t;
+const elevAt = (level: number) => {
+  const l = Math.max(1, Math.min(3, level));
+  const lo = ELEV[Math.floor(l) as 1 | 2 | 3];
+  const hi = ELEV[Math.ceil(l) as 1 | 2 | 3];
+  const t = l - Math.floor(l);
+  return {off: mixN(lo.off, hi.off, t), blur: mixN(lo.blur, hi.blur, t), a: mixN(lo.a, hi.a, t),
+    contact: mixN(lo.contact, hi.contact, t)};
+};
+
+/** 사각 종이·사진·자막 상자의 box-shadow: 접촉 그림자(선명) + 주변 그림자(부드러움) 두 겹. level 은 1~3 실수. */
+export const paperShadow = (level: number): string => {
+  const e = elevAt(level);
+  const x = (LIGHT.dx / LIGHT.dy) * e.off;
+  return `1px 1.5px 1px rgba(${LIGHT.rgb},${e.contact.toFixed(3)}), `
+    + `${x.toFixed(1)}px ${e.off.toFixed(1)}px ${e.blur.toFixed(1)}px rgba(${LIGHT.rgb},${e.a.toFixed(3)})`;
+};
+
+/** 찢긴 모양(SVG path)·잘린 그림의 drop-shadow — 블러 값은 고정, 위치·불투명도만(렌더 속도 규칙). */
+export const paperDropShadow = (level: number): string => {
+  const e = elevAt(level);
+  return `drop-shadow(${((LIGHT.dx / LIGHT.dy) * e.off).toFixed(1)}px ${e.off.toFixed(1)}px ${e.blur.toFixed(1)}px `
+    + `rgba(${LIGHT.rgb},${(e.a + e.contact * 0.4).toFixed(3)}))`;
+};
+
+/** 종이 물성 — 0°·완전한 직선·완벽한 정렬은 디지털의 표식이다. 값은 시드로 고정한다. */
+export const PAPER_MAT = {
+  rotate: {note: [0.6, 1.8], photo: [1, 3], tape: [3, 8], sticker: [2, 4], speaker: [0.3, 0.6]}, // ±도, 0 금지
+  jitter: 4,
+  photo: {saturate: 0.75, border: [10, 14]},
+} as const;
+
+/** 시드 → 도착 각(도). 부호도 시드가 정한다. */
+export const paperRotate = (seed: number, kind: keyof typeof PAPER_MAT.rotate): number => {
+  const [lo, hi] = PAPER_MAT.rotate[kind];
+  const u = Math.abs(Math.sin(seed * 12.9898 + 78.233) * 43758.5453) % 1;
+  const sign = Math.sin(seed * 3.1) >= 0 ? 1 : -1;
+  return sign * (lo + (hi - lo) * u);
+};
+
+/** 16:9 12열 그리드. 글자·출처는 좌우 96 · 위 54 안쪽. y 900~1026 은 자막 띠. */
+export const GRID16 = {W: 1920, H: 1080, margin: 96, gutter: 24, cols: 12, col: 122,
+  safeTop: 54, stageTop: 84, stageBottom: 880, captionTop: 900} as const;
+export const colX = (n: number): number => GRID16.margin + n * (GRID16.col + GRID16.gutter); // n = 0..11
+/** k 열 폭: 4→560 · 5→706 · 8→1144 · 12→1728 (06b 의 span — 지역 변수 span 과 헷갈리지 않게 이름만 바꿈) */
+export const colSpan = (k: number): number => GRID16.col * k + GRID16.gutter * (k - 1);
+
+/** 9:16 6열 그리드. 꼭 읽혀야 하는 글자는 x 64~940, y 270~1248 안. */
+export const GRID9 = {W: 1080, H: 1920, margin: 64, gutter: 20, cols: 6, col: 142,
+  textLeft: 64, textRight: 940, textTop: 270, textBottom: 1248} as const;
+
+/** 최소 글자 크기 — 캔버스가 아니라 '최종 프레임 px'(축소 배율을 곱한 값)로 잰다. check.mjs · spec.py 와 같은 값. */
+export const TYPE_MIN = {
+  long: {headSide: 56, headSheet: 72, body: 34, label: 28, credit: 22},
+  short: {head: 72, body: 44, label: 32, credit: 26},
+} as const;
+
+/** 모션 DSL 의 size(상자 높이 대비 %)가 실제 몇 px 인지 — spec.py 의 검증과 같은 식. */
+export const pxOfSize = (sizePct: number, boxH: number): number => (sizePct / 100) * boxH;
+
+/** 채움 규칙(게이트 C2·C4 와 같은 값) */
+export const FILL = {minInk: 0.45, minInkAtHalfSec: 0.35, maxEmptyStage: 0.3} as const;

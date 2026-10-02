@@ -1,7 +1,7 @@
 import React from 'react';
 import {Img, OffthreadVideo, interpolate, staticFile} from 'remotion';
 import {DUR, EASE, LONG, STAGGER, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, NOTE, paperShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import type {EvidenceAsset, GraphicData, NBox} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
@@ -130,7 +130,7 @@ const DocHighlight: React.FC<{asset: EvidenceAsset; lines?: NBox[]; quote?: stri
   return (
     <div style={{position: 'absolute', inset: 0}}>
       <Img src={staticFile(asset.src)} style={{position: 'absolute', left: ox, top: oy, width: w, height: h,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.18)', rotate: '-0.6deg'}} />
+        boxShadow: paperShadow(1), rotate: '-0.6deg'}} />
       <div style={{position: 'absolute', left: ox, top: oy, width: w, height: h, background: 'rgba(38,33,30,0.55)',
         opacity: dim}} />
       {lines.map(([x, y, lw, lh], i) => {
@@ -176,7 +176,7 @@ const BrowserFrame: React.FC<{asset: EvidenceAsset; url?: string; win: {w: numbe
   const domain = (url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
   return (
     <div style={{position: 'absolute', inset: 0, borderRadius: 14, overflow: 'hidden', background: NOTE.paper,
-      boxShadow: '0 10px 28px rgba(0,0,0,0.25)'}}>
+      boxShadow: paperShadow(2)}}>
       <div style={{height: bar, background: NOTE.paperDeep, display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 20px'}}>
         {[0, 1, 2].map((i) => <i key={i} style={{width: 12, height: 12, borderRadius: 6, background: NOTE.rule}} />)}
@@ -364,7 +364,7 @@ export const EvidenceCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps
       <div style={{position: 'absolute', left: win.x, top: win.y, width: win.w, height: win.h,
         overflow: framed ? 'hidden' : 'visible', background: framed && t === 'hero' ? NOTE.paperDeep : undefined,
         opacity: pIn, translate: `0 ${interpolate(pIn, [0, 1], [18, 0])}px`,
-        boxShadow: t === 'hero' ? '0 10px 26px rgba(0,0,0,0.16)' : undefined}}>
+        boxShadow: t === 'hero' ? paperShadow(2) : undefined}}>
         {inner}
       </div>
       <CaptionRow x={win.x} y={win.y + win.h + 6 * k} w={win.w} label={data.title} caption={data.caption}

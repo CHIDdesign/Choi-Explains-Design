@@ -4,7 +4,7 @@ import {cameraAt, punchFactor} from '../../compositions/LongForm';
 import {useFontForText} from '../../design/fonts';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
-import {FONT, makeTheme, rgba} from '../../design/tokens';
+import {FONT, HOUSE, makeTheme, paperShadow, rgba} from '../../design/tokens';
 import {fitSize} from '../../lib/fit';
 import {lastIndexAtOrBefore, sampleFace, toFrame} from '../../lib/time';
 import type {CaptionCue, Graphic, ShortBeat, ShortProps} from '../../lib/types';
@@ -87,21 +87,15 @@ const CardContent: React.FC<{s: Slide; f: number; fps: number; props: ShortProps
     );
   }
   if (g && !CONCEPT.has(g.template)) {
-    // 도식·목록·모션: 어두운 앱 화면 같은 카드(참고 릴스의 어두운 UI 카드)
+    // 도식·목록·모션: 크림 종이 한 장(F-12, docs/upgrade/06 9장 규칙 6 — 앱 창 장식·신호등 점·카드 안의 카드·내부 이름 라벨 없음)
     const Comp = TEMPLATE_COMPONENTS[g.template];
     if (!Comp) return null;
-    const surf = mkSurface(theme, 'ink');
+    const surf = mkSurface(theme, 'paper');
     return (
-      <div style={{position: 'absolute', inset: 0, background: INK}}>
-        <div style={{position: 'absolute', left: 30, top: 22, display: 'flex', gap: 10}}>
-          {['#FF5F57', '#FEBC2E', '#28C840'].map((c) => <span key={c} style={{width: 14, height: 14, borderRadius: 7,
-            background: c, display: 'inline-block', opacity: 0.9}} />)}
-        </div>
-        <div style={{position: 'absolute', left: 0, right: 0, top: 16, textAlign: 'center', fontFamily: FONT.sans,
-          fontWeight: 600, fontSize: 22, color: 'rgba(255,255,255,0.6)'}}>{TEMPLATE_LABEL[g.template]}</div>
-        <div style={{position: 'absolute', left: 50, top: 70, width: CARD.w - 100, height: CARD.h - 110}}>
+      <div style={{position: 'absolute', inset: 0, background: HOUSE.paper}}>
+        <div style={{position: 'absolute', left: 40, top: 40, width: CARD.w - 80, height: CARD.h - 80}}>
           <Comp id={g.id} data={g.data} frame={f} dur={dur} fps={fps} theme={theme} surface={surf}
-            box={{w: CARD.w - 100, h: CARD.h - 110}} layout="split" brand={props.brand} episode={props.episode} />
+            box={{w: CARD.w - 80, h: CARD.h - 80}} layout="split" brand={props.brand} episode={props.episode} />
         </div>
       </div>
     );
@@ -194,7 +188,7 @@ const Hero: React.FC<{props: ShortProps; frame: number; fps: number; out: number
         const src = mediaOf(g)!;
         return (
           <div key={g.id} style={{position: 'absolute', left: 540 - w / 2 + (i - 1) * 70, top: 470 + i * 26, width: w,
-            height: h, borderRadius: 26, overflow: 'hidden', boxShadow: '0 30px 70px rgba(0,0,0,0.28)', background: '#ddd',
+            height: h, borderRadius: 26, overflow: 'hidden', boxShadow: paperShadow(2), background: '#ddd',
             rotate: `${interpolate(p, [0, 1], [tilts[i] + 8, tilts[i]])}deg`, opacity: p,
             translate: `0 ${interpolate(p, [0, 1], [80, 0])}px`}}>
             {g.template === 'broll' && g.data.kind === 'video'
@@ -237,7 +231,8 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
   // 첫 장면 → 본 구성: 0.6초에 걸쳐 흰 화면이 걷히고 얼굴이 아래에서 올라온다
   const k = heroEnd > 0 ? tween(frame, toFrame(heroEnd, fps), 18, 'inOutCubic') : 1;
   const faceRegion: Rect = {...FACE, y: SEAM + (1 - k) * 260};
-  const box = videoBoxFor(faceRegion, face, zoom, 'center', 0.40);
+  // F-13: 얼굴 중심 0.46 · 자막 중심 SEAM + 90 — 자막이 머리 위에 얹히지 않게(머리 꼭대기와 24px 이상)
+  const box = videoBoxFor(faceRegion, face, zoom, 'center', 0.46);
   const si = lastIndexAtOrBefore(slides, t, (s) => s.start);
 
   return (
@@ -273,7 +268,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
         const leaving = i < si;
         return (
           <div key={`${i}-${s.start}`} style={{position: 'absolute', left: CARD.x, top: CARD.y, width: CARD.w, height: CARD.h,
-            borderRadius: 30, overflow: 'hidden', boxShadow: '0 26px 60px rgba(0,0,0,0.22)', background: '#fff',
+            borderRadius: 30, overflow: 'hidden', boxShadow: paperShadow(2), background: HOUSE.paper,
             opacity: leaving ? 1 : p * k, rotate: `${leaving ? 0 : interpolate(p, [0, 1], [seedTilt + 1.5, 0])}deg`,
             scale: `${leaving ? interpolate(tween((t - slides[si].start) * fps, 0, 14), [0, 1], [1, 0.96]) : interpolate(p, [0, 1], [0.97, 1])}`,
             translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 40, 0])}px`,
@@ -292,7 +287,7 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
       ) : null}
       {heroEnd > 0 && frame < toFrame(heroEnd, fps) + 18 ? <Hero props={props} frame={frame} fps={fps} out={1 - k} marker={marker} />
         : null}
-      <SeamCaption cues={props.captions} t={t} fps={fps} y={k > 0.5 ? SEAM + 70 : 1740} accent={theme.accent}
+      <SeamCaption cues={props.captions} t={t} fps={fps} y={k > 0.5 ? SEAM + 90 : 1740} accent={theme.accent}
         onLight={k <= 0.5} />
       {props.progressBar ? (
         <div style={{position: 'absolute', left: 0, bottom: 0, height: 6, width: (1080 * frame) / Math.max(1, durationInFrames),

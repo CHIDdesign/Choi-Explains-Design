@@ -18,7 +18,8 @@ import {openBrowser} from '@remotion/renderer';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
-const MIN_FONT_PX = 26;
+const MIN_FONT_PX = 28; // 라벨 최소(docs/upgrade/06 4-1 · 7-2 — 예전 26)
+const FIRST_FRAME_SHARE = 0.35; // 게이트 C4: 0.5초 프레임의 잉크 ≥ 정착 프레임의 35%
 const CAPTION_ZONE_PX = 170; // 전체 화면·오버레이 카드 아래 자막 자리(LongCaptions paper 상자가 y≈920–1000 에 놓인다)
 const CONTRAST_BODY = 4.5;
 const CONTRAST_LARGE = 3.0;
@@ -224,6 +225,51 @@ const audit = async (opts) => {
     const iy = Math.max(0, Math.min(r.bottom, R.bottom) - Math.max(r.top, R.top));
     if (ix * iy < 0.5 * r.width * r.height && !textEls.has(el)) push('outside_canvas', 'element mostly outside canvas', desc(el));
   }
+  // 게이트 C4(docs/upgrade/06 F-6 · 06c P1-4): 시작 0.5초 프레임이 정착 프레임의 35% 이상 차 있어야 한다(빈 판 2~3초 금지).
+  // 잉크 = 보이는 글자·그림·채운 면의 상자 넓이(유효 불투명도로 가중, 캔버스의 60% 넘는 배경 면은 뺀다)
+  const opacityOf = (el) => {
+    let o = 1;
+    for (let e = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
+      o *= parseFloat(cs.opacity);
+    }
+    return o;
+  };
+  const inkNow = () => {
+    let sum = 0;
+    const canvas = R.width * R.height;
+    for (const el of root.querySelectorAll('*')) {
+      if (el.closest('style')) continue;
+      const tag = el.tagName.toLowerCase();
+      const hasText = Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim());
+      const bgc = parse(getComputedStyle(el).backgroundColor);
+      const media = tag === 'img' || tag === 'svg';
+      if (!hasText && !media && !(bgc && bgc.a > 0.5)) continue;
+      const r = el.getBoundingClientRect();
+      const ix = Math.max(0, Math.min(r.right, R.right) - Math.max(r.left, R.left));
+      const iy = Math.max(0, Math.min(r.bottom, R.bottom) - Math.max(r.top, R.top));
+      const a = ix * iy;
+      if (a <= 0 || (!hasText && a > 0.6 * canvas)) continue;
+      const o = opacityOf(el);
+      if (o > 0.12) sum += a * Math.min(1, o);
+    }
+    return sum;
+  };
+  if (compiled) {
+    try {
+      const inkSettle = inkNow();
+      compiled.seek(Math.min(0.5, opts.settle));
+      const ink05 = inkNow();
+      compiled.seek(opts.settle);
+      out.metrics.ink_at_0_5s = inkSettle > 0 ? Number((ink05 / inkSettle).toFixed(2)) : 1;
+      if (inkSettle > 0 && ink05 < opts.firstFrame * inkSettle) {
+        push('anim_first_frame_empty', `0.5s frame ink ${(100 * ink05 / inkSettle).toFixed(0)}% of settled (< ${Math.round(opts.firstFrame * 100)}%)`);
+      }
+    } catch (e) {
+      push('runtime_error', 'first-frame check: ' + (e && e.message ? e.message : e));
+    }
+  }
   // 같은 코드·요소 중복 정리
   const seen = new Set();
   out.problems = out.problems.filter((p) => {
@@ -257,7 +303,7 @@ const main = async () => {
         await page.setViewport({width: card.w, height: card.h, deviceScaleFactor: 1});
         await page.goto({url: pathToFileURL(file).href, timeout: 20000});
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
-          minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE,
+          minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE, firstFrame: FIRST_FRAME_SHARE,
           captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX});
       } catch (e) {
         res = {problems: [{code: 'runtime_error', detail: String(e && e.message ? e.message : e), selector: ''}], metrics: {}};

@@ -157,7 +157,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
     if agent == "motion":
         # 자료가 먼저, 모션이 나중(13 문서 2-2): 확보 목록 + 재현 요청 + 컨택트 시트를 받는다
         assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images == 1, (n_images, instruction[:300])
-        spec = copy.deepcopy(EXAMPLES["proximity"])
+        spec = copy.deepcopy(EXAMPLES["fixation_two_groups"])
         card = CARD_EXAMPLES["slam_minimal"]["html"]   # 글자가 적어(35자) 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
                                             "title": "근접성", "spec_json": json.dumps(spec, ensure_ascii=False),

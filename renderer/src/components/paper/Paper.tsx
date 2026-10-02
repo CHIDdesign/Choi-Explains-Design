@@ -1,6 +1,6 @@
 import React, {useMemo} from 'react';
 import {Img, staticFile} from 'remotion';
-import {FONT} from '../../design/tokens';
+import {FONT, paperDropShadow, paperShadow} from '../../design/tokens';
 
 /**
  * 종이 콜라주 스킨 — 사용자가 직접 편집한 레퍼런스(구겨진 짙은 종이 + 찢어진 흰 테두리 액자 + 회색 거친 테두리
@@ -105,7 +105,7 @@ export const TornFrame: React.FC<{b: Box; border?: number; seed?: number; opacit
     <div style={{position: 'absolute', left: b.x - pad, top: b.y - pad, width: b.w + pad * 2, height: b.h + pad * 2,
       opacity, rotate: rotate ? `${rotate}deg` : undefined}}>
       <svg width={b.w + pad * 2} height={b.h + pad * 2} style={{position: 'absolute', inset: 0, overflow: 'visible',
-        filter: shadow ? 'drop-shadow(0 12px 22px rgba(0,0,0,0.55))' : undefined}}>
+        filter: shadow ? paperDropShadow(2) : undefined}}>
         <path d={fibers} fill="rgba(200,200,204,0.3)" />
         <path d={path} fill={PAPER.white} />
       </svg>
@@ -149,7 +149,7 @@ export const LabelTag: React.FC<{text: string; variant?: 'white' | 'black'; size
       color: variant === 'white' ? PAPER.ink : PAPER.white,
       background: variant === 'white' ? PAPER.white : 'rgba(17,17,17,0.94)',
       borderRadius: variant === 'white' ? size * 0.22 : 2, padding: `${size * 0.14}px ${size * 0.42}px ${size * 0.18}px`,
-      boxShadow: variant === 'black' ? '0 6px 18px rgba(0,0,0,0.35)' : undefined, ...style}}>
+      boxShadow: variant === 'black' ? paperShadow(1) : undefined, ...style}}>
       {text}
     </div>
   ) : null

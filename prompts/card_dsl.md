@@ -97,7 +97,9 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 
 ### 렌더 전 검사(check) — 이 이름으로 수정 요청이 온다
 `font_family_not_bundled` · `font_not_loaded` · `text_overflow`(글이 상자·캔버스를 넘침) · `outside_canvas` · `text_in_caption_zone`(아래 170px 안의 글자) ·
-`text_too_small`(26px 미만) · `low_contrast`(글자와 배경 대비 4.5:1 미만, 40px 이상은 3:1) · `runtime_error` · `anim_unknown_kind` · `anim_ends_too_late`. 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
+`text_too_small`(28px 미만 — 라벨·출처도 28px 이상, 본문 34px 이상을 권한다) · `low_contrast`(글자와 배경 대비 4.5:1 미만, 40px 이상은 3:1) · `runtime_error` · `anim_unknown_kind` · `anim_ends_too_late` ·
+`anim_first_frame_empty`(시작 0.5초 프레임이 완성 프레임의 35%보다 비어 있음 — 제목과 주 요소는 0~0.3초에 세우고, 말에 맞춰 오는 것은 강조·숫자·마지막 한 줄만). 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
+`scale-pop` 은 펀치 구간의 한 방에만 — 롱폼 본문 카드의 등장은 `fade-in`·`slide-in`·`kinetic-chars`·`draw-path` 로.
 
 ### 내야 하는 것(`cards[]`)
 `start_seg`·`end_seg`·`start_word`(카드가 도착할 단어) · `layout` · `style` · `title`(로그·검수용 한 줄) · `html`(위 계약대로 카드 조각 전체) · `reason`.

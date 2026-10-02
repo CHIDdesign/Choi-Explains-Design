@@ -1,173 +1,596 @@
 {
- "proximity": {
-  "bg": "board",
-  "label": "게슈탈트 · 근접성",
+ "sketch_first_marks": {
+  "bg": "paper",
+  "label": "",
+  "hero": 1,
   "elements": [
    {
     "type": "text",
-    "text": "가까이 있으면 한 무리로 본다",
-    "x": 50,
+    "text": "스케치가 먼저다",
+    "x": 6,
     "y": 14,
-    "size": 7.5,
-    "weight": 800,
-    "highlight": "한 무리",
-    "at": 0.1
-   },
-   {
-    "type": "dots",
-    "count": 12,
-    "cols": 12,
-    "gap": 5.4,
-    "r": 1.3,
-    "x": 50,
-    "y": 52,
-    "at": 0.4,
-    "groups": [
-     4,
-     4,
-     4
-    ],
-    "groupAt": 1.8,
-    "groupGap": 9,
-    "highlight": [
-     4,
-     5,
-     6,
-     7
-    ]
-   },
-   {
-    "type": "text",
-    "text": "같은 점, 다른 간격",
-    "x": 50,
-    "y": 70,
-    "size": 4.2,
-    "weight": 600,
-    "color": "dim",
-    "at": 2.8,
-    "enter": "up"
-   },
-   {
-    "type": "text",
-    "text": "Proximity",
-    "x": 50,
-    "y": 86,
-    "size": 5,
-    "font": "latin",
-    "color": "dim",
-    "at": 3.2,
-    "enter": "fade"
-   }
-  ]
- },
- "form_function": {
-  "bg": "board",
-  "label": "형태와 기능",
-  "grid": true,
-  "elements": [
-   {
-    "type": "rect",
-    "w": 18,
-    "h": 30,
-    "radius": 18,
-    "x": 28,
-    "y": 48,
-    "at": 0.2
-   },
-   {
-    "type": "circle",
-    "r": 7,
-    "x": 72,
-    "y": 48,
-    "at": 0.6
-   },
-   {
-    "type": "arrow",
-    "x": 40,
-    "y": 48,
-    "x2": 62,
-    "y2": 48,
-    "at": 1.2,
-    "color": "accent",
-    "strokeWidth": 4
-   },
-   {
-    "type": "text",
-    "text": "형태",
-    "x": 28,
-    "y": 76,
-    "size": 6,
-    "at": 1.0
-   },
-   {
-    "type": "text",
-    "text": "기능",
-    "x": 72,
-    "y": 76,
-    "size": 6,
-    "at": 1.6,
-    "highlight": "기능"
-   },
-   {
-    "type": "text",
-    "text": "Form follows function",
-    "x": 50,
-    "y": 12,
-    "size": 5,
-    "font": "latin",
-    "color": "dim",
-    "at": 2.0,
-    "enter": "fade"
-   }
-  ]
- },
- "usability_stat": {
-  "bg": "ink",
-  "label": "사용성 테스트",
-  "elements": [
-   {
-    "type": "counter",
-    "from": 0,
-    "to": 85,
-    "suffix": "%",
-    "size": 34,
-    "x": 30,
-    "y": 50,
-    "dur": 1.4,
-    "at": 0.2
-   },
-   {
-    "type": "text",
-    "text": "다섯 명이면\n문제의 대부분이 보인다",
-    "x": 52,
-    "y": 42,
-    "size": 6,
-    "weight": 700,
     "anchor": "left",
-    "align": "left",
-    "reveal": "lines",
-    "at": 0.6
+    "size": 10,
+    "weight": 800,
+    "at": 0.05
    },
    {
-    "type": "bar",
-    "w": 36,
-    "h": 2.6,
-    "value": 0.85,
-    "label": "5명",
-    "x": 52,
-    "y": 66,
+    "type": "image",
+    "src": "pixabay:photo:pencil sketch on paper",
+    "x": 30,
+    "y": 58,
+    "w": 40,
+    "h": 62,
+    "frame": "print",
+    "enter": "place",
+    "at": 0.1,
+    "dur": 0.35
+   },
+   {
+    "type": "mark",
+    "kind": "underline",
+    "x": 22,
+    "y": 14,
+    "w": 32,
+    "h": 9,
     "at": 1.2
    },
    {
+    "type": "text",
+    "text": "해결책",
+    "x": 74,
+    "y": 40,
+    "size": 7,
+    "weight": 800,
+    "ghost": true,
+    "at": 2.0
+   },
+   {
+    "type": "mark",
+    "kind": "circle",
+    "x": 74,
+    "y": 40,
+    "w": 20,
+    "h": 12,
+    "at": 2.6
+   },
+   {
+    "type": "text",
+    "text": "문제부터 다시",
+    "x": 74,
+    "y": 62,
+    "size": 7,
+    "font": "hand",
+    "enter": "write",
+    "at": 3.2,
+    "ghost": true
+   },
+   {
+    "type": "mark",
+    "kind": "arrow",
+    "x": 74,
+    "y": 62,
+    "w": 22,
+    "h": 9,
+    "at": 3.9
+   }
+  ]
+ },
+ "fixation_two_groups": {
+  "bg": "paper",
+  "label": "고착 실험",
+  "elements": [
+   {
+    "type": "rect",
+    "x": 27.0,
+    "y": 61.0,
+    "at": 0.3,
+    "dur": 0.6,
+    "enter": "draw",
+    "w": 42.0,
+    "h": 56.0,
+    "radius": 14.0,
+    "strokeWidth": 2.0,
+    "fill": "faint",
+    "stroke": "dim"
+   },
+   {
+    "type": "rect",
+    "x": 73.0,
+    "y": 61.0,
+    "at": 0.6,
+    "dur": 0.6,
+    "enter": "draw",
+    "w": 42.0,
+    "h": 56.0,
+    "radius": 14.0,
+    "strokeWidth": 2.0,
+    "fill": "faint",
+    "stroke": "dim"
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 9.0,
+    "at": 0.1,
+    "text": "1991 · 고착 실험",
+    "size": 9.0,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 21.0,
+    "at": 1.9,
+    "enter": "fade",
+    "color": "dim",
+    "text": "Jansson & Smith",
+    "size": 4.6,
+    "font": "latin"
+   },
+   {
+    "type": "text",
+    "x": 27.0,
+    "y": 40.0,
+    "at": 3.9,
+    "enter": "up",
+    "text": "A · 문제만",
+    "size": 5.0,
+    "weight": 700
+   },
+   {
+    "type": "dots",
+    "x": 27.0,
+    "y": 65.0,
+    "at": 4.4,
+    "count": 6,
+    "cols": 3,
+    "gap": 9.0,
+    "r": 3.0
+   },
+   {
+    "type": "text",
+    "x": 73.0,
+    "y": 40.0,
+    "at": 5.4,
+    "enter": "up",
+    "text": "B · 문제 + 예시",
+    "size": 5.0,
+    "weight": 700
+   },
+   {
+    "type": "rect",
+    "x": 73.0,
+    "y": 53.0,
+    "at": 6.3,
+    "dur": 0.5,
+    "enter": "draw",
+    "w": 10.0,
+    "h": 12.0,
+    "radius": 6.0,
+    "strokeWidth": 4.0,
+    "stroke": "accent"
+   },
+   {
+    "type": "text",
+    "x": 73.0,
+    "y": 53.0,
+    "at": 6.8,
+    "text": "예시",
+    "size": 4.6,
+    "weight": 700
+   },
+   {
+    "type": "dots",
+    "x": 73.0,
+    "y": 76.0,
+    "at": 7.3,
+    "keys": [
+     {
+      "t": 10.3,
+      "y": 76.0,
+      "scale": 1.0
+     },
+     {
+      "t": 11.1,
+      "y": 68.0,
+      "scale": 0.5
+     }
+    ],
+    "count": 6,
+    "cols": 3,
+    "gap": 9.0,
+    "r": 3.0
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 95.0,
+    "at": 8.4,
+    "out": 10.5,
+    "color": "dim",
+    "text": "결함도 알려 줬다",
+    "size": 4.8
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 95.0,
+    "at": 10.7,
+    "text": "그래도 닮았다",
+    "size": 5.2,
+    "weight": 700
+   }
+  ]
+ },
+ "double_diamond_front": {
+  "bg": "paper",
+  "label": "더블 다이아몬드 · 앞 절반",
+  "elements": [
+   {
+    "type": "path",
+    "x": 50.0,
+    "y": 50.0,
+    "at": 0.3,
+    "dur": 0.6,
+    "enter": "fade",
+    "d": "M 8 55 L 36 26 L 36 84 Z",
+    "strokeWidth": 3,
+    "fill": "faint",
+    "stroke": "none"
+   },
+   {
+    "type": "path",
+    "x": 50.0,
+    "y": 50.0,
+    "at": 4.0,
+    "dur": 0.6,
+    "enter": "fade",
+    "d": "M 36 26 L 64 55 L 36 84 Z",
+    "strokeWidth": 3,
+    "fill": "faint",
+    "stroke": "none"
+   },
+   {
+    "type": "path",
+    "x": 50.0,
+    "y": 50.0,
+    "at": 0.45,
+    "dur": 0.9,
+    "enter": "draw",
+    "d": "M 8 55 L 36 26 M 8 55 L 36 84",
+    "strokeWidth": 4.0,
+    "stroke": "fg"
+   },
+   {
+    "type": "path",
+    "x": 50.0,
+    "y": 50.0,
+    "at": 0.8,
+    "dur": 0.8,
+    "enter": "draw",
+    "d": "M 64 55 L 92 26 M 64 55 L 92 84",
+    "strokeWidth": 3.0,
+    "stroke": "dim"
+   },
+   {
+    "type": "path",
+    "x": 50.0,
+    "y": 50.0,
+    "at": 4.15,
+    "dur": 0.9,
+    "enter": "draw",
+    "d": "M 36 26 L 64 55 M 36 84 L 64 55",
+    "strokeWidth": 4.0,
+    "stroke": "fg"
+   },
+   {
+    "type": "circle",
+    "x": 8.0,
+    "y": 55.0,
+    "at": 1.2,
+    "enter": "scale",
+    "keys": [
+     {
+      "t": 1.8,
+      "x": 8.0,
+      "scale": 1.0
+     },
+     {
+      "t": 3.6,
+      "x": 36.0,
+      "scale": 2.7
+     },
+     {
+      "t": 6.4,
+      "x": 64.0,
+      "scale": 1.0
+     }
+    ],
+    "r": 3.0,
+    "strokeWidth": 3,
+    "fill": "accent",
+    "stroke": "accent"
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 9.0,
+    "at": 0.1,
+    "text": "문제를 다루는 절반",
+    "size": 9.0,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 22.0,
+    "y": 93.0,
+    "at": 2.4,
+    "enter": "up",
+    "text": "탐색 · 넓힌다",
+    "size": 5.0,
+    "weight": 700
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 93.0,
+    "at": 5.0,
+    "enter": "up",
+    "text": "정의 · 좁힌다",
+    "size": 5.0,
+    "weight": 700
+   }
+  ]
+ },
+ "gap_under_deadline": {
+  "bg": "paper",
+  "label": "이론과 작업 사이",
+  "elements": [
+   {
+    "type": "rect",
+    "x": 18.0,
+    "y": 56.0,
+    "at": 0.1,
+    "dur": 0.5,
+    "enter": "draw",
+    "w": 26.0,
+    "h": 36.0,
+    "radius": 8.0,
+    "strokeWidth": 3.0,
+    "fill": "faint",
+    "stroke": "fg"
+   },
+   {
+    "type": "rect",
+    "x": 82.0,
+    "y": 56.0,
+    "at": 0.62,
+    "dur": 0.5,
+    "enter": "draw",
+    "w": 26.0,
+    "h": 36.0,
+    "radius": 8.0,
+    "strokeWidth": 3.0,
+    "fill": "faint",
+    "stroke": "fg"
+   },
+   {
+    "type": "rect",
+    "x": 36.5,
+    "y": 56.0,
+    "at": 2.95,
+    "enter": "right",
+    "w": 11.0,
+    "h": 2.4,
+    "radius": 0,
+    "strokeWidth": 3,
+    "fill": "fg",
+    "stroke": "none"
+   },
+   {
+    "type": "rect",
+    "x": 63.5,
+    "y": 56.0,
+    "at": 3.1,
+    "enter": "left",
+    "w": 11.0,
+    "h": 2.4,
+    "radius": 0,
+    "strokeWidth": 3,
+    "fill": "fg",
+    "stroke": "none"
+   },
+   {
+    "type": "rect",
+    "x": 50.0,
+    "y": 22.0,
+    "at": 4.7,
+    "enter": "down",
+    "keys": [
+     {
+      "t": 6.3,
+      "y": 22.0
+     },
+     {
+      "t": 7.1,
+      "y": 45.0
+     }
+    ],
+    "w": 18.0,
+    "h": 12.0,
+    "radius": 4.0,
+    "strokeWidth": 3,
+    "fill": "accent",
+    "stroke": "accent"
+   },
+   {
+    "type": "arrow",
+    "x": 31.0,
+    "y": 76.0,
+    "at": 7.6,
+    "dur": 0.8,
+    "color": "dim",
+    "x2": 69.0,
+    "y2": 76.0,
+    "strokeWidth": 3.0,
+    "curve": 0.45
+   },
+   {
+    "type": "text",
+    "x": 18.0,
+    "y": 56.0,
+    "at": 0.22,
+    "text": "이론",
+    "size": 7.0,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 10.0,
+    "at": 0.36,
+    "text": "간극은 그 사이에",
+    "size": 9.0,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 82.0,
+    "y": 56.0,
+    "at": 2.2,
+    "dur": 0.3,
+    "enter": "up",
+    "text": "작업",
+    "size": 7.0,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 22.0,
+    "at": 4.82,
+    "dur": 0.3,
+    "enter": "up",
+    "color": "bg",
+    "keys": [
+     {
+      "t": 6.3,
+      "y": 22.0
+     },
+     {
+      "t": 7.1,
+      "y": 45.0
+     }
+    ],
+    "text": "결과 · 마감",
+    "size": 4.6,
+    "weight": 800
+   },
+   {
+    "type": "text",
+    "x": 50.0,
+    "y": 92.0,
+    "at": 8.2,
+    "dur": 0.3,
+    "enter": "up",
+    "text": "안 쓰는 쪽이 빠르다",
+    "size": 5.0,
+    "weight": 700
+   }
+  ]
+ },
+ "no_example_fixates_more": {
+  "bg": "paper",
+  "label": "2020 후속 연구",
+  "elements": [
+   {
+    "type": "rect",
+    "x": 50.0,
+    "y": 37.0,
+    "at": 0.1,
+    "dur": 0.5,
+    "enter": "draw",
+    "w": 84.0,
+    "h": 10.0,
+    "radius": 20.0,
+    "strokeWidth": 2.0,
+    "fill": "faint",
+    "stroke": "dim"
+   },
+   {
+    "type": "rect",
+    "x": 50.0,
+    "y": 79.0,
+    "at": 0.25,
+    "dur": 0.5,
+    "enter": "draw",
+    "w": 84.0,
+    "h": 10.0,
+    "radius": 20.0,
+    "strokeWidth": 2.0,
+    "fill": "faint",
+    "stroke": "dim"
+   },
+   {
     "type": "bar",
-    "w": 36,
-    "h": 2.6,
-    "value": 0.31,
-    "label": "1명",
-    "x": 52,
-    "y": 80,
-    "at": 1.5,
-    "color": "dim"
+    "x": 8.0,
+    "y": 37.0,
+    "at": 6.0,
+    "dur": 0.9,
+    "color": "accent",
+    "w": 84.0,
+    "h": 10.0,
+    "value": 0.85
+   },
+   {
+    "type": "bar",
+    "x": 8.0,
+    "y": 79.0,
+    "at": 8.1,
+    "dur": 0.7,
+    "color": "dim",
+    "w": 84.0,
+    "h": 10.0,
+    "value": 0.5
+   },
+   {
+    "type": "text",
+    "x": 8.0,
+    "y": 24.0,
+    "at": 0.9,
+    "dur": 0.3,
+    "enter": "up",
+    "anchor": "left",
+    "text": "예시 없이 시작한 그룹",
+    "size": 5.4,
+    "weight": 800,
+    "align": "left"
+   },
+   {
+    "type": "text",
+    "x": 8.0,
+    "y": 50.0,
+    "at": 5.3,
+    "dur": 0.3,
+    "enter": "up",
+    "anchor": "left",
+    "text": "자기 첫 아이디어에 고착",
+    "size": 4.8,
+    "align": "left"
+   },
+   {
+    "type": "text",
+    "x": 8.0,
+    "y": 66.0,
+    "at": 7.7,
+    "dur": 0.3,
+    "enter": "up",
+    "anchor": "left",
+    "text": "예시를 본 그룹",
+    "size": 5.4,
+    "weight": 800,
+    "align": "left"
    }
   ]
  }

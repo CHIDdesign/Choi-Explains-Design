@@ -1,7 +1,7 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {DUR, EASE, exitFrames, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, NOTE, paperShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import type {CaptionCue, LongCaptionPreset} from '../../lib/types';
@@ -113,7 +113,7 @@ export const LongCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, cent
         justifyContent: 'center', opacity: Math.min(joinPrev ? 1 : pIn, pOut)}}>
         <div style={{padding: '12px 28px 14px', borderRadius: 18, background: 'rgba(18,18,18,0.36)',
           backdropFilter: 'blur(18px) saturate(140%)', WebkitBackdropFilter: 'blur(18px) saturate(140%)',
-          border: '1px solid rgba(255,255,255,0.16)', boxShadow: '0 10px 34px rgba(0,0,0,0.22)',
+          border: '1px solid rgba(255,255,255,0.16)', boxShadow: paperShadow(1),
           scale: `${joinPrev ? 1 : scale}`, display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
           {cue.lines.map((line, li) => (
             <div key={li} style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: 42, lineHeight: 1.36,
@@ -188,7 +188,7 @@ export const PaperCaption: React.FC<{cue: CaptionCue; local: number; remain: num
       opacity: op}}>
       <div style={{background: NOTE.paper, padding: `${size * 0.12}px ${size * 0.5}px ${size * 0.16}px`, borderRadius: 4,
         fontFamily: FONT.sans, fontWeight: 600, fontSize: size, lineHeight: 1.3, letterSpacing: '-0.012em',
-        color: NOTE.ink, whiteSpace: 'nowrap', boxShadow: `0 ${edge}px 0 ${accent}, 0 ${edge + 6}px 18px rgba(0,0,0,0.28)`}}>
+        color: NOTE.ink, whiteSpace: 'nowrap', boxShadow: `0 ${edge}px 0 ${accent}, ${paperShadow(1)}`}}>
         {cue.lines.map((line, li) => (
           <div key={li}>
             {line.map((w, wi) => {

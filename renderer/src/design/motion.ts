@@ -19,6 +19,15 @@ export const EASE = {
   inExpo: Easing.bezier(0.7, 0, 0.84, 0), // 전환: 나가는 장면이 컷으로 빨려 들어감
   inQuart: Easing.bezier(0.5, 0, 0.75, 0),
   linear: Easing.linear,
+  // ── v2: 곡선 이름이 아니라 '역할'로 고른다(docs/upgrade/06 6-1, 06b) — 진입·이동·퇴장에 서로 다른 곡선 ──
+  enter: Easing.bezier(0.22, 1, 0.36, 1), // 작은·중간 요소 진입 — easeOutQuint(easings.net)
+  enterText: Easing.bezier(0.16, 1, 0.3, 1), // 글 마스크 리빌 — easeOutExpo
+  enterLarge: Easing.bezier(0.05, 0.7, 0.1, 1), // 큰 면(종이 판·전면) — Material 3 emphasized-decelerate
+  move: Easing.bezier(0.2, 0, 0, 1), // 화면 안 A→B — Material 3 standard(빨리 떠나 길게 앉는다)
+  exit: Easing.bezier(0.3, 0, 0.8, 0.15), // 퇴장 — Material 3 emphasized-accelerate
+  settle: Easing.bezier(0.34, 1.2, 0.64, 1), // 미세 정착, 피크 약 +1.3% — 숫자 끝·칩
+  settlePaper: Easing.bezier(0.34, 1.35, 0.64, 1), // 종이 안착, 피크 약 +4.1%
+  pop: Easing.bezier(0.34, 1.56, 0.64, 1), // 피크 약 +9.8% — 펀치 구간·숏폼 훅 전용(롱폼 본문 금지)
 } as const;
 
 export type EaseName = keyof typeof EASE;
@@ -71,10 +80,15 @@ export const STAGGER = {
   item: 5,
 } as const;
 
+// 감쇠비 ζ = damping / (2·√(stiffness·mass)), 오버슛 = exp(−ζπ/√(1−ζ²)). Remotion 기본값(100/10, ζ 0.5 · 약 16%)은 쓰지 않는다.
 export const SPRING = {
-  gentle: {stiffness: 100, damping: 20, mass: 1},
-  stiff: {stiffness: 400, damping: 30, mass: 1},
-  slow: {stiffness: 50, damping: 20, mass: 1},
+  gentle: {stiffness: 100, damping: 20, mass: 1}, // ζ 1.0  · 0%
+  stiff: {stiffness: 400, damping: 30, mass: 1}, // ζ 0.75 · 약 2.8%
+  slow: {stiffness: 50, damping: 20, mass: 1}, // ζ 1.41 · 0%
+  paper: {stiffness: 260, damping: 22, mass: 1}, // ζ 0.68 · 약 5% — 메모의 '회전' 정착에만
+  snap: {stiffness: 500, damping: 32, mass: 1}, // ζ 0.72 · 약 4% — 칩·배지·테이프
+  heavy: {stiffness: 120, damping: 22, mass: 1}, // ζ 1.0  · 0% — 종이 판·전면
+  float: {stiffness: 40, damping: 18, mass: 1}, // ζ 1.42 · 0% — 배경·시차
 } as const;
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
@@ -91,3 +105,80 @@ export const springIn = (frame: number, fps: number, delay = 0, preset: keyof ty
 /** 진입 + 퇴장(75%) 합성 가시도 */
 export const visibility = (frame: number, total: number, enterDur: number = DUR.normal) =>
   Math.min(tween(frame, 0, enterDur), tweenOut(frame, total, exitFrames(enterDur)));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 모션 토큰 v2(docs/upgrade/06 6장 · 06b) — 값은 [제안], 스틸·시퀀스를 렌더해 확정한다.
+
+/** 퇴장은 진입보다 짧다. 기본 0.75, 허용 0.6~0.87. */
+export const EXIT_RATIO = 0.75;
+
+/** 길이는 거리와 면적으로 고른다(30fps 프레임). distPct: 이동 거리(짧은 변 대비 %), areaPct: 요소 면적(프레임 대비 %) */
+export const durFor = (distPct: number, areaPct = 0): number => {
+  const d = distPct < 5 ? 8 : distPct < 15 ? 11 : distPct < 35 ? 15 : distPct < 60 ? 19 : 23;
+  return Math.min(26, d + (areaPct > 50 ? 3 : areaPct > 25 ? 2 : 0));
+};
+
+/** 장식적 스태거의 총 길이 상한 15f(0.5초). 말에 맞춘 순차 등장(목록·단계)에는 쓰지 않는다. */
+export const staggerFor = (n: number, base: number, cap = 15): number =>
+  n <= 1 ? 0 : Math.max(1, Math.min(base, Math.floor(cap / (n - 1))));
+
+/** 읽는 시간: 모든 모션이 끝난 뒤 글자가 멈춰 있어야 하는 길이 — max(1.2초, 글자 수 ÷ 7). */
+export const HOLD = {cps: 7, minSec: 1.2} as const;
+export const restFrames = (chars: number, fps = 30): number => Math.ceil(Math.max(HOLD.minSec, chars / HOLD.cps) * fps);
+
+/** 부품 시간차(팔로스루): 본체 도착 기준 프레임. 꼬리는 maxTail 안에서 끝난다. */
+export const FOLLOW = {shadow: 2, tape: 3, badge: 4, underline: 6, note: 8, maxTail: 12} as const;
+
+/** 진입·퇴장 가족 — 변주 선택기가 고른다(06 문서 5·6장). */
+export const ENTER_KINDS = ['place', 'slide', 'unfold', 'rule'] as const;
+export const EXIT_KINDS = ['fade', 'peel', 'swap'] as const;
+export type EnterKind = (typeof ENTER_KINDS)[number];
+export type ExitKind = (typeof EXIT_KINDS)[number];
+
+/** 손맛 스텝: hold 프레임마다만 값이 바뀐다. 종이·테이프·사진·손글씨에만(자막·화자·카메라·20f 넘는 이동 제외). */
+export const stepFrame = (frame: number, hold = 2): number => Math.floor(frame / hold) * hold;
+
+/** 보일: 정지한 종이가 4프레임마다 아주 조금 다르게 놓인다. 글자는 종이와 같은 변환 안에 둔다. */
+export const BOIL = {hold: 4, rotate: 0.4, shift: 0.8, seeds: 3} as const; // ±도, ±px
+const rnd = (n: number): number => {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
+export const boil = (frame: number, seed: number): {rotate: number; dx: number; dy: number} => {
+  const k = Math.floor(frame / BOIL.hold) % BOIL.seeds;
+  const r = (i: number) => rnd(seed * 13 + k * 7 + i) * 2 - 1;
+  return {rotate: r(1) * BOIL.rotate, dx: r(2) * BOIL.shift, dy: r(3) * BOIL.shift};
+};
+
+/**
+ * 붙이기(place): 종이가 살짝 떠 있다가 내려앉는다 — 스케일 바운스가 아니라 회전과 그림자가 정착한다.
+ * rest = 도착 각(tokens.ts paperRotate). elev 는 tokens.ts paperShadow(elev) 에 넣는다(3 → 1).
+ */
+export const placeIn = (frame: number, rest: number, dur = 10, step = true) => {
+  const f = step ? stepFrame(frame, 2) : frame;
+  const p = interpolate(f, [0, dur], [0, 1], {...clamp, easing: EASE.enter});
+  return {
+    opacity: interpolate(f, [0, Math.max(2, Math.round(dur * 0.4))], [0, 1], clamp), // 불투명도는 먼저 끝난다
+    scale: 1.03 - 0.03 * p,
+    translateY: -14 * (1 - p),
+    // 회전은 위치보다 3f 늦게 끝나고 도착 각을 0.5° 지나쳤다 돌아온다
+    rotate: interpolate(f, [0, Math.round(dur * 0.7), dur + 3], [rest + 2.5, rest - 0.5, rest], {...clamp, easing: EASE.outCubic}),
+    elev: 3 - 2 * p,
+  };
+};
+
+/** 펼치기(unfold): 테이프가 붙은 변을 축으로 열린다. clip 은 가려진 비율(1 → 0). */
+export const unfoldIn = (frame: number, dur = 12) => {
+  const p = interpolate(frame, [0, dur], [0, 1], {...clamp, easing: EASE.enter});
+  return {clip: 1 - p, scaleCross: 0.96 + 0.04 * p, opacity: interpolate(frame, [0, 4], [0, 1], clamp)};
+};
+
+/** 떼기(peel) 퇴장: 테이프 쪽을 축으로 2° 돌며 뜬다. 불투명도는 마지막 4f 에만. */
+export const peelOut = (frame: number, end: number, rest: number, dur = 8) => {
+  const p = interpolate(frame, [end - dur, end], [0, 1], {...clamp, easing: EASE.exit});
+  return {rotate: rest + 2 * p, translateY: -10 * p, elev: 1 + p, opacity: interpolate(frame, [end - 4, end], [1, 0], clamp)};
+};
+
+/** 역할 이름으로 쓰는 진입 진행도(0→1). tween() 과 같고 기본 곡선만 다르다. */
+export const enterP = (frame: number, start: number, dur: number, role: 'enter' | 'enterText' | 'enterLarge' = 'enter') =>
+  interpolate(frame, [start, start + Math.max(1, dur)], [0, 1], {...clamp, easing: EASE[role]});

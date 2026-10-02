@@ -1,8 +1,8 @@
 import React from 'react';
 import {Img, interpolate, staticFile} from 'remotion';
-import {DUR, EASE, exitFrames, STAGGER} from '../../design/motion';
+import {DUR, EASE, exitFrames, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
 import type {EaseName} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {FONT, HOUSE, paperDropShadow, paperRotate, paperShadow} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {MotionColor, MotionEl, MotionKey, MotionSpec} from '../../lib/types';
 import {ChalkFilter, ParenLabel} from '../layout/Editorial';
@@ -25,9 +25,9 @@ const colorOf = (c: MotionColor | 'none' | undefined, s: Surface, fallback: stri
     case 'bg':
       return s.bg;
     case 'white':
-      return '#ffffff';
+      return HOUSE.paperLight; // 순백 대신 하우스 종이(docs/upgrade/06 3-1)
     case 'ink':
-      return '#111111';
+      return HOUSE.ink; // 순흑 대신 웜 잉크
     case 'none':
       return 'none';
     default:
@@ -35,7 +35,11 @@ const colorOf = (c: MotionColor | 'none' | undefined, s: Surface, fallback: stri
   }
 };
 
-const easeOf = (e?: string): EaseName => (e === 'inOut' ? 'inOutCubic' : e === 'back' ? 'outBack' : e === 'linear' ? 'linear' : 'outQuint');
+const easeOf = (e?: string): EaseName => (e === 'inOut' ? 'inOutCubic' : e === 'back' ? 'outBack' : e === 'linear' ? 'linear'
+  : e === 'enterLarge' ? 'enterLarge' : e === 'move' ? 'move' : e === 'settle' ? 'settle' : 'outQuint');
+
+/** 어두운 무대인가(칠판·잉크·구겨진 종이·시그널) — 잉크 단색 그림을 종이색 선으로 뒤집을 때 */
+const darkSurface = (s: Surface) => s.name === 'board' || s.name === 'ink' || s.name === 'crumple' || s.name === 'signal';
 
 /** 키프레임 보간 — 시작 상태(요소의 x/y, 배율 1)를 암묵적으로 넣고, 화면 안 이동은 ease-in-out(animate-skill) */
 const sampleKeys = (keys: MotionKey[] | undefined, t: number, base: Required<MotionKey>) => {
@@ -67,7 +71,7 @@ const sampleKeys = (keys: MotionKey[] | undefined, t: number, base: Required<Mot
 const elementState = (el: MotionEl, c: Ctx) => {
   const t = c.frame / c.fps;
   const at = el.at ?? 0;
-  const enterF = Math.max(1, Math.round((el.dur ?? DUR.normal / 30) * c.fps));
+  const enterF = Math.max(1, Math.round((el.dur ?? (el.enter === 'write' ? 0.8 : DUR.normal / 30)) * c.fps));
   const local = c.frame - at * c.fps;
   const pIn = interpolate(local, [0, enterF], [0, 1], {...clamp, easing: EASE[easeOf(el.ease)]});
   const outAt = el.out !== undefined ? el.out * c.fps : c.total;
@@ -80,8 +84,11 @@ const elementState = (el: MotionEl, c: Ctx) => {
   let dy = 0;
   let scale = k.scale ?? 1;
   let opacity = (k.opacity ?? el.opacity ?? 1) * pOut;
-  const enter = el.enter ?? (el.type === 'line' || el.type === 'arrow' || el.type === 'path' ? 'draw' : el.type === 'text' ? 'mask' : 'up');
+  const enter = el.enter ?? (el.type === 'line' || el.type === 'arrow' || el.type === 'path' || el.type === 'mark' ? 'draw'
+    : el.type === 'text' ? 'mask' : 'up');
   const dist = c.H * 0.04;
+  let rot = k.rotate ?? 0;
+  let clip: string | undefined;
   switch (enter) {
     case 'fade':
       opacity *= pIn;
@@ -106,8 +113,31 @@ const elementState = (el: MotionEl, c: Ctx) => {
       scale *= interpolate(pIn, [0, 1], [0.86, 1]);
       opacity *= pIn;
       break;
+    case 'place': {
+      // 붙이기: 살짝 떠 있다가 내려앉는다 — 회전과 그림자가 정착(06b placeIn, 2프레임 스텝)
+      const a = placeIn(Math.max(0, local), 0, enterF);
+      scale *= a.scale;
+      dy = a.translateY;
+      rot += a.rotate;
+      opacity *= local >= 0 ? a.opacity : 0;
+      break;
+    }
+    case 'unfold': {
+      const u = unfoldIn(Math.max(0, local), enterF);
+      clip = `inset(0 0 ${(u.clip * 100).toFixed(2)}% 0)`;
+      opacity *= local >= 0 ? u.opacity : 0;
+      break;
+    }
+    case 'write': {
+      // 손글씨처럼 왼→오, 4프레임마다(on fours) — 매끈한 와이프가 아니라 손맛
+      const w = interpolate(stepFrame(Math.max(0, local), 4), [0, enterF], [0, 1], clamp);
+      clip = `inset(-10% ${((1 - w) * 100).toFixed(2)}% -10% 0)`;
+      opacity *= local >= 0 ? 1 : 0;
+      break;
+    }
     case 'pop': {
-      const pp = interpolate(local, [0, enterF], [0, 1], {...clamp, easing: EASE.outBack});
+      // 롱폼 본문에서는 튀지 않게: 정착 곡선(피크 약 +1.3%, docs/upgrade/06 7-1)
+      const pp = interpolate(local, [0, enterF], [0, 1], {...clamp, easing: EASE.settle});
       scale *= interpolate(pp, [0, 1], [0.55, 1]);
       opacity *= Math.min(1, pIn * 2);
       break;
@@ -119,7 +149,7 @@ const elementState = (el: MotionEl, c: Ctx) => {
       // mask / draw 는 요소별로 처리
       opacity *= local >= 0 ? 1 : 0;
   }
-  return {x, y, dx, dy, scale, rotate: k.rotate ?? 0, opacity, pIn, local, enter, visible: local >= 0 && c.frame <= outAt};
+  return {x, y, dx, dy, scale, rotate: rot, opacity, pIn, local, enter, clip, visible: local >= 0 && c.frame <= outAt};
 };
 
 const Wrap: React.FC<{st: ReturnType<typeof elementState>; anchor?: string; children: React.ReactNode}> = ({st, anchor,
@@ -127,7 +157,7 @@ const Wrap: React.FC<{st: ReturnType<typeof elementState>; anchor?: string; chil
   const tx = anchor === 'left' ? '0%' : anchor === 'right' ? '-100%' : '-50%';
   return (
     <div style={{position: 'absolute', left: st.x + st.dx, top: st.y + st.dy, translate: `${tx} -50%`,
-      scale: `${st.scale}`, rotate: `${st.rotate}deg`, opacity: st.opacity, transformOrigin: 'center'}}>
+      scale: `${st.scale}`, rotate: `${st.rotate}deg`, opacity: st.opacity, transformOrigin: 'center', clipPath: st.clip}}>
       {children}
     </div>
   );
@@ -341,6 +371,25 @@ const ImageEl: React.FC<{el: Extract<MotionEl, {type: 'image'}>; c: Ctx}> = ({el
   const w = (el.w / 100) * c.W;
   const h = (el.h / 100) * c.H;
   const cutout = el.frame === 'cutout' || (!el.frame && el.src.endsWith('.png'));
+  // tint(게이트 B8): 컬러 클립아트를 잉크 단색으로 — 정적 필터(프레임마다 바뀌지 않는다). 어두운 무대에서는 종이색 선으로
+  const dark = darkSurface(c.surface);
+  const tint = el.tint === 'ink' ? (dark ? 'grayscale(1) invert(1) contrast(1.3)' : 'grayscale(1) contrast(1.3) brightness(1.04)')
+    : el.tint === 'duotone' ? (dark ? 'grayscale(1) invert(0.9) sepia(0.35) contrast(1.1)' : 'grayscale(1) sepia(0.35) contrast(1.15)')
+      : undefined;
+  const blend: React.CSSProperties['mixBlendMode'] = el.tint && el.tint !== 'none' ? (dark ? 'screen' : 'multiply') : undefined;
+  if (el.frame === 'print') {
+    // 종이 위에 붙인 프린트: 얇은 종이 테두리 + 높이 2 그림자 + 시드로 정한 각도(0° 금지, 06b PAPER_MAT.photo)
+    const border = 12;
+    return (
+      <Wrap st={st} anchor={el.anchor}>
+        <div style={{width: w, height: h, padding: border, boxSizing: 'border-box', background: HOUSE.paperLight,
+          boxShadow: paperShadow(2), rotate: `${paperRotate(hashSeed(el.src), 'photo')}deg`}}>
+          <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+            filter: tint ? `${tint} saturate(0.75)` : 'saturate(0.75)'}} />
+        </div>
+      </Wrap>
+    );
+  }
   if (el.frame === 'torn') {
     // 종이 콜라주: 찢어진 흰 테두리 액자(레퍼런스 3)
     return (
@@ -356,10 +405,102 @@ const ImageEl: React.FC<{el: Extract<MotionEl, {type: 'image'}>; c: Ctx}> = ({el
   return (
     <Wrap st={st} anchor={el.anchor}>
       <Img src={staticFile(el.src)} style={{width: w, height: h, objectFit: cutout ? 'contain' : 'cover',
-        borderRadius: el.radius ?? 0, display: 'block',
-        filter: cutout ? 'drop-shadow(0 10px 18px rgba(0,0,0,0.45))' : undefined}} />
+        borderRadius: el.radius ?? 0, display: 'block', mixBlendMode: blend,
+        filter: [tint, cutout && !tint ? paperDropShadow(2) : undefined].filter(Boolean).join(' ') || undefined}} />
     </Wrap>
   );
+};
+
+/** 시드 난수(0~1) — 손 주석의 흔들림을 프레임마다 바꾸지 않게 고정 */
+const rnd = (seed: number, i: number) => {
+  const v = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+};
+
+/** 손으로 친 주석(docs/upgrade/06 7-1 mark): 동그라미·밑줄·화살표·괄호·취소선 — 시드로 흔든 경로를 그리기로 */
+const MarkEl: React.FC<{el: Extract<MotionEl, {type: 'mark'}>; c: Ctx}> = ({el, c}) => {
+  const st = elementState(el, c);
+  if (!st.visible) return null;
+  const cx = st.x + st.dx;
+  const cy = st.y + st.dy;
+  const w = (el.w / 100) * c.W;
+  const h = (el.h / 100) * c.H;
+  const x0 = cx - w / 2;
+  const x1 = cx + w / 2;
+  const y0 = cy - h / 2;
+  const y1 = cy + h / 2;
+  const seed = hashSeed(`${el.kind}${el.x}${el.y}${el.at ?? 0}`);
+  const j = (i: number, amp: number) => (rnd(seed, i) - 0.5) * 2 * amp;
+  let d = '';
+  let head = '';
+  if (el.kind === 'circle') {
+    // 한 바퀴 조금 넘게(시작과 끝이 겹친다) — 손으로 친 동그라미
+    const pts: string[] = [];
+    const n = 44;
+    const a0 = -Math.PI * 0.62;
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + (i / n) * Math.PI * 2.14;
+      const r = 1 + j(i % 7, 0.035) + (i / n) * 0.06;
+      pts.push(`${(cx + Math.cos(a) * (w / 2) * 1.1 * r).toFixed(1)} ${(cy + Math.sin(a) * (h / 2) * 1.22 * r).toFixed(1)}`);
+    }
+    d = `M ${pts.join(' L ')}`;
+  } else if (el.kind === 'underline') {
+    const y = y1 + h * 0.14;
+    d = `M ${x0 - w * 0.02} ${y + j(1, 3)} Q ${cx} ${y + h * 0.12 + j(2, 4)} ${x1 + w * 0.03} ${y - h * 0.04 + j(3, 3)}`;
+  } else if (el.kind === 'strike') {
+    d = `M ${x0 - w * 0.03} ${cy + h * 0.08 + j(1, 2)} L ${x1 + w * 0.03} ${cy - h * 0.08 + j(2, 2)}`;
+  } else if (el.kind === 'bracket') {
+    const p = Math.max(10, w * 0.06);
+    d = `M ${x0 - p * 0.4} ${y0} Q ${x0 - p * 1.2} ${y0 + 4} ${x0 - p * 1.1} ${cy} Q ${x0 - p * 1.2} ${y1 - 4} ${x0 - p * 0.4} ${y1}`;
+  } else {
+    // arrow: 상자 왼쪽 아래 바깥에서 왼쪽 가운데로 휘어 들어온다
+    const sx = x0 - w * 0.55;
+    const sy = y1 + h * 0.9;
+    const ex = x0 - w * 0.04;
+    const ey = cy + h * 0.05;
+    d = `M ${sx} ${sy} Q ${sx + w * 0.1 + j(1, 6)} ${ey + h * 0.2} ${ex} ${ey}`;
+    const ang = Math.atan2(ey - (ey + h * 0.2), ex - (sx + w * 0.1));
+    const ah = 18 + (el.strokeWidth ?? 5) * 2;
+    head = `M ${ex - ah * Math.cos(ang - 0.5)} ${ey - ah * Math.sin(ang - 0.5)} L ${ex} ${ey} L ${ex - ah * Math.cos(ang + 0.5)} ${ey - ah * Math.sin(ang + 0.5)}`;
+  }
+  const draw = st.enter === 'draw' ? st.pIn : 1;
+  const stroke = colorOf(el.color, c.surface, c.surface.accent);
+  const sw = el.strokeWidth ?? 5;
+  return (
+    <svg width={c.W} height={c.H} style={{position: 'absolute', inset: 0, overflow: 'visible', opacity: st.opacity}}>
+      <path d={d} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" pathLength={1}
+        strokeDasharray={1} strokeDashoffset={1 - draw} />
+      {head && draw > 0.92 ? <path d={head} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round"
+        strokeLinejoin="round" /> : null}
+    </svg>
+  );
+};
+
+/** 자리 표시(ghost): 0초부터 흐리게(0.22) 서 있는 같은 요소 — 강조·숫자·막대는 시작 상태로, 움직임 없이 */
+const ghostOf = (el: MotionEl): MotionEl => {
+  const base = {...el, at: 0, dur: 0.2, enter: 'fade' as const, ghost: false, keys: undefined, out: undefined,
+    opacity: 0.22 * (el.opacity ?? 1)};
+  if (el.type === 'text') return {...base, type: 'text', highlight: undefined, reveal: 'none'} as MotionEl;
+  if (el.type === 'counter') return {...base, type: 'counter', to: el.from} as MotionEl;
+  if (el.type === 'bar') return {...base, type: 'bar', value: 0} as MotionEl;
+  return base as MotionEl;
+};
+
+const renderEl = (el: MotionEl, key: React.Key, c: Ctx): React.ReactNode => {
+  switch (el.type) {
+    case 'text':
+      return <TextEl key={key} el={el} c={c} />;
+    case 'counter':
+      return <CounterEl key={key} el={el} c={c} />;
+    case 'bar':
+      return <BarEl key={key} el={el} c={c} />;
+    case 'image':
+      return <ImageEl key={key} el={el} c={c} />;
+    case 'mark':
+      return <MarkEl key={key} el={el} c={c} />;
+    default:
+      return <ShapeEl key={key} el={el} c={c} />;
+  }
 };
 
 /** MotionSpec 장면 렌더러 — 모션 디자이너 에이전트의 JSON 을 프레임 단위로 애니메이션 */
@@ -384,18 +525,14 @@ export const MotionScene: React.FC<{spec: MotionSpec; frame: number; fps: number
         </div>
       ) : null}
       {spec.elements.map((el, i) => {
-        switch (el.type) {
-          case 'text':
-            return <TextEl key={i} el={el} c={c} />;
-          case 'counter':
-            return <CounterEl key={i} el={el} c={c} />;
-          case 'bar':
-            return <BarEl key={i} el={el} c={c} />;
-          case 'image':
-            return <ImageEl key={i} el={el} c={c} />;
-          default:
-            return <ShapeEl key={i} el={el} c={c} />;
-        }
+        // 자리 표시: 진입이 끝날 때까지 흐린 윤곽이 그 자리에 있다(그 뒤엔 본 요소만)
+        const ghostOn = el.ghost && frame < ((el.at ?? 0) + (el.dur ?? 0.4)) * fps + 2;
+        return (
+          <React.Fragment key={i}>
+            {ghostOn ? renderEl(ghostOf(el), `g${i}`, c) : null}
+            {renderEl(el, i, c)}
+          </React.Fragment>
+        );
       })}
     </div>
   );

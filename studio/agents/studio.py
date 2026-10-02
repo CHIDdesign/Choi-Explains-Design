@@ -200,9 +200,16 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         if not spec or not clean_spec(spec, 12.0):
             log(f"🎨 모션 장면 '{sc.get('title', '')}' 의 spec 이 올바르지 않아 제외")
             continue
+        try:
+            hero = int(sc.get("hero", -1))
+        except (TypeError, ValueError):
+            hero = -1
+        if 0 <= hero < len(spec.get("elements") or []) and "hero" not in spec:
+            spec["hero"] = hero
+        why = str(sc.get("reason", "")) + (f" · 움직임: {sc['motion_reason']}" if sc.get("motion_reason") else "")
         graphics.append(_g("motion", sc.get("layout") or "fullscreen", sc.get("start_seg", -1),
                            sc.get("end_seg", sc.get("start_seg", -1)), sc.get("start_word", ""),
-                           title=sc.get("title", ""), reason="모션 디자이너: " + str(sc.get("reason", "")), spec=spec,
+                           title=sc.get("title", ""), reason="모션 디자이너: " + why, spec=spec,
                            sequence_id=str(sc.get("sequence_id") or "")))
         n_scene += 1
     n_card = 0

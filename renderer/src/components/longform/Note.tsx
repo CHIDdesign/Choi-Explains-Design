@@ -2,7 +2,7 @@ import React, {useMemo} from 'react';
 import {interpolate} from 'remotion';
 import {grainOffset, useNoiseTile} from '../../lib/noise';
 import {EASE, LONG, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, NOTE, paperDropShadow, paperShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {fitSize} from '../../lib/fit';
 import {seeded, tornRectPath} from '../paper/Paper';
@@ -54,7 +54,7 @@ export const Tape: React.FC<{x: number; y: number; w?: number; h?: number; rotat
   opacity?: number}> = ({x, y, w = 128, h = 34, rotate = -4, color, opacity = 1}) => (
   <div style={{position: 'absolute', left: x, top: y, width: w, height: h, rotate: `${rotate}deg`, opacity: 0.9 * opacity,
     background: `repeating-linear-gradient(90deg, ${color} 0 9px, rgba(255,255,255,0.14) 9px 11px)`,
-    backgroundColor: color, boxShadow: '0 2px 6px rgba(0,0,0,0.22)',
+    backgroundColor: color, boxShadow: paperShadow(1),
     clipPath: 'polygon(1% 0, 99% 2%, 100% 100%, 0 96%)'}} />
 );
 
@@ -92,7 +92,7 @@ export const PaperNote: React.FC<{x: number; y: number; w: number; h: number; fr
       <div style={{position: 'absolute', left: M, top: M, width: w, height: h}}>
         <svg width={w + 12} height={h + 12} style={{position: 'absolute', left: 0, top: 0, overflow: 'visible'}}>
           <path d={path} fill={NOTE.ink} opacity={0.92} transform="translate(7 9)" />
-          <path d={path} fill={NOTE.paper} style={{filter: 'drop-shadow(0 10px 22px rgba(0,0,0,0.28))'}} />
+          <path d={path} fill={NOTE.paper} style={{filter: paperDropShadow(2)}} />
         </svg>
         <div style={{position: 'absolute', inset: 0, clipPath: `path('${path}')`}}>
           <Halftone opacity={0.5} />
@@ -129,7 +129,7 @@ export const SectionBar: React.FC<{text: string; frame: number; dur: number; W: 
       <svg width={w + 20} height={h + 20} style={{position: 'absolute', left: -10, top: -10, overflow: 'visible'}}>
         <g transform="translate(10 10)">
           <path d={path} fill={NOTE.ink} opacity={0.9} transform="translate(6 7)" />
-          <path d={path} fill={NOTE.paper} style={{filter: 'drop-shadow(0 8px 18px rgba(0,0,0,0.3))'}} />
+          <path d={path} fill={NOTE.paper} style={{filter: paperDropShadow(2)}} />
         </g>
       </svg>
       <div style={{position: 'absolute', inset: 0, clipPath: `path('${path}')`}}><Halftone opacity={0.45} /></div>

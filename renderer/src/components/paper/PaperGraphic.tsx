@@ -4,11 +4,10 @@ import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import type {Theme} from '../../design/tokens';
 import {FONT} from '../../design/tokens';
-import {fitBlock} from '../../lib/fit';
 import type {Brand, Episode, Graphic} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
 import {ConceptCard, conceptText, DisplayText, FramedMedia, pipBoxes} from './Collage';
-import {AccentText, hashSeed, LabelTag, PAPER, PaperBg, RoughBorder, SourceCredit} from './Paper';
+import {hashSeed, LabelTag, PAPER, PaperBg, RoughBorder, SourceCredit} from './Paper';
 import type {Box} from './Paper';
 
 const CONCEPT = new Set(['keyword', 'definition', 'quote', 'stat']);
@@ -113,32 +112,6 @@ export const PaperGraphic: React.FC<Props> = ({g, Comp, frame, dur, fps, theme, 
           </div>
         ) : null}
       </>, false);
-  }
-
-  if (g.template === 'chapter') {
-    const title = g.data.title || '';
-    const {size, lines} = fitBlock(title, W * 0.72, H * 0.4, 150, 80, 1.12, 2, -0.03);
-    return page(
-      <div style={{position: 'absolute', left: 156, top: H * 0.3}}>
-        <div style={{opacity: tween(frame, 2, DUR.normal)}}>
-          <LabelTag text={g.data.number ? `CHAPTER ${g.data.number}` : 'CHAPTER'} />
-        </div>
-        <div style={{marginTop: 34}}>
-          {lines.map((l, i) => (
-            <div key={i} style={{overflow: 'hidden'}}>
-              <div style={{fontFamily: FONT.display, fontWeight: 400, fontSize: size, lineHeight: 1.12,
-                letterSpacing: '-0.04em', whiteSpace: 'nowrap',
-                translate: `0 ${interpolate(tween(frame, 6 + i * 3, DUR.reveal, 'outExpo'), [0, 1], [100, 0])}%`}}>
-                <AccentText text={l} accent={i === lines.length - 1 ? g.data.accent : null} />
-              </div>
-            </div>
-          ))}
-        </div>
-        {g.data.subtitle ? (
-          <div style={{marginTop: 24, fontFamily: FONT.sans, fontSize: 32, color: PAPER.body,
-            opacity: tween(frame, 14, 12)}}>{g.data.subtitle}</div>
-        ) : null}
-      </div>);
   }
 
   if (CONCEPT.has(g.template)) {

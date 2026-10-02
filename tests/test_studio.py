@@ -53,7 +53,9 @@ def _schema_ok(schema: dict) -> None:
 def test_agent_schemas_valid_for_structured_outputs():
     for a in AGENTS.values():
         _schema_ok(a.schema)
-    assert S.QA["properties"]["issues"]["items"]["properties"]["action"]["enum"][-2:] == ["revise_scene", "revise_card"]
+    issue = S.QA["properties"]["issues"]["items"]["properties"]
+    assert issue["action"]["enum"][-3:] == ["revise_scene", "revise_card", "escalate_edit"]   # 아트 디렉터 v2(08 문서 7절)
+    assert {"scope", "blocking", "check", "measured"} <= set(issue)
 
 
 def test_studio_system_prompt_includes_skills_and_dsl():
@@ -67,7 +69,7 @@ def test_studio_system_prompt_includes_skills_and_dsl():
 
 
 def test_parse_spec_tolerates_fences():
-    spec = EXAMPLES["proximity"]
+    spec = EXAMPLES["fixation_two_groups"]
     assert parse_spec(json.dumps(spec))["elements"]
     assert parse_spec("```json\n" + json.dumps(spec) + "\n```")["elements"]
     assert parse_spec("not json") is None
@@ -81,7 +83,7 @@ def test_merge_plan_builds_long_plan_with_motion_and_stock():
         "editor": {"drop": [{"seg": 4, "reason": "반복"}], "punch": [{"seg": 4, "word": "결국"}], "pacing_notes": ""},
         "motion": {"graphics": [], "scenes": [
             {"start_seg": 1, "end_seg": 1, "start_word": "", "layout": "fullscreen", "title": "근접성",
-             "spec_json": json.dumps(EXAMPLES["proximity"]), "reason": ""},
+             "spec_json": json.dumps(EXAMPLES["fixation_two_groups"]), "reason": ""},
             {"start_seg": 2, "end_seg": 2, "start_word": "", "layout": "split", "title": "깨짐", "spec_json": "{oops",
              "reason": ""}]},
         "stock": {"requests": [{"start_seg": 2, "end_seg": 2, "start_word": "", "kind": "video", "query_en": "hand sketch",
@@ -111,14 +113,14 @@ def test_time_graphics_motion_spec_and_broll_rules():
     total = tm.duration
     motion = {"template": "motion", "layout": "fullscreen", "start_seg": 1, "end_seg": 1, "start_word": "",
               "title": "근접성", "subtitle": "", "body": "", "items": [], "title_b": "", "items_b": [], "highlight": -1,
-              "author": "", "source": "", "image": "", "reason": "", "spec": EXAMPLES["proximity"]}
+              "author": "", "source": "", "image": "", "reason": "", "spec": EXAMPLES["sketch_first_marks"]}
     broll_missing = dict(motion, template="broll", start_seg=3, end_seg=3, spec=None,
                          stock={"kind": "video", "query_en": "x", "query_ko": "", "purpose": "", "must_show": ""})
     broll_ok = dict(broll_missing, start_seg=4, end_seg=4, src="broll/v1.mp4", kind="video", credit="A / Pexels")
     timed = time_graphics([motion, broll_missing, broll_ok], utts, tm, total=total, min_start=0.0)
     by_t = {g.template: g for g in timed}
     assert "motion" in by_t and by_t["motion"].data["spec"]["elements"]
-    assert by_t["motion"].end - by_t["motion"].start >= min(spec_settle_time(EXAMPLES["proximity"]) + 1.2, 12) - 0.01
+    assert by_t["motion"].end - by_t["motion"].start >= min(spec_settle_time(EXAMPLES["sketch_first_marks"]) + 1.2, 12) - 0.01
     # 소재 없는 B-roll 은 버리고, 있는 전면 B-roll 은 말이 먼저(voice_first — 그 낱말 −2f 에 컷, docs/upgrade/05 3장)
     brolls = [g for g in timed if g.template == "broll"]
     assert len(brolls) == 1 and brolls[0].data["src"] == "broll/v1.mp4" and brolls[0].data["credit"] == "A / Pexels"

@@ -437,6 +437,38 @@ def a17_monotony(graphics: list[dict], *, cv_warn: float = 0.45) -> GateResult:
     return _bad("A17_monotony", "warn", m, f"그래픽 간격이 시계처럼 고름(CV {cv:.2f}) — 내용이 박자를 정하게")
 
 
+def b7_variety(graphics: list[dict], *, run_max: int = 2, share_max: float = 0.25, combo_max: float = 0.20,
+               min_n: int = 8) -> GateResult:
+    """B7 변주(docs/upgrade/06 5장): 같은 템플릿 3회 연속 금지 · 한 템플릿 ≤ 25% · (구도, 템플릿) 쌍이 직전과 같지 않다 ·
+    한 조합 ≤ 20%. 10/1: double_diamond 5 · compare 3 · keyword 8(41개). 길잡이·자동 템플릿과 시퀀스 안의 샷은 빼고 센다."""
+    gs = [g for g in _content(graphics) if not _seq_of(g)]
+    if len(gs) < min_n:
+        return _skip("B7_variety", "warn", "그래픽이 적어 건너뜀")
+    tpl = [g["template"] for g in gs]
+    combo = [(g.get("layout", ""), g["template"]) for g in gs]
+    run, worst, at = 1, 1, ""
+    for a, b in zip(tpl, tpl[1:]):
+        run = run + 1 if a == b else 1
+        if run > worst:
+            worst, at = run, b
+    pairs = sum(1 for a, b in zip(combo, combo[1:]) if a == b)
+    top_t = max(set(tpl), key=tpl.count)
+    top_c = max(set(combo), key=combo.count)
+    m = {"n": len(gs), "max_run": worst, "run_template": at, "top_template": top_t,
+         "top_template_share": round(tpl.count(top_t) / len(gs), 2), "repeat_pairs": pairs,
+         "top_combo": "/".join(top_c), "top_combo_share": round(combo.count(top_c) / len(gs), 2)}
+    bad = []
+    if worst > run_max:
+        bad.append(f"{at} {worst}회 연속")
+    if m["top_template_share"] > share_max:
+        bad.append(f"{top_t} {m['top_template_share']:.0%}")
+    if m["top_combo_share"] > combo_max:
+        bad.append(f"{m['top_combo']} 조합 {m['top_combo_share']:.0%}")
+    if bad:
+        return _bad("B7_variety", "warn", m, "같은 구조 반복: " + " · ".join(bad) + " — 글자가 아니라 구조를 바꾼다")
+    return _ok("B7_variety", "warn", m, f"변주 최다 {top_t} {m['top_template_share']:.0%} · 연속 최대 {worst}")
+
+
 # ---------------------------------------------------------------------------
 # 게이트 B — 화면 글자 위생(렌더 props 확정 뒤)
 # ---------------------------------------------------------------------------

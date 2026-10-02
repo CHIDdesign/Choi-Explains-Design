@@ -128,7 +128,10 @@ MOTION = _obj({
         "title": STR,
         "spec_json": STR,
         "sequence_id": STR,          # 감독 브리프의 시퀀스(없으면 "")
-        "reason": STR,
+        "hero": INT,                 # 크게 움직이는 주 요소의 번호(elements 인덱스, 없으면 −1)
+        "motion_reason": STR,        # 왜 그렇게 움직이는지 한 문장(motion_craft 1번)
+        "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "reason": STR,               # 첫머리에 챕터 키 "[키: 모눈 · 붙이기]"
     })},
     "cards": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT, "start_word": STR,
@@ -137,6 +140,8 @@ MOTION = _obj({
         "title": STR,
         "html": STR,
         "sequence_id": STR,
+        "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
         "reason": STR,
     })},
 })
@@ -279,10 +284,16 @@ COPY = _obj({
 QA = _obj({
     "verdict": {"type": "string", "enum": ["pass", "revise"]},
     "issues": {"type": "array", "items": _obj({
-        "target": STR,  # 그래픽 id 또는 "captions"
+        "target": STR,  # 그래픽 id 또는 "captions" · "sheet"
+        "check": STR,      # 루브릭 항목 번호("R3") — art_director.md
+        "measured": STR,   # 잰 값("헤드라인 44px / 본문 38px = 1.16")
         "severity": {"type": "string", "enum": ["high", "medium", "low"]},
         "problem": STR,
-        "action": {"type": "string", "enum": ["none", "shorten_text", "change_layout", "drop", "revise_scene", "revise_card"]},
+        "scope": {"type": "string", "enum": ["graphic", "captions", "edit", "audio", "source"]},
+        "blocking": BOOL,  # 렌더 전에 반드시 풀어야 하면 true
+        # escalate_edit = 그래픽으로 풀 수 없는 편집·컷·음향·원본 문제(docs/upgrade/08 7절 — 게이트 A 를 다시 돌린다)
+        "action": {"type": "string", "enum": ["none", "shorten_text", "change_layout", "drop", "revise_scene", "revise_card",
+                                              "escalate_edit"]},
         "new_title": STR, "new_body": STR, "new_items": STR_LIST,
         "new_layout": {"type": "string", "enum": ["", *LAYOUTS]},
         "direction": STR,

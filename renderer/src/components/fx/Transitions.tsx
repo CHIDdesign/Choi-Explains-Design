@@ -1,6 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, interpolate} from 'remotion';
 import {EASE} from '../../design/motion';
+import {HOUSE} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import type {Transition} from '../../lib/types';
 
@@ -104,7 +105,8 @@ export const transitionState = (list: Transition[], t: number, W: number, H: num
       const k = out ? EASE.inOutCubic(1 + p) : EASE.inOutCubic(p);
       const x = out ? interpolate(k, [0, 1], [-1.02, 0], clamp) : interpolate(k, [0, 1], [0, 1.02], clamp);
       const edge = out ? 1 : -1;
-      const col = tr.color || theme.accent;
+      // F-14(docs/upgrade/06): 면은 하우스 종이, 앞 가장자리 24px 만 시그널 — 주황 전면이 검토 시트에 잡혔다
+      const col = HOUSE.paper;
       return {
         style: {},
         blurX: 0,
@@ -112,8 +114,8 @@ export const transitionState = (list: Transition[], t: number, W: number, H: num
         overlay: (
           <AbsoluteFill style={{pointerEvents: 'none', overflow: 'hidden'}}>
             <div style={{position: 'absolute', top: 0, bottom: 0, width: W * 1.02, left: x * W, background: col}} />
-            <div style={{position: 'absolute', top: 0, bottom: 0, width: 10, background: theme.ink,
-              left: x * W + (edge > 0 ? W * 1.02 : -10), opacity: 0.9}} />
+            <div style={{position: 'absolute', top: 0, bottom: 0, width: 24, background: tr.color || theme.accent,
+              left: x * W + (edge > 0 ? W * 1.02 - 24 : 0)}} />
           </AbsoluteFill>
         ),
         hideCaptions: Math.abs(x) < 0.55,

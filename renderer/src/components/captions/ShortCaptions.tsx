@@ -1,7 +1,7 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {EASE, tween, tweenOut} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {FONT, paperShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import {PaperCaption} from './LongCaptions';
@@ -97,7 +97,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
         opacity: Math.min(pIn, out)}}>
         <div style={{display: 'flex', gap: `0 ${Math.round(size * 0.12)}px`, padding: '14px 26px 18px', borderRadius: 18,
           background: 'rgba(14,14,14,0.88)', scale: `${interpolate(pIn, [0, 1], [0.96, 1])}`,
-          boxShadow: '0 12px 36px rgba(0,0,0,0.35)'}}>
+          boxShadow: paperShadow(2)}}>
           {words.map((wd, k) => {
             const active = k === activeIdx;
             const em = emOf(wd);
