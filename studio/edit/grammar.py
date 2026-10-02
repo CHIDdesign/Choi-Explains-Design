@@ -68,13 +68,14 @@ PARAMS: dict[str, Any] = {
     # 효과음(피크 -1dBFS 정규화 후 게인, dB). 최종 마스터(-14 LUFS)에서 피크가 대략 게인+1dB:
     # whoosh ≈ -24dBFS · pop ≈ -26 (리서치: whoosh -24 · pop -26 · impact -18, 숏폼은 목소리보다 10~18dB 아래)
     # 교육 영상이라 한 단계 낮고 부드럽게, 종류는 다양하게(종이·스와이프·팝·클릭·타자·작은 종·셔터)
-    "sfx_gain": {"whoosh_fast": -25, "whoosh_soft": -25, "whoosh_deep": -25, "swoosh_short": -26, "pop": -27,
-                 "click": -29, "riser": -28, "impact": -24, "sub_drop": -26, "ding": -28, "camera_shutter": -26,
-                 "reverse": -26, "typing": -31, "paper": -24, "glitch": -30, "swipe": -26, "bell_soft": -28,
-                 "notification": -30},
+    # 문구 팔레트 v2(docs/upgrade/04c 3절): 소리는 화면의 재질(종이·연필·테이프·도장)을 따른다. 게인은 표의 상대 레벨
+    # (목소리 V − 18~26 LU)을 피크 정규화 기준 dB 로 옮긴 출발값 — 자주 나는 소리일수록 작고 짧게
+    "sfx_gain": {"paper_slide": -26, "paper_place": -25, "page_turn": -23, "tape": -26, "pencil_stroke": -28,
+                 "pencil_tick": -30, "stamp": -23, "print_place": -25, "air_soft": -30, "tonal": -19, "ident": -16},
     "sfx_min_gap": 2.0,         # 효과음 사이 최소 2초
-    "sfx_per_min": 4,           # ±30초 창에 최대 4개(평균 분당 2개)
-    "list_click_max": 6,
+    "sfx_per_min": 3,           # 60초 창 어디서도 3개 이하 — 목록 틱까지 모두 센다(게이트 D5)
+    "list_click_max": 2,        # 목록 틱은 목록당 최대 2개(상한에 포함)
+    "sfx_speech_gap": 0.15,     # 말 시작 0.15초 안에는 놓지 않는다(앞으로 당긴다)
     # 강조 자막·콜아웃
     "impact_min_gap": 22.0,
     # 콜아웃(화자 반대편 키워드)은 강조 글라이드(40초 간격·8회)와 따로 고른다 — 레퍼런스 실측 얼굴+오버레이 화면이
@@ -99,7 +100,9 @@ PUNCH: dict[str, Any] = {
     "tx_min_gap": 8.0,                       # 휩·푸시 전환 간격
     "tx_kind": "whip",                       # 사진·스톡·키워드가 들어올 때의 전환
     "sfx_min_gap": 1.2,
-    "sfx_for_punch": {3: "impact", 2: "whoosh_fast", 1: "pop"},
+    "sfx_per_min": 6,
+    # 펀치 구간에서도 riser·impact·whoosh 는 없다 — 힘은 도장 한 번과 컷의 리듬에서(04c 6절)
+    "sfx_for_punch": {3: "stamp", 2: "paper_slide", 1: "paper_place"},
 }
 
 
@@ -120,13 +123,15 @@ TX_FOR_TEMPLATE = {
     "stat": "blur",
 }
 TX_DEFAULT_IN = "push"
-SFX_FOR_TX = {"whip": "whoosh_soft", "zoom": "whoosh_soft", "blur": "whoosh_soft", "push": "swipe",
-              "wipe": "paper", "leak": "reverse", "flash": "whoosh_soft", "dip": ""}
-# 그래픽이 나올 때 효과음 — 종류를 다양하게(템플릿 성격에 맞춰)
-SFX_FOR_TEMPLATE = {"keyword": "pop", "definition": "typing", "quote": "typing", "photo": "camera_shutter",
-                    "broll": "whoosh_soft", "motion": "swipe", "stat": "ding", "compare": "paper", "list": "paper",
-                    "process": "paper", "cycle": "swipe", "timeline": "paper", "pyramid": "paper",
-                    "concept": "paper", "image_note": "paper", "lower_third": "swoosh_short", "recap": "paper"}
+# 전환 소리(04c 4절) — 컷·박자가 아니라 화면에서 무언가 넘어갈 때만. 블러·줌·빛샘·플래시는 소리 없음
+SFX_FOR_TX = {"whip": "paper_slide", "zoom": "", "blur": "", "push": "paper_slide",
+              "wipe": "page_turn", "leak": "", "flash": "", "dip": ""}
+# 그래픽이 놓일 때(04c 4절 매핑) — 표에 없는 템플릿은 소리 없음("모르면 종이"를 없앤다)
+SFX_FOR_TEMPLATE = {"keyword": "paper_place", "definition": "pencil_stroke", "quote": "", "photo": "print_place",
+                    "broll": "", "motion": "paper_slide", "stat": "stamp", "compare": "paper_place",
+                    "list": "paper_slide", "process": "paper_slide", "cycle": "paper_slide", "timeline": "pencil_stroke",
+                    "pyramid": "paper_place", "concept": "paper_place", "image_note": "tape", "lower_third": "",
+                    "recap": "paper_place", "evidence": "print_place", "card": "paper_slide"}
 LIST_TEMPLATES = ("list", "process", "cycle", "timeline", "pyramid")
 
 MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")
@@ -189,10 +194,12 @@ def _thin_by_gap(events: list[dict], gap: float, key: str = "t") -> list[dict]:
 
 
 def _cap_per_minute(events: list[dict], per_min: int, key: str = "t") -> list[dict]:
+    """우선순위 높은 것부터, **60초 창 어디서도** per_min 개 이하가 되게 고른다(게이트 D5 — 예전 ±30초 중심 창은
+    창을 옮기면 4개가 잡혔다)."""
     out: list[dict] = []
     for e in sorted(events, key=lambda e: (-e.get("prio", 0), e[key])):
-        window = [c for c in out if abs(c[key] - e[key]) < 30.0]
-        if len(window) < per_min:
+        ts = sorted([c[key] for c in out] + [e[key]])
+        if all(sum(1 for t in ts if x <= t < x + 60.0) <= per_min for x in ts if e[key] - 60.0 < x <= e[key]):
             out.append(e)
     return sorted(out, key=lambda e: e[key])
 
@@ -529,6 +536,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
             "start": c["start"], "end": c["end"], "zoom": P["callout_zoom"], "zoomEnd": P["callout_zoom"], "x": x,
             "glide": P["callout_glide"]}, glide_back=P["callout_glide"] + 0.2)
         reframed.add(round(c["start"] + 0.08, 3))
+        c["pop"] = True        # 리프레이밍이 강조를 대신하니 콜아웃이 놓일 때의 종이 소리는 남긴다
     if reframed:
         # ⚡ 펀치 구간의 하드 펀치인(cut)은 리프레이밍과 겹쳐도 남긴다(펀치 편집의 핵심). 젠틀 글라이드만 리프레이밍이 대신한다
         ed.punches = [p for p in ed.punches if round(p["t"], 3) not in reframed or p["style"] == "cut"]
@@ -562,35 +570,35 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         tpl, a = g.get("template", ""), g["start"]
         near_tx = any(abs(a - t) < 0.4 for t in tx_times)
         if tpl == "chapter":
-            add(a, "riser", 4, "챕터 진입 riser")
+            if not near_tx:              # 와이프 전환의 page_turn 과 하나로(챕터 진입 소리는 한 번)
+                add(a, "page_turn", 6, "챕터 진입")
         elif tpl == "title":
-            add(a + 0.15, "bell_soft", 6, "타이틀 카드")
+            add(a + 0.15, "ident", 6, "타이틀 카드")      # 채널 인장(없으면 무음 — tonal 은 스코어가 맡는다)
         elif not near_tx:
-            add(a, SFX_FOR_TEMPLATE.get(tpl, "paper"), 2, f"{tpl} 등장")
+            add(a, SFX_FOR_TEMPLATE.get(tpl, ""), 2, f"{tpl} 등장")
         if tpl in LIST_TEMPLATES:
-            for i, rt in enumerate(list_reveal_times(g)[: P["list_click_max"]]):
-                if i:  # 첫 항목은 등장 효과음과 겹치므로 생략
-                    add(rt, "click", 1, "목록 항목")
+            for i, rt in enumerate(list_reveal_times(g)[1: 1 + P["list_click_max"]]):
+                add(rt, "pencil_tick", 1, "목록 항목")       # 첫 항목은 등장 소리와 겹치므로 생략
     for p in punches:
         if p.get("hot"):
-            add(p["t"], PU["sfx_for_punch"].get(p["intensity"], "pop"), 5, f"펀치 강조({p['kind']})")
-        else:
-            add(p["t"], "pop" if p["intensity"] >= 2 else "", 4 if p["intensity"] >= 3 else 2, f"강조({p['kind']})")
+            add(p["t"], PU["sfx_for_punch"].get(p["intensity"], ""), 5, f"펀치 강조({p['kind']})")
+        # 펀치 밖 강조 글라이드는 소리 없음 — 화면에 놓이는 것이 없다
     for c in ed.callouts:
         if c.pop("pop", False):
-            add(c["start"] + 0.08, "pop", 2, "콜아웃")
-    # 결론·감정 문장 밑에는 효과음을 깔지 않는다(리서치) — 대신 배경음악을 0.8초 전에 비워 '숨'을 준다
-    if endcard and total > speech_total + 0.5:
-        add(speech_total + 0.2, "whoosh_soft", 3, "엔드카드")
-    # 목록 click 은 간격 규칙에서 제외(항목마다 짧게 나오는 게 자연스럽다).
-    # riser 는 소리가 '앞으로' 깔리고 피크가 챕터 진입(와이프 whoosh)과 겹치도록 설계된 짝이라 함께 둔다.
-    lead = ("click", "riser")
-    clicks = [s for s in sfx if s["category"] in lead]
-    rest = [s for s in sfx if s["category"] not in lead]
-    hot_sfx = _thin_by_gap([s for s in rest if in_spans(s["t"], spans)], PU["sfx_min_gap"])   # 펀치 구간: 촘촘히
-    others = _thin_by_gap([s for s in rest if not in_spans(s["t"], spans)], P["sfx_min_gap"])
+            add(c["start"] + 0.08, "paper_place", 2, "콜아웃")
+    # 결론·감정 문장 밑에는 효과음을 깔지 않는다. 엔드카드는 스코어의 reprise 가 맡는다(효과음 없음)
+    # 말 시작 0.15초 안에는 놓지 않는다 — 앞으로 당긴다(자음 대역을 비운다, 04c 2절 5번)
+    onsets = [c["start"] for c in cues]
+    for x in sfx:
+        near = next((o for o in onsets if -P["sfx_speech_gap"] < x["t"] - o < P["sfx_speech_gap"]), None)
+        if near is not None:
+            x["t"] = round(max(0.0, near - P["sfx_speech_gap"]), 3)
+    # 목록 틱·챕터도 간격·분당 상한에 모두 센다(예전엔 click·riser 가 상한 밖이라 '틱틱' 튀었다 — 게이트 D5)
+    hot_sfx = _thin_by_gap([s for s in sfx if in_spans(s["t"], spans)], PU["sfx_min_gap"])   # 펀치 구간: 촘촘히
+    hot_sfx = _cap_per_minute(hot_sfx, PU["sfx_per_min"])
+    others = _thin_by_gap([s for s in sfx if not in_spans(s["t"], spans)], P["sfx_min_gap"])
     others = _cap_per_minute(others, P["sfx_per_min"])
-    ed.sfx = sorted(others + hot_sfx + clicks, key=lambda s: s["t"])
+    ed.sfx = sorted(others + hot_sfx, key=lambda s: s["t"])
 
     # ---- 배경음악 부풀리기 --------------------------------------------------
     first_speech = cues[0]["start"] if cues else 0.0
@@ -689,16 +697,16 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
     #    카드·아이콘이 떨어질 때 작은 pop, 그 밖은 잔잔한 음악만. 그래픽 성격에 맞춰 종류는 다양하게, 5초에 하나 이하.
     sfx: list[dict] = []
     for g in graphics:
-        media = g.get("template") in ("photo", "broll")
-        cat = "pop" if media else SFX_FOR_TEMPLATE.get(g.get("template", ""), "paper")
-        sfx.append({"t": g["start"], "category": cat, "gain_db": P["sfx_gain"].get(cat, -26), "prio": 3,
-                    "why": f"{g.get('template', '')} 등장"})
+        media = g.get("template") in ("photo", "broll", "evidence")
+        cat = "print_place" if media else SFX_FOR_TEMPLATE.get(g.get("template", ""), "")
+        if cat and g["start"] >= 3.0:          # 훅(첫 3초) 위에는 얹지 않는다(04c 6절)
+            sfx.append({"t": g["start"], "category": cat, "gain_db": P["sfx_gain"].get(cat, -26), "prio": 3,
+                        "why": f"{g.get('template', '')} 등장"})
     for p in ed.punches:
-        cat = "whoosh_fast" if p["style"] == "cut" else "pop"
-        sfx.append({"t": p["t"], "category": cat, "gain_db": P["sfx_gain"][cat] - 2, "prio": 2, "why": "강조"})
-    if total > 8:
-        sfx.append({"t": max(0.0, total - 1.6), "category": "ding", "gain_db": P["sfx_gain"]["ding"], "prio": 2,
-                    "why": "페이오프"})
+        if p["style"] == "cut" and p["t"] >= 3.0:
+            sfx.append({"t": p["t"], "category": "paper_slide", "gain_db": P["sfx_gain"]["paper_slide"] - 2, "prio": 2,
+                        "why": "강조"})
+    # 마지막은 스코어의 tag 가 맡는다 — 효과음 없음
     ed.sfx = _thin_by_gap(sfx, 5.0)[:6]
     ed.bgm_swells = [(0.0, 0.8)]
     ed.stats = {"shots": len(ed.camera), "transitions": len(ed.transitions), "punches": len(ed.punches),

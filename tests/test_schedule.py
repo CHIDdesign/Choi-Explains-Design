@@ -40,6 +40,7 @@ def test_schedule_keeps_dependencies():
     lane = next(lane for st in pl.SCHEDULE for lane in st if "grade" in lane)
     assert lane.index("grade") < lane.index("proxy")          # 프록시는 색보정 LUT 가 필요
     assert pos["director"] < pos["verify"] == pos["broll"] == pos["stock"] < pos["qa"] < pos["render"] < pos["master"]
+    assert pos["verify"] < pos["music"] == pos["qa"]           # 🎼 큐 시트는 편집 검사가 컷을 확정한 뒤
     plan = [k for st in pl.schedule_for("plan") for lane in st for k in lane]
     assert set(plan) == set(pl.PLAN_ONLY) and "proxy" not in plan
 

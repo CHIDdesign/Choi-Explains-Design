@@ -232,6 +232,32 @@ EVIDENCE_PICK = _obj({
     })},
 })
 
+# 🎼 음악 감독 — 큐 시트(docs/upgrade/04_음악_사운드_엔진_v2.md 3-1): 어디서 들어오고 나가고, 어디에 없는지
+SUITES = ["felt", "analog", "brush", "air"]
+CUE_ROLES = ["theme", "bed", "air", "reprise"]
+CUE_ENTRIES = ["downbeat", "fade_in"]
+CUE_EXITS = ["ending", "fade_bar", "into_next"]
+MUSIC = _obj({
+    "suite": {"type": "string", "enum": SUITES},
+    "suite_reason": STR,        # 이 영상의 말투·논지와 왜 맞는지 한 줄
+    "fit_score": INT,           # 0~10. 7 미만이면 air 만 쓰거나 음악 없이 간다(게이트 D6)
+    "describe": STR,            # 주제곡을 묘사하는 영어 한 줄
+    "tempo_bpm": INT,           # 원하는 템포. 0 = 박 없음
+    "cues": {"type": "array", "items": _obj({
+        "id": STR, "start_seg": INT, "end_seg": INT,       # −1 = 영상 맨 앞 / 맨 끝
+        "role": {"type": "string", "enum": CUE_ROLES},
+        "energy": INT,
+        "entry": {"type": "string", "enum": CUE_ENTRIES},
+        "exit": {"type": "string", "enum": CUE_EXITS},
+        "why_in": STR, "why_out": STR,
+    })},
+    "silences": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "why": STR})},
+    "hero": {"type": "array", "items": _obj({
+        "seg": INT, "kind": {"type": "string", "enum": ["ident", "tonal"]}, "why": STR})},
+    "shorts": _obj({"role": {"type": "string", "enum": ["bed", "air", "none"]}, "energy": INT, "note": STR}),
+    "notes": STR,
+})
+
 # 🔤 자막 디자이너
 CAPTIONS = _obj({
     "emphasis": {"type": "array", "items": _obj({
@@ -271,7 +297,7 @@ CARD_REVISE = _obj({"html": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

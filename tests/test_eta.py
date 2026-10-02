@@ -10,8 +10,8 @@ sys.path.insert(0, str(ROOT))
 from studio.eta import DEFAULTS, Eta, EtaDisplay, features, fmt_left  # noqa: E402
 
 KEYS = ["probe", "audio", "asr", "align", "face", "grade", "director", "proxy", "broll", "stock", "sound", "qa",
-        "render", "master", "export"]
-VARIANTS = {"asr": "asr@gpu", "director": "director@ai", "qa": "qa@ai", "stock": "stock@ai"}
+        "music", "render", "master", "export"]
+VARIANTS = {"asr": "asr@gpu", "director": "director@ai", "qa": "qa@ai", "stock": "stock@ai", "music": "music@ai"}
 # 7.5분 · 60fps 원본(사용자 실제 사례), 롱폼 + 숏폼 2편
 FEATS = features(src_s=450, out_fps=60, long_s=450 * 0.85, shorts_s=2 * 60, thumbs=True)
 

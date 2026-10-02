@@ -60,10 +60,12 @@
 - `hook_segs`: 인트로 훅 발화. `title_card_seg`: 오프닝 타이틀을 얹을 발화(본론 시작점).
 - `shorts_ideas`: 숏폼 후보 **연속 구간**과 각도(후킹 가이드 참고). 롱폼을 안 본 사람도 이해되는 완결된 아이디어 하나씩.
 - `caption_direction`: 자막 톤 한 줄(예: "절제된 에디토리얼, 전문용어만 마커").
-- `music`: 무드와 운용.
-- `bgm_mood`: 롱폼 배경음악 무드. minimal | calm | ambient | lofi | piano | inspiring | upbeat. 기본은 minimal 또는 ambient —
-  한 영상에 한 곡이고 말 아래 깔리는 바닥이다(코퍼레이트·업비트는 교육 채널 톤에 맞지 않는다).
-- `shorts_bgm_mood`: 숏폼 배경음악 무드. 숏폼은 롱폼 곡을 물려받으므로 `bgm_mood` 와 같은 값을 적는다(업비트·인스파이어링 기본 없음).
+- `music`: 🎼 음악 감독이 이것을 읽고 큐 시트(음악이 어디서 들어오고 나가고 어디에 없는지)를 쓴다.
+  `music.mood` = 악기·음역·템포 한 줄(예: "느린 펠트 피아노, 낮은 음역, 드럼 없음"), `music.notes` = 구조 메모
+  (예: "훅과 타이틀에만 주제, 실험 설명은 음악 없이, 엔딩에서 재현"). 분위기 형용사(감동적인·신나는)만 적지 않는다.
+- `bgm_mood`: 곡 라이브러리에서 고를 무드 분류 하나. minimal | calm | ambient | lofi | piano | inspiring | upbeat. 기본은 minimal
+  또는 ambient — 한 영상에 한 곡이다(코퍼레이트·업비트는 교육 채널 톤에 맞지 않는다). 언제 들릴지는 음악 감독이 정한다.
+- `shorts_bgm_mood`: 숏폼은 롱폼 곡을 물려받으므로 `bgm_mood` 와 같은 값을 적는다(업비트·인스파이어링 기본 없음).
 - `notes_for_team`: 팀 전체에 주는 연출 메모(짧게). 구간·발화 번호가 들어가는 지시(얼굴로 둘 곳, 이어 붙일 도식, 뺄 테이크)는 메모가
   아니라 해당 필드로 낸다: 얼굴 = `beats[].show: emotion`, 같은 도식의 재등장 = 같은 `sequence_id` 의 walkthrough, 테이크 = `integrity`.
 - `integrity`: 녹음의 구조적 이상을 **코드가 읽는 필드로** 낸다(자유 글 메모에만 적지 않는다).

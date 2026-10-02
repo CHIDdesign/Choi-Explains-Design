@@ -232,6 +232,18 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                                 "action": "revise_scene", "new_title": "", "new_body": "", "new_items": [],
                                 "new_layout": "", "direction": "라벨 크게"}]}
         return {"verdict": "pass", "summary": "좋음", "issues": []}
+    if agent == "music":
+        # 🎼 컷이 확정된 전사본(편집 시각)을 받는다 — 그림 없음
+        assert n_images == 0 and "편집 " in json.dumps(body, ensure_ascii=False) and segs, instruction[:200]
+        ids = sorted(segs)
+        return {"suite": "felt", "suite_reason": "차분한 강의 말투", "fit_score": 8,
+                "describe": "sparse felt piano, close-mic, slow, long rests, no drums", "tempo_bpm": 70,
+                "cues": [{"id": "m1", "start_seg": -1, "end_seg": ids[min(3, len(ids) - 1)], "role": "theme", "energy": 3,
+                          "entry": "downbeat", "exit": "fade_bar", "why_in": "훅과 타이틀", "why_out": "첫 설명 앞"},
+                         {"id": "m2", "start_seg": ids[-4], "end_seg": -1, "role": "reprise", "energy": 2,
+                          "entry": "fade_in", "exit": "ending", "why_in": "엔딩", "why_out": "종지"}],
+                "silences": [{"start_seg": ids[len(ids) // 2], "end_seg": ids[len(ids) // 2], "why": "결론 문장"}],
+                "hero": [], "shorts": {"role": "air", "energy": 1, "note": "말 아래 바닥만"}, "notes": ""}
     if agent == "timeline_review":
         # 🧐 게이트 E: 검토 시트 전부를 받는다 — 이벤트 목록에 홀드가 있어야 한다
         assert n_images >= 1 and "HOLD" in instruction, (n_images, instruction[:300])
@@ -257,7 +269,7 @@ def agent_of(schema: dict) -> str:
                         ("colorist", "strength"),
                         ("stock_pick", "picks"), ("captions", "emphasis"), ("shorts", "shorts"),
                         ("copy", "pinned_comment"), ("art_director", "verdict"), ("card_revise", "html"),
-                        ("motion_revise", "changes"), ("timeline_review", "thesis_read")):
+                        ("motion_revise", "changes"), ("timeline_review", "thesis_read"), ("music", "suite")):
         if marker in props:
             return key
     return "unknown"
@@ -388,6 +400,10 @@ def main() -> int:
     video = work / "source.mp4"
     if not video.exists():
         make_media(video, words, duration)
+    bgm = work / "my_music.wav"           # 🎼 내 음악(직접 고른 곡) — 큐 시트대로만 들린다
+    if not bgm.exists():
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "sine=frequency=220:duration=150,volume=0.3", "-ac", "2", "-ar", "48000", str(bgm)], check=True)
     clip = work / "stock_src.mp4"
     if not clip.exists():
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -455,7 +471,7 @@ def main() -> int:
     pl.Pipeline._evidence_deps = deps_with_fake_scholar
     spec = pl.JobSpec(video=str(video), topic="좋은 디자인은 질문에서 시작한다 — 디자인 전공 1~2학년 대상", episode="01",
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
-                      direction="모션 장면은 크게", images_dir=str(mats))
+                      direction="모션 장면은 크게", images_dir=str(mats), bgm=str(bgm))
     job = work / "job"
     previews: list[str] = []
     res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
@@ -535,6 +551,16 @@ def main() -> int:
     # 🧐 게이트 E(타임라인 검수): 통과(가중 4.0) — 검토 필요 딱지 없음
     assert by_gate["E_timeline"]["ok"] and by_gate["E_timeline"]["measured"]["weighted"] == 4.0, by_gate.get("E_timeline")
     assert not (out / "⚠검토필요.md").exists()
+    # 🎼 큐 시트 → 음악은 큐 안에서만(점유율 < 100%), 게이트 D 가 기록됐다
+    assert "music" in agents, agents
+    snd = json.loads((job / "work" / "sound_report.json").read_text(encoding="utf-8"))
+    print("소리 리포트:", json.dumps({k: snd[k] for k in ("music_sheet_by", "suite", "fit_score", "cues")}, ensure_ascii=False))
+    assert snd["music_sheet_by"] == "ai" and snd["cues"] and snd["cues"][-1]["role"] == "reprise", snd
+    assert 0 < snd["mix"]["music_share"] < 0.9 and snd["mix"]["bgm_tracks"] == 1, snd["mix"]
+    assert snd["shorts"] and all(s.get("music_share", 0) <= 1 for s in snd["shorts"]), snd["shorts"]
+    for gid in ("D1_voice_music", "D3_one_track", "D5_sfx_density", "D6_fit", "D8_occupancy", "D9_license", "D10_voice"):
+        assert gid in by_gate, (gid, sorted(by_gate))
+    assert by_gate["D9_license"]["ok"] and by_gate["D3_one_track"]["ok"] and by_gate["D6_fit"]["ok"], by_gate["D9_license"]
     covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
     assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]

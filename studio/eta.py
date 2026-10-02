@@ -40,6 +40,8 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
     "sound": lambda f: 60,
     "qa@ai": lambda f: 180,
     "qa@rule": lambda f: 20,
+    "music@ai": lambda f: 45,            # 🎼 음악 감독(전사본만, 그림 없음) — 아트 디렉터 검수와 동시에
+    "music@rule": lambda f: 1,
     "render": lambda f: 60 + 67 * f["frames_k"] + (15 if f["thumbs"] else 0),   # 약 15fps(첫 작업은 넉넉히)
     "master": lambda f: 20 + 8 * f["out_s"] / 60,
     "export": lambda f: 30,
@@ -47,7 +49,7 @@ DEFAULTS: dict[str, Callable[[dict], float]] = {
 }
 # 같은 종류(느리면 같이 느린) 단계 묶음
 GROUPS = {"audio": "sound", "master": "sound", "face": "video", "grade": "video", "proxy": "video",
-          "render": "video", "director": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net",
+          "render": "video", "director": "ai", "qa": "ai", "stock": "ai", "broll": "net", "sound": "net", "music": "ai",
           "export": "ai"}
 GROUP_MIN, GROUP_MAX = 0.75, 2.0   # 같은 묶음 조정 범위(줄일 때는 조금만 — 보수적으로)
 GROUP_EVIDENCE = 60.0  # 같은 묶음에서 이만큼(예상 초) 끝나야 조정

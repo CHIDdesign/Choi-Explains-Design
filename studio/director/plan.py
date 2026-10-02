@@ -390,6 +390,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
     kept = [u.id for u in utts if u.kept]
     if not kept:
         raise ValueError("남은 발화가 없습니다")
+    from ..sound.cues import clean_music
     plan: dict[str, Any] = {
         "summary": str(raw.get("summary", "")),
         "hook_segs": [s for s in raw.get("hook_segs", []) if s in kept],
@@ -400,6 +401,8 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "drop": [],
         "youtube": raw.get("youtube") or {},
         "music": raw.get("music") or {},
+        # 🎼 음악 감독의 큐 시트(손으로 고친 것이 있으면 그것이 이긴다 — 없으면 work/music.json)
+        "music_cues": clean_music(raw.get("music_cues"), kept),
         "captions": raw.get("captions") or {},   # 🔤 자막 디자이너의 프리셋 선택
         "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
         "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)

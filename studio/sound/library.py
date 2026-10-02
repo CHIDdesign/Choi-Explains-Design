@@ -24,14 +24,8 @@ MANIFEST = ASSETS_DIR / "sound_manifest.json"
 SOUND_DIR = ASSETS_DIR / "sound"
 
 # 사용할 수 있는 카테고리가 없을 때 대신 쓸 카테고리
-FALLBACK = {
-    "whoosh_fast": ["whoosh_soft", "swoosh_short"], "whoosh_soft": ["whoosh_fast", "swoosh_short"],
-    "whoosh_deep": ["whoosh_soft"], "swoosh_short": ["whoosh_fast"], "swipe": ["swoosh_short"],
-    "tick": ["click"], "click": ["tick", "pop"], "pop": ["bubble", "click"], "bubble": ["pop"],
-    "impact": ["sub_drop"], "sub_drop": ["impact"], "chime": ["ding"], "ding": ["chime", "bell_soft"],
-    "bell_soft": ["ding"], "reverse_cymbal": ["reverse"], "reverse": ["reverse_cymbal", "riser"],
-    "page_flip": ["paper"], "paper": ["page_flip"], "notification": ["ding", "pop"],
-}
+# 비슷한 카테고리로 대신하지 않는다 — 맞는 소리가 없으면 내지 않는다(docs/upgrade/04c 2절 7번)
+FALLBACK: dict[str, list[str]] = {}
 
 MOODS_LONG = ("minimal", "calm", "ambient", "lofi", "inspiring")
 # 숏폼도 롱폼과 같은 계열 — 업비트·인스파이어링(코퍼레이트) 기본은 뺐다(docs/upgrade/04 11절 5번). 숏폼은 롱폼 곡을 물려받는다
@@ -55,6 +49,8 @@ class Sound:
     credit: str = ""
     attribution: str = ""        # 라이선스가 요구하는 출처 문구(CC BY 등) — 업로드 정보에 그대로
     lead_silence: float = 0.0    # 곡 앞 무음(초) — 건너뛰고 시작
+    family: str = ""             # 같은 녹음 세션(한 영상은 한 세션의 변주만 — 04c 2절 4번)
+    license_class: str = ""      # 저작권 위험 등급(A~D·X, 매니페스트 license.class) — 게이트 D9
 
 
 def _sha256(p: Path) -> str:
@@ -157,24 +153,28 @@ class SoundLibrary:
                     failed.append(f"{kind}:{e['id']}")
             if ok:
                 attr = str(((e.get("license") or {}).get("attribution")) or "")
+                lic = str(((e.get("license") or {}).get("class")) or "")
                 if kind == "sfx":
                     self.sfx.append(Sound(e["id"], e.get("category", ""), dst, float(e.get("peak_s") or 0.0),
                                           float(e.get("duration") or 0.0), e.get("source", ""), e.get("lufs"),
-                                          title=e.get("title", ""), attribution=attr))
+                                          title=e.get("title", ""), attribution=attr, family=str(e.get("family") or ""),
+                                          license_class=lic))
                 elif kind == "bgm":
                     self.bgm.append(Sound(e["id"], "bgm", dst, 0.0, float(e.get("duration") or 0.0),
                                           e.get("source", ""), e.get("lufs"), mood=e.get("mood", ""),
                                           title=e.get("title", ""),
                                           credit=attr or " · ".join(x for x in (e.get("title"), e.get("artist"),
                                                                                 e.get("source")) if x),
-                                          attribution=attr, lead_silence=float(e.get("lead_silence_s") or 0.0)))
+                                          attribution=attr, lead_silence=float(e.get("lead_silence_s") or 0.0),
+                                          license_class=lic))
                 else:
                     self.models[e["id"]] = dst
             progress((i + 1) / max(1, len(entries)) * 0.9)
         # 절차적 기본 세트(항상)
         if "sfx" in want:
             for d in synth.build(self.root / "synth"):
-                self.sfx.append(Sound(d["id"], d["category"], Path(d["path"]), d["peak_s"], d["duration"], "synth"))
+                self.sfx.append(Sound(d["id"], d["category"], Path(d["path"]), d["peak_s"], d["duration"], "synth",
+                                      family="synth"))
         progress(1.0)
         if got:
             self.log(f"🔊 효과음·음악 {got}개 새로 받음")
@@ -196,14 +196,23 @@ class SoundLibrary:
 
     # ------------------------------------------------------------------
     def pick(self, category: str, *, seed: int = 0, prefer_real: bool = True) -> Optional[Sound]:
-        """카테고리(없으면 비슷한 카테고리)에서 하나. 내려받은 실제 효과음을 절차적 효과음보다 먼저."""
-        cats = [category] + FALLBACK.get(category, [])
+        """그 카테고리에서 하나(없으면 None — 비슷한 소리로 메우지 않는다). 내려받은 실제 효과음을 절차적보다 먼저,
+        같은 세션(family)의 변주 안에서 돌리고 직전과 같은 파일은 피한다(04c 3절)."""
         tiers = ([lambda s: s.source != "synth"] if prefer_real else []) + [lambda s: True]
         for ok in tiers:
-            for c in cats:
-                pool = [s for s in self.sfx if s.category == c and ok(s)]
-                if pool:
-                    return pool[seed % len(pool)]
+            pool = [s for s in self.sfx if s.category == category and ok(s)]
+            if not pool:
+                continue
+            fam = getattr(self, "_family", {}).get(category)
+            same = [s for s in pool if (getattr(s, "family", "") or "") == fam] if fam else []
+            pool = same or pool
+            last = getattr(self, "_last", {}).get(category)
+            choice = pool[seed % len(pool)]
+            if len(pool) > 1 and choice.path == last:
+                choice = pool[(seed + 1) % len(pool)]
+            self._family = {**getattr(self, "_family", {}), category: getattr(choice, "family", "") or ""}
+            self._last = {**getattr(self, "_last", {}), category: choice.path}
+            return choice
         return None
 
     def pick_bgm(self, moods: tuple[str, ...], *, min_duration: float = 60.0, seed: int = 0,

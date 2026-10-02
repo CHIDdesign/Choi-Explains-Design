@@ -44,9 +44,11 @@ def test_long_edit_punch_only_inside_spans():
     assert 33.0 not in by_t and by_t[37.0]["style"] == "cut" and by_t[37.0]["amount"] == PUNCH["punch"][1]
     assert by_t[80.0]["style"] == "glide"
     assert ed.stats["punch_spans"] == 1 and ed.stats["hot_punches"] == 2
-    # 효과음: 펀치 구간 안은 임팩트·빠른 우시, 밖은 팝
-    cat = {s["t"]: s["category"] for s in ed.sfx}
-    assert cat[30.0] == "impact" and cat[37.0] == "pop" and cat[10.0] == "pop"
+    # 효과음(문구 팔레트 04c 6절): 펀치 구간 안은 도장(강도 3)·종이 놓기(강도 1), 밖의 강조 글라이드는 소리 없음.
+    # 말 시작 0.15초 안이면 앞으로 당긴다
+    def near(t):
+        return next((s["category"] for s in ed.sfx if abs(s["t"] - t) <= 0.16), None)
+    assert near(30.0) == "stamp" and near(37.0) == "paper_place" and near(10.0) is None
     # 전환: 펀치 구간 안의 사진 진입은 휩
     tx = {t["t"]: t for t in ed.transitions}
     assert tx[44.0]["type"] == "whip" and tx[44.0]["dir"] in ("left", "right")
@@ -76,7 +78,7 @@ def test_short_edit_hook_is_hot():
     by_t = {p["t"]: p for p in ed.punches}
     assert by_t[1.5]["style"] == "cut" and by_t[1.5]["amount"] == PUNCH["punch"][3]     # 훅(첫 3초)
     assert by_t[12.0]["style"] == "glide"
-    assert any(s["category"] == "whoosh_fast" and s["t"] == 1.5 for s in ed.sfx)
+    assert not any(s["t"] < 3.0 for s in ed.sfx)                                         # 훅 문장 위에는 효과음 없음
     ed2 = build_short_edit(timemap=tm, total=30.0, graphics=[], cues=_cues(30), moments=moments, hook=0.0)
     assert all(p["style"] == "glide" for p in ed2.punches)
 

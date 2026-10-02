@@ -670,6 +670,90 @@ def f6_tags(problems: dict[str, list[str]]) -> GateResult:
     return _ok("F6_tags", "warn", m, "색 태그 BT.709 · tv · yuv420p")
 
 
+# --- 소리(04 문서 9절 게이트 D) ---------------------------------------------------------------------
+def d1_voice_over_music(voice_lufs: Optional[float], under_db: Optional[float], *, ref_lufs: float = -14.0,
+                        lo: float = 18.0, hi: float = 26.0) -> GateResult:
+    """말 구간 목소리 − 음악 18~26 LU(목표 20). 음악은 곡마다 ref_lufs 로 맞춘 뒤 under_db 를 곱하므로
+    말 아래 음악 ≈ ref_lufs + under_db — 게인 계획에서 잰다(곡 원래 다이내믹은 들어가지 않는다)."""
+    if voice_lufs is None or under_db is None:
+        return _skip("D1_voice_music", "repair", "음악 없음")
+    d = voice_lufs - (ref_lufs + under_db)
+    m = {"voice_lufs": round(voice_lufs, 1), "music_under_lufs": round(ref_lufs + under_db, 1), "diff_lu": round(d, 1)}
+    if not lo <= d <= hi:
+        return _bad("D1_voice_music", "repair", m, f"목소리가 음악보다 {d:.1f} LU 위({lo:.0f}~{hi:.0f})", "bed_level")
+    return _ok("D1_voice_music", "repair", m, f"목소리 − 음악 {d:.1f} LU")
+
+
+def d3_one_track(tracks: int) -> GateResult:
+    """한 영상 한 곡(아이덴트 제외)."""
+    m = {"tracks": tracks}
+    if tracks > 1:
+        return _bad("D3_one_track", "repair", m, f"곡이 {tracks}개 — 한 영상 한 곡", "one_track")
+    return _ok("D3_one_track", "repair", m, "곡 하나" if tracks else "음악 없음")
+
+
+def d5_sfx_density(cues: list[tuple[float, str]], *, punch: list[tuple[float, float]] = (), window: float = 60.0,
+                   cap: int = 3) -> GateResult:
+    """효과음: 펀치 구간 밖 60초 창 어디서도 3개 이하(목록 틱 포함), 같은 파일 연속 2회 금지.
+    cues: (시각, 파일 경로) 시간순."""
+    cues = sorted(cues)
+    outside = [t for t, _ in cues if not any(a <= t < b for a, b in punch)]
+    worst, at = 0, 0.0
+    for i, t in enumerate(outside):
+        n = sum(1 for u in outside[i:] if u < t + window)
+        if n > worst:
+            worst, at = n, t
+    repeats = [round(cues[i][0], 1) for i in range(1, len(cues)) if cues[i][1] == cues[i - 1][1]]
+    m = {"sfx": len(cues), "max_per_window": worst, "window_at": round(at, 1), "repeats": repeats[:6]}
+    if worst > cap:
+        return _bad("D5_sfx_density", "warn", m, f"효과음이 {at:.0f}초부터 60초 안에 {worst}개(상한 {cap})")
+    if repeats:
+        return _bad("D5_sfx_density", "warn", m, f"같은 효과음 파일이 연달아 {len(repeats)}번")
+    return _ok("D5_sfx_density", "warn", m, f"효과음 {len(cues)}개 · 60초 창 최대 {worst}개")
+
+
+def d6_fit(fit_score: Optional[int], *, min_fit: int = 7) -> GateResult:
+    """음악 감독의 fit_score ≥ 7 — 아니면 air 판만(수리), 그것도 안 되면 음악 없음."""
+    if fit_score is None:
+        return _skip("D6_fit", "repair", "큐 시트 없음")
+    m = {"fit_score": fit_score}
+    if fit_score < min_fit:
+        return _bad("D6_fit", "repair", m, f"맞는 음악 점수 {fit_score}/10 — air 만 쓴다", "air_only")
+    return _ok("D6_fit", "repair", m, f"맞는 음악 점수 {fit_score}/10")
+
+
+def d8_occupancy(share: Optional[float], cues: list[dict], *, lo: float = 0.30, hi: float = 0.65) -> GateResult:
+    """롱폼 음악 점유율 30~65%(처음부터 끝까지 깐 계획은 틀린 계획), 모든 큐에 why_in·why_out."""
+    if share is None:
+        return _skip("D8_occupancy", "warn", "음악 없음")
+    no_why = [c.get("id", "") for c in cues if not (str(c.get("why_in", "")).strip() and str(c.get("why_out", "")).strip())]
+    m = {"share": round(share, 3), "cues": len(cues), "no_why": no_why}
+    if not lo <= share <= hi:
+        return _bad("D8_occupancy", "warn", m, f"음악 점유율 {share:.0%}({lo:.0%}~{hi:.0%})")
+    if no_why:
+        return _bad("D8_occupancy", "warn", m, f"들어오고 나가는 이유가 없는 큐 {', '.join(no_why)}")
+    return _ok("D8_occupancy", "warn", m, f"음악 점유율 {share:.0%} · 큐 {len(cues)}개")
+
+
+def d9_license(used: list[tuple[str, str]]) -> GateResult:
+    """쓰인 모든 음원(곡·효과음)의 저작권 위험 등급이 own·A~C. used: (이름, 등급). 등급 없음 = 확인 안 됨."""
+    bad = [f"{n}({c or '등급 없음'})" for n, c in used if c not in ("own", "A", "A-sa", "B", "C", "synth")]
+    m = {"used": len(used), "bad": bad}
+    if bad:
+        return _bad("D9_license", "block", m, f"라이선스가 확인되지 않은 음원: {', '.join(bad[:4])}")
+    return _ok("D9_license", "block", m, f"음원 {len(used)}개 라이선스 확인")
+
+
+def d10_voice_level(voice_lufs: Optional[float], *, target: float = -16.0, tol: float = 1.0) -> GateResult:
+    """목소리 스템 −16 ±1 LUFS(마스터 −14 의 바탕)."""
+    if voice_lufs is None:
+        return _skip("D10_voice", "warn", "목소리 측정 못 함")
+    m = {"voice_lufs": round(voice_lufs, 1)}
+    if abs(voice_lufs - target) > tol:
+        return _bad("D10_voice", "warn", m, f"목소리 {voice_lufs:.1f} LUFS(목표 {target:.0f} ±{tol:.0f})")
+    return _ok("D10_voice", "warn", m, f"목소리 {voice_lufs:.1f} LUFS")
+
+
 def b3_query_labels(graphics: list[dict]) -> GateResult:
     """자료 라벨 = 검색어(10/1: 스톡 위 큰 글씨 '스케치북 넘기기'). 계획 모양의 broll·photo(stock 이 있는 것)."""
     bad = []

@@ -77,16 +77,17 @@ def test_punch_callout_and_sfx_rules():
     assert 30.0 in ts and 31.0 not in ts and 44.0 not in ts     # 간격·풀스크린 그래픽 규칙
     assert ed.punches[0]["amount"] == PARAMS["punch"][3] <= 0.1
     assert all(p["style"] == "glide" for p in ed.punches)      # 하드컷 줌 없이 천천히 당긴다
-    assert not {"impact", "sub_drop", "glitch"} & {s["category"] for s in ed.sfx}   # 거친 효과음 없음
+    # 문구 팔레트(04c): 거친·UI 효과음 없음
+    assert not {"impact", "sub_drop", "glitch", "riser", "pop", "click", "whoosh_soft", "ding"} & {s["category"] for s in ed.sfx}
     c = ed.callouts[0]
     assert c["text"] == "좋은 디자인은\n질문에서" and c["highlight"] == "질문" and c["label"] == "핵심"
     assert c["side"] == "right"                                  # 얼굴이 왼쪽(x=0.35) → 오른쪽 빈 공간
     assert 2.0 <= c["end"] - c["start"] <= 4.5
-    non_click = [s for s in ed.sfx if s["category"] not in ("click", "riser")]  # riser 는 챕터 whoosh 와 짝
-    for a, b in zip(non_click, non_click[1:]):
+    for a, b in zip(ed.sfx, ed.sfx[1:]):                       # 목록 틱·챕터까지 모두 간격 규칙 안(게이트 D5)
         assert b["t"] - a["t"] >= PARAMS["sfx_min_gap"] - 1e-6
-    assert not any(s["category"] == "ding" for s in ed.sfx)      # 결론 문장 밑에는 효과음 없음
-    assert any(s["category"] == "riser" for s in ed.sfx)         # 챕터 진입
+    for s0 in ed.sfx:                                            # 60초 창 어디서도 3개 이하
+        assert sum(1 for s1 in ed.sfx if s0["t"] <= s1["t"] < s0["t"] + 60) <= PARAMS["sfx_per_min"]
+    assert any(s["category"] == "page_turn" for s in ed.sfx)     # 챕터 진입(와이프와 한 소리)
     assert ed.bgm_dips and ed.bgm_dips[0][1] - ed.bgm_dips[0][0] == pytest.approx(1.0)  # 강도 3 직전 음악 비우기
 
 
@@ -106,13 +107,13 @@ def test_centered_speaker_is_reframed_for_callout():
     back = next(s for s in ed.camera if abs(s["start"] - c["end"]) < 0.01)
     assert back["glide"] > 0.3                                 # 돌아올 때도
     assert not any(abs(p["t"] - 20.0) < 0.01 for p in ed.punches)
-    assert any(s["category"] == "pop" and abs(s["t"] - 20.0) < 0.01 for s in ed.sfx)
+    assert any(s["category"] == "paper_place" and abs(s["t"] - 20.0) < 0.3 for s in ed.sfx)   # 말 시작 0.15초 앞으로
     assert all(s["end"] - s["start"] >= 0.99 for s in ed.camera[:-1])
 
 
 def test_callouts_are_not_capped_by_punch_glides():
     """콜아웃은 강조 글라이드(40초 간격)와 따로 20초 간격으로 — 레퍼런스의 얼굴+오버레이 비율(약 21%)에 가깝게.
-    글라이드가 없는 콜아웃은 등장에 작은 pop. 얼굴만 이어지는 가장 긴 구간을 통계로 남긴다."""
+    글라이드가 없는 콜아웃은 등장에 종이 놓는 소리(paper_place). 얼굴만 이어지는 가장 긴 구간을 통계로 남긴다."""
     tm = TimeMap([Span(0, 120)])
     moments = [Moment(t=float(t), end=t + 2.5, kind="punchline", intensity=2, word="핵심", callout=f"핵심 {t}")
                for t in (10, 32, 54, 76, 98)]
@@ -123,7 +124,8 @@ def test_callouts_are_not_capped_by_punch_glides():
     starts = [round(c["start"] + 0.08) for c in ed.callouts]
     assert starts == [10, 32, 54, 76, 98]                         # 콜아웃은 모두(20초 간격 이상)
     no_glide = [t for t in starts if not any(abs(p["t"] - t) < 0.01 for p in ed.punches)]
-    assert no_glide and all(any(s["category"] == "pop" and abs(s["t"] - t) < 0.2 for s in ed.sfx) for t in no_glide)
+    assert no_glide and all(any(s["category"] == "paper_place" and abs(s["t"] - t) < 0.2 for s in ed.sfx)
+                            for t in no_glide)
     assert ed.stats["callouts"] == 5 and 0 < ed.stats["max_face_run"] < 30
 
 
@@ -146,14 +148,15 @@ def test_short_edit_is_fast_but_sparse():
     total = tm.duration
     cues = [_cue(t * 1.2, t * 1.2 + 1.1, "짧은 자막") for t in range(int(total / 1.2))]
     cues[5]["lines"][0][0]["em"] = "keyword"
-    ed = build_short_edit(timemap=tm, total=total, graphics=[{"start": 8.0, "end": 12.0}], cues=cues,
-                          moments=[Moment(t=20.0, end=22.0, intensity=3)])
+    ed = build_short_edit(timemap=tm, total=total, graphics=[{"start": 8.0, "end": 12.0, "template": "keyword"},
+                                                             {"start": 15.0, "end": 18.0, "template": "photo"}],
+                          cues=cues, moments=[Moment(t=20.0, end=22.0, intensity=3)])
     assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "blur"       # 되감기 이음새 하나
     assert {c["zoom"] for c in ed.camera} <= {1.0, 1.06}
     assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
     assert all(p["style"] == "glide" for p in ed.punches)
-    assert 2 <= len(ed.sfx) <= 6 and not {"impact", "sub_drop", "whoosh_fast", "reverse", "swipe"} & {
-        s["category"] for s in ed.sfx}                                   # 컷·이음새에 whoosh 없음(참고 채널)
+    assert 2 <= len(ed.sfx) <= 6 and {s["category"] for s in ed.sfx} <= {"paper_place", "print_place", "paper_slide"}
+    # 컷·이음새·강조 글라이드에는 소리 없음 — 그래픽이 놓일 때만(참고 채널 · 04c)
     assert ed.soft_cut > 0
 
 
@@ -448,7 +451,7 @@ def test_mix_and_master_hit_minus_14_lufs(tmp_path):
     _wav(tmp_path / "voice.wav", voice)
     _wav(tmp_path / "bgm.wav", 0.2 * np.sin(2 * np.pi * 220 * np.arange(5 * sr) / sr))
     sfx = synth.build(tmp_path / "sfx")
-    whoosh = next(s for s in sfx if s["category"] == "whoosh_soft")
+    whoosh = next(s for s in sfx if s["category"] == "paper_slide")
     rep = mix(ff, tmp_path / "voice.wav", tmp_path / "mix.wav", total=12.0,
               sfx=[SfxCue(t=3.5, path=whoosh["path"], gain_db=-20, peak=whoosh["peak_s"])],
               bgm=BgmPlan(path=str(tmp_path / "bgm.wav"), switch_at=[6.0],
@@ -472,10 +475,14 @@ def test_sound_library_prefers_real_then_falls_back(tmp_path):
     from studio.sound.library import SoundLibrary
     (tmp_path / "m.json").write_text(json.dumps({"sfx": [], "bgm": [], "models": []}), encoding="utf-8")
     lib = SoundLibrary(root=tmp_path / "sound", manifest=tmp_path / "m.json").ensure(download=False)
-    # 내려받은 게 없으면 절차적 효과음, 없는 카테고리는 비슷한 것으로
-    assert lib.pick("whoosh_fast").source == "synth"
-    assert lib.pick("reverse_cymbal").category == "reverse"
-    assert lib.pick("chime").category == "ding"
+    # 내려받은 게 없으면 절차적 효과음(문구 팔레트), 없는 카테고리는 비슷한 것으로 메우지 않는다(04c — 없으면 무음)
+    assert lib.pick("paper_slide").source == "synth"
+    assert lib.pick("whoosh_fast") is None and lib.pick("tape") is None and lib.pick("ident") is None
+    a, b = lib.pick("paper_slide", seed=0), lib.pick("paper_slide", seed=0)
+    assert a.path != b.path                                         # 같은 파일 연속 금지(같은 세션 안 라운드 로빈)
+    from studio.sound import synth
+    assert {c for c, _, _ in synth.SYNTHS} == {"paper_slide", "paper_place", "page_turn", "pencil_stroke",
+                                               "pencil_tick", "stamp"}
     assert lib.pick_bgm(("minimal",)) is None and lib.rnnoise_model() is None
 
 

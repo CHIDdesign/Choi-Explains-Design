@@ -38,10 +38,29 @@ def youtube_text(plan: dict[str, Any], chapters: list[dict], shorts: list[dict],
     return "\n".join(parts)
 
 
+def sound_section(snd: dict) -> list[str]:
+    """🎼 소리(work/sound_report.json): 큐 시트 · 점유율 · 목소리 레벨 · 쓰인 음원."""
+    mix = snd.get("mix") or {}
+    by = {"ai": "음악 감독", "rule": "규칙", "plan": "계획"}.get(snd.get("music_sheet_by", ""), "")
+    out = ["## 🎼 소리", ""]
+    if mix.get("bgm"):
+        out.append(f"- 음악: {mix.get('bgm')} · 큐 시트 {by or '없음(말 아래 덕킹)'}"
+                   + (f" · {snd.get('suite')} · 맞는 정도 {snd.get('fit_score')}/10" if snd.get("suite") else "")
+                   + (f" · 음악이 들리는 시간 {mix['music_share'] * 100:.0f}%" if mix.get("music_share") is not None else ""))
+        for q in snd.get("cues") or []:
+            out.append(f"  - {q.get('id')} {fmt_ts(q['start'])}–{fmt_ts(q['end'])} {q.get('role')} — "
+                       f"{q.get('why_in', '')} → {q.get('why_out', '')}")
+    else:
+        out.append("- 음악 없음")
+    if snd.get("voice_lufs") is not None:
+        out.append(f"- 목소리 {snd['voice_lufs']:.1f} LUFS · 효과음 {mix.get('sfx', 0)}개")
+    return out + [""]
+
+
 def edit_report(*, title: str, source_duration: float, long_duration: float, align_report: dict,
                 utts: list, graphics: list[dict], chapters: list[dict], shorts: list[dict],
                 director: str, usage: list[dict], broll: list[dict], studio: dict | None = None,
-                qa: list[dict] | None = None, gate: str = "") -> str:
+                qa: list[dict] | None = None, gate: str = "", sound: dict | None = None) -> str:
     removed = [u for u in utts if not u.kept]
     lines = [f"# 편집 리포트 — {title}", "",
              f"- 편집 판단: {director}",
@@ -54,6 +73,8 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
                 f"{fid.get('sentences', 0)}개 들어감**" if (fid := align_report.get("fidelity") or {}) else ""), ""]
     if gate:            # 🚦 품질 게이트가 첫 절(검토가 필요하면 맨 위에서 보이게)
         lines += [gate.rstrip("\n"), ""]
+    if sound:
+        lines += sound_section(sound)
     if studio:
         lines += ["## 🎬 AI 스튜디오 브리프", "",
                   f"- 로그라인: {studio.get('logline', '')}",

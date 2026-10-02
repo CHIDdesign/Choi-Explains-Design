@@ -195,8 +195,84 @@ def paper(seed: int = 13) -> tuple[np.ndarray, float]:
     return x, 0.45 * 0.3
 
 
-# (카테고리, 파일명, 생성기)
+# --- 문구 팔레트 v2(docs/upgrade/04c 8절) — 화면이 크림 종이·잉크·테이프이므로 소리도 종이·연필·도장 ----------------
+
+def paper_slide(seed: int = 21, dur: float = 0.36) -> tuple[np.ndarray, float]:
+    """종이가 책상 위를 미끄러진다: 대역 잡음 800~6000 Hz + 불규칙 엔벨로프, 0.25~0.45초."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * dur)
+    t = np.linspace(0, 1, n)
+    grain = 0.55 + 0.45 * np.abs(np.sin(2 * np.pi * rng.uniform(18, 30) * t + rng.uniform(0, 3)))
+    x = _band(rng.normal(0, 1, n), 800, 6000) * _env(n, 1.1, 0.35, 2.2) * grain
+    return x, dur * 0.35
+
+
+def paper_place(seed: int = 22) -> tuple[np.ndarray, float]:
+    """종이를 내려놓는 낮은 '톡': 90~140 Hz 감쇠 사인 40 ms + 2~5 kHz 잡음 15 ms."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * 0.3)
+    t = np.arange(n) / SR
+    f = rng.uniform(90, 140)
+    body = np.sin(2 * np.pi * f * t) * np.exp(-t / 0.04)
+    tick = _band(rng.normal(0, 1, n), 2000, 5000) * np.exp(-t / 0.015) * 0.5
+    return body + tick, 0.004
+
+
+def page_turn(seed: int = 23) -> tuple[np.ndarray, float]:
+    """페이지를 한 번 넘긴다: 미끄러짐 두 번을 0.25초 간격으로, 둘째를 더 낮게."""
+    a, _ = paper_slide(seed, 0.4)
+    b, _ = paper_slide(seed + 7, 0.45)
+    j = int(SR * 0.25)
+    x = np.zeros(j + len(b))
+    x[: len(a)] += a
+    x[j:] += _onepole(b, 2500) * 0.8
+    return x, 0.25 + 0.45 * 0.35
+
+
+def pencil_stroke(seed: int = 24, dur: float = 0.45) -> tuple[np.ndarray, float]:
+    """연필이 선을 긋는다: 3~7 kHz 대역 잡음에 20~40 Hz 불규칙 진폭 변조."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * dur)
+    t = np.arange(n) / SR
+    am = 0.55 + 0.45 * np.sin(2 * np.pi * rng.uniform(20, 40) * t + rng.normal(0, 0.6, n).cumsum() * 0.01)
+    x = _band(rng.normal(0, 1, n), 3000, 7000) * am * _env(n, 0.6, 0.15, 1.4)
+    return x, dur * 0.15
+
+
+def pencil_tick(seed: int = 25) -> tuple[np.ndarray, float]:
+    """짧은 체크: 대역 잡음 12 ms."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * 0.06)
+    t = np.arange(n) / SR
+    return _band(rng.normal(0, 1, n), 2500, 6500) * np.exp(-t / 0.012), 0.002
+
+
+def stamp(seed: int = 26) -> tuple[np.ndarray, float]:
+    """고무 도장(부드럽게): 110 Hz 감쇠 사인 80 ms + 저역 잡음."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * 0.35)
+    t = np.arange(n) / SR
+    body = np.sin(2 * np.pi * 110 * t) * np.exp(-t / 0.08)
+    thud = _onepole(rng.normal(0, 1, n), 600) * np.exp(-t / 0.05) * 0.6
+    return body + thud, 0.006
+
+
+# (카테고리, 파일명, 생성기) — 문구 팔레트만 합성한다. tape·print_place·air_soft·tonal·ident 는 합성하지 않는다(없으면 무음)
 SYNTHS: list[tuple[str, str, Callable[[], tuple[np.ndarray, float]]]] = [
+    ("paper_slide", "paper_slide_1", lambda: paper_slide(21)),
+    ("paper_slide", "paper_slide_2", lambda: paper_slide(31, 0.3)),
+    ("paper_slide", "paper_slide_3", lambda: paper_slide(41, 0.42)),
+    ("paper_place", "paper_place_1", lambda: paper_place(22)),
+    ("paper_place", "paper_place_2", lambda: paper_place(32)),
+    ("page_turn", "page_turn_1", lambda: page_turn(23)),
+    ("pencil_stroke", "pencil_stroke_1", lambda: pencil_stroke(24)),
+    ("pencil_stroke", "pencil_stroke_2", lambda: pencil_stroke(34, 0.35)),
+    ("pencil_tick", "pencil_tick_1", lambda: pencil_tick(25)),
+    ("pencil_tick", "pencil_tick_2", lambda: pencil_tick(35)),
+    ("stamp", "stamp_1", lambda: stamp(26)),
+]
+# 예전 합성음(UI·예고편 소리 — 쓰지 않는다. 호환을 위해 함수만 남긴다)
+LEGACY_SYNTHS: list[tuple[str, str, Callable[[], tuple[np.ndarray, float]]]] = [
     ("whoosh_soft", "whoosh_soft", lambda: whoosh(0.55, 0.55, 200, 4200, 1)),
     ("whoosh_fast", "whoosh_fast", lambda: whoosh(0.32, 0.6, 400, 7000, 21)),
     ("whoosh_deep", "whoosh_deep", lambda: whoosh(0.8, 0.5, 90, 2400, 31)),

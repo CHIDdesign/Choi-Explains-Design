@@ -58,6 +58,10 @@ class BgmPlan:
     restart_at: list[float] = field(default_factory=list)   # 곡이 다 끝났으면 다시 시작할 구조 앵커(챕터 카드)
     dip_fade: float = 2.5             # 음악을 비울 때 들어가는 페이드(초) — 뚝 끊기지 않게
     end_at: Optional[float] = None    # 끝 페이드가 시작할 곳(말이 끝난 곳) — 없으면 끝에서 fade_out 초 전
+    # 🎼 큐 시트(04 문서 3절, studio/sound/cues.py) — 있으면 음악은 큐 안에서만 들린다(나머지는 침묵이 곧 큐).
+    # [{start, end, role(theme|bed|air|reprise), entry, exit}] · 상태별 레벨(6.3): 말 아래 bed · 쉼 · theme/reprise 의
+    # 말 없는 1.5초 이상 = feature(목소리 −8 LU 까지) · air = 말 아래보다 8 dB 낮게
+    cues: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +171,21 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
         if i0 > r0:     # 앞쪽 페이드(코사인)
             ramp = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, i0 - r0, dtype=np.float32))
             dip_mask[r0:i0] = np.maximum(dip_mask[r0:i0], ramp)
+    if plan.cues:
+        silent = a <= 0.5
+        for q in plan.cues:
+            i0, i1 = max(0, int(float(q["start"]) * 100)), min(n, int(float(q["end"]) * 100))
+            if i1 <= i0:
+                continue
+            if q.get("role") == "air":
+                target[i0:i1] = plan.under_db - 8.0
+            elif q.get("role") in ("theme", "reprise"):
+                # 말이 1.5초 넘게 없는 곳(타이틀·카드·엔드카드)만 또렷하게
+                run = 0
+                for i in range(i0, i1):
+                    run = run + 1 if silent[i] else 0
+                    if run >= 150:
+                        target[i - 149: i + 1] = np.maximum(target[i - 149: i + 1], plan.swell_db)
     out = np.empty_like(target)
     cur = float(target[0])
     down = 1 - np.exp(-1 / 5.0)    # ≈50ms
@@ -176,6 +195,13 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
         out[i] = cur
     if dip_mask.any():
         out += 20 * np.log10(np.maximum(1e-3, 1.0 - dip_mask))
+    if plan.cues:
+        from ..sound.cues import MusicCue, cue_windows
+        win = cue_windows([MusicCue(str(q.get("id", "")), float(q["start"]), float(q["end"]), str(q.get("role", "bed")),
+                                    int(q.get("energy", 1)), str(q.get("entry", "fade_in")), str(q.get("exit", "fade_bar")))
+                           for q in plan.cues], total)
+        out += 20 * np.log10(np.maximum(1e-4, win[:n] if len(win) >= n else np.pad(win, (0, n - len(win)))))
+        return out          # 큐가 시작·끝을 정한다(전체 페이드 인·끝 페이드 대신)
     # 페이드 인
     fi = int(plan.fade_in * 100)
     if fi > 0:
@@ -292,6 +318,10 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
             curve = bgm_gain_curve(act, bgm, total)
             report["bgm_tracks"] = len({p for _, _, p in track.pieces})
             report["bgm_pieces"] = len(track.pieces)
+            # 음악 점유율(게이트 D8): 게인이 말 아래 레벨 −12 dB 보다 큰 시간의 비율
+            report["music_share"] = round(float((curve > (bgm.under_db - 12.0)).mean()), 3)
+            if bgm.cues:
+                report["cues"] = len(bgm.cues)
         except (FFmpegError, ValueError) as e:
             log(f"배경음악 준비 실패(음악 없이 진행): {e}")
             track = None

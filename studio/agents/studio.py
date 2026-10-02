@@ -52,6 +52,8 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("card_revise", "🃏 카드 디자이너(수정)", "card_revise", S.CARD_REVISE, "high", 32000),
     Agent("colorist", "🎨 컬러리스트", "colorist", S.GRADE, "medium", 8000),
     Agent("timeline_review", "🧐 타임라인 검수", "timeline_review", S.TIMELINE_QA, "high", 16000),
+    # 🎼 음악 감독 — SPECIALISTS 에 넣지 않는다: 컷이 확정된 뒤 따로 부른다(13 문서 3절)
+    Agent("music", "🎼 음악 감독", "music_supervisor", S.MUSIC, "medium", 12000),
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
@@ -506,6 +508,12 @@ class Studio:
         """🎨 컬러리스트: 원본 + 룩 5가지 비교 시트(와 원본 스코프)를 보고 룩·세기·미세 조정을 고른다."""
         instr = load_prompt("agents/colorist.md").replace("{{notes}}", notes)
         return self.call("colorist", ctx, instr, images=[sheet] + ([scope_sheet] if scope_sheet else []))
+
+    def score(self, ctx: str, brief: dict[str, Any]) -> dict[str, Any]:
+        """🎼 음악 감독: 컷이 확정된 전사본(편집 시각) + 감독 브리프 → 큐 시트(MUSIC)."""
+        instr = (load_prompt("agents/music_supervisor.md").replace("{{brief}}", compact_brief(brief))
+                 .replace("{{user_direction}}", direction_block(self.direction)))
+        return self.call("music", ctx, instr)
 
     def review_timeline(self, ctx: str, events: str, srt: str, plan_text: str, gate_text: str,
                         sheets: list[tuple[str, bytes, str]]) -> dict[str, Any]:

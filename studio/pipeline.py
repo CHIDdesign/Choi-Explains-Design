@@ -62,7 +62,7 @@ from .grade import auto as grade
 from .grade import scopes
 from .media.audio import build_voice_track
 from .media.ffmpeg import FFmpeg, MediaInfo, hdr_to_sdr_filter, pick_output_fps
-from .media.mix import BgmPlan, SfxCue, mix, mux_final
+from .media.mix import BgmPlan, SfxCue, measure_lufs, mix, mux_final
 from .media.sources import (Piece, Quality, SourceMap, analyze_sources, angle_cut_times, angle_summary, choose_angles,
                             clips_for, face_track, master_audio_args, visual_scorer)
 from .models import Span, Tag, TimeMap, Utterance, Word
@@ -76,6 +76,7 @@ from .render.props import (Episode, apply_edit, caption_overlays, dedupe_caption
                            fold_keywords_into_media)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
+from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resolve_cues
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .stock.providers import StockHub
 from .stock.research import StockResearcher, contact_sheet, strip_stock_images
@@ -104,6 +105,7 @@ STAGES: list[tuple[str, str, float]] = [
     ("stock", "스톡 영상·사진", 3),
     ("sound", "효과음·배경음악 준비", 2),
     ("qa", "아트 디렉터 검수", 4),
+    ("music", "음악 큐 시트(음악 감독)", 1),
     ("render", "렌더링", 30),
     ("master", "음향 믹스·마스터링", 5),
     ("export", "마무리(썸네일·자막·검토 시트·업로드 정보)", 2),
@@ -115,6 +117,7 @@ EXTRAS = "부가자료"
 #  · 얼굴 추적(영상 디코딩)은 목소리 다듬기 → 음성 인식(소리·GPU)과 함께
 #  · 🎬 AI 기획(네트워크)은 색보정 → 편집본 인코딩(GPU/CPU)과 함께 — 컷은 둘 다 끝난 뒤(_make_edit)
 #  · 🔎 편집 검사(Whisper)는 자료 사진 → 스톡(네트워크) · 효과음 준비 → 렌더 번들 미리 만들기와 함께
+#  · 🎼 음악 큐 시트는 편집 검사가 컷을 확정한 뒤, 아트 디렉터 검수와 함께
 #  · 렌더 중에 음향 믹스를 미리 만들어 두고(stage_render) 마스터링 단계는 합치기만 한다
 # STAGES 에 없는 키(bundle)는 화면·남은 시간에 나오지 않는 준비 작업이다(실패해도 작업은 계속).
 SCHEDULE: list[list[list[str]]] = [
@@ -123,7 +126,7 @@ SCHEDULE: list[list[list[str]]] = [
     [["align"]],
     [["director"], ["grade", "proxy"]],
     [["verify"], ["broll", "stock"], ["sound", "bundle"]],
-    [["qa"]],
+    [["qa"], ["music"]],
     [["render"]],
     [["master"]],
     [["export"]],
@@ -131,7 +134,7 @@ SCHEDULE: list[list[list[str]]] = [
 PLAN_ONLY = ("probe", "audio", "asr", "face", "align", "grade", "director")
 # 말단 작업 — 실패해도 영상은 끝까지 만든다(그 단계만 건너뛰고 안전한 대체 상태로). 원본·음성 인식·대본 맞추기·
 # 렌더·합치기만 영상에 꼭 필요하다. 채널 주인: "초기 작업의 외부 프로그램 오류 하나로 전체 작업이 다 망한다"
-SOFT_STAGES = {"audio", "face", "grade", "verify", "broll", "stock", "sound", "qa", "export"}
+SOFT_STAGES = {"audio", "face", "grade", "verify", "broll", "stock", "sound", "qa", "music", "export"}
 MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 
 
@@ -361,6 +364,7 @@ class Pipeline:
                     "director": "director@ai" if ai else "director@rule",
                     "align": "align@ai" if (ai and self.spec.studio_mode) else "align",
                     "qa": "qa@ai" if ai else "qa@rule",
+                    "music": "music@ai" if (ai and self.spec.studio_mode) else "music@rule",
                     "export": "export@ai" if (ai and self.spec.studio_mode) else "export",
                     "stock": ("stock@ai" if ai else "stock@rule") if self._stock_enabled() else "stock@off"}
         self.eta.plan(keys, variants, self._eta_features(), steps=steps)
@@ -2408,6 +2412,92 @@ class Pipeline:
         cats = sorted({s.category for s in lib.sfx if s.source != "synth"})
         self.log(f"🔊 효과음 {len(lib.sfx)}개(내려받은 카테고리 {len(cats)}) · 배경음악 {len(lib.bgm)}곡")
 
+    def stage_music(self) -> None:
+        """🎼 음악 감독의 큐 시트 — 편집 검사가 컷을 확정한 뒤(전사본의 편집 시각이 최종), 음악이 있을 때만."""
+        lib = self.sounds if (self.spec.music and not self.spec.bgm) else None
+        if self.spec.make_long and self._music_on(lib):
+            self._music_sheet()
+
+    def _soft_music(self) -> None:
+        self._music = {}
+        self.log("   → 큐 시트 없이(예전처럼 말 아래 덕킹) 계속합니다")
+
+    def _music_on(self, lib=None) -> bool:
+        if self.spec.bgm and Path(self.spec.bgm).exists():
+            return True
+        return bool(self.spec.music and lib is not None and lib.bgm)
+
+    def _music_listing(self) -> str:
+        """음악 감독이 읽는 전사본: 남은 발화의 편집 시각(본편 기준) + 챕터·홀드·강도 3 표시."""
+        kept = [u for u in self.utts if u.kept]
+        seg_t = seg_edit_times(kept, self.timemap)
+        ch = {c["seg"]: c for c in self.plan_long.get("chapters", []) or []}
+        holds = [(h["start_seg"], h["end_seg"]) for h in self.plan_long.get("holds", []) or []]
+        strong = {m.get("seg") for m in self.plan_long.get("moments", []) or [] if int(m.get("intensity", 0) or 0) >= 3}
+        hl = f" · 앞에 오프닝 하이라이트(약 {self.spec.highlight_max_sec:.0f}초 이내)" if self.spec.opening_highlight else ""
+        lines = [f"본편 길이 {fmt_ts(self.timemap.duration)} · 남은 발화 {len(seg_t)}개{hl}"]
+        for u in kept:
+            if u.id not in seg_t:
+                continue
+            if u.id in ch:
+                c = ch[u.id]
+                lines.append(f"## 챕터: {c['title']}" + (f" — {c['claim']}" if c.get("claim") else ""))
+            a, b = seg_t[u.id]
+            marks = (" | 얼굴 홀드" if any(x <= u.id <= y for x, y in holds) else "") + (" | 강도 3" if u.id in strong else "")
+            lines.append(f"[S{u.id} | 편집 {fmt_ts(a)}–{fmt_ts(b)}{marks}] {u.text}")
+        return "\n".join(lines)
+
+    def _music_sheet(self) -> dict:
+        """🎼 큐 시트: 계획에 손으로 넣은 것(music_cues) → 캐시(work/music.json, 전사본·브리프가 같을 때) → 음악 감독 →
+        실패하면 규칙 큐 시트(04 문서 10절 3단계). 결과는 self._music(계획 파일은 건드리지 않는다 — 편집 검사와 동시에 돈다)."""
+        if self.plan_long.get("music_cues"):
+            self._music = dict(self.plan_long["music_cues"], by=self.plan_long["music_cues"].get("by", "plan"))
+            return self._music
+        kept_ids = [u.id for u in self.utts if u.kept]
+        listing = self._music_listing()
+        brief = self.plan_long.get("studio") or {}
+        key = text_hash(listing, json.dumps(self.plan_long.get("music") or {}, ensure_ascii=False), "music-v1")
+        cache = read_json(self.work / "music.json", {})
+        sheet: dict = {}
+        if cache.get("key") == key and cache.get("sheet"):
+            sheet = cache["sheet"]
+            self._log_file_only("   (🎼 큐 시트: 이전 결과 사용)")
+        else:
+            studio = self._ensure_studio() if (self._use_api() and self.spec.studio_mode) else None
+            if studio is not None:
+                b = dict(brief, music=self.plan_long.get("music") or {}, chapters=self.plan_long.get("chapters", []))
+                try:
+                    sheet = clean_music(studio.score(listing, b), kept_ids)
+                    sheet["by"] = "ai"
+                except DirectorError as e:
+                    self.log(f"🎼 음악 감독 실패 → 규칙 큐 시트: {e}")
+            if not sheet:
+                ch_segs = [c["seg"] for c in self.plan_long.get("chapters", []) or [] if c.get("seg") in kept_ids]
+                seg_t = seg_edit_times([u for u in self.utts if u.kept], self.timemap)
+                tail = [i for i in kept_ids if i in seg_t and seg_t[i][0] <= self.timemap.duration - 20.0]
+                sheet = clean_music(fallback_music(ch_segs, self.plan_long.get("title_card_seg", -1),
+                                                   kept_ids[-1] if kept_ids else -1,
+                                                   reprise_seg=tail[-1] if tail else None), kept_ids)
+                sheet["by"] = "rule"
+            write_json(self.work / "music.json", {"key": key, "sheet": sheet})
+        self._music = sheet
+        n = len(sheet.get("cues") or [])
+        self.log(f"🎼 큐 시트({'음악 감독' if sheet.get('by') == 'ai' else '규칙'}): {sheet.get('suite', '')} · 큐 {n}개 · "
+                 f"침묵 {len(sheet.get('silences') or [])}곳 · 맞는 정도 {sheet.get('fit_score', '-')}/10")
+        return sheet
+
+    def _long_music_cues(self, sheet: dict, total: float) -> tuple[list[dict], list[tuple[float, float]]]:
+        """큐 시트 → 롱폼 최종 시각(오프닝 하이라이트만큼 민다)의 큐. 홀드·강도 3 순간은 침묵(큐보다 우선)."""
+        hd = self.hl_duration
+        seg_t = {k: (a + hd, b + hd) for k, (a, b) in seg_edit_times([u for u in self.utts if u.kept], self.timemap).items()}
+        chs = [float(c["start"]) for c in (getattr(self, "long_props", {}) or {}).get("chapters") or []]
+        holds = [(a + hd, b + hd) for a, b in self._hold_spans()]
+        strong = [(mo.t + hd, mo.end + hd) for mo in self._moments(self.timemap) if mo.intensity >= 3]
+        cues, silences = resolve_cues(sheet, seg_t, total, chapter_starts=chs, holds=holds, strong=strong)
+        if hd > 0 and cues and cues[0].start <= hd + 0.5 and sheet.get("cues") and sheet["cues"][0]["start_seg"] == -1:
+            cues[0].start = 0.0               # 첫 큐가 맨 앞에서 시작하면 하이라이트부터
+        return plan_cues(cues), silences
+
     # ------------------------------------------------------------------
     def stage_qa(self) -> None:
         """🧐 아트 디렉터: 실제 렌더된 스틸만 보고 검수(블라인드) → 계획 패치 → 필요하면 한 번 더."""
@@ -2938,13 +3028,13 @@ class Pipeline:
         ed.bgm_swells = list(ed_h.bgm_swells) + ed.bgm_swells
         ed.bgm_dips = list(ed_h.bgm_dips) + ed.bgm_dips
         ed.bgm_anchors = [round(hd, 3)] + ed.bgm_anchors        # 한 곡 그대로 — 곡이 끝났으면 본편 시작에서 다시
-        # 하이라이트 → 본편(타이틀): 빛샘 전환 + 라이저
+        # 하이라이트 → 본편(타이틀): 빛샘 전환 + 페이지 넘김 한 번(04c 6절 — 라이저는 팔레트에서 뺐다)
         fps = float(self.fps)
         lp["transitions"] = sorted(lp["transitions"] + [{"t": round(hd, 3), "type": "leak",
                                                          "dur": round(PARAMS["tx_frames"]["leak"] / fps, 3)}],
                                    key=lambda t: t["t"])
-        ed.sfx.append({"t": round(max(0.0, hd - 2.5), 3), "category": "riser",
-                       "gain_db": PARAMS["sfx_gain"].get("riser", -28), "prio": 5, "why": "하이라이트 → 본편"})
+        ed.sfx.append({"t": round(max(0.0, hd - 0.15), 3), "category": "page_turn",
+                       "gain_db": PARAMS["sfx_gain"].get("page_turn", -26), "prio": 5, "why": "하이라이트 → 본편"})
         ed.sfx.sort(key=lambda x: x["t"])
         ed.stats["highlight_sec"] = round(hd, 1)
         ed.stats["shots"] = len(lp["camera"])
@@ -3074,6 +3164,7 @@ class Pipeline:
             job.result()
         else:
             self._mix_all(progress=lambda f: self._stage("master", 0.8 * f))
+        self._gate_sound()          # 🚦 게이트 D — D9(라이선스 미확인 음원)만 멈춘다
         n = len(self.masters)
         for k, m in enumerate(self.masters):
             self.cancel.check()
@@ -3098,12 +3189,15 @@ class Pipeline:
                     snd = lib.pick(e["category"], seed=j)
                     if snd is None or snd.source == "synth":     # 절차적으로 만든 효과음은 완성본에 쓰지 않는다
                         continue
+                    if snd.license_class not in ("A", "A-sa", "B", "C"):   # 등급이 확인 안 된 효과음은 쓰지 않는다(D9)
+                        continue
                     if snd.attribution:                          # CC BY 효과음 — 업로드 정보에 출처
                         attrs.add(snd.attribution)
                     cues.append(SfxCue(t=e["t"], path=str(snd.path), gain_db=e["gain_db"], peak=snd.peak,
                                        name=e["category"], fade_out=2.5 if e["category"] == "riser" else 0.0))
             bgm: Optional[BgmPlan] = None
             track = None
+            sheet = getattr(self, "_music", None) or {}
             # 한 영상 한 곡, 숏폼은 롱폼 곡을 물려받는다(04 11절 2·5번) — 레벨은 목소리 실측 기준(롱 −20 · 숏 −18 LU)
             common = dict(swells=ed.bgm_swells, dips=ed.bgm_dips, rel_lu=-18.0 if m["short"] else -20.0,
                           short=m["short"], restart_at=list(getattr(ed, "bgm_anchors", []) or []),
@@ -3120,14 +3214,89 @@ class Pipeline:
                 track = self._bgm_track
                 if track is not None:
                     bgm = BgmPlan(path=str(track.path), lufs=track.lufs, start_offset=track.lead_silence, **common)
+            if bgm is not None and sheet:
+                bgm = self._apply_music_sheet(bgm, sheet, m)
             mix_wav = self.work / f"mix_{k}.wav"
-            mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
-                cancel=self.cancel)
+            rep = mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
+                      cancel=self.cancel)
+            m["mix_report"] = rep
+            m["sfx_used"] = [(c.t, c.path) for c in cues]
+            m["music_license"] = ("own" if self.spec.bgm and bgm is not None else
+                                  (getattr(track, "license_class", "") if track is not None and bgm is not None else None))
             m["mix"] = mix_wav
             m["n_sfx"] = len(cues)
             m["bgm_title"] = track.credit if track else (Path(self.spec.bgm).name if self.spec.bgm else "")
             m["sfx_credits"] = sorted(attrs)
             progress((k + 1) / max(1, n))
+
+    def _apply_music_sheet(self, bgm: BgmPlan, sheet: dict, m: dict) -> Optional[BgmPlan]:
+        """🎼 큐 시트를 믹스에: 롱폼은 큐 안에서만 음악(나머지는 침묵이 곧 큐), 숏폼은 shorts.role(none = 없음 · air ·
+        bed = 지금처럼). fit_score 7 미만이면 air 판만(게이트 D6 수리)."""
+        air_only = int(sheet.get("fit_score", 10) or 0) < 7
+        if m["short"]:
+            role = (sheet.get("shorts") or {}).get("role", "air")
+            if role == "none":
+                return None
+            if role == "air" or air_only:
+                bgm.cues = [{"id": "s1", "start": 0.0, "end": float(m["total"]), "role": "air", "energy": 1,
+                             "entry": "fade_in", "exit": "ending"}]
+            return bgm
+        cues, silences = self._long_music_cues(sheet, float(m["total"]))
+        if not cues:
+            self.log("🎼 큐 시트에 남은 큐가 없어 음악 없이 갑니다")
+            return None
+        if air_only:
+            for q in cues:
+                q["role"] = "air"
+        bgm.cues = cues
+        m["music_cues"] = cues
+        m["music_silences"] = [[round(a, 2), round(b, 2)] for a, b in silences]
+        return bgm
+
+    def _gate_sound(self) -> None:
+        """🚦 게이트 D(04 문서 9절) — 믹스가 끝난 뒤 수치로: D1 목소리−음악 · D3 한 곡 · D5 효과음 밀도 · D6 맞는 정도 ·
+        D8 점유율 · D9 라이선스 · D10 목소리 레벨 → work/sound_report.json. 실패해도 소리는 그대로(경고·리포트)."""
+        main = next((m for m in self.masters if not m["short"] and m.get("mix_report") is not None), None)
+        if main is None:
+            return
+        rep = main["mix_report"]
+        sheet = getattr(self, "_music", None) or {}
+        ed: EditDecisions = main["edit"]
+        hd = self.hl_duration
+        punch = ([(0.0, hd)] if hd > 0 else []) + [(a + hd, b + hd) for a, b in self._punch_spans(
+            seg_edit_times([u for u in self.utts if u.kept], self.timemap))]
+        voice_lufs = rep.get("voice_lufs")
+        if voice_lufs is None:
+            try:
+                voice_lufs = measure_lufs(self.ff, main["voice"])
+            except Exception:  # noqa: BLE001 - 측정 실패는 건너뛴다
+                voice_lufs = None
+        used = []
+        for m in self.masters:
+            if m.get("music_license") is not None:
+                used.append((m.get("bgm_title") or "배경음악", m["music_license"]))
+        snd = {Path(p).name: p for m in self.masters for _, p in m.get("sfx_used", [])}
+        lib = self.sounds
+        lic = {str(s.path): ("synth" if s.source == "synth" else s.license_class) for s in (lib.sfx if lib else [])}
+        used += [(n, lic.get(p, "")) for n, p in snd.items()]
+        has_music = bool(rep.get("bgm"))
+        results = [
+            gate.d1_voice_over_music(voice_lufs if has_music else None, rep.get("bgm_under_db") if has_music else None),
+            gate.d3_one_track(int(rep.get("bgm_tracks", 0) or 0)),
+            gate.d5_sfx_density(main.get("sfx_used", []), punch=punch),
+            gate.d6_fit(int(sheet["fit_score"]) if has_music and sheet.get("fit_score") is not None else None),
+            gate.d8_occupancy(rep.get("music_share") if has_music else None, main.get("music_cues") or []),
+            gate.d9_license(used),
+            gate.d10_voice_level(voice_lufs),
+        ]
+        write_json(self.work / "sound_report.json", {
+            "voice_lufs": voice_lufs, "mix": rep, "music_sheet_by": sheet.get("by", ""),
+            "suite": sheet.get("suite", ""), "fit_score": sheet.get("fit_score"),
+            "cues": main.get("music_cues") or [], "silences": main.get("music_silences") or [],
+            "shorts": [{"name": m["name"], **(m.get("mix_report") or {})} for m in self.masters if m["short"]],
+            "used": [{"name": n, "license": c} for n, c in used],
+            "gates": [r.to_dict() for r in results]})
+        self._gate_record(results, "소리")
 
     def _start_mix_job(self) -> None:
         """렌더(Chrome·인코더)가 도는 동안 음향 믹스(FFmpeg)를 옆에서 만든다 — 마스터링 단계가 합치기만 남는다."""
@@ -3365,7 +3534,8 @@ class Pipeline:
                              usage=self.claude.usage if self.claude else read_json(self.work / "plan.json", {}).get("usage", []),
                              broll=self.broll_log, studio=self.plan_long.get("studio") or None,
                              qa=self.qa_log or (self.plan_long.get("qa") or {}).get("rounds"),
-                             gate=gate.report_section(self.gate_results))
+                             gate=gate.report_section(self.gate_results),
+                             sound=read_json(self.work / "sound_report.json", {}) or None)
         report += self._craft_report()
         if self.soft_failures:
             report += "\n## ⚠️ 건너뛴 작업(실패했지만 영상은 끝까지 만들었습니다)\n\n" + "".join(
