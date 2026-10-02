@@ -146,4 +146,4 @@ def test_card_pure_white_and_black_backgrounds_become_house_paper_and_ink():
     assert "#ffffff" not in c["css"].lower() and "black" not in c["css"].lower()
     assert "color:#000" in c["css"].replace(" ", "") and "color:#fff" in c["css"].replace(" ", "")
     tsx = (ROOT / "renderer" / "src" / "components" / "card" / "HtmlCard.tsx").read_text(encoding="utf-8")
-    assert "'--white': NOTE.paper" in tsx and "'--ink': NOTE.ink" in tsx
+    assert "'--white': MODERN.card" in tsx and "'--ink': MODERN.ink" in tsx      # 디자인 v4: 흰 카드는 룩이다

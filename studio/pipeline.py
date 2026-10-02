@@ -2440,7 +2440,7 @@ class Pipeline:
             if a:
                 got_t.append(a.start)
         ratio = shown / max(1.0, total)
-        if ratio >= 0.30 or total < 90:
+        if ratio >= 0.40 or total < 90:                     # 디자인 v4: 실물 자료 목표 45~65%
             return ""
         gaps = []
         marks = sorted([kept[0].start] + got_t + [kept[-1].end])

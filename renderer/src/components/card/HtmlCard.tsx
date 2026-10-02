@@ -3,7 +3,7 @@ import {continueRender, delayRender} from 'remotion';
 import gsap from 'gsap';
 import {compileCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import type {CompiledCard} from '../../../vendor/hyperframes/card-anim.mjs';
-import {FONT, rgba, NOTE} from '../../design/tokens';
+import {FONT, rgba, MODERN} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {CardSpec} from '../../lib/types';
@@ -20,10 +20,11 @@ export const HtmlCard: React.FC<TemplateProps> = (p) => (p.data.card ? <CardBody
 // 한 재질(docs/upgrade/06 3-1, F-10): 카드의 '흰 바탕'·'잉크 바탕'은 순백(#FFF)·순흑(#111)이 아니라 메모·로고 카드와 같은
 // 크림 종이(NOTE.paper)·따뜻한 잉크(NOTE.ink) — 한 영상에 전면 배경색이 셋을 넘지 않게(게이트 B9)
 export const cardVars = (theme: Theme, surface: Surface): Record<string, string> => ({
-  '--bg': surface.bg === 'transparent' ? 'transparent' : NOTE.paper,
-  '--paper': NOTE.paper,
-  '--paper-line': theme.paperLine,
-  '--ink': NOTE.ink,
+  // 디자인 v4: 카드의 바탕·잉크·흰색은 모던 무대 값(순백 카드 허용 — 흰 둥근 UI 카드가 룩이다)
+  '--bg': surface.bg === 'transparent' ? 'transparent' : MODERN.bg,
+  '--paper': MODERN.bg,
+  '--paper-line': MODERN.line,
+  '--ink': MODERN.ink,
   '--ink-soft': theme.inkSoft,
   '--muted': 'rgba(28, 28, 28, 0.7)',
   '--accent': theme.accent,
@@ -34,7 +35,7 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--board-edge': theme.boardEdge,
   '--chalk': theme.chalk,
   '--chalk-dim': theme.chalkDim,
-  '--white': NOTE.paper,
+  '--white': MODERN.card,
   '--font-head': FONT.display,
   '--font-body': FONT.sans,
   '--font-serif': FONT.serif,

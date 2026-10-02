@@ -118,12 +118,12 @@ def test_collage_fields_survive_plan_normalisation():
 
 
 def test_media_first_policy_thresholds():
-    assert gate.a8_face_ratio(0.25).ok and gate.a8_face_ratio(0.5).ok
-    assert not gate.a8_face_ratio(0.62).ok and gate.a8_face_ratio(0.62).repair == "fill_gaps"
-    assert not gate.a8_face_ratio(0.1).ok
+    assert gate.a8_face_ratio(0.15).ok and gate.a8_face_ratio(0.38).ok
+    assert not gate.a8_face_ratio(0.5).ok and gate.a8_face_ratio(0.5).repair == "fill_gaps"
+    assert not gate.a8_face_ratio(0.05).ok
     gs = [{"id": "g", "template": "broll", "layout": "fullscreen", "start": 0, "end": 50, "data": {"src": "b.mp4"}}]
-    assert not gate.b1_media_ratio(gs, 200.0).ok                # 25% < 30%
-    gs[0]["end"] = 70
+    assert not gate.b1_media_ratio(gs, 200.0).ok                # 25% < 40%
+    gs[0]["end"] = 90                                           # 45% ≥ 40%
     assert gate.b1_media_ratio(gs, 200.0).ok
 
 
@@ -136,10 +136,10 @@ def test_motion_dsl_accepts_new_serif_fonts():
     assert fonts[:2] == ["italic", "poster"] and fonts[2] is None
 
 
-def test_design_palette_defaults_to_forest_and_brand_keeps_accent():
+def test_design_palette_defaults_to_ember_and_brand_keeps_accent():
     b = Brand()
     p = brand_props(b)
-    assert b.palette == "forest" and p["accent"] == "#2B8A64" and p["deep"] and p["tint"]
+    assert b.palette == "ember" and p["accent"] == "#FC5400" and p["deep"] and p["tint"]
     b.palette = "brand"
     p = brand_props(b)
     assert p["accent"] == b.accent and "deep" not in p

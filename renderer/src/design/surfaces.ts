@@ -1,7 +1,7 @@
 import type {Layout, TemplateName} from '../lib/types';
 import type {Theme} from './tokens';
 
-export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo' | 'crumple' | 'collage';
+export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo' | 'crumple' | 'collage' | 'modern' | 'dark';
 
 export type Surface = {
   name: SurfaceName;
@@ -30,6 +30,14 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
       // 디자인 v3 종이 콜라주(운영자 레퍼런스): 크림 종이 · 웜 잉크 · 짙은 디자인 색. 바탕 그림은 PaperStage 가 그린다
       return {name, bg: '#ECEAE1', fg: '#24211E', dim: 'rgba(36,33,30,0.64)', faint: 'rgba(36,33,30,0.14)',
         accent: theme.accentDeep, rule: 'rgba(36,33,30,0.2)', chalk: false};
+    case 'modern':
+      // 디자인 v4 모던 모션: 밝은 무대(흰/옅은 디자인 색) · 검정에 가까운 잉크 · 짙은 디자인 색 강조. 바탕 그림은 ModernStage
+      return {name, bg: '#F7F8F6', fg: '#121315', dim: 'rgba(18,19,21,0.64)', faint: 'rgba(18,19,21,0.10)',
+        accent: theme.accentDeep, rule: 'rgba(18,19,21,0.14)', chalk: false};
+    case 'dark':
+      // 디자인 v4 어두운 무대(펀치·반전 장면): 검정 + 디자인 색 강조
+      return {name, bg: '#0A0A0B', fg: '#F4F4F2', dim: 'rgba(244,244,242,0.62)', faint: 'rgba(244,244,242,0.12)',
+        accent: theme.accent, rule: 'rgba(244,244,242,0.2)', chalk: false};
     case 'signal':
       return {name, bg: theme.accent, fg: theme.accentDeep, dim: 'rgba(0,0,0,0.45)', faint: 'rgba(0,0,0,0.12)',
         accent: '#111111', rule: 'rgba(0,0,0,0.25)', chalk: false};
@@ -47,7 +55,7 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
   }
 };
 
-/** 템플릿 × 레이아웃 → 표면. 디자인 v3: 한 재질 — 칠판·순흑·주황 전면 대신 모두 크림 종이 콜라주(사진·스톡만 사진 면) */
+/** 템플릿 × 레이아웃 → 표면. 디자인 v4: 모던 밝은 무대 하나(사진·스톡만 사진 면, 모션 bg ink 는 어두운 무대) */
 export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName => {
   if (layout === 'split') return template === 'photo' || template === 'broll' ? 'photo' : 'board';
   if (layout === 'overlay') return 'overlay';
@@ -56,15 +64,15 @@ export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName 
     case 'broll':
       return 'photo';
     case 'card':
-      return 'paper'; // 카드가 자기 배경을 그린다 — 뒤에는 종이색
+      return 'modern'; // 카드가 자기 배경을 그린다 — 뒤에는 무대색
     default:
-      return 'collage';
+      return 'modern';
   }
 };
 
 /** 모션 장면의 bg 값 → 표면(한 재질: board·paper·signal 은 종이 콜라주, ink 는 따뜻한 반전 면) */
 export const surfaceForSpecBg = (bg: string | undefined): SurfaceName | null =>
-  !bg || bg === 'transparent' ? null : bg === 'ink' ? 'ink' : 'collage';
+  !bg || bg === 'transparent' ? null : bg === 'ink' ? 'dark' : 'modern';
 
 // 화면에 나오는 역할 이름 — 내부 템플릿 이름(chapter·keyword·motion·card·broll·title)은 화면에 내지 않는다(품질 게이트 B5,
 // 10/1 테스트: 숏폼 카드 머리에 'motion'·'card', 보드 머리줄에 '( motion )'). 빈 문자열이면 쓰는 곳이 라벨을 그리지 않는다.

@@ -247,7 +247,7 @@ def face_ratio(graphics: list[dict], total: float) -> float:
     return max(0.0, 1.0 - covered / max(1e-6, total))
 
 
-def a8_face_ratio(ratio: float, *, lo: float = 0.15, hi: float = 0.55) -> GateResult:
+def a8_face_ratio(ratio: float, *, lo: float = 0.08, hi: float = 0.40) -> GateResult:
     """얼굴 화면 비율 15~55%(디자인 v3 — 채널 주인: 얼굴보다 시청각 자료를 최대한 많이. 예전 35~70%)."""
     m = {"face_ratio": round(ratio, 3)}
     if lo <= ratio <= hi:
@@ -586,11 +586,11 @@ def is_hero_media(g: dict) -> bool:
     return is_real_media(g) and (g.get("layout") == "fullscreen" or g.get("template") == "evidence")
 
 
-def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.30) -> GateResult:
-    """실물 자료가 보이는 시간 / 본편 ≥ 30%(목표 40~55% — 디자인 v3, 예전 15%·25~30%). 짧은 영상(90초 미만)은 건너뛴다."""
+def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.40) -> GateResult:
+    """실물 자료가 보이는 시간 / 본편 ≥ 40%(목표 45~65% — 디자인 v4, 예전 15%·30%). 짧은 영상(90초 미만)은 건너뛴다."""
     secs = sum(max(0.0, float(g["end"]) - float(g["start"])) for g in graphics if is_real_media(g) and "end" in g)
     ratio = secs / total if total else 0.0
-    m = {"seconds": round(secs, 1), "ratio": round(ratio, 3), "target": [0.40, 0.55], "min": min_ratio}
+    m = {"seconds": round(secs, 1), "ratio": round(ratio, 3), "target": [0.45, 0.65], "min": min_ratio}
     if total < 90:
         r = _ok("B1_media_ratio", "warn", m, f"실물 자료 {ratio:.0%}(짧은 영상 — 건너뜀)")
         r.skipped = True

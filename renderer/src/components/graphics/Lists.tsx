@@ -5,6 +5,8 @@ import {fitBlock, fitSize} from '../../lib/fit';
 import {FONT} from '../../design/tokens';
 import {DrawRule, MaskLine, ParenLabel} from '../layout/Editorial';
 import type {TemplateProps} from './common';
+import {modernColors} from '../modern/Modern';
+import {softShadow} from '../../design/tokens';
 
 const Title: React.FC<{text: string; label: string} & Pick<TemplateProps, 'frame' | 'surface' | 'box' | 'compact'>> = ({
   text,
@@ -32,13 +34,41 @@ const Title: React.FC<{text: string; label: string} & Pick<TemplateProps, 'frame
 // 목록 — 말하는 속도에 맞춰 하나씩. 지금 말하는 항목만 또렷하게.
 // ---------------------------------------------------------------------------
 export const ListCard: React.FC<TemplateProps> = (props) => {
-  const {data, frame, dur, surface, box, compact} = props;
+  const {data, frame, dur, surface, box, compact, theme} = props;
   const items = (data.items || []).slice(0, 6);
   const n = items.length;
   const titleH = data.title ? (compact ? 70 : 150) : 0;
   const rowH = Math.min((box.h - titleH) / Math.max(1, n), compact ? 86 : 120);
   const size = Math.min(rowH * 0.46, compact ? 40 : 52);
   const lastShown = items.reduce((acc, _, i) => (frame >= revealAt(i, n, dur) ? i : acc), -1);
+  if (surface.name === 'modern' || surface.name === 'dark') {
+    // 디자인 v4(레퍼런스 'Project Pricing'): 둥근 행(옅은 디자인 색) + 번호, 지금 말하는 행은 흰 카드 + 그림자
+    const c = modernColors(theme, surface.name === 'dark');
+    const gap = Math.round(rowH * 0.12);
+    const h = rowH - gap;
+    return (
+      <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
+        <Title text={data.title || ''} label="정리" {...props} />
+        <div style={{display: 'flex', flexDirection: 'column', gap}}>
+          {items.map((it, i) => {
+            const at = revealAt(i, n, dur);
+            const p = enter(frame, at, 14);
+            const active = i === lastShown;
+            return (
+              <div key={i} style={{height: h, borderRadius: h * 0.34, background: active ? c.card : c.cardTint, border: `1px solid ${c.line}`,
+                boxShadow: active ? softShadow(2, c.dark) : undefined, display: 'flex', alignItems: 'center', gap: size * 0.7,
+                padding: `0 ${size * 0.7}px`, opacity: p * (active ? 1 : 0.62), translate: `0 ${interpolate(p, [0, 1], [14, 0])}px`}}>
+                <span style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: size * 0.72, color: active ? c.accent : c.inkSoft,
+                  width: size * 1.3, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums'}}>{String(i + 1).padStart(2, '0')}</span>
+                <span style={{fontFamily: FONT.sans, fontWeight: active ? 700 : 500, fontSize: size * 0.92, color: c.ink, letterSpacing: '-0.02em',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{it}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
       <Title text={data.title || ''} label="정리" {...props} />

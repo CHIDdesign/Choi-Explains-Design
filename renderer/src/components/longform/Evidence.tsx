@@ -1,7 +1,7 @@
 import React from 'react';
 import {Img, OffthreadVideo, interpolate, staticFile} from 'remotion';
 import {DUR, EASE, LONG, STAGGER, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE, paperShadow} from '../../design/tokens';
+import {FONT, NOTE, paperShadow, MODERN} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import type {EvidenceAsset, GraphicData, NBox} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
@@ -197,9 +197,9 @@ const BrowserFrame: React.FC<{asset: EvidenceAsset; url?: string; win: {w: numbe
     {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: EASE.inOutCubic});
   const domain = (url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
   return (
-    <div style={{position: 'absolute', inset: 0, borderRadius: 14, overflow: 'hidden', background: NOTE.paper,
+    <div style={{position: 'absolute', inset: 0, borderRadius: 14, overflow: 'hidden', background: MODERN.card,
       boxShadow: paperShadow(2)}}>
-      <div style={{height: bar, background: NOTE.paperDeep, display: 'flex', alignItems: 'center', gap: 10,
+      <div style={{height: bar, background: MODERN.bg, display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 20px'}}>
         {[0, 1, 2].map((i) => <i key={i} style={{width: 12, height: 12, borderRadius: 6, background: NOTE.rule}} />)}
         <span style={{marginLeft: 16, fontFamily: FONT.sans, fontSize: 24, color: NOTE.inkSoft}}>{domain}</span>
@@ -227,7 +227,7 @@ const ImageGrid: React.FC<{assets: EvidenceAsset[]; win: {w: number; h: number};
         return (
           <div key={a.src + i} style={{position: 'absolute', left: (i % cols) * (cw + gap), top: Math.floor(i / cols) * (ch + gap),
             width: cw, height: ch, overflow: 'hidden', opacity: p, translate: `0 ${interpolate(p, [0, 1], [14, 0])}px`,
-            background: NOTE.paperDeep}}>
+            background: MODERN.bg}}>
             <Img src={staticFile(a.src)} style={{width: '100%', height: '100%', objectFit: fitFor(a, {w: cw, h: ch})}} />
           </div>
         );
@@ -248,7 +248,7 @@ const ComparePair: React.FC<{a: EvidenceAsset; b: EvidenceAsset; win: {w: number
         const p = tween(frame, i * 10, DUR.slow);
         return (
           <div key={i} style={{position: 'absolute', left: i * (w + gap), top: 0, width: w, height: h, overflow: 'hidden',
-            opacity: p, translate: `0 ${interpolate(p, [0, 1], [18, 0])}px`, background: NOTE.paperDeep}}>
+            opacity: p, translate: `0 ${interpolate(p, [0, 1], [18, 0])}px`, background: MODERN.bg}}>
             <Img src={staticFile(x.src)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />
           </div>
         );
@@ -281,11 +281,11 @@ const ArchiveCard: React.FC<{data: GraphicData; frame: number; dur: number; W: n
   const innerW = w - pad * 2;
   const label = arc.label || data.title || '';
   return (
-    <div style={{position: 'absolute', inset: 0, background: NOTE.paperDeep}}>
+    <div style={{position: 'absolute', inset: 0, background: MODERN.bg}}>
       <Halftone opacity={0.3} />
       <PaperNote x={x} y={y} w={w} h={h} frame={frame} dur={dur} from="right" theme={theme} seed={seed} pad={pad} id={`ac${id}`}>
         {photo ? (
-          <div style={{position: 'relative', width: innerW, height: h * 0.56, overflow: 'hidden', background: NOTE.paperDeep}}>
+          <div style={{position: 'relative', width: innerW, height: h * 0.56, overflow: 'hidden', background: MODERN.bg}}>
             <FocusMove asset={asset} win={{w: innerW, h: h * 0.56}} frame={frame} dur={dur} amount={0.04} />
           </div>
         ) : label && label !== arc.title ? (

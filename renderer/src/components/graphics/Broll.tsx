@@ -4,9 +4,10 @@ import {EASE, tween} from '../../design/motion';
 import {FONT} from '../../design/tokens';
 import {Credit} from '../layout/Editorial';
 import type {TemplateProps} from './common';
-import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
+import {CornerCredit} from '../longform/Note';
 import {CollageScene} from '../press/CollageScene';
-import {GRADE_QUOTE, NameChip, QuoteOverlay} from '../press/Press';
+import {GRADE_QUOTE, QuoteOverlay} from '../press/Press';
+import {CutoutScene, FootageText, modernColors, Pill} from '../modern/Modern';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -16,11 +17,12 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
  */
 export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, surface, box, layout, compact, theme}) => {
   if (!data.src) return null;
-  // 디자인 v3: 스톡 사진도 '붙이지 않고 편집한다' — 콜라주(연도·큰 글자·바닥 타원)로 쓸 수 있으면 종이 무대 위로
-  if (layout === 'fullscreen' && data.kind !== 'video' && (data.treatment === 'collage' || data.cut || data.display || data.year)) {
-    return <CollageScene id={id} data={{...data, assets: [{src: data.src, kind: 'photo', w: data.w ?? 1600, h: data.h ?? 1067,
-      cut: data.cut}]}} frame={frame} dur={dur} theme={theme} W={box.w} H={box.h} />;
+  // 디자인 v4: 오려 낸 사진은 밝은 무대 위 오린 장면(큰 글자 + 칩), 그 밖의 콜라주 지시는 전면 사진 + 영상 위 글자
+  if (layout === 'fullscreen' && data.kind !== 'video' && data.cut) {
+    return <CutoutScene src={data.cut} w={data.w ?? 1600} h={data.h ?? 1067} cutout title={data.display || ''}
+      chips={[data.title || ''].filter(Boolean)} year={data.year} theme={theme} frame={frame} dur={dur} W={box.w} H={box.h} />;
   }
+  void CollageScene;
   const src = staticFile(data.src);
   const pIn = tween(frame, 0, 10, 'outQuint');
   const kb = data.kenburns ?? 'in';
@@ -37,16 +39,18 @@ export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
           filter: data.quote ? GRADE_QUOTE : undefined}}>{media}</div>
         <div style={{position: 'absolute', inset: 0, background:
           'radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 100%)'}} />
-        {data.quote ? <QuoteOverlay text={data.quote} frame={frame} W={box.w} H={box.h} /> : data.title ? (
-          <div style={{position: 'absolute', left: 72, top: 60}}>
-            <NameChip text={data.title} theme={theme} frame={frame} delay={8} size={36} />
-          </div>
-        ) : null}
-        <FilmLook frame={frame} id={id} strength={data.kind === 'video' ? 0.6 : 0.9} />
+        {data.quote ? <QuoteOverlay text={data.quote} frame={frame} W={box.w} H={box.h} />
+          : data.display ? <FootageText kicker={data.title} text={data.display} frame={frame} W={box.w} H={box.h} accent={theme.accentLight} />
+          : data.title ? (
+            <div style={{position: 'absolute', left: 72, top: 60}}>
+              <Pill text={data.title} c={modernColors(theme)} frame={frame} delay={8} size={28} icon="dot" />
+            </div>
+          ) : null}
         {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
-          <KeywordSlam keyword={data.keyword} sub={data.keyword_sub} f={frame - (data.keyword_at ?? 0) * fps} W={box.w}
-            theme={theme} />
+          <FootageText kicker={data.keyword_sub} text={data.keyword} frame={frame - (data.keyword_at ?? 0) * fps} W={box.w} H={box.h}
+            accent={theme.accentLight} />
         ) : null}
+        <span style={{display: 'none'}}>{id}</span>
         <CornerCredit text={data.credit || ''} opacity={tween(frame, 12, 12)} />
       </div>
     );

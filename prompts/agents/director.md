@@ -36,7 +36,7 @@
   - `idea`: 화면 아이디어를 구체적으로 한 줄.
   - `priority`: 1(필수)~3(여유 있으면).
   - 얼굴은 훅·의견·결론·감정 비트에서 보인다. 개념·원리·과정 비트는 visual=motion 으로 — 모션 그래픽만의 장면이 이어져도
-    된다(같은 개념의 비트 2~3개 연속, 얼굴 없는 구간 최대 60초).
+    된다(같은 개념의 비트 2~3개 연속, 얼굴 없는 구간 최대 90초 — 얼굴은 늘 나올 필요가 없다).
   - 개수 목표는 없다. `show` 가 object · example · comparison · source 인 줄의 80% 이상에 **실물**(visual: evidence)이 붙게 짠다.
     추상 개념은 motion. 실물을 구할 수 없어 보이는 줄은 `idea` 끝에 "(자료 요청: 무엇)"을 적는다.
   - 글자만 있는 화면(keyword · definition · list · compare 글자판)은 화면 줄의 40% 이하로 둔다.
@@ -85,16 +85,16 @@
   장마다 이정표가 된다." 아이폰 신형 → "제품 사진은 종이 위에 오려 붙인 실물, 인터페이스는 실제 비율로 재현해 손가락 대신 잉크 화살표가
   움직임을 설명한다."
 - `motifs`: 영상 내내 되풀이할 시각 장치 3~5개(같은 장치가 돌아오면 시청자가 구조를 느낀다).
-- `texture_note` · `type_note`: 종이 콜라주 하우스 스타일 안에서 이 주제가 앞세울 질감·서체(서체 역할표 안에서 고른다).
+- `texture_note` · `type_note`: 디자인 v4 모던 모션 스타일(밝은/어두운 무대 · 흰 둥근 UI 카드 · 굵은 산세리프 + 이탤릭 강조 한 어절) 안에서 이 주제가 앞세울 질감·서체.
 - `sound_concept`: 음악과 효과음이 할 일. 효과음은 `segments[].sfx`·`signature_scenes[].sfx` 로 고른 곳에만, 그 화면이 들어오는
   순간에 들어간다(60초에 3개 이하, 얼굴 홀드·첫 3초 위에는 없음 — 앱이 지킨다). 모션 그래픽에서 흔히 쓰는 짝을 따른다:
-  - 사진·콜라주가 종이처럼 놓일 때 `paper` · 전면 영상·장면 전환 `whoosh_soft` · 짧은 밀기·슬라이드 `swoosh_short` ·
+  - 문서·종이 자료가 놓일 때 `paper` · 전면 영상·장면 전환 `whoosh_soft` · 짧은 밀기·슬라이드 `swoosh_short` ·
     UI 를 넘기는 손짓 `swipe` · 이름표·라벨이 톡 붙을 때 `pop` · 체크·선택 `click` · 글자가 타자처럼 찍힐 때 `typing` ·
     사진 한 장을 '찍어' 보여 줄 때 `camera_shutter` · 핵심 숫자·정답 `ding`(드물게) · 앱 알림 재현 `notification`.
   - 효과음이 없는 편이 나은 곳이 더 많다: 고백·결론·질문 뒤 침묵, 문서를 읽는 동안, 같은 소리 연속.
 - `segments`: **대본 흐름 그대로의 화면 구성표**. 첫 발화부터 마지막 발화까지 빈틈없이, 단락(발화 2~8개)마다 한 줄.
-  - `layout`: face(얼굴) · face_callout(얼굴 + 옆 큰 문구) · face_photo(얼굴 옆 사진) · collage(오린 사진 + 큰 글자 + 연도) ·
-    photo_full(전면 사진 + 이름표) · stock_video(스톡 영상) · quote_over_footage(어둡게 누른 영상 위 명조 인용) · document(문서 스캔 +
+  - `layout`: face(얼굴) · face_callout(얼굴 + 옆 큰 문구) · face_photo(얼굴 옆 사진) · collage(오린 사물 장면 — 밝은 무대 가운데 오린 사진 + 칩 + 헤드라인) ·
+    photo_full(전면 사진 + 이름표) · stock_video(스톡 영상) · quote_over_footage(어둡게 누른 영상 위 한 문장) · document(문서 스캔 +
     형광펜) · motion(모션 장면) · signature(아래 시그니처 장면) · board(화자 판 + 보드) · timeline · compare.
   - 얼굴은 전체의 20~35% 만: 훅·의견·고백·결론·시청자에게 말을 거는 문장. 그 밖의 단락은 **자료가 먼저** — 조사 노트에 커먼즈 파일·
     사진이 있는 대상은 collage·photo_full·document 로, 과정·현장·시대는 stock_video 로, 추상 개념은 motion 으로.

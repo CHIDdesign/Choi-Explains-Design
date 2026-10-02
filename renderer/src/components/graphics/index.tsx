@@ -17,11 +17,12 @@ import {MotionScene} from '../motion/MotionScene';
 import {PaperStage} from '../press/Press';
 import {HtmlCard} from '../card/HtmlCard';
 import {PaperGraphic, textBoxFor} from '../paper/PaperGraphic';
-import {CollageChapter, CollageTitle} from '../press/Titles';
-import {BoardPanel, RecapBoard} from '../longform/Board';
-import {CONCEPT_TEMPLATES, ConceptPlate, MediaPlate} from '../longform/Plates';
-import {SectionBar} from '../longform/Note';
-import {hashSeed, SourceCredit} from '../paper/Paper';
+import {RecapBoard} from '../longform/Board';
+import {CONCEPT_TEMPLATES} from '../longform/Plates';
+import {SourceCredit} from '../paper/Paper';
+import {CornerLabels, ModernStage, modernColors, Pill} from '../modern/Modern';
+import {ModernChapter, ModernTitle} from '../modern/Titles';
+import {ModernPanel, ModernPlate} from '../modern/Panels';
 
 export const TEMPLATE_COMPONENTS: Record<TemplateName, React.FC<TemplateProps>> = {
   chapter: ChapterCard,
@@ -81,7 +82,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   if (!Comp) return null;
   // 증거 자료는 자기 종이·창·캡션을 다 가진 전면 그래픽 — 스킨·레이아웃과 무관하게 화면 전체(03b 3절 EvidenceFrame)
   if (g.template === 'evidence') {
-    const s0 = mkSurface(theme, 'paper');
+    const s0 = mkSurface(theme, 'modern');
     return (
       <AbsoluteFill>
         <Comp id={g.id} data={g.data} fps={fps} theme={theme} brand={brand} episode={episode} layout={g.layout}
@@ -101,8 +102,8 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
     const tb = textBoxFor(panelSide);
     return (
       <AbsoluteFill>
-        <PaperStage theme={theme} frame={frame} />
-        <CollageTitle data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} brand={brand} episode={episode}
+        <ModernStage theme={theme} frame={frame} />
+        <ModernTitle data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} brand={brand} episode={episode}
           textW={tb.w} left={tb.x} />
       </AbsoluteFill>
     );
@@ -111,7 +112,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   if (g.template === 'chapter') {
     return (
       <AbsoluteFill style={{opacity: Math.min(enter(frame, 0, 8, EASE_OUT), exit(frame, dur, 10, EASE_IN_OUT))}}>
-        <CollageChapter data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} />
+        <ModernChapter data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} />
       </AbsoluteFill>
     );
   }
@@ -134,16 +135,19 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   // 짧은 키워드는 화면 위 소제목 바(파이프라인이 머리 위가 비었을 때 pip.side='top' 으로)
   if (g.layout === 'pip' || g.layout === 'overlay') {
     if (g.pip?.side === 'top' && g.template === 'keyword') {
-      return <SectionBar text={g.data.title || ''} frame={frame} dur={dur} W={W} theme={theme} seed={hashSeed(g.id)}
-        maxW={g.pip.w} />;
+      // 디자인 v4: 화면 위 소제목은 알약 칩 하나(종이 소제목 바 대신)
+      return (
+        <div style={{position: 'absolute', left: '50%', top: 44, translate: '-50% 0', opacity: Math.min(pIn, pOut)}}>
+          <Pill text={g.data.title || ''} c={modernColors(theme)} frame={frame} delay={0} size={30} icon="dot" />
+        </div>
+      );
     }
-    if (media) return <MediaPlate g={g} frame={frame} dur={dur} W={W} theme={theme} faceX={faceX} />;
-    if (concept) return <ConceptPlate g={g} frame={frame} dur={dur} W={W} theme={theme} faceX={faceX} />;
+    if (media || concept) return <ModernPlate g={g} frame={frame} dur={dur} W={W} theme={theme} faceX={faceX} />;
   }
 
   // 보드 판(화자 판 옆 작업대 열)
   if (g.layout === 'split') {
-    return <BoardPanel g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand} episode={episode}
+    return <ModernPanel g={g} Comp={Comp} frame={frame} dur={dur} fps={fps} theme={theme} brand={brand} episode={episode}
       W={W} H={H} panelSide={panelSide} chapterTag={chapterTag} />;
   }
 
@@ -177,13 +181,18 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const innerH = H - top - bottom;
   // 디자인 v3 종이 콜라주: 리포트 머리글·위에서 내려오는 쓸기 대신 종이 무대가 8프레임에 깔리고 내용이 올라온다
   const collage = s.name === 'collage';
+  // 디자인 v4: 모던 무대(밝은/어두운) + 모서리 작은 라벨(챕터 이름 · 브랜드) — 러닝 헤더·쓸기 없음
+  const modern = s.name === 'modern' || s.name === 'dark';
   // 전면 영상·사진·카드는 6프레임 디졸브로 들어온다(위에서 내려오는 쓸기는 들어오는 동안 뒤의 화자를 드러낸다)
-  const fade = collage || noHeader;
+  const fade = collage || modern || noHeader;
   return (
-    <AbsoluteFill style={{clipPath: fade ? undefined : clip, background: collage ? undefined : s.bg,
-      opacity: fade ? Math.min(enter(frame, 0, collage ? 8 : 6, EASE_OUT), pOut) : undefined}}>
+    <AbsoluteFill style={{clipPath: fade ? undefined : clip, background: collage || modern ? undefined : s.bg,
+      opacity: fade ? Math.min(enter(frame, 0, collage || modern ? 8 : 6, EASE_OUT), pOut) : undefined}}>
       {collage ? <PaperStage theme={theme} frame={frame} /> : null}
-      {!noHeader && !stage && !collage ? (
+      {modern && !noHeader ? <ModernStage theme={theme} frame={frame} dark={s.name === 'dark'} /> : null}
+      {modern && !noHeader ? <CornerLabels frame={frame} W={W} H={H} c={modernColors(theme, s.name === 'dark')} tl={chapterTag}
+        br={brand.name} /> : null}
+      {!noHeader && !stage && !collage && !modern ? (
         <RunningHeader surface={s} frame={frame} width={W}
           cells={[brand.name, episode.title, brand.year, pageLabel || TEMPLATE_LABEL[g.template]]} />
       ) : null}

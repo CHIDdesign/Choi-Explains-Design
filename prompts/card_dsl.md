@@ -33,18 +33,18 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 ### 채널 토큰(CSS 변수) — 색은 이것만
 | 변수 | 값 | 쓰임 |
 |---|---|---|
-| `--paper` `--bg` | 크림 종이 | 카드 배경(overlay 는 배경 없음) |
+| `--paper` `--bg` | 밝은 무대(흰 #F7F8F6) | 카드 배경(overlay 는 배경 없음) · 흰 둥근 카드는 `--white` |
 | `--paper-line` | 옅은 회갈색 선 | 괘선·테두리 |
 | `--ink` `--ink-soft` | 잉크 검정 | 제목·본문 |
 | `--muted` | 회색 잉크 | 보조문·주석 |
 | `--accent` `--accent-deep` `--accent-light` `--accent-soft` | 채널 강조색(기본 숲 초록 — 고급 설정 '디자인 색')·진한·밝은·반투명 | **카드당 1~2곳**. 밝은 배경(종이·흰색) 위 **글자**는 `--accent-deep`(밝은 강조색 글자는 대비 검사에 걸린다), 룰·블록·형광펜은 `--accent`/`--accent-soft`, 칠판 위 글자는 `--accent-light` |
 | `--board` `--board-edge` `--chalk` `--chalk-dim` | 칠판 짙은 배경·크림 분필 | `board` 스타일·split 패널 |
 | `--white` | 흰색 | 흰 상자 |
-| `--font-head` | Gowun Batang 700(명조 제목) | 제목·큰 글자(디자인 v3 — 고딕 제목은 쓰지 않는다) |
+| `--font-head` | Pretendard 800(자간 −0.035em) | 제목·큰 글자(디자인 v4 — 굵고 자간 좁은 산세리프) |
 | `--font-body` | Pretendard(400~600) | 본문·라벨 |
-| `--font-serif` | Gowun Batang(고운바탕 400·700) | **문장**: 인용·주장·개념 제목·앞말(디자인 v3 — 명조를 적극적으로) |
-| `--font-editorial` | Song Myung(송명, 굵기 하나) | 예술적인 큰 명조 제목(전면 카드 헤드라인 100~150px) — `font-weight` 는 400 |
-| `--font-poster` | Song Myung(송명) | 포스터 같은 명조 한 방(짧은 낱말 120px 이상) |
+| `--font-serif` | Pretendard 500 | **문장**: 인용·주장·본문(명조는 쓰지 않는다 — 강조 한 어절만 `--font-italic`) |
+| `--font-editorial` | Pretendard 800 | 전면 카드 헤드라인(100~150px) |
+| `--font-poster` | Pretendard 900 | 한 방(짧은 낱말 120px 이상) |
 | `--font-italic` | Instrument Serif 이탤릭 | 영문 원어·인용 출처·작은 킥커(32px 이상) |
 | `--font-latin` | Anton | 좁은 고딕 숫자(표·데이터). 연도·큰 숫자는 `--font-numeral` 이 기본 |
 | `--font-heavy` | Black Han Sans(굵기 하나) | **한 방**: 1~4어절 90px 이상의 선언·키워드 |
@@ -56,7 +56,7 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 서체는 카드당 **세 가족까지**(docs/롱폼_무대_디자인.md 6장 역할표).
 
 ### 타이포 크기(1920×1080 기준 · split 은 ×0.75)
-제목 96–132px · 본문 32–40px · 라벨/킥커 26–30px · 큰 숫자 160–240px(`--font-latin`) · 인용 32–40px(명조 기울임).
+제목 96–132px · 본문 32–40px · 라벨/킥커 26–30px · 큰 숫자 160–240px(`--font-head` 900, 구두점만 강조색) · 인용 32–40px(강조 한 어절만 이탤릭 세리프).
 **최소 26px**. 한 줄 22자 이내, 본문 두 줄 이내. 여백은 캔버스의 6~8%(fullscreen 은 padding 100~140px).
 **아래 170px 은 자막 자리** — fullscreen·overlay 카드에서는 그 안에 글자를 두지 않는다(자막이 위에 얹힌다). 장식·점·룰은 괜찮다.
 
@@ -89,9 +89,9 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 | style | 인상 | 배경 | 글꼴 | 강조 |
 |---|---|---|---|---|
 | `editorial` | 잡지 표지 — 큰 제목, 굵은 룰, 한 낱말만 강조색 | `--paper` | 제목 `--font-head` 900 · 인용 `--font-serif` | 강조색 블록·룰 |
-| `academic` | 노트 — 옅은 격자, 명조, 밑줄 강조 | `--paper` + 격자(`repeating-linear-gradient`) | `--font-serif` 제목 | 형광펜 `highlight` |
-| `whiteboard` | 화이트보드 — 손으로 그린 테두리(`draw-path`), 마커 | `--white`(크림 종이 — 순백 없음) | `--font-head` 800 | 강조색 마커 밑줄 |
-| `swiss` | 스위스 그리드 — 종이 바탕, 굵은 고딕, 위아래 굵은 룰(`grow-x`), 큰 숫자 | `--white`(크림 종이) | `--font-head` 900 · 숫자 `--font-latin` | 룰만 강조색 |
+| `academic` | 노트 — 옅은 격자, 밑줄 강조 | `--paper` + 격자(`repeating-linear-gradient`) | `--font-head` 700 제목 | 형광펜 `highlight`(옅은 강조색) |
+| `whiteboard` | UI 패널 — 흰 둥근 카드(반경 28·부드러운 그림자) + 둥근 행(아이콘·라벨·값) | `--white` 카드, 행은 `--paper` | `--font-head` 800 | 강조색 칩·체크 |
+| `swiss` | 스위스 그리드 — 굵은 산세리프, 위아래 굵은 룰(`grow-x`), 큰 숫자 | `--paper` | `--font-head` 900 · 숫자도 `--font-head` 900 | 룰·구두점만 강조색 |
 | `minimal` | 잉크 — 따뜻한 잉크 바탕, 종이색 큰 글자 하나 | `--ink`(따뜻한 잉크 — 순흑 없음) | `--font-head` 900 | 흰색(강조색 최소) |
 | `board` | 칠판 — 채널 도식 톤(짙은 배경, 크림 분필, 손으로 긋는 선) | `--board` | `--chalk` 색 `--font-body` | `--accent-light` |
 

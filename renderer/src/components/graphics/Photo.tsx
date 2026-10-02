@@ -1,10 +1,11 @@
 import React from 'react';
 import {Img, interpolate, staticFile} from 'remotion';
 import {enter, exit} from '../../lib/anim';
-import {FONT, NOTE} from '../../design/tokens';
+import {FONT, MODERN} from '../../design/tokens';
 import {Credit, MaskLine} from '../layout/Editorial';
 import type {TemplateProps} from './common';
-import {CornerCredit, FilmLook, KeywordSlam} from '../longform/Note';
+import {CornerCredit} from '../longform/Note';
+import {FootageText} from '../modern/Modern';
 
 /** 자료 사진 — 풀스크린은 아주 느린 푸시인(최대 105%) + 필름 룩 + 우하단 출처, 접힌 키워드가 있으면 keyword_at 부터
  *  어두워지며 키워드 슬램(레퍼런스: 같은 사진이 이어진 채 큰 키워드). 패널은 액자형 */
@@ -18,19 +19,19 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
     // 브랜드 로고 카드·세로 사진 여백 액자: 크림 종이 위 — 사진용 어둠·필름 입자 없이 아주 느린 푸시, 이름은 잉크색 가운데 아래
     if (data.logo || data.mat) {
       return (
-        <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: NOTE.paper}}>
+        <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: MODERN.bg}}>
           <Img src={src} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
             scale: `${interpolate(frame, [0, dur], [0.98, 1.02])}`, translate: '0 -6%', opacity: p}} />
           {data.title ? (
             <div style={{position: 'absolute', left: 0, right: 0, bottom: 196, display: 'flex',
               flexDirection: 'column', alignItems: 'center', gap: 8}}>
               <MaskLine frame={frame} delay={8}>
-                <div style={{fontFamily: FONT.display, fontWeight: 800, fontSize: 44, color: NOTE.ink,
-                  letterSpacing: '-0.02em'}}>{data.title}</div>
+                <div style={{fontFamily: FONT.display, fontWeight: 800, fontSize: 44, color: MODERN.ink,
+                  letterSpacing: '-0.03em'}}>{data.title}</div>
               </MaskLine>
               {data.body ? (
                 <MaskLine frame={frame} delay={12}>
-                  <div style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 26, color: NOTE.inkSoft}}>{data.body}</div>
+                  <div style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: 26, color: MODERN.inkSoft}}>{data.body}</div>
                 </MaskLine>
               ) : null}
             </div>
@@ -59,11 +60,11 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
             ) : null}
           </div>
         ) : null}
-        <FilmLook frame={frame} id={id} strength={0.9} />
         {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
-          <KeywordSlam keyword={data.keyword} sub={data.keyword_sub} f={frame - (data.keyword_at ?? 0) * fps} W={box.w}
-            theme={theme} />
+          <FootageText kicker={data.keyword_sub} text={data.keyword} frame={frame - (data.keyword_at ?? 0) * fps} W={box.w} H={box.h}
+            accent={theme.accentLight} />
         ) : null}
+        <span style={{display: 'none'}}>{id}</span>
         <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} />
       </div>
     );

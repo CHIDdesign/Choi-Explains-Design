@@ -6,6 +6,7 @@ import {FONT} from '../../design/tokens';
 import {DrawRule, MaskLine, ParenLabel} from '../layout/Editorial';
 import type {TemplateProps} from './common';
 import {PrintText} from '../press/Press';
+import {BigNumeral, CornerMarks, Echo, Headline, modernColors, Pill} from '../modern/Modern';
 
 // ---------------------------------------------------------------------------
 // 챕터 카드 — Ink 표면. 거대한 번호(Anton) + 챕터 제목 + 주장(명조 기울임) + 목차(전체 챕터, 지금 챕터 강조).
@@ -84,7 +85,7 @@ export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box,
 // ---------------------------------------------------------------------------
 // 키워드 슬램 — 리포트 p.8 "NOSTALGIA IS GOLD" 레이아웃.
 // ---------------------------------------------------------------------------
-export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, brand, layout}) => {
+export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, brand, layout, theme}) => {
   const title = data.title || '';
   const onBoard = surface.name === 'board';
   const maxSize = onBoard ? 150 : 250;
@@ -93,6 +94,23 @@ export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface,
   const out = exit(frame, dur, 10);
   const year = brand.year || '2026';
   const small = data.subtitle || '';
+  // 디자인 v4 모던: 가운데 키네틱 헤드라인(어절마다 등장) + 둘레 네모 넷 + 아래 알약 칩(보조문)
+  if ((surface.name === 'modern' || surface.name === 'dark') && !onBoard && layout !== 'split') {
+    const c = modernColors(theme, surface.name === 'dark');
+    const hw = Math.min(box.w * 0.9, estWidth(title.replace(/\*/g, ''), size, -0.035) + size * 0.9);
+    const hh = size * 1.5;
+    return (
+      <div style={{position: 'absolute', inset: 0, opacity: out, display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', gap: size * 0.3, paddingBottom: box.h * 0.04}}>
+        {title.replace(/\*/g, '').length <= 14 && !small ? <Echo text={title} size={size} color={c.inkSoft} frame={frame} W={box.w} H={box.h} /> : null}
+        <div style={{position: 'relative', width: hw, height: hh, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+          <CornerMarks x={0} y={0} w={hw} h={hh} c={c} p={enter(frame, 2, 14)} size={Math.max(10, size * 0.09)} />
+          <Headline text={title} size={size} color={c.ink} accentColor={c.deep} frame={frame} delay={2} align="center" />
+        </div>
+        {small ? <Pill text={small} c={c} frame={frame} delay={12} size={Math.max(24, size * 0.2)} icon="gear" /> : null}
+      </div>
+    );
+  }
   // 디자인 v3 종이 콜라주: 인쇄 얼룩 큰 글자(레퍼런스 3번) + 아래 명조 한 줄 — 옛 리포트 쪽 번호·양옆 보조문은 쓰지 않는다
   if (surface.name === 'collage' && !onBoard && layout !== 'split') {
     return (
@@ -210,7 +228,7 @@ export const DefinitionCard: React.FC<TemplateProps> = ({data, frame, surface, b
       </MaskLine>
       {data.subtitle ? (
         <MaskLine frame={frame} delay={7}>
-          <div style={{marginTop: 14, fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 700, fontSize: 40,
+          <div style={{marginTop: 14, fontFamily: FONT.italic, fontStyle: 'italic', fontWeight: 400, fontSize: 44,
             color: surface.accent, letterSpacing: '0'}}>{data.subtitle}</div>
         </MaskLine>
       ) : null}
@@ -238,12 +256,12 @@ export const QuoteCard: React.FC<TemplateProps> = ({data, frame, surface, box}) 
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',
       paddingLeft: box.w * 0.08}}>
-      <div style={{position: 'absolute', left: 0, top: box.h * 0.02, fontFamily: FONT.numeral, fontStyle: 'italic',
-        fontWeight: 900, fontSize: 300, lineHeight: 1, color: surface.accent, opacity: enter(frame, 0, 12)}}>“</div>
+      <div style={{position: 'absolute', left: 0, top: box.h * 0.02, fontFamily: FONT.italic, fontStyle: 'italic',
+        fontWeight: 400, fontSize: 300, lineHeight: 1, color: surface.accent, opacity: enter(frame, 0, 12)}}>“</div>
       {lines.map((l, i) => (
         <MaskLine key={i} frame={frame} delay={4 + i * 4} dur={20}>
-          <div style={{fontFamily: FONT.serif, fontWeight: 400, fontSize: size, lineHeight: 1.5, color: surface.fg,
-            letterSpacing: '-0.01em'}}>{l}</div>
+          <div style={{fontFamily: FONT.serif, fontWeight: 600, fontSize: size, lineHeight: 1.4, color: surface.fg,
+            letterSpacing: '-0.025em'}}>{l}</div>
         </MaskLine>
       ))}
       <div style={{height: 44}} />
@@ -258,18 +276,24 @@ export const QuoteCard: React.FC<TemplateProps> = ({data, frame, surface, box}) 
 // ---------------------------------------------------------------------------
 // 숫자 강조
 // ---------------------------------------------------------------------------
-export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box}) => {
+export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box, theme}) => {
   const num = data.title || '';
   const numSize = fitSize(num, box.w * 0.55, 360, 120);
   const p = enter(frame, 0, 18);
   const body = fitBlock(data.body || '', box.w * 0.36, box.h * 0.5, 54, 30, 1.35, 4);
+  const modern = surface.name === 'modern' || surface.name === 'dark';
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', gap: box.w * 0.05}}>
+      {modern ? (
+        // 디자인 v4(레퍼런스 '02:47 AM'): 숫자는 잉크, 구두점만 디자인 색, 단위는 작게 옆에
+        <BigNumeral text={num} size={numSize * 0.9} c={modernColors(theme, surface.name === 'dark')} frame={frame} unit={data.subtitle} />
+      ) : (
       <div style={{overflow: 'hidden'}}>
-        <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: numSize * 0.86, lineHeight: 1.05,
-          paddingRight: numSize * 0.08, color: surface.name === 'overlay' ? surface.accent : surface.accent,
+        <div style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: numSize * 0.9, lineHeight: 1.05, letterSpacing: '-0.05em',
+          paddingRight: numSize * 0.04, color: surface.accent, fontVariantNumeric: 'tabular-nums',
           translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>{num}</div>
       </div>
+      )}
       <div style={{display: 'flex', flexDirection: 'column', gap: 18}}>
         {body.lines.map((l, i) => (
           <MaskLine key={i} frame={frame} delay={8 + i * 3}>
@@ -277,7 +301,7 @@ export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box}) =
               color: surface.name === 'signal' ? '#111' : surface.fg}}>{l}</div>
           </MaskLine>
         ))}
-        {data.subtitle ? (
+        {data.subtitle && !modern ? (
           <div style={{fontFamily: FONT.italic, fontStyle: 'italic', fontSize: 40, color: surface.dim, opacity: enter(frame, 16, 12)}}>
             {data.subtitle}
           </div>

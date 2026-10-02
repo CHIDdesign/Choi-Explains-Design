@@ -1,5 +1,6 @@
 import React, {useMemo} from 'react';
-import {PaperStage} from '../components/press/Press';
+import {ModernStage, SpeakerFrame} from '../components/modern/Modern';
+import {ModernEndCard} from '../components/modern/Titles';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {GraphicLayer} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
@@ -15,7 +16,7 @@ import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/Talking
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts, useFontForText, useFontGuard} from '../design/fonts';
 import {CAMERA, EASE} from '../design/motion';
-import {makeTheme} from '../design/tokens';
+import {makeTheme, MODERN} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
 import type {CameraShot, Graphic, Look, LongFormProps, Punch} from '../lib/types';
@@ -179,6 +180,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
       paperP = Math.max(paperP, p);
       paperBorder = paperSpan ? p : 0;
       paperFill = paperSpan;
+      radius = Math.max(radius, 28 * p);
     } else if (p > 0) {
       let target: Rect;
       let tBox;
@@ -188,8 +190,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
         tBox = videoBoxFor(target, face, 1.04 * punchFactor(props.punches, t, fps), 'center', 0.42);
         const bc = boardCard(props.panelSide, W, H);
         capCenter = W / 2 + (bc.x + bc.w / 2 - W / 2) * p;
-        radius = 6 * p;     // 디자인 v3: 화자 사진도 종이 위 프린트처럼(둥근 UI 창 대신)
-        border = `1px solid rgba(36,33,30,${0.18 * p})`;
+        radius = 24 * p;    // 디자인 v4: 화자도 둥근 흰 카드 안에
+        border = `1px solid rgba(18,19,21,${0.12 * p})`;
       } else if (span.kind === 'pip') {
         target = {x: W - 96 - 520, y: H - 96 - 292 - 70, w: 520, h: 292};
         tBox = videoBoxFor(target, face, 1.0, 'anchor');
@@ -262,16 +264,17 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
   return (
-    <AbsoluteFill style={{background: '#ECEAE1'}}>
+    <AbsoluteFill style={{background: MODERN.bg}}>
       <TransitionStage tx={tx}>
-        {/* 디자인 v3: 화자가 판으로 줄어들 때 뒤는 책상(잉크)이 아니라 크림 종이 무대 */}
-        {region !== full ? <PaperStage theme={theme} frame={frame} /> : null}
+        {/* 디자인 v4: 화자가 판으로 줄어들 때 뒤는 모던 밝은 무대 */}
+        {region !== full ? <ModernStage theme={theme} frame={frame} /> : null}
         {under.map(seq)}
         {paperP > 0 && frame < endStart ? (
           <>
             {paperFill ? <PaperBg src={props.paperTexture} opacity={Math.min(1, paperP * 1.6)} /> : null}
             {paperBorder > 0 ? <RoughBorder opacity={paperBorder} /> : null}
-            <TornFrame b={region} opacity={Math.min(1, paperP * 2)} seed={7} />
+            {paperFill ? <TornFrame b={region} opacity={Math.min(1, paperP * 2)} seed={7} />
+              : <SpeakerFrame x={region.x} y={region.y} w={region.w} h={region.h} opacity={Math.min(1, paperP * 2)} />}
             {cam.framed > 0.5 && chapter && !span ? (
               <SourceCredit text={`( ${chapter.number} ) ${chapter.title}`} raw opacity={cam.framed} />
             ) : null}
@@ -322,8 +325,11 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
 const EndCardSeq: React.FC<{theme: ReturnType<typeof makeTheme>; props: LongFormProps}> = ({theme, props}) => {
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
-  // 두 스킨 모두 '오늘의 정리 + 다음 영상 자리'(예전 엔드카드는 빈 칸 두 개뿐이라 비어 보였다)
+  // 디자인 v4: 밝은 무대 + '다음 이야기에서 만나요' + 챕터 목록 + 다음 영상·구독·재생목록 자리
+  if (props.skin !== 'paper') {
+    return <ModernEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters} theme={theme}
+      W={width} H={height} />;
+  }
   return <PaperEndCard frame={frame} brand={props.brand} episode={props.episode} chapters={props.chapters}
-    texture={props.skin !== 'classic' ? props.paperTexture : undefined} plain={props.skin === 'classic'}
-    bg={props.skin === 'classic' ? theme.ink : undefined} W={width} H={height} />;
+    texture={props.paperTexture} W={width} H={height} />;
 };

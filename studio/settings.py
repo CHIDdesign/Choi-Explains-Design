@@ -21,8 +21,8 @@ class Brand:
     ink: str = "#111111"
     paper: str = "#F4F4F2"
     year: str = "2026"
-    # 디자인 색(디자인 v3 종이 콜라주): forest = 운영자 레퍼런스의 짙은 초록 큰 글자 + 민트 형광펜, brand = 위 강조색에서 계산
-    palette: str = "forest"
+    # 디자인 색: ember = 채널 오렌지(#FC5400, 디자인 v4 기본) · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
+    palette: str = "ember"
 
 
 @dataclass

@@ -109,8 +109,8 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
       <div style={col}>
         {header}
         <div style={{display: 'flex', alignItems: 'center', gap: 28 * s, marginTop: gapS}}>
-          <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: numSize * 0.86, lineHeight: 1.05,
-            paddingRight: numSize * 0.06, color: accent, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums',
+          <div style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: numSize * 0.9, lineHeight: 1.05,
+            paddingRight: numSize * 0.04, color: accent, letterSpacing: '-0.05em', fontVariantNumeric: 'tabular-nums',
             scale: `${land}`, transformOrigin: '0% 60%',
             opacity: tween(frame, 3, 8), whiteSpace: 'nowrap'}}>{shown}</div>
           <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -199,7 +199,7 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
               <Annotated text={l} accent={i === nHead - 1 ? data.accent : null}
                 p={tween(frame, 14 + i * 3, LONG.underline, 'outQuint')} color={fg} accentColor={accent} />
               {eng && i === nHead - 1 ? (
-                <span style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 700, fontSize: hb.size * 0.42,
+                <span style={{fontFamily: FONT.italic, fontStyle: 'italic', fontWeight: 400, fontSize: hb.size * 0.46,
                   color: accent, marginLeft: hb.size * 0.3, letterSpacing: '0', verticalAlign: 'baseline',
                   opacity: tween(frame, 10, 10)}}>{eng}</span>
               ) : null}

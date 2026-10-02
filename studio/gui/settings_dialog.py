@@ -197,9 +197,10 @@ class SettingsDialog(QDialog):
         f2.addRow("강조색", self.b_accent)
         # 디자인 v3(종이 콜라주): 레퍼런스의 초록 팔레트 또는 위 강조색
         self.b_palette = QComboBox()
-        self.b_palette.addItem("숲 초록(레퍼런스 — 짙은 초록 글자 + 민트 형광펜)", "forest")
+        self.b_palette.addItem("채널 오렌지(#FC5400 — 디자인 v4 기본)", "ember")
+        self.b_palette.addItem("숲 초록(짙은 초록 글자 + 민트)", "forest")
         self.b_palette.addItem("브랜드 강조색에서 만들기", "brand")
-        self.b_palette.setCurrentIndex(0 if getattr(b, "palette", "forest") == "forest" else 1)
+        self.b_palette.setCurrentIndex({"ember": 0, "forest": 1}.get(getattr(b, "palette", "ember"), 2))
         f2.addRow("디자인 색", self.b_palette)
         tabs.addTab(br, "브랜드")
 
@@ -295,7 +296,7 @@ class SettingsDialog(QDialog):
         s.brand.presenter_title = self.b_ptitle.text().strip()
         s.brand.year = self.b_year.text().strip()
         s.brand.accent = self.b_accent.text().strip()
-        s.brand.palette = self.b_palette.currentData() or "forest"
+        s.brand.palette = self.b_palette.currentData() or "ember"
         gloss = {}
         for line in self.glossary.toPlainText().splitlines():
             if "=" in line:

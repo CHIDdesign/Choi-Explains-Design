@@ -1,7 +1,7 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {DUR, EASE, exitFrames, tween, tweenOut} from '../../design/motion';
-import {FONT, NOTE, paperShadow} from '../../design/tokens';
+import {FONT, MODERN, paperShadow, softShadow} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
 import type {CaptionCue, LongCaptionPreset} from '../../lib/types';
@@ -184,12 +184,13 @@ export const PaperCaption: React.FC<{cue: CaptionCue; local: number; remain: num
   const op = Math.min(joinPrev ? 1 : interpolate(local, [0, 2], [0, 1], clamp),
     joinNext ? 1 : interpolate(remain, [0, 2], [0, 1], clamp));
   const off = Math.max(4, Math.round(size * 0.16));
+  // 디자인 v4: 흰 둥근 상자 + 부드러운 그림자(테두리·오프셋 블록 없음), 글자는 Pretendard 500 — 핵심어만 짙은 디자인 색
   return (
     <div style={{position: 'absolute', left, width, bottom: bottom + off, display: 'flex', justifyContent: 'center',
       opacity: op}}>
-      <div style={{background: '#FBFAF6', padding: `${size * 0.14}px ${size * 0.42}px ${size * 0.17}px`,
-        border: `2px solid ${NOTE.ink}`, fontFamily: FONT.sans, fontWeight: 500, fontSize: size, lineHeight: 1.3,
-        letterSpacing: '-0.01em', color: NOTE.ink, whiteSpace: 'nowrap', boxShadow: `${off}px ${off}px 0 ${accent}`}}>
+      <div style={{background: 'rgba(255,255,255,0.96)', padding: `${size * 0.2}px ${size * 0.56}px ${size * 0.24}px`,
+        borderRadius: size * 0.42, fontFamily: FONT.sans, fontWeight: 500, fontSize: size, lineHeight: 1.3,
+        letterSpacing: '-0.015em', color: MODERN.ink, whiteSpace: 'nowrap', boxShadow: softShadow(1)}}>
         {cue.lines.map((line, li) => (
           <div key={li}>
             {line.map((w, wi) => {

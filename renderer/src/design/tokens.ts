@@ -44,6 +44,28 @@ export const makeTheme = (brand: Brand) => ({
 
 export type Theme = ReturnType<typeof makeTheme>;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 디자인 v4 — 모던 모션(운영자 레퍼런스 2026-10-02: 테크 설명 영상의 모션 디자인). 밝은 무대(흰/옅은 디자인 색) ·
+// 어두운 무대(검정) · 굵고 자간 좁은 산세리프 · 둥근 흰 UI 카드 · 부드러운 그림자. 종이 콜라주(v3)는 'collage' 표면으로만 남는다.
+export const DESIGN = 'v4' as const;
+export const MODERN = {
+  bg: '#F7F8F6',
+  ink: '#121315',
+  inkSoft: 'rgba(18,19,21,0.64)',
+  line: 'rgba(18,19,21,0.10)',
+  card: '#FFFFFF',
+  dark: '#121214', // 어두운 무대: 레퍼런스의 구겨진 차콜(#2A2A2F)과 쇼릴의 검정 사이
+  darkInk: '#F4F4F2',
+  darkSoft: 'rgba(244,244,242,0.62)',
+} as const;
+
+/** v4 그림자: 광원은 위(살짝 왼쪽) 하나 — 넓게 번지는 부드러운 그림자 3단(1 칩 · 2 말풍선 · 3 패널·기기) */
+export const softShadow = (level: 1 | 2 | 3, dark = false): string => {
+  const a = dark ? 0.5 : 0.12;
+  const l = Math.max(1, Math.min(3, level));
+  return `${3 * l}px ${8 * l}px ${22 * l}px rgba(18,19,21,${(a + 0.02 * l).toFixed(2)}), 0 1px 2px rgba(18,19,21,${dark ? 0.6 : 0.06})`;
+};
+
 // 롱폼 무대 재질 v2 — 종이 메모 룩(docs/롱폼_무대_디자인.md 5장): 크림 종이 · 웜 잉크 · 시그널(테마 accent) 세 색뿐
 export const NOTE = {
   paper: '#F5F2EA',
@@ -73,23 +95,39 @@ export const NOTE = {
  *  numeral   Playfair Display 이탤릭 400·700·900 — 연도·큰 숫자(레퍼런스의 '1853')
  *  italic    Instrument Serif(이탤릭) 영문 원어·인용 출처·작은 킥커
  */
+const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+const ITALIC = '"Instrument Serif", "Playfair Display", serif';
+/**
+ * 디자인 v4(모던 모션): 역할 이름은 그대로 두고 글꼴만 바꾼다 — 거의 모든 역할이 Pretendard(굵기로 구분), 강조·연도·영문·
+ * 각주는 Instrument Serif 이탤릭 하나. 명조·손글씨·블랙한산스는 번들에만 남는다(collage 표면이 쓸 때).
+ *  display  Pretendard 800  제목(정의·도식·목록·모션 제목)        heavy   Pretendard 900  한 방(키워드·훅)
+ *  serif    Pretendard 500  문장(인용·주장·본문)                 round   Pretendard 700  메모·콜아웃·소제목 바
+ *  editorial/poster Pretendard 800 타이틀·챕터·포스터            italic/numeral/hand Instrument Serif 이탤릭
+ */
 export const FONT = {
-  sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-  // 디자인 v3: 제목도 명조(고운바탕 700) — 도식·정의·목록·모션 제목. 읽는 글·작은 라벨은 여전히 sans
+  sans: SANS,
+  display: SANS,
+  latin: SANS,
+  serif: SANS,
+  editorial: SANS,
+  poster: SANS,
+  italic: ITALIC,
+  heavy: SANS,
+  round: SANS,
+  memo: SANS,
+  numeral: ITALIC,
+  hand: ITALIC,
+  mono: SANS,
+};
+/** v3 종이 콜라주가 쓰던 글꼴(collage 표면 전용 — 기본 룩에서는 쓰지 않는다) */
+export const PRESS_FONT = {
   display: '"Gowun Batang", "Noto Serif KR", "Pretendard", serif',
-  latin: '"Anton", "Pretendard", sans-serif',
   serif: '"Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", serif',
   editorial: '"Song Myung", "Gowun Batang", "Noto Serif KR", serif',
-  poster: '"Song Myung", "Gowun Batang", serif',
-  italic: '"Instrument Serif", "Playfair Display", serif',
   heavy: '"Black Han Sans", "Pretendard", sans-serif',
-  // 디자인 v3: 말하듯 붙인 메모·콜아웃·소제목 바도 명조(고운바탕 굵게 — 'Press Serif' 는 굵은 면만 등록한 이름)
-  round: '"Press Serif", "Gowun Batang", serif',
-  memo: '"Jua", "Pretendard", sans-serif', // 예전 둥근 메모체(카드 --font-round 가 쓴다)
   numeral: '"Playfair Display", "Gowun Batang", serif',
   hand: '"Nanum Pen Script", "Pretendard", cursive',
-  mono: '"Pretendard", monospace',
-};
+} as const;
 
 // 1920 기준 타입 스케일(짧은 쪽 1080 기준으로 비례)
 export const TYPE = {
