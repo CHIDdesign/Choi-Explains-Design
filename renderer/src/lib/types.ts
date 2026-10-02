@@ -82,6 +82,11 @@ export type GraphicData = {
   keyword?: string;
   keyword_sub?: string;
   keyword_at?: number;
+  // 사진 위 구도(studio/vision/compose.py): 글자·칩을 놓을 빈 쪽, 어두운 사진, 얼굴 상자, cover 초점(objectPosition), 통째 보기
+  safe?: {side: 'left' | 'right' | 'center'; dark: boolean};
+  face?: NBox | null;
+  focus?: [number, number] | null; // objectPosition(0~1) — 얼굴이 잘리지 않게
+  fit?: 'cover' | 'contain';
   // evidence
   assets?: EvidenceAsset[];
   treatment?: Treatment;

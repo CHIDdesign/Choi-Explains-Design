@@ -40,29 +40,34 @@ export const PhotoCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
         </div>
       );
     }
+    // 사진 분석(studio/vision/compose.py): 얼굴이 잘리면 초점을 얼굴로(objectPosition), 그래도면 통째로(contain), 글자는 빈 쪽에
+    const focus = data.focus && data.focus.length >= 2 ? `${(data.focus[0] * 100).toFixed(1)}% ${(data.focus[1] * 100).toFixed(1)}%` : '50% 50%';
+    const contain = data.fit === 'contain';
+    const side = data.safe?.side ?? 'left';
     return (
-      <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: '#0B0B0B'}}>
-        <Img src={src} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-          scale: `${push}`, opacity: p}} />
+      <div style={{position: 'absolute', inset: 0, opacity: out, overflow: 'hidden', background: contain ? MODERN.bg : '#0B0B0B'}}>
+        <Img src={src} style={{position: 'absolute', inset: contain ? '4% 0' : 0, width: '100%', height: contain ? '92%' : '100%',
+          objectFit: contain ? 'contain' : 'cover', objectPosition: focus, scale: `${contain ? 1 : push}`, opacity: p}} />
         <div style={{position: 'absolute', inset: 0, background:
           'linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.55) 100%)'}} />
         {data.title ? (
-          <div style={{position: 'absolute', left: 72, top: 60}}>
+          <div style={{position: 'absolute', left: side === 'right' ? undefined : 72, right: side === 'right' ? 72 : undefined, top: 60,
+            textAlign: side === 'right' ? 'right' : 'left'}}>
             <MaskLine frame={frame} delay={6}>
-              <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 34, color: '#fff',
-                textShadow: '0 2px 14px rgba(0,0,0,0.4)'}}>{data.title}</div>
+              <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 34, color: contain ? MODERN.ink : '#fff',
+                textShadow: contain ? undefined : '0 2px 14px rgba(0,0,0,0.4)'}}>{data.title}</div>
             </MaskLine>
             {data.body ? (
               <MaskLine frame={frame} delay={10}>
                 <div style={{marginTop: 6, fontFamily: FONT.sans, fontWeight: 500, fontSize: 24,
-                  color: 'rgba(255,255,255,0.85)'}}>{data.body}</div>
+                  color: contain ? MODERN.inkSoft : 'rgba(255,255,255,0.85)'}}>{data.body}</div>
               </MaskLine>
             ) : null}
           </div>
         ) : null}
         {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
           <FootageText kicker={data.keyword_sub} text={data.keyword} frame={frame - (data.keyword_at ?? 0) * fps} W={box.w} H={box.h}
-            accent={theme.accentLight} />
+            accent={theme.accentLight} align={side} />
         ) : null}
         <span style={{display: 'none'}}>{id}</span>
         <CornerCredit text={data.credit || ''} opacity={enter(frame, 10, 12)} />

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Img, interpolate, OffthreadVideo, staticFile} from 'remotion';
 import {EASE, tween} from '../../design/motion';
-import {FONT} from '../../design/tokens';
+import {FONT, MODERN} from '../../design/tokens';
 import {Credit} from '../layout/Editorial';
 import type {TemplateProps} from './common';
 import {CornerCredit} from '../longform/Note';
@@ -29,26 +29,30 @@ export const BrollCard: React.FC<TemplateProps> = ({id, data, frame, dur, fps, s
   const prog = interpolate(frame, [0, dur], [0, 1], {...clamp, easing: EASE.linear});
   const scale = data.kind === 'video' ? 1 + 0.04 * prog : kb === 'out' ? 1.08 - 0.06 * prog : 1.02 + 0.06 * prog;
   const tx = kb === 'left' ? -2.5 * prog : kb === 'right' ? 2.5 * prog : 0;
+  // 사진 분석(studio/vision/compose.py): 얼굴 초점·통째 보기·글자는 빈 쪽에(영상은 분석하지 않는다)
+  const focus = data.focus && data.focus.length >= 2 ? `${(data.focus[0] * 100).toFixed(1)}% ${(data.focus[1] * 100).toFixed(1)}%` : '50% 50%';
+  const contain = data.kind !== 'video' && data.fit === 'contain';
+  const side = data.safe?.side ?? 'left';
   const media = data.kind === 'video'
     ? <OffthreadVideo src={src} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-    : <Img src={src} style={{width: '100%', height: '100%', objectFit: 'cover'}} />;
+    : <Img src={src} style={{width: '100%', height: '100%', objectFit: contain ? 'contain' : 'cover', objectPosition: focus}} />;
   if (layout === 'fullscreen' || layout === 'pip') {
     return (
-      <div style={{position: 'absolute', inset: 0, overflow: 'hidden', background: '#000'}}>
-        <div style={{position: 'absolute', inset: 0, scale: `${scale}`, translate: `${tx}% 0`,
+      <div style={{position: 'absolute', inset: 0, overflow: 'hidden', background: contain ? MODERN.bg : '#000'}}>
+        <div style={{position: 'absolute', inset: contain ? '4% 0' : 0, scale: `${contain ? 1 : scale}`, translate: `${contain ? 0 : tx}% 0`,
           filter: data.quote ? GRADE_QUOTE : undefined}}>{media}</div>
         <div style={{position: 'absolute', inset: 0, background:
           'radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.35) 100%)'}} />
         {data.quote ? <QuoteOverlay text={data.quote} frame={frame} W={box.w} H={box.h} />
-          : data.display ? <FootageText kicker={data.title} text={data.display} frame={frame} W={box.w} H={box.h} accent={theme.accentLight} />
+          : data.display ? <FootageText kicker={data.title} text={data.display} frame={frame} W={box.w} H={box.h} accent={theme.accentLight} align={side} />
           : data.title ? (
-            <div style={{position: 'absolute', left: 72, top: 60}}>
+            <div style={{position: 'absolute', left: side === 'right' ? undefined : 72, right: side === 'right' ? 72 : undefined, top: 60}}>
               <Pill text={data.title} c={modernColors(theme)} frame={frame} delay={8} size={28} icon="dot" />
             </div>
           ) : null}
         {data.keyword && frame >= (data.keyword_at ?? 0) * fps ? (
           <FootageText kicker={data.keyword_sub} text={data.keyword} frame={frame - (data.keyword_at ?? 0) * fps} W={box.w} H={box.h}
-            accent={theme.accentLight} />
+            accent={theme.accentLight} align={side} />
         ) : null}
         <span style={{display: 'none'}}>{id}</span>
         <CornerCredit text={data.credit || ''} opacity={tween(frame, 12, 12)} />

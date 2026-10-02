@@ -20,7 +20,8 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
 EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat",
                    "assets", "treatment", "archive", "caption", "tier",   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
-                   "year", "display", "quote", "cut", "w", "h")          # 디자인 v3 콜라주(연도 · 큰 글자 · 인용 · 오린 사진)
+                   "year", "display", "quote", "cut", "w", "h",          # 디자인 v3 콜라주(연도 · 큰 글자 · 인용 · 오린 사진)
+                   "safe", "face", "focus", "fit")                       # 사진 위 구도(studio/vision/compose.py)
 # 증거 자료(evidence)의 트리트먼트별 기본 유지 시간(03b 14절 — 읽을 것이 있으면 길게)
 EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "collage": 5.0, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
                  "grid": 4.5, "compare_pair": 6.0, "pip": 3.0}

@@ -1735,7 +1735,56 @@ class Pipeline:
                 gate.b1_media_ratio(gs, total),
                 gate.b2_hero_per_chapter(gs, lp.get("chapters", []), total),
                 gate.b6_pick_scores(gs),
-                gate.b7_variety(gs)]
+                gate.b7_variety(gs),
+                gate.b10_portraits(getattr(self, "_compose_plans", []))]
+
+    def _compose_media(self, graphics: list[dict]) -> list[dict]:
+        """사진(photo.image · broll 사진 src)마다 구도를 재서(`vision/compose.py`) data 에 safe(빈 쪽·어둠)·face·focus·fit 을 넣는다.
+        측정은 파일마다 한 번(`work/compose.json`, 경로+크기 키). 영상 스톡은 재지 않는다(첫 프레임만으로는 구도가 안 맞는다)."""
+        from .vision import compose
+        cache_p = self.work / "compose.json"
+        cache: dict[str, dict] = {}
+        if cache_p.exists():
+            try:
+                cache = json.loads(cache_p.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                cache = {}
+        plans: list[dict] = []
+        for g in graphics:
+            d = g.get("data") or {}
+            if g.get("template") == "photo":
+                rel = d.get("image") or ""
+            elif g.get("template") == "broll" and d.get("kind", "photo") == "photo":
+                rel = d.get("src") or ""
+            else:
+                continue
+            if not rel or str(rel).startswith(("pixabay:", "http")):
+                continue
+            p = self.public / rel
+            if not p.exists():
+                continue
+            key = f"{rel}|{p.stat().st_size}"
+            info = cache.get(key)
+            if info is None:
+                info = compose.analyze_image(p, self.log) or {"error": "unreadable"}
+                cache[key] = info
+            if info.get("error"):
+                plans.append({"error": info["error"], "src": rel})
+                continue
+            # pip 액자는 face_safe_layouts 가 준 크기, 아니면 화면 전체
+            pip = d.get("pip") if isinstance(d.get("pip"), dict) else None
+            bw, bh = (float(pip.get("w", 700)), float(pip.get("h", 420))) if pip else (1920.0, 1080.0)
+            plan = compose.plan_media(info, bw, bh)
+            d.update(plan)
+            g["data"] = d
+            plans.append({**plan, "src": rel})
+        try:
+            cache_p.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        if plans:
+            self.log(compose.media_report(plans))
+        return plans
 
     def _gate_screen(self, lp: dict, ed: EditDecisions) -> tuple[dict, EditDecisions]:
         """렌더 props 확정 뒤: 그래픽 없는 칸·긴 맨얼굴은 그 자리의 핵심어 카드로 채우고, 늦은 타이틀은 앞으로 → props 다시."""
@@ -3194,6 +3243,8 @@ class Pipeline:
         if ps["placed"] or ps["to_split"]:
             self.log(f"🙂 얼굴 옆 배치: 액자·메모 {ps['placed']}개(줄임 {ps['shrunk']}, 위 소제목 바 {ps.get('top', 0)})"
                      f" · 자리가 없어 패널로 {ps['to_split']}개")
+        # 사진·스톡 위 구도(채널 주인 2026-10-02): 이미지를 분석해 글자·칩은 빈 쪽, 얼굴은 잘리지 않게
+        self._compose_plans = self._compose_media(lp["graphics"])
         seg_t = seg_edit_times(self.utts, self.timemap)
         punch_spans = self._punch_spans(seg_t)
         moments = self._moments(self.timemap)
@@ -3287,6 +3338,7 @@ class Pipeline:
             src = by_main.get(f"g{subset[k][0]}") if 0 <= k < len(subset) else None
             g["skin"] = src["skin"] if src and src.get("skin") else "classic"
         face_safe_layouts(hp["graphics"], hp["face"])
+        self._compose_media(hp["graphics"])
         # 조각마다 강조 순간 하나(트레일러 느낌: 펀치인 + 큰 자막). 편집 문법 엔진은 분할 패널·전체화면 그래픽 ±0.4초 안의
         # 강조를 버리므로, 그 조각의 그래픽이 끝난 뒤(또는 조각 시작 0.5초 뒤)로 옮겨 놓는다
         planned = {m.seg: m for m in self._moments(tm, segs)}

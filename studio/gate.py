@@ -586,6 +586,19 @@ def is_hero_media(g: dict) -> bool:
     return is_real_media(g) and (g.get("layout") == "fullscreen" or g.get("template") == "evidence")
 
 
+def b10_portraits(plans: list[dict]) -> GateResult:
+    """B10 인물 사진 구도(채널 주인: "인물 사진은 얼굴이 잘 드러나고 잘리지 않는지 확인") — compose.plan_media 결과를 센다.
+    얼굴이 잘려 초점을 옮겼거나(focus) 통째로 보이게 한(contain) 사진은 수리된 것, 분석 자체를 못 한 사진은 경고."""
+    faces = [p for p in plans if p.get("face")]
+    moved = sum(1 for p in faces if p.get("focus"))
+    contain = sum(1 for p in faces if p.get("fit") == "contain")
+    failed = sum(1 for p in plans if p.get("error"))
+    m = {"photos": len(plans), "faces": len(faces), "refocused": moved, "contain": contain, "unanalyzed": failed}
+    if failed:
+        return _bad("B10_portraits", "warn", m, f"사진 {failed}장은 구도를 분석하지 못했다(얼굴이 잘릴 수 있음)")
+    return _ok("B10_portraits", "warn", m, f"사진 {len(plans)}장 구도 분석 — 얼굴 {len(faces)}(초점 조정 {moved} · 통째 {contain})")
+
+
 def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.40) -> GateResult:
     """실물 자료가 보이는 시간 / 본편 ≥ 40%(목표 45~65% — 디자인 v4, 예전 15%·30%). 짧은 영상(90초 미만)은 건너뛴다."""
     secs = sum(max(0.0, float(g["end"]) - float(g["start"])) for g in graphics if is_real_media(g) and "end" in g)

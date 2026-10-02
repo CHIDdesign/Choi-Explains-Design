@@ -407,17 +407,20 @@ export const BigNumeral: React.FC<{text: string; size: number; c: ModernColors; 
 
 /** 영상 위 글자(레퍼런스 'What your land / IS WORTH?'): 가는 머리말 + 굵은 본문, 왼쪽 아래 어둠 */
 export const FootageText: React.FC<{kicker?: string; text: string; frame: number; W: number; H: number; delay?: number;
-  align?: 'left' | 'center'; accent?: string}> = ({kicker, text, frame, W, H, delay = 0, align = 'left', accent}) => {
+  align?: 'left' | 'center' | 'right'; accent?: string}> = ({kicker, text, frame, W, H, delay = 0, align = 'left', accent}) => {
   const k = W / 1920;
   const {size, lines} = fitBlock(text.replace(/\*/g, ''), W * 0.62, H * 0.36, 118 * k, 56 * k, 1.02, 3, -0.035);
-  const left = align === 'center' ? 0 : 96 * k;
+  // 사진 분석(data.safe.side)이 정한 빈 쪽에 놓는다 — 어둠도 그쪽에서
+  const left = align === 'left' ? 96 * k : 0;
+  const right = align === 'right' ? 96 * k : 0;
+  const scrim = align === 'center' ? 'radial-gradient(70% 70% at 50% 55%, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.2) 100%)'
+    : align === 'right' ? 'linear-gradient(270deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0) 80%)'
+      : 'linear-gradient(90deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0) 80%)';
   return (
     <>
-      <div style={{position: 'absolute', inset: 0, background: align === 'center'
-        ? 'radial-gradient(70% 70% at 50% 55%, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.2) 100%)'
-        : 'linear-gradient(90deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0) 80%)'}} />
-      <div style={{position: 'absolute', left, right: align === 'center' ? 0 : undefined, top: 0, bottom: H * 0.2, display: 'flex',
-        flexDirection: 'column', justifyContent: 'center', alignItems: align === 'center' ? 'center' : 'flex-start'}}>
+      <div style={{position: 'absolute', inset: 0, background: scrim}} />
+      <div style={{position: 'absolute', left, right, top: 0, bottom: H * 0.2, display: 'flex',
+        flexDirection: 'column', justifyContent: 'center', alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start'}}>
         {kicker ? (
           <div style={{overflow: 'hidden', paddingBottom: 4}}>
             <div style={{fontFamily: FONT.sans, fontWeight: 400, fontSize: size * 0.5, letterSpacing: '-0.01em', color: 'rgba(255,255,255,0.9)',
