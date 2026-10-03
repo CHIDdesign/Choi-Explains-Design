@@ -35,10 +35,11 @@ def ko_query(q: str) -> str:
     return KO_AMBIGUOUS.get(q, q)
 
 
-def query_variants(q: str) -> list[str]:
+def query_variants(q: str, *, min_words: int = 1) -> list[str]:
     """스톡 검색은 단어를 모두 포함해야 걸린다(AND). 긴 묘사형 검색어는 결과가 0~1개라서 점점 줄여 본다.
     예: 'designer sketching wireframes on paper notebook'(1건) → 'designer sketching wireframes'(123건).
-    줄일 때 뜻 없는 동사(working·using …)를 먼저 버려 보여야 할 명사가 남게 한다."""
+    줄일 때 뜻 없는 동사(working·using …)를 먼저 버려 보여야 할 명사가 남게 한다.
+    min_words: 이보다 짧게 줄이지 않는다 — 한 낱말까지 줄이면 동음이의어가 걸린다(2026-10-04 'foam mockup' → 'foam' → 파도 거품)."""
     q = re.sub(r"\s+", " ", (q or "").strip())
     if not q:
         return []
@@ -46,6 +47,8 @@ def query_variants(q: str) -> list[str]:
     if len([w for w in core if w.lower() not in VAGUE]) >= 2:
         core = [w for w in core if w.lower() not in VAGUE]
     out = [q, " ".join(core), " ".join(core[:3]), " ".join(core[:2]), " ".join(core[-2:]), core[0] if core else ""]
+    floor = min(min_words, len(core)) if core else 1
+    out = [v for v in out if len(v.split()) >= floor]
     seen: list[str] = []
     for v in out:
         v = v.strip()
@@ -137,21 +140,28 @@ class StockHub:
         return []
 
     def search(self, st: dict[str, Any], n: int = 6) -> list[StockCandidate]:
-        """영상 요청은 영상 제공처 → 부족하면 사진으로 넓힌다. 영어 검색어를 점점 줄여 가며, 그래도 없으면 한국어.
-        self.last_trace 에 무엇을 몇 건 찾았는지 남긴다(진단용)."""
+        """영상 요청은 영상 제공처 → 부족하면 사진으로 넓힌다. 영어 검색어를 점점 줄여 가며(두 낱말까지), 그래도 없으면 한국어.
+        리서처가 준 다른 각도 검색어(alt_queries — 역추상화: 손·과정·장소·질감)가 있으면 첫 검색어와 함께 찾아 후보를 섞는다 —
+        비전 선택이 한 가지 해석만 보지 않게. self.last_trace 에 무엇을 몇 건 찾았는지 남긴다(진단용)."""
         qe, qk = st.get("query_en", ""), st.get("query_ko", "")
+        alts = [str(q).strip() for q in st.get("alt_queries") or [] if str(q or "").strip()][:2]
         out: list[StockCandidate] = []
         trace: list[str] = []
         kinds = ["video", "photo"] if st.get("kind", "video") == "video" else ["photo"]
         for kind in kinds:
             method = "search_videos" if kind == "video" else "search_photos"
             provs = [p for p in self.providers if (p.videos if kind == "video" else p.photos)]
-            for q in query_variants(qe):
-                groups = [self._call(p, method, q, per_page=n) for p in provs]
-                trace.append(f"{kind} '{q}': " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(provs, groups)))
-                out = interleave([out] + groups, n)
-                if len(out) >= MIN_HITS:
-                    break
+            per_q: list[list[StockCandidate]] = []
+            for q0 in [qe] + alts:
+                got: list[StockCandidate] = []
+                for q in query_variants(q0, min_words=2):
+                    groups = [self._call(p, method, q, per_page=n) for p in provs]
+                    trace.append(f"{kind} '{q}': " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(provs, groups)))
+                    got = interleave([got] + groups, n)
+                    if len(got) >= MIN_HITS:
+                        break
+                per_q.append(got)
+            out = interleave([out] + per_q, n)
             if len(out) < MIN_HITS and qk:
                 ko = [p for p in provs if p.korean]
                 qk = ko_query(qk)

@@ -12,7 +12,7 @@ from studio import gate  # noqa: E402
 from studio.director.plan import TimedGraphic  # noqa: E402
 from studio.motion import lint  # noqa: E402
 from studio.motion.spec import clean_spec  # noqa: E402
-from studio.render.props import bridge_split_gaps, stack_avoid_spans  # noqa: E402
+from studio.render.props import bridge_fullscreen_gaps, bridge_split_gaps, stack_avoid_spans  # noqa: E402
 
 EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "motion_examples.json").read_text(encoding="utf-8"))
 DURS = {"sketch_first_marks": 6.5, "fixation_two_groups": 12.45, "double_diamond_front": 9.0,
@@ -153,3 +153,36 @@ def test_l28_caption_zone_text_is_an_error_only_on_the_fullscreen_stage():
     assert "L28_caption_zone" in full
     split = [i.rule for i in lint.lint(c, 4.0, box=lint.BOXES["split"])]
     assert "L28_caption_zone" not in split
+
+
+def test_lint_scene_cleans_raw_designer_spec_first():
+    """2026-10-03 실제 작업: 계획에 저장된 원본 spec 의 dots 요소에 gap·r 이 없어 `lint` 가 KeyError 로 멈췄다 —
+    `lint_scene` 은 렌더러가 받을 모양(clean_spec)으로 만든 뒤 린트하고, 원본은 건드리지 않는다."""
+    import copy
+
+    import pytest
+    from studio.motion import lint as mlint
+    raw = {"elements": [
+        {"type": "text", "text": "첫 아이디어", "x": 50, "y": 20, "size": 6, "at": 0.0},
+        {"type": "dots", "x": 50, "y": 60, "count": 12, "cols": 6, "at": 0.8},        # gap·r 생략(선택 값)
+        {"type": "rect", "x": 50, "y": 85, "at": 1.5},                                   # w·h 생략
+    ]}
+    before = copy.deepcopy(raw)
+    with pytest.raises(KeyError):
+        mlint.lint(raw, 8.0, [], box=mlint.box_for("fullscreen"))
+    issues = mlint.lint_scene(raw, 8.0, [], box=mlint.box_for("fullscreen"))
+    assert issues and all(isinstance(i, mlint.Issue) for i in issues)
+    assert raw == before                                        # 원본 spec 은 그대로(렌더 직전 time_graphics 가 다시 정리)
+    assert [i.rule for i in mlint.lint_scene({"elements": []}, 8.0, [])] == ["L00_empty"]
+    assert [i.rule for i in mlint.lint_scene("not a spec", 8.0, [])] == ["L00_empty"]
+
+
+def test_bridge_fullscreen_gaps_closes_short_gaps_only():
+    """2026-10-03: 전면 그래픽 사이 0.2~0.5초 틈의 디졸브 동안 화자가 비쳤다 — 0.5초 이하 틈만 앞 그래픽을 늘려 메운다."""
+    gs = [{"id": "g0", "template": "motion", "layout": "fullscreen", "start": 10.0, "end": 14.0},
+          {"id": "g1", "template": "card", "layout": "fullscreen", "start": 14.3, "end": 18.0},       # 0.3초 → 메움
+          {"id": "g2", "template": "broll", "layout": "fullscreen", "start": 18.9, "end": 22.0},      # 0.9초 → 얼굴로 돌아감
+          {"id": "g3", "template": "title", "layout": "fullscreen", "start": 22.2, "end": 25.0},      # 타이틀은 제외
+          {"id": "g4", "template": "keyword", "layout": "overlay", "start": 22.1, "end": 24.0}]
+    assert bridge_fullscreen_gaps(gs) == 1
+    assert gs[0]["end"] == 14.3 and gs[1]["end"] == 18.0 and gs[2]["end"] == 22.0

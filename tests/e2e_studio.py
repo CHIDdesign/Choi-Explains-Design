@@ -160,6 +160,9 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "caption_direction": "절제된 다큐멘터리 톤, 전문용어만 마커", "music": {"mood": "calm piano", "notes": ""},
                 "notes_for_team": "화자 중심, 도식은 크게",
                 "treatment": {"concept": "연구 노트 위에서 질문이 해결책을 앞지르는 장면", "motifs": ["물음표", "마름모"],
+                              "world": {"who": "미술대학 산업디자인과 학생(20대 초반)", "where": "실기실·모형실·크리틱 벽",
+                                        "era": "2020년대", "props": "스케치북·마커·폼 모형", "look": "자연광",
+                                        "never": "초중고 교실·아이·색연필 세트"},
                               "texture_note": "", "type_note": "", "sound_concept": "종이 소리만 드물게",
                               "segments": [{"start_seg": first, "end_seg": s_wide, "layout": "face", "show": "화자",
                                             "asset": "", "motion": "", "sfx": "none", "why": "훅"},
@@ -224,7 +227,9 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             return it
         return {"items": [
             ev(s_sketch, "stock", claim="스케치가 가득한 책상", treatment="full", sequence_id="q1",
-               stock={"kind": "video", "query_en": "student sketching", "query_ko": "스케치하는 학생"}, must_show="손과 연필"),
+               stock={"kind": "video", "query_en": "student sketching", "query_ko": "스케치하는 학생", "angle": "detail",
+                      "alt_queries": ["marker drawing paper", "sketchbook pages"]}, must_show="손과 연필",
+               avoid="아이·크레용"),
             ev(s_trip, "stock", claim="방향 없는 여행", treatment="pip",
                stock={"kind": "photo", "query_en": "question mark notebook", "query_ko": "물음표 노트"}, must_show="물음표"),
             ev(s_draw, "own_material", claim="해결책부터 그린 스케치", local_file="해결책_스케치.jpg",
@@ -326,6 +331,7 @@ class ClaudeHandler(BaseHTTPRequestHandler):
         ans = fake_answer(agent, body, n_images, instruction)
         if True:
             record_call({"agent": agent, "images": n_images, "effort": body.get("output_config", {}).get("effort"),
+                         "world": "이 영상의 세계" in instruction,
                           "cache": [b.get("cache_control") is not None for b in blocks[:1]]})
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
@@ -551,6 +557,8 @@ def main() -> int:
                                                                      "copy")), agents
     assert agents.index("colorist") < agents.index("art_director"), agents
     assert next(c for c in CALLS if c["agent"] == "stock_pick")["images"] == 2
+    # 🌍 이 영상의 세계가 그림 고르기·검수에 간다(2026-10-04: '학교'에 아이 공책 스톡)
+    assert all(c.get("world") for c in CALLS if c["agent"] in ("stock_pick", "art_director")), CALLS
     assert next(c for c in CALLS if c["agent"] == "art_director")["images"] >= 2
     assert next(c for c in CALLS if c["agent"] == "copy")["effort"] == "low"
     assert agents.count("art_director") == 2, agents  # 수정 후 재검수에서 통과

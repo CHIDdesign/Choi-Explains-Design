@@ -51,18 +51,26 @@ class _Quota(QObject):
             self.done.emit("한도 창을 받지 못했습니다: " + (r.get("error") or "응답에 rate_limit 정보 없음(Claude Code 를 업데이트하세요)"))
 
 
-# 모델 선택지(편집 가능 — 다른 id 를 직접 적어도 된다)
-MODEL_CHOICES = [("claude-fable-5-1", "Fable 5.1 — 최신 최상위(기획·시그니처 장면에 추천)"),
-                 ("claude-opus-5-5", "Opus 5.5 — 기본"),
+# 모델·사고 강도는 선택만(직접 입력 없음 — 오타가 곧 오류였다) · 하나가 모든 에이전트에(채널 주인 2026-10-03)
+MODEL_CHOICES = [("claude-opus-5-5", "Opus 5.5 — 기본(기획·편집·디자인 전부)"),
+                 ("claude-fable-5-1", "Fable 5.1 — 최상위(더 느리고 비쌈)"),
                  ("claude-sonnet-5-5", "Sonnet 5.5 — 빠르고 저렴"),
-                 ("claude-haiku-4-5-20251001", "Haiku 4.5 — 가장 저렴(검수·카피·선택용)")]
-EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"]
-# 에이전트별 덮어쓰기 표(비우면 위 기본): (키, 이름)
-AGENT_ROWS = [("research", "🔎 리서치 디렉터"), ("director", "🎬 총괄 감독"), ("setpiece", "🛠 시그니처 장면"),
-              ("cut_editor", "✂️ 컷 편집 총괄"), ("editor", "✂️ 편집 감독"), ("motion", "🎨 모션 디자이너"),
-              ("stock", "🎞 자료 리서처"), ("captions", "🔤 자막 디자이너"), ("shorts", "📱 숏폼 PD"), ("copy", "✍️ 카피라이터"),
-              ("music", "🎼 음악 감독"), ("art_director", "🧐 아트 디렉터"), ("timeline_review", "🧐 타임라인 검수"),
-              ("colorist", "🎨 컬러리스트")]
+                 ("claude-haiku-4-5-20251001", "Haiku 4.5 — 가장 저렴(시험용)")]
+EFFORT_CHOICES = [("xhigh", "xhigh — 아주 높음(기본)"), ("max", "max — 최대(가장 느림)"), ("high", "high — 높음"),
+                  ("medium", "medium — 보통"), ("low", "low — 낮음(시험용)")]
+
+
+def _pick(combo: QComboBox, value: str, fallback: str) -> None:
+    """콤보의 userData 가 value 인 항목을 고른다. 없으면(옛 설정 파일의 낯선 id) 그 값을 항목으로 더해 고른다."""
+    for i in range(combo.count()):
+        if combo.itemData(i) == value:
+            combo.setCurrentIndex(i)
+            return
+    if value:
+        combo.addItem(value, value)
+        combo.setCurrentIndex(combo.count() - 1)
+        return
+    _pick(combo, fallback, fallback)
 
 
 class SettingsDialog(QDialog):
@@ -125,50 +133,27 @@ class SettingsDialog(QDialog):
         m = QFormLayout()
         m.setContentsMargins(0, 10, 0, 0)
         self.model = QComboBox()
-        self.model.setEditable(True)
-        for mid, _label in MODEL_CHOICES:
-            self.model.addItem(mid)
-        self.model.setCurrentText(s.claude_model)
+        for mid, label in MODEL_CHOICES:
+            self.model.addItem(label, mid)
+        _pick(self.model, s.claude_model, "claude-opus-5-5")
         self.model.setToolTip("\n".join(f"{mid}: {label}" for mid, label in MODEL_CHOICES))
         self.effort = QComboBox()
-        self.effort.addItems(EFFORT_CHOICES)
-        self.effort.setCurrentText(s.claude_effort)
+        for val, label in EFFORT_CHOICES:
+            self.effort.addItem(label, val)
+        _pick(self.effort, s.claude_effort, "xhigh")
         self.workers = QSpinBox()
         self.workers.setRange(1, 8)
         self.workers.setValue(s.studio_workers)
         self.workers.setToolTip("총괄 감독 아래에서 동시에 일하는 전문 에이전트 수(한도에 자주 걸리면 2로)")
         m.addRow("모델", self.model)
-        m.addRow("", hint(" · ".join(label for _, label in MODEL_CHOICES)))
         m.addRow("사고 강도", self.effort)
+        m.addRow("", hint("모델과 사고 강도 하나가 모든 에이전트(조사·기획·컷·모션·자료·검수)에 똑같이 쓰입니다. "
+                          "xhigh 는 high 보다 오래 생각하고 토큰을 더 씁니다."))
         m.addRow("동시 에이전트", self.workers)
         self.research_web = QCheckBox("웹 조사 — 🔎 리서치 디렉터·🛠 시그니처 장면이 인물·제품·개념을 검색해 확인한다(권장)")
         self.research_web.setChecked(bool(getattr(s, "research_web", True)))
         m.addRow("조사", self.research_web)
         v.addLayout(m)
-        # 에이전트별 모델·사고 강도(비우면 기본)
-        agents_box = QFormLayout()
-        agents_box.setContentsMargins(0, 8, 0, 0)
-        head2 = QLabel("에이전트별 모델·사고 강도 (비우면 위 기본 — 예: 기획·시그니처는 Fable, 선택·카피는 Haiku)")
-        head2.setStyleSheet("font-weight:700;")
-        agents_box.addRow(head2)
-        self.agent_widgets: dict[str, tuple[QComboBox, QComboBox]] = {}
-        for key, name in AGENT_ROWS:
-            mc = QComboBox()
-            mc.setEditable(True)
-            mc.addItem("")
-            for mid, _label in MODEL_CHOICES:
-                mc.addItem(mid)
-            mc.setCurrentText(str((getattr(s, "agent_models", {}) or {}).get(key, "")))
-            ec = QComboBox()
-            ec.addItem("")
-            ec.addItems(EFFORT_CHOICES)
-            ec.setCurrentText(str((getattr(s, "agent_effort", {}) or {}).get(key, "")))
-            row2 = QHBoxLayout()
-            row2.addWidget(mc, 3)
-            row2.addWidget(ec, 1)
-            agents_box.addRow(name, row2)
-            self.agent_widgets[key] = (mc, ec)
-        v.addLayout(agents_box)
         # 📊 사용량·한도
         self.usage_lbl = QLabel(usage_summary())
         self.usage_lbl.setObjectName("hint")
@@ -368,10 +353,9 @@ class SettingsDialog(QDialog):
         s.ai_backend = "api" if self.rb_api.isChecked() else "claude_code"
         s.claude_code_path = self.cc_path.text().strip()
         s.anthropic_api_key = self.key.text().strip()
-        s.claude_model = self.model.currentText().strip()
-        s.claude_effort = self.effort.currentText()
-        s.agent_models = {k: mc.currentText().strip() for k, (mc, _ec) in self.agent_widgets.items() if mc.currentText().strip()}
-        s.agent_effort = {k: ec.currentText().strip() for k, (_mc, ec) in self.agent_widgets.items() if ec.currentText().strip()}
+        s.claude_model = str(self.model.currentData() or "claude-opus-5-5")
+        s.claude_effort = str(self.effort.currentData() or "xhigh")
+        s.agent_models, s.agent_effort = {}, {}      # 전역 하나로 통합 — 옛 에이전트별 덮어쓰기는 저장할 때 지운다
         s.studio_workers = self.workers.value()
         s.research_web = self.research_web.isChecked()
         s.pixabay_api_key = self.pixabay.text().strip()

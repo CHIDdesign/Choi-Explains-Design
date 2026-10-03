@@ -32,12 +32,37 @@
 5. 유지 시간은 내용의 어려움에 맞춘다. 신 풀의 기준은 이렇다: 맥락 컷은 빨리 읽히고, 도표나 낯선 과정은 오래 걸린다.
    우리 기본값은 맥락 스톡 2.5~4초, 대상 첫 등장 3.5~5초, 문서·화면 5~6초, 비교 5~7초다.
 
-## 3. 스톡 검색어 쓰기(`query_en` · `query_ko`)
+## 2-1. 역추상화 — 세계 안에서 구상하고, 낱말은 맨 끝에(2026-10-04 채널 주인)
 
-1. 영어 3~6낱말을 다음 순서로 쓴다: **주인공 + 행동 + 대상 + 장소 + 화각**.
-   앱은 결과가 적으면 뒤에서부터 낱말을 줄인다. 그래서 꼭 남아야 할 명사를 앞에 둔다.
-   - 예: "hands sketching chair on tracing paper close up"
-   - 예: "industrial designer sanding foam model workshop"
+"픽사베이 API 를 활용하라고 한 거지 아무거나 갖다 쓰라는 게 아니다. 장면에 들어갈 그림을 분해·추상화해서 전문 편집자라면 어떻게
+센스 있게 시각 자료를 구상할지 생각하라." 실제로 나간 것: '학교'(미대 산업디자인과)에 색연필·아이 공책, '렌더링'에 거실 인테리어,
+'폼 목업'에 해변 파도 거품, '포트폴리오'에 액자 목업과 바다 사진.
+1. **직역 B롤은 가리키기만 한다.** Elaine McMillion Sheldon(넷플릭스 'Recovery Boys' 감독): 모든 화면이 무언가를 설명해야 한다는 생각은
+   "storytelling that points, instead of wanders"를 만든다. B롤은 "sets tone. It's suggesting metaphor … They don't explain. They
+   evoke." "I don't want every shot to tell me something I already know." — 다만 구체적인 주장에는 구체적인 증거다("A specific claim
+   needs specific evidence", 분위기만 맞는 "decorative footage that matches the vibe, not the sentence"는 안 된다).
+2. **세계 한 줄을 먼저.** 이 영상의 🌍 세계(누구·어디·언제·사물)를 정하고 모든 검색어를 그 안에서 쓴다. Getty VisualGPS: "Go to real
+   places and photograph real people." "When an image feels forced, we sense it immediately." 사람들은 다양한 얼굴이 아니라
+   "people's true lifestyles and cultures"를 기대한다 — 나이·장소·시대·직업 도구가 맞아야 '진짜'로 보인다.
+3. **다섯 칸 분해**: 주체(나이·직업) · 장소 · 행위(손이 하는 일) · 감정 · 추상 개념 → **전략 사다리**: 그 세계의 실물(literal) →
+   손·도구·재료(detail) → 과정(process) → 장소의 공기(place) → 1초 안에 읽히는 은유(metaphor) → 그래도 없으면 모션으로 재현.
+4. **5샷 문법**(영상 저널리즘): 손 "What are they doing?" → 얼굴 "Who is doing it?" → 와이드 "Where is it happening?" → 어깨 너머
+   "What does the subject see?" → 자유 샷. 스톡에서는 얼굴 칸을 빼고(모델 미소) 손·와이드·어깨 너머로 채운다.
+   다음 컷은 "what would I want to see next?"(Todd Boruff)로 고른다.
+5. **검색 엔진을 안다.** Pixabay 는 `q` 를 태그와 낱말마다 따로 맞춘다(2026-10-03 직접 검색): "sketching" → 1위 'Child, Drawing, Kid,
+   Pencil' · "mood board" → 모래시계·체스판·안개 · "design studio students" → 스쿨버스·AI 생성 학생 · "desk lamp night" → lofi 애니 ·
+   "3d render" → 오크·마녀·침실 인테리어. 반대로 손·과정·사물은 실물이 나온다: "workshop hands" → 점토 모델링·테이블쏘 ·
+   "3d modeling software" → 3D 모델 화면 · "university students" → 실제 공부하는 학생들. 그래서 검색어는 **1~4낱말의 구체 명사
+   (+ 동작)** 이고, 다른 각도의 `alt_queries` 2~3개를 함께 낸다. 앱이 함께 찾아 섞고, 비전 선택이 세계로 거른다.
+6. 산업디자인 세계의 실물(미대 실기실): 수업은 "foam, plaster, wood, plastics … vacuum-former … lathe"를 쓴다(CCA 산업디자인 강의).
+   크리틱은 데스크 크리틱과 핀업 형식이다(BYU Design Critique). 이런 사물이 '학교'의 그림이다 — 칠판·사물함·졸업모가 아니다.
+
+## 3. 스톡 검색어 쓰기(`query_en` · `alt_queries` · `query_ko`)
+
+1. 영어 1~4낱말, **구체 명사(+ 동작)**: "foam model sanding", "pin board photos", "3d model screen", "marker drawing paper".
+   앱은 결과가 적으면 두 낱말까지만 줄인다(한 낱말이면 동음이의어가 걸린다 — foam → 파도 거품). 꼭 남아야 할 명사를 앞에 둔다.
+   - 예: "tracing paper sketch" · alt: "marker drawing hand", "sketchbook pages"
+   - 예: "foam model sanding" · alt: "model making workshop", "industrial design studio"
 2. 구체적인 명사, 구체적인 장소를 쓴다. Wave.video 가이드는 막연한 "city" 대신 실제 도시 이름을 검색하라고 한다.
    그래야 남들이 다 쓴 화면을 피한다. "seoul subway platform", "tokyo crosswalk aerial" 처럼 쓴다.
 3. 화각어를 하나만 붙인다: close up, extreme close up, macro, overhead / top view, aerial, wide shot,
@@ -97,7 +122,8 @@
 ## 7. 내기 전에 확인
 
 1. 이름이 나온 문장마다 그 대상의 실물(사진, 로고, 문서, 화면)을 요청했는가. 스톡으로 대신한 곳은 없는가.
-2. 스톡 검색어가 모두 '보이는 행동 + 대상 + 장소 + 화각'인가. 추상어, 꾸밈말, 뻔한 은유가 없는가.
+2. 스톡 검색어가 모두 1~4낱말의 구체 명사(+ 동작)이고, 다른 각도의 `alt_queries` 가 2개 이상인가. 추상어, 꾸밈말, 뻔한 은유가 없는가.
+   검색어와 `avoid` 가 🌍 이 영상의 세계(나이·장소·시대·도구) 안인가.
 3. 과정을 말하는 구간은 3샷 시퀀스이고, 그중 하나 이상이 영상인가.
 4. 디자인사·시대 문장에서 쿠퍼 휴잇, 메트, 레이크스, 의회도서관, 프렐링어, e뮤지엄 후보를 먼저 떠올렸는가.
 5. NC·ND·보도용·출처 불명 자료를 요청하지 않았는가. AI 로 만든 기록 이미지는 없는가.
@@ -120,3 +146,13 @@
 - https://publicdomainreview.org/collections/source/prelinger-archives/
 - https://www.museum.go.kr/MUSEUM/contents/M3304000000.do
 - https://gongu.copyright.or.kr/gongu/main/contents.do?menuNo=200023
+- https://betweenframes.elainemcmillionsheldon.com/p/why-i-hate-the-term-b-roll
+- https://jupitrr.com/how-to/add-b-roll-to-talking-head-videos
+- https://async.com/blog/match-b-roll-to-your-video/
+- https://www.gettyimages.com/visualgps/creative-trends/culture/on-authenticity
+- https://scvo.scot/about/work/campaigns/essentialsector/mobile-video-training/support/five-shot-sequence
+- https://toddboruff.substack.com/p/the-four-ss-of-b-roll
+- https://pixabay.com/api/docs/
+- https://portal.cca.edu/courses/sec/INDUS-1120-1_AP_Spring_2023/
+- https://open.byu.edu/id/design_critique
+- https://www.premiumbeat.com/blog/continuity-with-stock-footage/

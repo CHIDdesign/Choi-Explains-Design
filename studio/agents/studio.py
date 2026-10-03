@@ -205,6 +205,26 @@ def signature_scenes(director: dict[str, Any], limit: int = 6) -> list[dict[str,
     return out[:limit]
 
 
+WORLD_ROWS = (("who", "누구"), ("where", "어디"), ("era", "언제"), ("props", "사물·도구"), ("look", "화면 결"),
+              ("never", "이 세계가 아닌 것(나오면 0점)"))
+
+
+def world_block(treatment: Optional[dict[str, Any]], topic: str = "") -> str:
+    """🌍 이 영상의 세계(총괄 감독 treatment.world) — 자료 리서처의 검색어·후보 고르기·모션 그림 부품·검수가 모두 받는다.
+    2026-10-04 채널 주인: '학교'라는 말에 아이들 연필 스톡 — 맥락은 미술대학 디자인과다. 세계가 없으면 주제 설명으로."""
+    w = (treatment or {}).get("world") if isinstance((treatment or {}).get("world"), dict) else {}
+    rows = [(label, str(w.get(k) or "").strip()) for k, label in WORLD_ROWS]
+    rows = [(label, v) for label, v in rows if v]
+    if not rows and not topic.strip():
+        return ""
+    lines = ["## 🌍 이 영상의 세계 — 모든 자료·스톡·그림이 이 안에 있어야 한다"]
+    lines += [f"- {label}: {v}" for label, v in rows] or [f"- 주제 설명: {topic.strip()[:400]}"]
+    lines.append("- 낱말이 아니라 이 세계로 판단한다: 대본의 '학교'·'작업'·'책상'은 이 사람의 학교·작업·책상이다. 나이·장소·시대·"
+                 "직업 도구가 이 세계와 다르면(어른 디자인 전공생의 이야기에 아이 공책·색연필, 실기실 이야기에 사무실 회의) "
+                 "낱말이 맞아도 쓰지 않는다.")
+    return "\n".join(lines) + "\n\n"
+
+
 def treatment_block(director: dict[str, Any], key: str) -> str:
     """전문가 지시 끝에 붙는 트리트먼트 요약 — 콘셉트·모티프와, 시그니처 장면 구간(겹쳐 내지 않는다)."""
     tr = director.get("treatment") if isinstance(director.get("treatment"), dict) else {}
@@ -215,6 +235,9 @@ def treatment_block(director: dict[str, Any], key: str) -> str:
         lines.append(f"- 콘셉트: {tr['concept']}")
     if tr.get("motifs"):
         lines.append("- 모티프: " + " · ".join(str(m) for m in tr["motifs"][:6]))
+    wb = world_block(tr) if key in ("motion", "stock", "captions") else ""
+    if wb:
+        lines += ["", wb.strip()]
     sigs = [sc for sc in tr.get("signature_scenes") or [] if isinstance(sc, dict)]
     if sigs and key in ("motion", "stock"):
         lines.append("- 시그니처 장면 구간(🛠 빌더가 짓는다 — 이 구간에는 다른 화면을 내지 않는다): "
@@ -302,7 +325,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         graphics.append(_g("motion", sc.get("layout") or "fullscreen", sc.get("start_seg", -1),
                            sc.get("end_seg", sc.get("start_seg", -1)), sc.get("start_word", ""),
                            title=sc.get("title", ""), reason="모션 디자이너: " + why, spec=spec,
-                           sequence_id=str(sc.get("sequence_id") or "")))
+                           sequence_id=str(sc.get("sequence_id") or ""), motif=str(sc.get("motif") or "")[:24]))
         n_scene += 1
     n_card = 0
     for cd in motion.get("cards", []) or []:
@@ -320,7 +343,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         graphics.append(_g("card", layout, cd.get("start_seg", -1), cd.get("end_seg", cd.get("start_seg", -1)),
                            cd.get("start_word", ""), title=cd.get("title", ""),
                            reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card,
-                           sequence_id=str(cd.get("sequence_id") or "")))
+                           sequence_id=str(cd.get("sequence_id") or ""), motif=str(cd.get("motif") or "")[:24]))
         n_card += 1
     # 🛠 시그니처 장면(트리트먼트) — 자유 HTML 카드로 정밀 재현. 겹치면 이긴다(signature → 우선순위 +3)
     n_sig = 0
@@ -392,6 +415,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "moments": moments,
         "energy_spans": [e for e in editor.get("energy_spans", []) or [] if isinstance(e, dict)],
         "holds": [h for h in editor.get("holds", []) or [] if isinstance(h, dict)],
+        "pauses": [p for p in editor.get("pauses", []) or [] if isinstance(p, dict)],
         "rhythm": [r for r in editor.get("rhythm", []) or [] if isinstance(r, dict)],
         "peak_seg": editor.get("peak_seg", -1),
         "sequences": [q for q in brief.get("sequences", []) or [] if isinstance(q, dict)],
@@ -450,12 +474,26 @@ class Studio:
         self.web = True                                                   # 🔎·🛠 에이전트에 웹 도구를 준다
         self.materials: tuple[str, Optional[bytes]] = ("", None)        # ④ 자료 폴더 목록 + 썸네일 시트(자료 리서처에게)
         self.evidence: tuple[str, Optional[bytes]] = ("", None)         # 확보 목록 + 컨택트 시트(모션 디자이너에게)
+        # 🌍 세계 블록 — 저장된 기획을 다시 쓸 때는 파이프라인이 계획의 treatment·주제 설명으로 준다(호출 때 읽는다)
+        self.world_fn: Optional[Callable[[], str]] = None
+
+    def world_text(self) -> str:
+        """지금 쓸 🌍 세계 블록 — 이번 기획의 총괄 감독 treatment 가 있으면 그것, 없으면 파이프라인이 준 것."""
+        tr = (self.results.get("director") or {}).get("treatment")
+        out = world_block(tr if isinstance(tr, dict) else None)
+        if not out and self.world_fn is not None:
+            try:
+                out = self.world_fn() or ""
+            except Exception:  # noqa: BLE001 - 세계 블록 없이도 고른다
+                out = ""
+        return out
 
     # ------------------------------------------------------------------
     def call(self, key: str, ctx: str, instruction: str, *, images=None, system: Optional[str] = None,
              label: str = "") -> dict[str, Any]:
         a = AGENTS[key]
-        eff = self.effort.get(key) or a.effort
+        # 사고 강도: 파일의 에이전트별 덮어쓰기 → 설정의 전역 값(모든 에이전트 같은 강도) → 에이전트 기본
+        eff = self.effort.get(key) or getattr(self.claude, "effort", "") or a.effort
         model = self.models.get(key) or None
         kw: dict[str, Any] = {}
         if a.tools and self.web:
@@ -675,7 +713,7 @@ class Studio:
     # ------------------------------------------------------------------
     def pick_evidence(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
         """🎞 후보 시트를 보고 0~3점 채점(EVIDENCE_PICK) — 2점 이상만 쓴다(게이트 B6). 고르는 규칙은 assets/ladder.choose."""
-        instr = load_prompt("agents/stock_pick_v2.md").replace("{{requests}}", requests_text)
+        instr = load_prompt("agents/stock_pick_v2.md").replace("{{requests}}", self.world_text() + requests_text)
         res = self.call("stock_pick", ctx, instr, images=sheets)
         return res.get("picks", []) or []
 
@@ -691,7 +729,8 @@ class Studio:
             n = max([int(c.get("candidate", 0) or 0) for c in pk.get("choices") or []] + [0])
             best = choose(pk, n, 1, "")
             out.append({"request": pk.get("request"), "candidate": best[0][0] + 1 if best else -1,
-                        "reason": pk.get("reason", ""), "shows": best[0][1].get("shows", "") if best else ""})
+                        "reason": pk.get("reason", ""), "shows": best[0][1].get("shows", "") if best else "",
+                        "retry_query_en": str(pk.get("retry_query_en") or "").strip() if not best else ""})
         return out
 
     def pick_portrait(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:
@@ -724,10 +763,15 @@ class Studio:
         """🧐 게이트 E: 완성본 검토 시트(2.5초 간격) + 자막 + 이벤트 목록 + 계획 + 게이트 결과 → 루브릭 채점·발견."""
         instr = (load_prompt("agents/timeline_review.md").replace("{{events}}", events).replace("{{srt}}", srt[:12000])
                  .replace("{{plan}}", plan_text).replace("{{gate}}", gate_text))
+        if self.world_text():
+            instr += "\n\n" + self.world_text() + ("자료·스톡이 이 세계 밖이면(나이·장소·시대·도구) wrong_image 로 적는다.")
         return self.call("timeline_review", ctx, instr, images=sheets)
 
     def review(self, ctx: str, graphics_text: str, stills: list[tuple[str, bytes, str]]) -> dict[str, Any]:
         instr = load_prompt("agents/art_director.md").replace("{{graphics}}", graphics_text)
+        if self.world_text():
+            instr += ("\n\n" + self.world_text() + "사진·스톡·그림 부품이 이 세계 밖이면(나이·장소·시대·직업 도구) R19 로 "
+                      "적고 revise_scene 으로 그 그림을 이 세계의 손·도구·과정으로 바꾸게 한다.")
         return self.call("art_director", ctx, instr, images=stills)
 
     def revise_card(self, ctx: str, card: dict[str, Any], dur: float, problem: str, direction: str,
@@ -752,6 +796,8 @@ class Studio:
         instr = (load_prompt("agents/motion_revise.md").replace("{{dur}}", f"{dur:.1f}")
                  .replace("{{spec}}", json.dumps(spec, ensure_ascii=False))
                  .replace("{{problem}}", problem or "").replace("{{direction}}", direction or ""))
+        if self.world_text():
+            instr += "\n\n" + self.world_text() + "그림 부품('pixabay:…' 검색어)도 이 세계 안의 구체 명사 2~4낱말로 쓴다."
         res = self.call("motion_revise", ctx, instr, images=[still] if still else None)
         new = parse_spec(res.get("spec_json", ""))
         cleaned = clean_spec(new, dur) if new else None

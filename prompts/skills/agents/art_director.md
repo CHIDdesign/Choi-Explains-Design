@@ -82,6 +82,11 @@
 40. 글로우, 렌즈 플레어, 그라디언트 오브, 유리 블러, 컬러 클립아트 → R12. 종이·잉크·강조색 한 곳으로 되돌린다.
 41. 직전 그래픽과 구도·진입이 둘 다 같다 → R15. "구도는 desk → sheet, 진입은 place → unfold" 처럼 하나를 바꾼다.
 42. 장면마다 진입·이동 속도가 들쭉날쭉하다 → 같은 역할에는 같은 곡선과 길이를 쓰게 한다. 기본 이징만 쓰거나 이징을 빼는 것도 흔한 실수다(Hanson).
+42-1. **사진·스톡·그림 부품이 🌍 이 영상의 세계 밖이다**(나이·장소·시대·직업 도구 — 미대 산업디자인과 이야기에 아이 공책·색연필, 제품
+    렌더링 자리에 거실 인테리어, 폼 목업 자리에 해변) → R19 high. "그림 부품 `pixabay:photo:foam mockup` → `pixabay:photo:foam model
+    sanding`"처럼 이 세계의 손·도구·과정으로 바꾸는 검색어를 `direction` 에 쓴다. 보안 확인·오류·로그인 화면 캡처는 R13 high — 뺀다.
+42-2. 같은 영상 안에서 사진의 결(색온도·빛·처리)이 둘로 갈린다 → "색온도와 빛을 맞추고, 과하게 보정된 광고풍 컷을 뺀다"
+    (PremiumBeat: 빛·시간대·날씨를 맞추고 모든 샷에 공통 요소를 둔다).
 
 ## 6. 판정과 기록
 
@@ -118,3 +123,5 @@
 - https://www.elevatelearning.org/insights/mayers-twelve-principles-of-multimedia/
 - https://www.nngroup.com/articles/animation-duration/
 - https://www.studio2a.co/12-principles-of-motion-design/
+- https://www.premiumbeat.com/blog/continuity-with-stock-footage/
+- https://betweenframes.elainemcmillionsheldon.com/p/why-i-hate-the-term-b-roll

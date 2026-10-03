@@ -454,6 +454,17 @@ def lint(spec: dict, dur: float, words=None, box=BOXES["paper"]) -> list[Issue]:
     return out
 
 
+def lint_scene(spec: dict, dur: float, words=None, box=BOXES["paper"]) -> list[Issue]:
+    """계획에 저장된 **원본** spec 을 린트한다 — 먼저 `clean_spec` 으로 렌더러가 받을 모양(기본값·범위·stage_first)으로 만든다.
+    계획(merge_plan·_clean_graphic)은 spec 을 검사만 하고 원본 그대로 두므로, 디자이너가 생략한 선택 값(dots 의 gap·r 등)이
+    없는 채로 `lint` 에 들어가면 KeyError 로 작업이 멈췄다(2026-10-03 실제 작업). 정리가 안 되는 spec 은 L00 오류 하나."""
+    from .spec import clean_spec
+    cleaned = clean_spec(spec, dur) if isinstance(spec, dict) else None
+    if not cleaned:
+        return [Issue("L00_empty", "error", "요소가 없거나 spec 이 올바르지 않다")]
+    return lint(cleaned, dur, words, box)
+
+
 def metrics(spec: dict, dur: float, box=BOXES["paper"]) -> dict:
     W, H = box
     els = spec["elements"]

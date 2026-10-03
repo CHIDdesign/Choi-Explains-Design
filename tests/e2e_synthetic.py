@@ -133,11 +133,12 @@ def check_multi(mode: str, job: Path) -> None:
         align = json.loads((job / "work" / "align.json").read_text(encoding="utf-8"))
         rep = align["report"]
         print("읽기 회차:", rep.get("pass_mode"), rep.get("main_pass"), rep.get("passes"), "· 역할:", src.get("roles"))
-        assert rep["pass_mode"] == "best_pass" and len(rep["passes"]) == 2 and rep["main_pass"] in (0, 1)
-        assert sorted((src.get("roles") or {}).values()) == ["alt_take", "main"], src.get("roles")
-        # 본편은 주 테이크(그 회차의 파일)로 — 다른 회차 파일은 빠진 문장 보강에만
+        assert rep["pass_mode"] == "best_take" and len(rep["passes"]) == 2 and rep["main_pass"] in (0, 1)
+        assert set((src.get("roles") or {}).values()) <= {"take", "alt_take"} and "take" in src["roles"].values(), src.get("roles")
+        # 대목마다 더 잘 나온 회차(파일)를 쓴다 — 가장 많이 쓴 회차의 파일은 반드시 들어간다
         main_proxy = "media/proxy.mp4" if rep["main_pass"] == 0 else "media/proxy_2.mp4"
         assert main_proxy in used, used
+        print("대목별 회차:", [(t["idx"], t["pass"], t["why"]) for t in rep.get("take_units") or []])
         kept = [u["text"] for u in align["utterances"] if u["status"] == "keep"]
         for line in ("먼저 넓게 펼치고", "어포던스라는", "좋은 질문에는 세 가지", "결국 좋은 디자인은"):
             assert sum(line in t for t in kept) == 1, (line, kept)       # 같은 대본 문장이 한 번만

@@ -37,9 +37,12 @@ if errorlevel 1 (
 set "PATH=%~dp0tools\node;%~dp0tools\ffmpeg\bin;%PATH%"
 rem 음성인식 모델·임시 파일은 프로그램 폴더 안에(C 드라이브 용량 절약)
 set "HF_HOME=%~dp0models\hf"
-if not exist "%~dp0tools\tmp" mkdir "%~dp0tools\tmp"
-set "TEMP=%~dp0tools\tmp"
-set "TMP=%~dp0tools\tmp"
+rem 단 프로그램 폴더가 OneDrive 안이면 임시 파일(렌더용 브라우저 프로필 등)은 OneDrive 밖에 — 동기화가 계속 올리지 않게
+set "CHOI_TMP=%~dp0tools\tmp"
+echo "%~dp0" | find /i "\OneDrive" >nul && set "CHOI_TMP=%LOCALAPPDATA%\Temp\ChoiStudio"
+if not exist "%CHOI_TMP%" mkdir "%CHOI_TMP%"
+set "TEMP=%CHOI_TMP%"
+set "TMP=%CHOI_TMP%"
 fc /b "requirements.txt" ".venv\.req_stamp" >nul 2>&1
 if errorlevel 1 (
   ".venv\Scripts\python.exe" -m pip install -q -r requirements.txt && copy /y "requirements.txt" ".venv\.req_stamp" >nul

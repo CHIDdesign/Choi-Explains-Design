@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -16,6 +18,49 @@ from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress, run_
 
 class RenderError(RuntimeError):
     pass
+
+
+def render_temp_dir() -> Path:
+    """렌더 프로세스 하나만 쓰는 임시 폴더(TEMP 아래 choi_render/<pid>_<ms>) — Remotion·Chrome 이 os.tmpdir() 에 만드는
+    것(브라우저 프로필·자산 내려받기)이 모두 여기로 오고, 렌더가 끝나면(실패·취소여도) 통째로 지운다. 예전엔 실패·취소한 렌더마다
+    수 GB 프록시 복사본이 임시 폴더에 남아 쌓였다(2026-10-04 ENOSPC). ASCII 경로라 Chrome 프로필 경로에 한글이 안 들어간다."""
+    d = Path(tempfile.gettempdir()) / "choi_render" / f"{os.getpid()}_{int(time.time() * 1000)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def preflight_items(job: "RenderJob", log: LogFn = noop_log) -> list["RenderItem"]:
+    """🛫 렌더 전 자산 확인(studio/render/preflight.py): props 마다 가리키는 파일이 publicDir 에 있는지 보고, 없는 것을 가리키는
+    부품은 빼서 props 파일을 다시 쓴다 — 그림 하나가 없다고 Remotion 이 렌더 전체를 멈추지 않게(2026-10-04). 화자 영상이 없으면
+    렌더할 수 없으니 그 이유로 멈추고, 그림이 없는 썸네일은 그 한 장만 건너뛴다."""
+    from . import preflight
+    chk = preflight.MediaCheck(job.public_dir, {dst: Path(src) for src, dst in job.links})
+    done: dict[str, list[str]] = {}
+    keep: list[RenderItem] = []
+    for it in job.items:
+        key = str(it.props_path)
+        if key not in done:
+            done[key] = []
+            try:
+                props = json.loads(Path(it.props_path).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                props = None             # 읽을 수 없으면 렌더러가 그 이유로 실패하게 둔다
+            if isinstance(props, dict):
+                notes, fatal = preflight.fix_props(props, chk)
+                if notes:
+                    write_json(Path(it.props_path), props)
+                    job.fixed.append(Path(it.props_path))
+                    log(f"🛫 렌더 전 자산 확인({Path(it.props_path).name}): 없는 파일을 가리키는 {len(notes)}곳을 빼고 렌더합니다 — "
+                        + preflight.summary(notes))
+                done[key] = fatal
+        fatal = done[key]
+        if fatal and it.composition == "Thumbnail":
+            log(f"🛫 썸네일 {Path(it.output).name} 건너뜀 — " + " · ".join(fatal))
+            continue
+        if fatal:
+            raise RenderError("렌더할 수 없습니다 — " + " · ".join(fatal))
+        keep.append(it)
+    return keep
 
 
 def find_node(custom: str = "") -> str:
@@ -72,6 +117,7 @@ class RenderJob:
     bundle_dir: Path
     links: list[tuple[Path, str]] = field(default_factory=list)
     items: list[RenderItem] = field(default_factory=list)
+    fixed: list[Path] = field(default_factory=list)   # 렌더 전 자산 확인이 고쳐 다시 쓴 props 파일
     browser_executable: str = ""
     gl: str = ""
     concurrency: int = 0
@@ -83,6 +129,10 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
                on_peek: Optional[Callable[[dict], None]] = None) -> None:
     """on_peek: 미리보기 이미지가 나올 때마다 {index, frame, file[, k, n]} (렌더 중 프레임·검수 스틸·썸네일)."""
     ensure_renderer_installed()
+    had = bool(job.items)
+    job.items = preflight_items(job, log)
+    if had and not job.items:            # 건너뛴 썸네일뿐이면 부를 것이 없다
+        return
     data = {
         "publicDir": str(job.public_dir),
         "bundleDir": str(job.bundle_dir),
@@ -138,8 +188,13 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
             except Exception:  # noqa: BLE001 - 미리보기 실패가 렌더를 멈추면 안 됨
                 pass
 
-    code, tail = run_process([node, str(RENDERER_DIR / "scripts" / "render.mjs"), str(job_file)], cwd=RENDERER_DIR,
-                             on_line=on_line, cancel=cancel)
+    tmp = render_temp_dir()
+    env = {**os.environ, "TEMP": str(tmp), "TMP": str(tmp), "TMPDIR": str(tmp)}
+    try:
+        code, tail = run_process([node, str(RENDERER_DIR / "scripts" / "render.mjs"), str(job_file)], cwd=RENDERER_DIR,
+                                 env=env, on_line=on_line, cancel=cancel)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     if code != 0:
         raise RenderError("Remotion 렌더 실패\n" + (state["err"] or tail)[-3000:])
     progress(1.0)

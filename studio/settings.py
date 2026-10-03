@@ -41,7 +41,7 @@ class Settings:
     claude_code_path: str = ""        # 비우면 자동 탐색(%USERPROFILE%\.local\bin\claude.exe, PATH)
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
-    claude_effort: str = "high"
+    claude_effort: str = "xhigh"      # 사고 강도 하나가 모든 에이전트에(채널 주인 2026-10-03: 에이전트별 조절 대신 전역 하나)
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
@@ -73,8 +73,9 @@ class Settings:
     research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
     sfx_motion_auto: bool = True      # 장면 전환·모션 등장에 흔한 효과음(우시·스우시·팝·클릭·타이핑·딩)을 자동으로(감독 지정과 함께)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
-    agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low", "timeline_review": "high"}
-    agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
+    # (예전) 에이전트별 덮어쓰기 — 설정 창에서 뺐다(모델·사고 강도는 전역 하나). 파일에 남아 있으면 그 에이전트에만 적용된다
+    agent_effort: dict[str, str] = field(default_factory=dict)
+    agent_models: dict[str, str] = field(default_factory=dict)
     glossary: dict[str, str] = field(default_factory=lambda: {
         "디자인 띵킹": "디자인 씽킹",
         "더블 다이어몬드": "더블 다이아몬드",

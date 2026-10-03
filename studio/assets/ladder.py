@@ -55,12 +55,24 @@ def clean_item(it: dict[str, Any]) -> dict[str, Any]:
     d["fallback"] = d.get("fallback") if d.get("fallback") in ("type_card", "code_drawn", "stock", "face") else "type_card"
     for k in ("subject", "source", "stock", "pair"):
         d[k] = dict(d.get(k) or {}) if isinstance(d.get(k), dict) else {}
-    d["label"] = str(d.get("label") or "").strip()[:14]
-    d["caption"] = str(d.get("caption") or "").strip()[:24]
+    d["label"] = clip_words(d.get("label"), 14)
+    d["caption"] = clip_words(d.get("caption"), 24)
     d["commons_files"] = [str(x).strip() for x in d.get("commons_files") or [] if str(x).strip()][:6]
     d["display"] = str(d.get("display") or "").strip()[:8]
-    d["quote"] = str(d.get("quote") or "").strip()[:36]
+    d["quote"] = clip_words(d.get("quote"), 36)
     return d
+
+
+def clip_words(s: Any, n: int) -> str:
+    """화면 글자를 n 자 안으로 — 낱말 가운데서 자르지 않는다(2026-10-04 캡션 'Leahy 외 · J. Mech. Desig').
+    n 자 안의 마지막 낱말 경계(공백·가운뎃점·쉼표)에서 자르고, 그러면 너무 짧아질 때만 글자로 자른다."""
+    t = re.sub(r"\s+", " ", str(s or "")).strip()
+    if len(t) <= n:
+        return t
+    cut = t[: n + 1]
+    k = max(cut.rfind(" "), cut.rfind("·"), cut.rfind(","))
+    out = cut[:k].rstrip(" ·,") if k >= n * 0.5 else t[:n]
+    return out.strip()
 
 
 def drawn_treatment(t: str, n_assets: int, tier: str, kind: str = "photo") -> str:
@@ -94,6 +106,7 @@ class Deps:
     pick_portraits: Optional[Callable[[MediaResolver, list[MediaPlan]], None]] = None
     stock: Optional[Callable[[list[dict[str, Any]]], list[Optional[dict[str, Any]]]]] = None
     allow_quote: bool = False
+    context: Optional[Callable[[Any], str]] = None      # 발화 id → 그 문장(스톡 후보를 문장의 뜻으로 고르게)
 
 
 class Ladder:
@@ -137,7 +150,12 @@ class Ladder:
         if stock_ix and self.d.stock is not None:
             reqs = [{"kind": items[i]["stock"].get("kind") or "photo", "query_en": items[i]["stock"].get("query_en", ""),
                      "query_ko": items[i]["stock"].get("query_ko", ""), "purpose": items[i].get("claim", ""),
-                     "must_show": items[i].get("must_show", "")} for i in stock_ix]
+                     "must_show": items[i].get("must_show", ""), "avoid": items[i].get("avoid", ""),
+                     # 역추상화(자료 리서처): 같은 장면을 다른 각도(손·과정·장소·질감)로 찾는 검색어와 화면 전략
+                     "alt_queries": [str(q) for q in items[i]["stock"].get("alt_queries") or [] if str(q).strip()][:3],
+                     "angle": str(items[i]["stock"].get("angle") or ""),
+                     "context": self.d.context(items[i].get("start_seg")) if self.d.context else ""}
+                    for i in stock_ix]
             try:
                 got = self.d.stock(reqs)
             except Exception as e:  # noqa: BLE001
@@ -407,7 +425,9 @@ class Ladder:
             self.img_dir.mkdir(parents=True, exist_ok=True)
             dst = self.img_dir / f"own_{re.sub(r'[^0-9A-Za-z가-힣._-]+', '_', path.name)[-60:]}"
             if not dst.exists():
-                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".svg"):
+                    # SVG(로고 카드)는 그대로 — 렌더러가 그린다. 자산 라이브러리에서 꺼낸 로고를 prepare_photo(PIL)로 바꾸려다
+                    # 'cannot identify image file' 로 조달이 실패하던 것(2026-10-03)
                     shutil.copyfile(path, dst)
                 else:
                     from ..stock.process import prepare_photo

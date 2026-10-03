@@ -27,8 +27,25 @@
 8. 홀드는 그 생각이 시작하는 문장에서 시작해 여운이 끝나는 문장에서 끝난다. 감독이 `show: emotion` 으로 표시한 줄이 모두 홀드 안에 들어갔는지 대조한다.
 9. 큰 개념을 말한 뒤에는 받아들일 시간을 준다. Joss Fong 은 큰 개념에 되풀이와 멈춤을 줘 시청자가 소화할 시간을 둔다.
    다큐 편집자들도 무거운 순간 뒤의 침묵이 전부일 때가 있다고 말한다. 그 멈춤을 지키는 방법이 홀드다.
-   사실을 늘어놓다가 생긴 쉼은 앱이 줄인다. 편집 감독은 남길 곳만 홀드로 지킨다.
+   1.4초 넘는 머뭇거림은 앱이 줄이고, 이어 붙인 곳에는 앱이 경계에 맞는 쉼을 둔다(아래 2-1). 편집 감독은 그보다 길게 머물 곳을
+   `pauses` 로, 얼굴로 머물 곳을 `holds` 로 지킨다.
 10. 얼굴만 이어지는 시간에는 상한이 있다. 설명은 12초, 의견은 20초, 고백은 25초다. 이보다 긴 홀드를 만들지 않는다.
+
+## 2-1. 쉼의 위계 — 숫자로(2026-10-04 채널 주인: "마디마디에 자연스러운 공백이 있어야 하는데 훅훅 넘어간다")
+
+11. 쉼은 고른 길이가 아니라 **위계**다. 낭독 녹음 48개를 잰 연구(Kazlauskienė & Kalašinskaitė 2020)에서 문장 사이 쉼은 빠른 화자
+    0.20~0.98초 · 느린 화자 0.34~1.36초, 문단 사이는 0.40~1.34초 · 0.75~1.80초였고, 긴 문장·긴 문단 뒤일수록 1.2~1.4배 길었다.
+    이 채널의 실측은 문장 사이 중앙값 0.15초 — 사람이 읽을 때는 나올 수 없는 길이였다. 그래서 앱이 이어 붙인 곳마다:
+    - 같은 문장의 조각 사이 0.3초 · 문장 사이 0.6초 · 문단(생각)이 바뀌는 곳 1.0초 · 정점·답 뒤 1.3초를 원본의 실제 무음으로 채운다.
+    - 편집 감독의 `pauses`(0.8~1.6초)는 그보다 길게 머물 곳 — 무거운 고백 뒤, 질문 뒤, 반전 직전 문장 뒤, 챕터 마지막 문장 뒤.
+12. **감정에는 시간이 든다.** Tony Zhou(Every Frame a Painting): "Emotions take time … we have time to watch their faces before they
+    speak and time to watch them afterwards. Editors have to decide, 'how much time do I give this emotion?'" 말을 마친 얼굴이
+    1초 머무는 것이 이 채널의 문장부호다.
+13. 설명 영상은 시청자가 따라올 틈이 필요하다. Joss Fong(Vox): "There's a really high risk of charging forward and not realizing that the
+    viewer is not with you." 정보가 몰린 구간(시퀀스·도식) 바로 뒤에는 `pauses` 하나와 slow 구간을 처방한다.
+14. 침묵은 이야기 도구다. 팟캐스트 편집 가이드(SoundGirls): 생각을 부르는 대화는 쉼을 남겨 듣는 사람이 소화할 시간을 주고, 숨소리는
+    지우지 말고 줄인다 — 지우면 편집이 날카롭게 들린다. 질문 뒤의 쉼은 "let that question sink in"(다큐 감독, NewsLab).
+15. 핵심 문장 **앞**의 짧은 쉼은 기대를 만든다(Toastmasters). 반전 문장의 바로 앞 문장에 `pauses` 0.8초를 둔다.
 
 ## 3. 리듬 지도와 다시 붙잡기
 
@@ -103,6 +120,7 @@
 - [ ] 콜드 오픈 문장은 앞뒤 없이 서고, 답이 아니라 질문을 남기며, 합쳐 20초 이내다.
 - [ ] drop 은 녹화 사고뿐이고 대본 문장은 하나도 없다.
 - [ ] 한 자리에 강조·콜아웃·효과음·전환이 두 개 이상 쌓이지 않는다.
+- [ ] 무거운 고백·질문·반전 직전·챕터 끝에 `pauses` 가 있고(4~12곳), `pacing_notes` 의 멈춤이 모두 `pauses` 에 들어갔다.
 
 ## 출처
 - https://nofilmschool.com/editing-emotion-using-walter-murchs-rule-six-non-narrative-content
@@ -118,3 +136,9 @@
 - https://en.wikipedia.org/wiki/Cold_open
 - https://www.derek-lieu.com/blog/2019/10/2/editing-an-engaging-trailer-opening
 - https://en.wikipedia.org/wiki/L_cut
+- https://www.journals.vu.lt/respectus-philologicus/article/view/17055
+- https://kottke.org/16/05/how-do-you-know-when-to-cut
+- https://soundgirls.org/how-to-avoid-over-editing-podcasts/
+- https://newslab.org/ethical-editing/
+- https://france.toastmasters.org/magazine/magazine-issues/2023/aug/power-pauses
+- https://www.nofilmschool.com/2016/05/not-sure-where-cut-editor-walter-murch-says-answer-may-be-eyes

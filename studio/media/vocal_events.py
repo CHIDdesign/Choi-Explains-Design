@@ -63,7 +63,37 @@ def vocal_events(audio16k: np.ndarray, vad: list[tuple[float, float]], words: li
             out.append({"id": len(out), "start": round(s, 3), "end": round(e, 3), "dur": round(dur, 3), "dbfs": round(db, 1),
                         "kind": kind, "prev": prev.text if prev else "", "next": nxt.text if nxt else "",
                         "gap_prev": round(s - prev.end, 2) if prev else 9.9, "gap_next": round(nxt.start - e, 2) if nxt else 9.9})
+    # 인식 '단어'로 적힌 헛기침·추임새(음·어·흠·큼 …, 또는 두 글자 이하인데 확신도가 낮은 토막)가 앞뒤 말에서 0.2초 이상 떨어져
+    # 있으면 '의심 단어'로 함께 넘긴다 — 2026-10-03 채널 주인: 헛기침 같은 소리 NG 가 그대로 들어간다(단어 없는 토막만 보고 있었다)
+    for i, w in enumerate(ws):
+        t = _norm_word(w.text)
+        prob = float(getattr(w, "prob", 1.0) or 1.0)
+        if not (t in SUSPECT_WORDS or (len(t) <= 2 and prob < 0.5)):
+            continue
+        gp = w.start - ws[i - 1].end if i > 0 else 9.9
+        gn = ws[i + 1].start - w.end if i + 1 < len(ws) else 9.9
+        if gp < 0.2 or gn < 0.2 or w.end - w.start > max_dur:
+            continue
+        seg = audio16k[int(w.start * SR):int(w.end * SR)]
+        db = _dbfs(seg) if len(seg) else -99.0
+        if db < min_dbfs:
+            continue
+        out.append({"id": len(out), "start": round(w.start, 3), "end": round(w.end, 3), "dur": round(w.end - w.start, 3),
+                    "dbfs": round(db, 1), "kind": "word", "text": w.text, "prob": round(prob, 2),
+                    "prev": ws[i - 1].text if i > 0 else "", "next": ws[i + 1].text if i + 1 < len(ws) else "",
+                    "gap_prev": round(gp, 2), "gap_next": round(gn, 2)})
+    out.sort(key=lambda e: e["start"])
+    for k, e in enumerate(out):
+        e["id"] = k
     return out
+
+
+# 인식기가 '단어'로 적는 헛기침·추임새(단독으로 떨어져 있을 때만 의심)
+SUSPECT_WORDS = {"음", "어", "아", "으", "에", "흠", "큼", "크흠", "에헴", "쩝", "하", "허", "후", "휴", "엄", "음음", "어어", "아아"}
+
+
+def _norm_word(text: str) -> str:
+    return "".join(ch for ch in text if ch.isalnum()).lower()
 
 
 def default_cuts(events: list[dict[str, Any]]) -> list[int]:
@@ -74,6 +104,6 @@ def default_cuts(events: list[dict[str, Any]]) -> list[int]:
 def as_removals(events: list[dict[str, Any]], ids: list[int], reasons: Optional[dict[int, str]] = None) -> list[dict[str, Any]]:
     """잘라 낼 소리 → 단어 정리(removed)와 같은 모양의 구간(cuts.py 가 keep 에서 빼고 쉼 안에서 넓힌다)."""
     want = set(ids)
-    return [{"start": e["start"], "end": e["end"], "text": "(비언어 소리)", "reason": "비언어 소리" +
+    return [{"start": e["start"], "end": e["end"], "text": e.get("text") or "(비언어 소리)", "reason": "비언어 소리" +
              (f": {(reasons or {}).get(e['id'], '')}" if (reasons or {}).get(e["id"]) else "")}
             for e in events if e["id"] in want]

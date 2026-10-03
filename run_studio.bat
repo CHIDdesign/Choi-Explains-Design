@@ -37,9 +37,12 @@ rem setup 이 tools\ 에 설치한 Node.js·FFmpeg 를 먼저 쓴다
 set "PATH=%~dp0tools\node;%~dp0tools\ffmpeg\bin;%PATH%"
 rem 음성인식 모델·임시 파일은 프로그램 폴더 안에(C 드라이브 용량 절약)
 set "HF_HOME=%~dp0models\hf"
-if not exist "%~dp0tools\tmp" mkdir "%~dp0tools\tmp"
-set "TEMP=%~dp0tools\tmp"
-set "TMP=%~dp0tools\tmp"
+rem 단 프로그램 폴더가 OneDrive 안이면 임시 파일(렌더용 브라우저 프로필 등)은 OneDrive 밖에 — 동기화가 계속 올리지 않게
+set "CHOI_TMP=%~dp0tools\tmp"
+echo "%~dp0" | find /i "\OneDrive" >nul && set "CHOI_TMP=%LOCALAPPDATA%\Temp\ChoiStudio"
+if not exist "%CHOI_TMP%" mkdir "%CHOI_TMP%"
+set "TEMP=%CHOI_TMP%"
+set "TMP=%CHOI_TMP%"
 rem 새 버전으로 파일을 덮어쓴 뒤 필요한 파이썬 패키지가 늘었으면 자동 설치(setup 을 다시 돌리지 않아도 됨)
 fc /b "requirements.txt" ".venv\.req_stamp" >nul 2>&1
 if errorlevel 1 (
