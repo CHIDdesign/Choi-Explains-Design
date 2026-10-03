@@ -99,6 +99,9 @@ export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
 
 const SEQ_SKIP = 16; // 시퀀스 둘째 샷부터 건너뛸 등장 프레임(등장 14~16f 가 끝난 상태로 컷)
 const COVER_PAD = 1.0; // 전체화면 그래픽 앞뒤로 화자 영상을 계속 그리는 여유(초) — 등장·퇴장·전환이 이 안에서 끝난다
+// 전면 그래픽끼리 이 간격(초) 이하로 이어지면 한 덮개로 본다: 사이에 화자를 그리지 않고, 앞 그래픽은 퇴장 없이 컷으로 넘기며,
+// 접합부 아래에는 무대판을 깐다 — 2026-10-03: 전면→전면 전환의 디졸브 몇 프레임 동안 화자 얼굴이 비쳤다
+const ABUT = 0.5;
 
 const GraphicSeq: React.FC<{
   g: Graphic;
@@ -240,10 +243,16 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     const sp = spans.find((x) => Math.abs(x.end - g.end) < 1e-3 && g.start >= x.start - 1e-3);
     return sp ? (sp.look === 'paper' ? 15 : 12) : 0;
   };
+  // 화자를 완전히 덮는 전면 그래픽(불투명 바탕)인가 — faceCovered·coverSpans·abutNext 가 같은 기준을 쓴다
+  const isCover = (g: Graphic) => g.layout === 'fullscreen' && g.template !== 'title' && g.template !== 'lower_third'
+    && (g.template === 'card' || g.template === 'motion' || g.template === 'evidence' || lookOf(g) !== 'paper');
+  // 바로 뒤에 다른 전면 그래픽이 ABUT 초 안에 이어지면 퇴장을 생략한다(앞 그래픽이 끝 프레임까지 그대로 있다가 컷)
+  const abutNext = (g: Graphic) => isCover(g) && props.graphics.some((o) => o !== g && isCover(o)
+    && o.start >= g.end - 1e-3 && o.start - g.end <= ABUT);
   const seq = (g: Graphic) => {
     const from = toFrame(g.start, fps);
     const dur = Math.max(1, toFrame(g.end, fps) - from);
-    const shown = Math.max(Math.min(dur, 8), dur - exitLead(g));
+    const shown = abutNext(g) ? dur + Math.round(fps) : Math.max(Math.min(dur, 8), dur - exitLead(g));
     return (
       <Sequence key={g.id} from={from} durationInFrames={dur} name={`${g.template} ${g.id}`}>
         <GraphicSeq g={g} dur={shown} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
@@ -256,10 +265,18 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   // 가운데 동안은 화자 영상을 그리지 않는다: 보이지 않는 프레임을 뽑고 합성하던 비용(사진 구간 렌더 1.8 → 3.0fps 실측).
   // 들어오고 나가는 애니메이션·전환이 걸리는 앞뒤 1초는 그대로 그린다. 종이 모양 그래픽은 경로가 여럿이라 모션 장면
   // (불투명 종이 페이지)만 넣는다
-  const faceCovered = props.graphics.some((g) => g.layout === 'fullscreen' && g.template !== 'title'
-    && g.template !== 'lower_third' && (g.template === 'card' || g.template === 'motion' || g.template === 'evidence'
-      || lookOf(g) !== 'paper')
-    && g.end - g.start > 2 * COVER_PAD + 0.2 && t >= g.start + COVER_PAD && t < g.end - COVER_PAD);
+  // 이어지는 전면 그래픽(틈 ABUT 초 이하)은 한 덮개로 합친다 — 접합부에서도 화자를 그리지 않는다
+  const coverSpans = useMemo(() => {
+    const out: {start: number; end: number}[] = [];
+    for (const g of props.graphics.filter(isCover).sort((a, b) => a.start - b.start)) {
+      const last = out[out.length - 1];
+      if (last && g.start - last.end <= ABUT) last.end = Math.max(last.end, g.end);
+      else out.push({start: g.start, end: g.end});
+    }
+    return out;
+  }, [props.graphics, fallback]);
+  const faceCovered = coverSpans.some((s) => s.end - s.start > 2 * COVER_PAD + 0.2
+    && t >= s.start + COVER_PAD && t < s.end - COVER_PAD);
   const endStart = props.endcard ? toFrame(props.endcard.start, fps) : Infinity;
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
@@ -267,7 +284,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
     <AbsoluteFill style={{background: MODERN.bg}}>
       <TransitionStage tx={tx}>
         {/* 디자인 v4: 화자가 판으로 줄어들 때 뒤는 모던 밝은 무대 */}
-        {region !== full ? <ModernStage theme={theme} frame={frame} /> : null}
+        {region !== full || faceCovered ? <ModernStage theme={theme} frame={frame} /> : null}
         {under.map(seq)}
         {paperP > 0 && frame < endStart ? (
           <>

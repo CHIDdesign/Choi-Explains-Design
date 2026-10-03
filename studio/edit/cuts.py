@@ -235,7 +235,9 @@ def trim_dead_air(spans: list[Span], vad: list[tuple[float, float]], word_starts
 
 
 def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]:
-    """프레임 격자에 맞춰 영상/음성 길이가 정확히 일치하도록."""
+    """프레임 격자에 맞춰 영상/음성 길이가 정확히 일치하도록. 앞 구간과 1초 안에서 겹치는 시작은 앞 구간 끝으로 밀되,
+    **뒤로 돌아가는 구간(콜드 오픈·대본 순서 재배치)은 그대로 둔다** — 2026-10-03 숏폼: 콜드 오픈 S57 뒤의 S47–S56 이
+    모두 앞 구간 끝 뒤로 밀려 2프레임 미만이 되어 사라졌다(계획 45초 → 결과 11.8초, 편집 검사 drop 이 있을 때만)."""
     out: list[Span] = []
     last_frame = int(media_duration * fps)
     for s in spans:
@@ -243,7 +245,8 @@ def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]
         b = min(int(round(s.end * fps)), last_frame)
         if out:
             prev_b = int(round(out[-1].end * fps))
-            a = max(a, prev_b)
+            if prev_b - int(round(fps)) <= a < prev_b:
+                a = prev_b
         if b - a >= 2:
             out.append(Span(a / fps, b / fps))
     return out

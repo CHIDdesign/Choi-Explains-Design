@@ -405,3 +405,15 @@ def test_evidence_shifts_to_free_slot_after_title_card():
     big = TimedGraphic("g41", "process", "fullscreen", 300.5, 305.0, {}, 9)
     out = {g.id: g for g in resolve_overlaps([ph, big], total=700.0)}
     assert out["g41"].start == 300.5 and out["g40"].start >= 305.0
+
+
+def test_quantize_keeps_reordered_spans_cold_open():
+    """2026-10-03 숏폼: 콜드 오픈(S57, 388초)을 맨 앞에 두면 그 뒤의 S47–S56(340초~)이 '앞 구간 끝 뒤'로 밀려 사라졌다
+    (45초 → 11.8초). 뒤로 돌아가는 구간은 그대로, 1초 안에서 겹치는 이음새만 앞 구간 끝으로."""
+    from studio.edit.cuts import quantize
+    from studio.models import Span
+    keeps = [Span(388.0, 392.0), Span(340.0, 345.0), Span(344.9, 350.0), Span(393.0, 396.0)]
+    out = quantize(keeps, 30.0, 600.0)
+    assert [round(k.start, 2) for k in out] == [388.0, 340.0, 345.0, 393.0]      # 재배치 유지 · 겹침 0.1초만 밀림
+    assert abs(sum(k.dur for k in out) - (4 + 5 + 5 + 3)) < 0.2
+    assert [round(k.start, 2) for k in quantize([Span(10.0, 12.0), Span(11.5, 14.0)], 30.0, 100.0)] == [10.0, 12.0]

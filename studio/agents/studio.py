@@ -455,7 +455,8 @@ class Studio:
     def call(self, key: str, ctx: str, instruction: str, *, images=None, system: Optional[str] = None,
              label: str = "") -> dict[str, Any]:
         a = AGENTS[key]
-        eff = self.effort.get(key) or a.effort
+        # 사고 강도: 파일의 에이전트별 덮어쓰기 → 설정의 전역 값(모든 에이전트 같은 강도) → 에이전트 기본
+        eff = self.effort.get(key) or getattr(self.claude, "effort", "") or a.effort
         model = self.models.get(key) or None
         kw: dict[str, Any] = {}
         if a.tools and self.web:

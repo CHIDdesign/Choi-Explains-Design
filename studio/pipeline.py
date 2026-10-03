@@ -75,7 +75,7 @@ from .render.props import (Episode, apply_edit, brand_props, caption_overlays, d
                            mark_sequences, face_safe_layouts, long_props,
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
                            short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
-                           fold_keywords_into_media, bridge_split_gaps, stack_avoid_spans)
+                           fold_keywords_into_media, bridge_split_gaps, bridge_fullscreen_gaps, stack_avoid_spans)
 from .render.remotion import RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resolve_cues
@@ -1201,7 +1201,8 @@ class Pipeline:
                 from .director.claude_code import scratch_dir
                 self.claude = ClaudeCodeClient(exe, self.settings.claude_model, self.settings.claude_effort,
                                                log=self.log, workdir=scratch_dir(self.work.parent.name, log=self.log))
-                self.log(f"AI 연결: Claude Code(Pro/Max 구독 사용량) · {exe}")
+                self.log(f"AI 연결: Claude Code(Pro/Max 구독 사용량) · {exe} · 모델 {self.settings.claude_model} · "
+                         f"사고 강도 {self.settings.claude_effort}")
             else:
                 self.claude = ClaudeClient(self.settings.anthropic_api_key, self.settings.claude_model,
                                            self.settings.claude_effort, log=self.log)
@@ -3298,6 +3299,9 @@ class Pipeline:
         bridged = bridge_split_gaps(lp["graphics"])
         if bridged:
             self._log_file_only(f"   (판 사이 1초 미만 틈 {bridged}곳을 앞 그래픽으로 메움 — 화자가 줄어든 채 옆이 비지 않게)")
+        bridged_full = bridge_fullscreen_gaps(lp["graphics"])
+        if bridged_full:
+            self._log_file_only(f"   (전면 그래픽 사이 0.5초 이하 틈 {bridged_full}곳을 앞 그래픽으로 메움 — 전환 중 얼굴이 비치지 않게)")
         if punch_spans:
             self.log("⚡ 펀치 구간(하드 펀치인·단어 슬램·휩·임팩트 허용): "
                      + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in punch_spans))
