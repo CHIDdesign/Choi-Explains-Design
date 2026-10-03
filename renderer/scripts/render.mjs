@@ -20,8 +20,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
 import {bundle} from '@remotion/bundler';
-import {openBrowser, renderMedia, renderStill, selectComposition} from '@remotion/renderer';
+
+// 렌더러는 CommonJS 판으로 불러온다 — 아래 localMedia() 가 같은 모듈 객체를 고쳐야 하므로(ESM 판은 고칠 수 없다)
+const require = createRequire(import.meta.url);
+const {openBrowser, renderMedia, renderStill, selectComposition} = require('@remotion/renderer');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
@@ -94,6 +98,57 @@ const syncDir = (src, dst) => {
   return n;
 };
 
+// 💾 번들 public 안의 영상(편집본 프록시·스톡)은 임시 폴더로 복사하지 않고 그 자리에서 읽게 한다.
+// Remotion 4.0.530 의 OffthreadVideo 는 http 로 받은 모든 영상을 os.tmpdir() 아래로 통째로 내려받은 뒤 프레임을 뽑는다
+// (download-and-map-assets-to-file.js downloadAsset) — 렌더마다, 검수 스틸은 장마다 수 GB 프록시를 복사해
+// 2026-10-04 실제 작업이 `ENOSPC: no space left on device` 로 멈췄다. 같은 PC 의 번들 서버가 내주는 /public/ 파일이면
+// 디스크의 그 파일 경로를 그대로 돌려준다(오프스레드 서버는 호출할 때마다 모듈 객체의 downloadAsset 을 읽는다).
+// 고칠 수 없으면(구조가 바뀐 버전) 예전대로 복사한다.
+const localMedia = (pubDir) => {
+  try {
+    const dist = path.dirname(require.resolve('@remotion/renderer'));
+    const mod = require(path.join(dist, 'assets', 'download-and-map-assets-to-file.js'));
+    if (typeof mod.downloadAsset !== 'function') throw new Error('downloadAsset 없음');
+    const orig = mod.__choiOriginal || mod.downloadAsset;
+    const root = path.resolve(pubDir);
+    const seen = new Set();
+    mod.__choiOriginal = orig;
+    mod.downloadAsset = async (opts) => {
+      const local = publicFile(opts && opts.src, root);
+      if (local) {
+        if (!seen.has(local)) {
+          seen.add(local);
+          emit({type: 'log', message: `local media ${path.basename(local)} (no temp copy)`});
+        }
+        return local;
+      }
+      return orig(opts);
+    };
+    return true;
+  } catch (e) {
+    emit({type: 'log', message: `local media patch unavailable — temp copies as before (${e && e.message})`});
+    return false;
+  }
+};
+
+// http://localhost:<포트>/public/<경로> → 번들 public 안의 실제 파일(없거나 public 밖이면 null)
+const publicFile = (src, root) => {
+  if (typeof src !== 'string' || !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/public\//i.test(src)) return null;
+  let rel;
+  try {
+    rel = decodeURIComponent(new URL(src).pathname.slice('/public/'.length));
+  } catch (e) {
+    return null;
+  }
+  const p = path.resolve(root, rel);
+  if (!p.toLowerCase().startsWith(root.toLowerCase() + path.sep)) return null;
+  try {
+    return fs.statSync(p).isFile() ? p : null;
+  } catch (e) {
+    return null;
+  }
+};
+
 const main = async () => {
   const jobPath = process.argv[2];
   if (!jobPath) throw new Error('usage: node scripts/render.mjs <job.json>');
@@ -132,6 +187,7 @@ const main = async () => {
     const how = linkOrCopy(l.src, path.join(pub, l.dst));
     emit({type: 'log', message: `media ${l.dst} (${how})`});
   }
+  localMedia(pub);
 
   const chromiumOptions = {gl: job.gl || (process.platform === 'win32' ? 'angle' : 'swangle')};
   const browserExecutable = job.browserExecutable || null;

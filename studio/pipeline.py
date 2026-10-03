@@ -31,7 +31,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 from rapidfuzz import fuzz
 
-from . import diag, gate
+from . import diag, gate, storage
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
 from .broll.entities import find_entities
@@ -408,6 +408,8 @@ class Pipeline:
                 keys = {k for lane in step for k in lane}
                 if "probe" in keys:
                     self._eta_plan(schedule)
+                    if until != "plan":
+                        self._ensure_space("start")
                 elif "proxy" in keys:
                     self._make_edit()
                     self._gate_cut()
@@ -442,12 +444,13 @@ class Pipeline:
         t_stage = time.time()
         self._stage(key, 0.0)
         try:
-            fn()
+            self._call_stage(key, fn)
         except Cancelled:
             raise
         except Exception as e:
-            if key not in SOFT_STAGES or self.cancel.cancelled or isinstance(e, gate.GateBlocked):
-                raise           # 품질 게이트가 멈추라고 한 것은 말단 단계라도 삼키지 않는다
+            if key not in SOFT_STAGES or self.cancel.cancelled or isinstance(e, (gate.GateBlocked,
+                                                                                    storage.DiskSpaceError)):
+                raise           # 품질 게이트·저장 공간 부족은 말단 단계라도 삼키지 않는다(뒤 단계도 같은 이유로 멈춘다)
             self._log_file_only(traceback.format_exc())
             self.log(f"⚠️ {STAGE_LABEL[key]} 실패 — 이 단계만 건너뛰고 계속합니다: {e}")
             self.soft_failures.append({"stage": key, "label": STAGE_LABEL[key], "error": str(e)[:300]})
@@ -461,6 +464,78 @@ class Pipeline:
         self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
         if key == "grade":
             self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
+
+    # ------------------------------------------------------------------
+    # 💾 저장 공간(studio/storage.py) — 2026-10-04: 디스크가 가득 차 검수·렌더가 ENOSPC 로 멈췄다
+    def _space_need(self, stage: str) -> int:
+        """이 작업이 앞으로 쓸 공간 어림. start = 편집본 + 렌더 + 여유, proxy = 아직 없는 편집본 + 렌더 + 여유,
+        render = 렌더 결과 + 여유."""
+        infos = list(self.infos.values()) or ([self.info] if self.info else [])
+        minutes = sum(float(getattr(i, "duration", 0.0) or 0.0) for i in infos) / 60.0 or 10.0
+        cams = max(1, len(self.smap.cams) if self.smap.groups else len(infos))
+        height = int(self.spec.out_height or 1080)
+        if stage == "render":
+            return storage.need_bytes(minutes, height=height, cameras=cams, have_proxies=1 << 50)
+        have = 0
+        for p in self.media.glob("proxy*.mp4"):
+            try:
+                have += p.stat().st_size
+            except OSError:
+                pass
+        return storage.need_bytes(minutes, height=height, cameras=cams, have_proxies=have)
+
+    def _ensure_space(self, stage: str) -> None:
+        """남은 공간이 이 작업에 모자라면 지난 렌더의 임시 파일·예전 작업의 다시 만들 수 있는 파일을 정리하고, 그래도
+        모자라면 지금 멈춘다(40분 작업 끝에 렌더에서 멈추지 않게)."""
+        storage.sweep_temp(log=self.log)
+        need = self._space_need(stage)
+        free = storage.free_bytes(self.dir)
+        if stage == "start":
+            self.log(f"💾 저장 공간: {storage.drive_label(self.dir)} 여유 {storage.fmt_gb(free)} · "
+                     f"이 작업에 약 {storage.fmt_gb(need)} 필요(편집본·렌더·여유 포함)")
+            if "onedrive" in str(self.dir).lower() and not getattr(self, "_onedrive_warned", False):
+                self._onedrive_warned = True
+                self.log("⚠️ 작업 폴더가 OneDrive 안에 있습니다 — 수 GB 의 편집본·렌더 파일이 OneDrive 로도 올라갑니다. "
+                         "프로그램 폴더를 C:\\ChoiStudio 처럼 OneDrive 밖으로 옮기거나 고급 설정 › 경로에서 작업 폴더를 "
+                         "바꾸길 권합니다")
+        if free >= need:
+            return
+        self.log(f"💾 {storage.drive_label(self.dir)} 여유 {storage.fmt_gb(free)} < 필요 {storage.fmt_gb(need)} — "
+                 "다시 만들 수 있는 파일을 정리합니다")
+        storage.reclaim(self.dir.parent, [self.dir], need, at=self.dir, log=self.log)
+        free = storage.free_bytes(self.dir)
+        if free < need:
+            raise storage.DiskSpaceError(storage.shortage_message(self.dir, free, need, self.dir.parent, [self.dir]))
+        self.log(f"💾 정리 뒤 여유 {storage.fmt_gb(free)} — 계속합니다")
+
+    def _call_stage(self, key: str, fn: Callable[[], None]) -> None:
+        """단계 실행. 디스크가 가득 차서 실패했으면(ENOSPC 등) 정리한 뒤 한 번만 다시 한다 — 그래도 모자라면 무엇을 비우면
+        되는지 알려 주는 DiskSpaceError."""
+        try:
+            fn()
+            return
+        except Cancelled:
+            raise
+        except Exception as e:
+            if self.cancel.cancelled or isinstance(e, storage.DiskSpaceError) or not storage.is_disk_full(e):
+                raise
+            first = e
+        label = STAGE_LABEL.get(key, key)
+        need = self._space_need("render" if key in ("qa", "render", "master", "export") else "proxy")
+        self.log(f"💾 {label}: 디스크가 가득 찼습니다({storage.drive_label(self.dir)} 여유 "
+                 f"{storage.fmt_gb(storage.free_bytes(self.dir))}) — 정리하고 한 번 다시 합니다")
+        storage.reclaim(self.dir.parent, [self.dir], need, at=self.dir, log=self.log)
+        free = storage.free_bytes(self.dir)
+        if free < need:
+            raise storage.DiskSpaceError(storage.shortage_message(self.dir, free, need, self.dir.parent,
+                                                                  [self.dir])) from first
+        try:
+            fn()
+        except Exception as e2:
+            if not isinstance(e2, Cancelled) and storage.is_disk_full(e2):
+                raise storage.DiskSpaceError(storage.shortage_message(self.dir, storage.free_bytes(self.dir), need,
+                                                                      self.dir.parent, [self.dir])) from e2
+            raise
 
     def _run_step(self, step: list[list[str]], fns: dict[str, Callable[[], None]]) -> None:
         """한 칸: 줄이 하나면 그대로, 여럿이면 줄마다 스레드 하나(FFmpeg·Whisper·AI 호출은 GIL 밖에서 돈다).
@@ -1619,6 +1694,7 @@ class Pipeline:
     def _encode_proxies(self) -> None:
         """카메라마다 편집용 프록시(CFR · 색보정 LUT · 디노이즈/샤픈). 0초 = 그 카메라의 첫 영상 프레임."""
         assert self.info
+        self._ensure_space("proxy")
         height = proxy_height_for(self.info, self.spec.out_height)
         cams = self.smap.cams
         meta = read_json(self.media / "proxy.json", {})
@@ -2899,6 +2975,7 @@ class Pipeline:
         if studio is None:
             self.log("🧐 아트 디렉터 검수 건너뜀(Claude Code 또는 API 키 필요)")
             return
+        self._ensure_space("render")
         gkey = lambda: text_hash([{k: v for k, v in g.items() if k != "reason"} for g in self.plan_long["graphics"]],
                                  "qa-v2")
         if self.plan_long.get("qa", {}).get("key") == gkey():
@@ -3520,6 +3597,7 @@ class Pipeline:
 
     def stage_render(self) -> None:
         assert self.info
+        self._ensure_space("render")
         links = self._prepare_render()
         items: list[RenderItem] = []
         rs = self.settings.render

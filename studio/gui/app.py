@@ -28,6 +28,7 @@ from .. import __version__
 from ..director.claude_code import auth_status, describe_auth, find_claude, open_login, resolve_backend
 from ..eta import Eta, EtaDisplay, fmt_left
 from ..gate import GateBlocked
+from ..storage import DiskSpaceError
 from ..paths import USER_DIR, ensure_user_dirs
 from ..pipeline import EXTRAS, STAGES, JobSpec, Pipeline, new_job_dir
 from ..settings import Settings
@@ -72,6 +73,8 @@ class Worker(QObject):
             self.failed.emit(f"{e}\n\n이유와 표: {self.job_dir / 'output' / '품질게이트_중단.md'}\n"
                              f"원본·대본을 확인한 뒤에도 이대로 만들려면 명령 창에서:\n"
                              f"python -m studio rerender \"{self.job_dir}\" --force-render")
+        except DiskSpaceError as e:   # 💾 저장 공간 — 무엇을 비우면 되는지가 메시지에 있다(코드 오류가 아니다)
+            self.failed.emit(str(e))
         except Exception as e:  # noqa: BLE001 - 모든 오류를 창에 표시
             self.failed.emit(f"{e}\n\n{traceback.format_exc()[-2500:]}")
 

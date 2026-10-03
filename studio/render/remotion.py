@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -16,6 +18,15 @@ from ..util import CancelToken, LogFn, ProgressFn, noop_log, noop_progress, run_
 
 class RenderError(RuntimeError):
     pass
+
+
+def render_temp_dir() -> Path:
+    """렌더 프로세스 하나만 쓰는 임시 폴더(TEMP 아래 choi_render/<pid>_<ms>) — Remotion·Chrome 이 os.tmpdir() 에 만드는
+    것(브라우저 프로필·자산 내려받기)이 모두 여기로 오고, 렌더가 끝나면(실패·취소여도) 통째로 지운다. 예전엔 실패·취소한 렌더마다
+    수 GB 프록시 복사본이 임시 폴더에 남아 쌓였다(2026-10-04 ENOSPC). ASCII 경로라 Chrome 프로필 경로에 한글이 안 들어간다."""
+    d = Path(tempfile.gettempdir()) / "choi_render" / f"{os.getpid()}_{int(time.time() * 1000)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def find_node(custom: str = "") -> str:
@@ -138,8 +149,13 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
             except Exception:  # noqa: BLE001 - 미리보기 실패가 렌더를 멈추면 안 됨
                 pass
 
-    code, tail = run_process([node, str(RENDERER_DIR / "scripts" / "render.mjs"), str(job_file)], cwd=RENDERER_DIR,
-                             on_line=on_line, cancel=cancel)
+    tmp = render_temp_dir()
+    env = {**os.environ, "TEMP": str(tmp), "TMP": str(tmp), "TMPDIR": str(tmp)}
+    try:
+        code, tail = run_process([node, str(RENDERER_DIR / "scripts" / "render.mjs"), str(job_file)], cwd=RENDERER_DIR,
+                                 env=env, on_line=on_line, cancel=cancel)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     if code != 0:
         raise RenderError("Remotion 렌더 실패\n" + (state["err"] or tail)[-3000:])
     progress(1.0)
