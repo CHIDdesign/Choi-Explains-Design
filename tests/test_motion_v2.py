@@ -153,3 +153,25 @@ def test_l28_caption_zone_text_is_an_error_only_on_the_fullscreen_stage():
     assert "L28_caption_zone" in full
     split = [i.rule for i in lint.lint(c, 4.0, box=lint.BOXES["split"])]
     assert "L28_caption_zone" not in split
+
+
+def test_lint_scene_cleans_raw_designer_spec_first():
+    """2026-10-03 실제 작업: 계획에 저장된 원본 spec 의 dots 요소에 gap·r 이 없어 `lint` 가 KeyError 로 멈췄다 —
+    `lint_scene` 은 렌더러가 받을 모양(clean_spec)으로 만든 뒤 린트하고, 원본은 건드리지 않는다."""
+    import copy
+
+    import pytest
+    from studio.motion import lint as mlint
+    raw = {"elements": [
+        {"type": "text", "text": "첫 아이디어", "x": 50, "y": 20, "size": 6, "at": 0.0},
+        {"type": "dots", "x": 50, "y": 60, "count": 12, "cols": 6, "at": 0.8},        # gap·r 생략(선택 값)
+        {"type": "rect", "x": 50, "y": 85, "at": 1.5},                                   # w·h 생략
+    ]}
+    before = copy.deepcopy(raw)
+    with pytest.raises(KeyError):
+        mlint.lint(raw, 8.0, [], box=mlint.box_for("fullscreen"))
+    issues = mlint.lint_scene(raw, 8.0, [], box=mlint.box_for("fullscreen"))
+    assert issues and all(isinstance(i, mlint.Issue) for i in issues)
+    assert raw == before                                        # 원본 spec 은 그대로(렌더 직전 time_graphics 가 다시 정리)
+    assert [i.rule for i in mlint.lint_scene({"elements": []}, 8.0, [])] == ["L00_empty"]
+    assert [i.rule for i in mlint.lint_scene("not a spec", 8.0, [])] == ["L00_empty"]

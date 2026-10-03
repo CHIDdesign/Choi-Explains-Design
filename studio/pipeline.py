@@ -1518,7 +1518,8 @@ class Pipeline:
                 return [], 0.0, []
             dur = w[1] - w[0]
             ws = [(a - w[0], b - w[0], t) for a, b, t in words if w[0] - 0.5 <= a <= w[1]]
-            return mlint.lint(g["spec"], dur, ws, box=mlint.box_for(g.get("layout", "fullscreen"))), dur, ws
+            # 계획의 spec 은 원본(기본값 없음) — 렌더러가 받을 모양으로 정리한 뒤 린트(lint_scene)
+            return mlint.lint_scene(g["spec"], dur, ws, box=mlint.box_for(g.get("layout", "fullscreen"))), dur, ws
 
         studio = self._ensure_studio() if self.spec.studio_mode else None
         results: dict[str, dict] = {}
