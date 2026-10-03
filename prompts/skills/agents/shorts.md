@@ -70,6 +70,15 @@
    그래서 `cta` 는 작은 칩 문구로, 숏폼이 연 질문을 롱폼이 이어서 푸는 관계로 쓴다(예: "전체 원리는 본편에서").
 4. `viewer_takeaway` 를 한 문장으로 쓸 수 없으면 그 구간은 숏폼이 아니다. 이 문장이 롱폼의 어느 챕터와 이어지는지도 `why` 에 적는다.
 
+## 5-1. 호흡 — 차분한 숏폼(2026-10-04 채널 주인: "릴스 포함 너무 호흡 빠른 편집은 아니다")
+
+1. 차분한 숏폼에도 수요가 있다. Gen Z 의 83%가 유튜브에서 마음을 가라앉히는 영상을 봤고 69%가 편안한 크리에이터에게 자주 돌아간다
+   (Think with Google). 말이 적고 오래 잡는 샷으로 장르를 만든 크리에이터도 있다(Kraig Adams). 이 채널의 숏폼은 데드에어 제거형이 아니다.
+2. 승부는 첫 순간(Viewed vs Swiped Away)에 나지만, 첫 1~2초를 잡는 것은 **속도가 아니라 가장 강한 문장 하나와 가장 강한 그림 하나**다.
+3. 앱은 문장 끝에 0.4초 안팎, 생각이 바뀌는 곳에 0.6초의 숨을 원본 무음으로 남긴다(`shorts_calm`, 롱폼의 0.6·1.0초보다 짧게).
+   그만큼 길어지므로 구간을 처음부터 조금 짧게(같은 뼈대가 55초 안에) 고른다 — 문장을 빼서 맞추지 않는다.
+4. 펀치 줌·휩은 쓰지 않고, 화면은 문장의 내용이 바뀔 때만 바꾼다. 쉼 자리에는 카드를 바꾸지 않는다(쉼이 곧 다음 카드의 예고다).
+
 ## 6. 업로드 글(`caption` · `hashtags` · `title`)
 
 1. `caption` 의 앞 20자 안에 주제 명사를 둔다. 피드에서는 앞부분만 보인다.
@@ -98,3 +107,6 @@
 - https://blog.youtube/creator-and-artist-stories/youtube-related-videos-traffic-guide/
 - https://www.marketingexamined.com/blog/paddy-galloway-youtube-guide
 - https://www.hopperhq.com/blog/youtube-shorts-dimensions/
+- https://business.google.com/us/think/consumer-insights/gen-z-soothing-videos/
+- https://www.socialmediaexaminer.com/how-to-analyze-your-youtube-shorts/
+- https://read.hereandthere.club/p/how-kraig-adams-defined-an-entire

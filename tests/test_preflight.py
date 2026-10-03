@@ -124,9 +124,12 @@ def test_run_render_rewrites_props_before_remotion_sees_them(tmp_path, monkeypat
     assert not seen
 
 
-def test_device_screen_pixabay_image_is_downloaded(tmp_path):
-    """스톡 단계는 image 뿐 아니라 device 화면의 'pixabay:' 도 파일로 바꾼다(화면이라 색을 지키는 graded 톤)."""
-    res = StockResearcher(StockHub([_FlakyProvider()]), ff=None, work=tmp_path / "work", public=tmp_path / "public")
+def test_device_screen_pixabay_image_is_downloaded(tmp_path, monkeypatch):
+    """스톡 단계는 image 뿐 아니라 device 화면의 'pixabay:' 도 파일로 바꾼다(화면이라 색을 지키는 graded 톤).
+    후보는 비전으로 고른다(2026-10-04 — 검색 1위를 그냥 쓰지 않는다)."""
+    monkeypatch.setattr(StockResearcher, "_thumb", lambda self, c: None)
+    res = StockResearcher(StockHub([_FlakyProvider()]), ff=None, work=tmp_path / "work", public=tmp_path / "public",
+                          pick=lambda text, sheets: [{"request": 1, "candidate": 1, "reason": "포트폴리오 화면"}])
     spec = {"elements": [dict(DEVICE), {"type": "text", "text": "포트폴리오"}]}
     lists = [[{"template": "motion", "spec": spec}]]
     assert stock_refs(spec) and res.resolve_images(lists) == 1

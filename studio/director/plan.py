@@ -435,6 +435,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
         "highlights": [],                        # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 발화들
         "holds": [],                             # 🙂 얼굴 홀드(그래픽·보드·콜아웃·효과음 없이 얼굴만 — 고백·결론·질문 뒤)
+        "pauses": [],                            # 🫁 발화 뒤 쉼(초) — 호흡 설계(studio/edit/breath.py)가 원본 무음으로 채운다
         "sequences": [],                         # 시퀀스(한 주장을 받치는 연속 화면 묶음) — docs/upgrade/05 2·6장
         "rhythm": [],                            # 리듬 수준(slow · steady · fast) 발화 구간
         "peak_seg": raw.get("peak_seg", -1) if raw.get("peak_seg", -1) in kept else -1,
@@ -498,6 +499,17 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             a, b = b, a
         if not any(x["start_seg"] <= b and a <= x["end_seg"] for x in plan["holds"]):
             plan["holds"].append({"start_seg": a, "end_seg": b, "reason": str(h.get("reason", "") or "")[:60]})
+    from ..edit.breath import EXPLICIT_RANGE
+    for p in (raw.get("pauses", []) or [])[:16]:
+        if not isinstance(p, dict) or p.get("after_seg") not in kept:
+            continue
+        try:
+            sec = min(max(float(p.get("sec", 0.8)), EXPLICIT_RANGE[0]), EXPLICIT_RANGE[1])
+        except (TypeError, ValueError):
+            continue
+        if not any(x["after_seg"] == p["after_seg"] for x in plan["pauses"]):
+            plan["pauses"].append({"after_seg": p["after_seg"], "sec": round(sec, 2),
+                                   "reason": str(p.get("reason", "") or "")[:60]})
     for q in (raw.get("sequences", []) or [])[:24]:
         if not isinstance(q, dict) or q.get("type") not in SEQ_TYPES or not str(q.get("id") or "").strip():
             continue

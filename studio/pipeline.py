@@ -181,6 +181,7 @@ class JobSpec:
     highlight_max_sec: int = 20
     out_height: int = 1080
     pace: str = "calm"
+    shorts_pace: str = "shorts_calm"    # 숏폼 컷 템포 — shorts_calm(짧은 숨은 남김) | shorts(예전: 데드에어 제거)
     use_claude: bool = True
     fetch_broll: bool = True
     grain: bool = False                 # 필름 그레인(리서치: 교육 채널은 끔)
@@ -1322,7 +1323,14 @@ class Pipeline:
                              user_direction=self.spec.direction, use_stock=self._stock_enabled(),
                              use_motion=self.spec.motion_scenes)
         self.studio.web = bool(getattr(self.settings, "research_web", True))
+        self.studio.world_fn = self._world_block
         return self.studio
+
+    def _world_block(self) -> str:
+        """🌍 이 영상의 세계 — 계획의 총괄 감독 treatment.world, 없으면 주제 설명(자료 고르기·그림 부품·검수가 받는다)."""
+        from .agents.studio import world_block
+        tr = ((getattr(self, "plan_long", None) or {}).get("studio") or {}).get("treatment")
+        return world_block(tr if isinstance(tr, dict) else None, self.spec.topic or self.spec.notes or "")
 
     def _resolve_scene_images(self, graphics: list[dict]) -> None:
         """스톡 단계 뒤에 고친 모션 장면(검수 revise_scene)이 새로 넣은 'pixabay:' 그림(이미지·기기 화면)을 파일로 바꾼다 —
@@ -1333,9 +1341,11 @@ class Pipeline:
         if self._stock_enabled():
             try:
                 hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
-                res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, log=self.log,
-                                      cancel=self.cancel)
-                res.resolve_images([motion])
+                studio = self._ensure_studio()
+                pick = (lambda text, sheets: studio.pick_stock(self.ctx, text, sheets)) if studio else None
+                res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, pick=pick,
+                                      log=self.log, cancel=self.cancel)
+                res.resolve_images([motion], context=lambda g: self._seg_text(g.get("start_seg")))
                 self.broll_log += res.credits
             except Cancelled:
                 raise
@@ -2386,6 +2396,11 @@ class Pipeline:
         multipass = len(self.align_report.get("passes") or []) > 1
         if multipass:
             keeps = self._order_by_script(keeps)
+        keeps, rep = self._breathe(keeps, self.spec.pace, drops)
+        self.breath_long = rep
+        if rep.joins:
+            self.align_report["breath"] = rep.to_dict()
+            self.log("🫁 호흡(이어 붙인 곳의 쉼): " + rep.summary())
         self.timemap = TimeMap(keeps, preserve_order=multipass)
         write_json(self.work / "keeps_long.json", self.timemap.to_list())
         starts = sorted(u.start for u in self.utts if u.kept)
@@ -2396,12 +2411,17 @@ class Pipeline:
             self._make_highlight_cuts(drops, starts)
         self.short_maps: list[TimeMap] = []
         self.short_pieces = []
+        space = self._shorts_pace()
         for i, s in enumerate(self.plan_shorts, 1):
-            keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES["shorts"], vad=self.vad,
+            keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES[space], vad=self.vad,
                                        media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
             if drops:   # 롱폼처럼 다시 프레임 격자에 맞춘다(안 맞추면 클립마다 반 프레임까지 어긋남)
                 keeps = quantize(subtract(keeps, drops), self.fps, self.info.duration)
-            keeps = self._limit_short(self.smap.clamp_keeps(keeps, self.fps))
+            keeps = self.smap.clamp_keeps(keeps, self.fps)
+            # 숏폼도 숨은 남긴다(채널 주인 2026-10-04: 릴스 포함 호흡 빠른 편집은 아니다) — 길이 상한 안에서만
+            room = float(self.spec.short_max_sec) + 3.0 - sum(k.dur for k in keeps)
+            keeps, _ = self._breathe(keeps, space, drops, budget=max(0.0, room), explicit=False)
+            keeps = self._limit_short(keeps)
             tm = TimeMap(keeps, preserve_order=True)
             s["duration"] = tm.duration
             self.short_maps.append(tm)
@@ -2415,6 +2435,55 @@ class Pipeline:
             write_json(self.work / "angles.json", {
                 "long": [vars(p) for p in self.long_pieces],
                 "shorts": [[vars(p) for p in ps] for ps in self.short_pieces]})
+
+    def _shorts_pace(self) -> str:
+        """숏폼 컷 템포: 기본 shorts_calm(짧은 숨은 남김) — JobSpec.shorts_pace 로 예전 'shorts'(데드에어 제거)를 고를 수 있다."""
+        return self.spec.shorts_pace if self.spec.shorts_pace in PACES else "shorts_calm"
+
+    def _breathe(self, keeps: list[Span], pace: str, drops: list[Span], *, budget: Optional[float] = None,
+                 explicit: bool = True) -> tuple[list[Span], Any]:
+        """🫁 호흡 설계(studio/edit/breath.py): 재생 순서의 keep 사이마다 경계(문장 안 · 문장 · 문단 · 여운)에 맞는 쉼을
+        원본의 실제 무음으로 채운다 — 이어 붙인 곳의 쉼이 경계와 상관없이 0.34초로 같던 것(2026-10-04 '훅훅 넘어간다').
+        explicit: 편집 감독의 pauses(발화 뒤 쉼 지정)와 정점·답(peak_seg · payoff_seg) 뒤 여운을 쓴다(롱폼만)."""
+        from .edit.breath import BREATHS, BreathReport, breathe, join_kinds
+        from .edit.cuts import quantize
+        br = BREATHS.get(pace)
+        if br is None or len(keeps) < 2 or not self.info:
+            return keeps, BreathReport()
+        parsed = parse_script(self.spec.script) if self.spec.script else None
+        clean = parsed.clean if parsed and parsed.has_text else ""
+        sents = [(a, b) for a, b, _ in parsed.sentences] if clean else []
+        plan = getattr(self, "plan_long", None) or {}
+        pauses: dict[int, float] = {}
+        beats: list[int] = []
+        if explicit:
+            for p in plan.get("pauses") or []:
+                try:
+                    pauses[int(p["after_seg"])] = float(p["sec"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+            beats = [int(x) for x in (plan.get("peak_seg", -1), plan.get("payoff_seg", -1)) if isinstance(x, int) and x >= 0]
+        kind_of = join_kinds(keeps, self.utts, clean=clean, sentence_spans=sents, explicit_after=pauses, beat_after=beats)
+        speech = [(float(a), float(b)) for a, b in (self.vad or [])]
+        speech += [(w.start, w.end) for u in self.utts for w in u.words]
+        try:
+            speech += [(w.start, w.end) for w in self._raw_words()]      # 단어 정리로 지운 말도 말소리다
+        except Exception:  # noqa: BLE001 - 전사 파일이 없으면 남은 단어만
+            pass
+        blocked = [(x.start, x.end) for x in self._removed_spans()] + [(d.start, d.end) for d in drops]
+        bounds = [(0.0, self.info.duration)] if self.smap.single else [(g.start, g.end) for g in self.smap.groups]
+        out, rep = breathe(keeps, speech=speech, blocked=blocked, kind_of=kind_of, breath=br,
+                           media_duration=self.info.duration, bounds=bounds, budget=budget)
+        return quantize(out, self.fps, self.info.duration), rep
+
+    def _verify_silence(self) -> float:
+        """편집 검사의 '긴 무음' 기준 — 호흡 설계가 일부러 둔 쉼(문단 · 편집 감독 지정)을 다시 자르지 않게."""
+        from .edit.breath import BREATHS, EXPLICIT_RANGE
+        br = BREATHS.get(self.spec.pace)
+        longest = max([br.paragraph, br.beat] if br else [0.0])
+        if (getattr(self, "plan_long", None) or {}).get("pauses"):
+            longest = max(longest, EXPLICIT_RANGE[1])
+        return max(self._pace().max_silence, longest + 0.15)
 
     def _make_highlight_cuts(self, drops: list[Span], starts: list[float]) -> None:
         """🎬 오프닝 하이라이트: 편집 감독이 고른 임팩트 문장 2~4개(각 ≤7초, 합쳐 ≤highlight_max_sec)를 본편 앞에 붙일
@@ -2481,7 +2550,7 @@ class Pipeline:
                              cancel=self.cancel)
             words = [Word.from_dict(w) for w in res.get("words", [])]
             vad = speech_regions(load_audio_16k(wav))
-            issues = find_issues(words, vad, max_silence=self._pace().max_silence, duration=self.timemap.duration)
+            issues = find_issues(words, vad, max_silence=self._verify_silence(), duration=self.timemap.duration)
             rounds.append({"round": rnd, "words": len(words), "issues": [i.to_dict() for i in issues]})
             if not issues:
                 self.log(f"🔎 편집 검사 {rnd}차: 남은 되풀이·추임새·긴 무음 없음")
@@ -2656,7 +2725,8 @@ class Pipeline:
                     openverse=self._openverse_named if online else None, capture=capture,
                     pick=(lambda text, sheets: studio.pick_evidence(self.ctx, text, sheets)) if studio else None,
                     pick_portraits=self._pick_portraits,
-                    stock=self._stock_batch if self._stock_enabled() else None, allow_quote=allow_quote)
+                    stock=self._stock_batch if self._stock_enabled() else None, allow_quote=allow_quote,
+                    context=self._seg_text)
 
     def _stock_batch(self, reqs: list[dict[str, Any]]) -> list[Optional[dict[str, Any]]]:
         """스톡 요청 묶음 → StockResearcher(검색 → 비전 선택 → 받기·정리, work/stock.json 캐시) → 요청마다 {src, kind, credit, url}."""
@@ -2860,7 +2930,7 @@ class Pipeline:
                               cancel=self.cancel)
         if n:
             res.run(lists, progress=self._sp("stock"))
-        res.resolve_images(lists)
+        res.resolve_images(lists, context=lambda g: self._seg_text(g.get("start_seg")))
         strip_stock_images(lists)        # 받는 중 실패·취소된 것까지 — 해석되지 않은 참조를 렌더로 넘기지 않는다
         self.stock_stats = res.stats
         self.broll_log += res.credits + res.fallbacks
@@ -4246,6 +4316,9 @@ class Pipeline:
             by_id = {u.id: u for u in self.utts}
             lines.append(f"- 오프닝 하이라이트 {self.hl_duration:.1f}초: "
                          + " / ".join(f"「{by_id[i].text[:30]}」" for i in self.hl_segs if i in by_id) + " → 처음부터")
+        br = getattr(self, "breath_long", None)
+        if br is not None and br.joins:
+            lines.append("- 🫁 호흡(이어 붙인 곳마다 경계에 맞는 쉼): " + br.summary())
         if self.look_plan:
             lines.append("- 화면 구성(자동 · 하이브리드): " + self.look_plan.summary())
         au = read_json(self.work / "audio.json", {})

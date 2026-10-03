@@ -5,6 +5,10 @@
 - 제공처별 후보를 번갈아 섞는다. 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
   그 B-roll 은 쓰지 않는다(틀린 B-roll 보다 없는 게 낫다).
 - 모션 장면 안의 'pixabay:<vector|illustration|photo>:<검색어>' 이미지(image·device 부품)는 resolve_images 가 broll/img_* 로 바꾼다.
+- 첫 후보를 그냥 쓰지 않는다(2026-10-04: 모션 장면 그림이 검색 1위를 그대로 받아 'product prototype foam mockup' → 해변 파도 거품,
+  'product 3d render studio' → 거실 인테리어). 비전 선택이 없거나 실패하면 `rule_choice` — 제공처 태그에 검색어의 핵심 명사가
+  들어 있는 후보만, AI 생성·애니·로파이·만화 태그는 빼고(Pixabay 는 태그를 낱말마다 따로 맞춘다).
+- 요청에 리서처의 다른 각도 검색어(`alt_queries`)·금지(`avoid`)·이 영상의 세계(선택 함수가 머리에 붙임)가 있으면 후보 시트와 함께 준다.
 - 결과는 work/stock.json 에 캐시 → 재실행 때 검색·선택·다운로드를 반복하지 않는다.
   단, 캐시에 남기는 '없음'은 에이전트가 직접 뺀 것뿐이다. 검색 0건·네트워크·다운로드 실패는 다음 실행에 다시 시도한다
   (예전에는 한 번 실패하면 영원히 '없음'으로 남았다).
@@ -12,6 +16,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -60,6 +65,74 @@ def strip_stock_images(graphic_lists: list[list[dict[str, Any]]]) -> int:
 
 def request_key(st: dict[str, Any]) -> str:
     return text_hash(st.get("kind", ""), st.get("query_en", ""), st.get("query_ko", ""), "stock-v1")
+
+
+# 그림 고르기에서 뜻이 없는 낱말(화각·꾸밈) — 핵심 명사로 세지 않는다
+GENERIC = {"close", "closeup", "up", "shot", "view", "top", "overhead", "wide", "background", "isolated", "copy",
+           "space", "slow", "motion", "aerial", "pov", "macro", "photo", "image", "stock", "footage", "video", "white",
+           "black", "minimal", "simple", "modern", "beautiful", "cinematic", "detail", "hand", "hands", "people", "person"}
+# 이 채널 화면에 쓰지 않는 소재 — 제공처 태그로 미리 거른다(2026-10-03 Pixabay 직접 검색: 'desk lamp night' → lofi 애니,
+# 'design studio students' → AI 생성 학생)
+JUNK_TAGS = re.compile(r"\b(ai[- ]generated|generative ai|anime|lofi|lo-fi|cartoon|chibi|kawaii|clipart|clip art|emoji|"
+                       r"3d character|mascot)\b", re.I)
+
+
+def _stem(w: str) -> str:
+    w = w.lower()
+    for suf in ("ings", "ing", "ers", "er", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            return w[: -len(suf)]
+    return w
+
+
+def query_terms(q: str) -> list[str]:
+    """검색어의 핵심 낱말(어간) — 불용어·뜻 없는 동사·화각어를 뺀다."""
+    from .providers import STOP, VAGUE
+    out = []
+    for w in re.split(r"[^A-Za-z0-9]+", q or ""):
+        lw = w.lower()
+        if len(lw) >= 3 and lw not in STOP and lw not in VAGUE and lw not in GENERIC:
+            st = _stem(lw)
+            if st not in out:
+                out.append(st)
+    return out
+
+
+def junk(c: StockCandidate) -> bool:
+    return bool(JUNK_TAGS.search(c.alt or ""))
+
+
+def rule_choice(st: dict[str, Any], cands: list[StockCandidate]) -> int:
+    """비전 선택을 쓸 수 없을 때(AI 없음·선택 실패): 제공처 태그에 검색어의 핵심 낱말이 가장 많이 든 후보. 핵심 낱말이 둘 이상이면
+    둘 이상, 하나면 하나가 맞아야 한다. 없으면 −1 — 첫 후보를 그냥 쓰지 않는다(틀린 그림보다 없는 게 낫고, 빈 자리는 모션이 짓는다)."""
+    queries = [str(st.get("query_en") or "")] + [str(q) for q in st.get("alt_queries") or [] if q]
+    best, bi = 0, -1
+    for i, c in enumerate(cands):
+        if junk(c):
+            continue
+        tags = {_stem(w) for w in re.split(r"[^A-Za-z0-9]+", c.alt or "") if len(w) >= 3}
+        for q in queries:
+            terms = query_terms(q)
+            if not terms:
+                continue
+            hit = sum(1 for t in terms if t in tags)
+            if hit >= min(2, len(terms)) and hit > best:
+                best, bi = hit, i
+    return bi
+
+
+def request_line(n: int, st: dict[str, Any], cands: list[StockCandidate], *, retried: bool = False) -> str:
+    """후보 시트 하나의 설명 — 낱말이 아니라 문장의 뜻·이 영상의 세계·금지로 고르게."""
+    alts = [q for q in st.get("alt_queries") or [] if q]
+    return (f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')}" + (f" / {st['query_ko']}" if st.get("query_ko") else "")
+            + (f" · 다른 각도: {', '.join(alts[:3])}" if alts else "")
+            + f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}"
+            + (f" · 금지(avoid): {st['avoid']}" if st.get("avoid") else "")
+            + (f" · 화면 전략: {st['angle']}" if st.get("angle") else "")
+            + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
+            + "".join(f"\n  C{j}: {c.alt[:70]}" + (" ⚠ AI·애니·만화 태그" if junk(c) else "")
+                      for j, c in enumerate(cands, 1) if c.alt)
+            + ("\n  (리서처의 새 검색어로 다시 찾은 후보)" if retried else ""))
 
 
 def contact_sheet(thumbs: list[tuple[str, Optional[bytes]]], *, cell: tuple[int, int] = (0, 0),
@@ -112,6 +185,7 @@ class StockResearcher:
         self.credits: list[dict[str, Any]] = []
         self.fallbacks: list[dict[str, Any]] = []        # 못 구한 요청 → 자료 카드(type_card) 또는 잃음(lost)
         self.stats: dict[str, int] = {}
+        self._tried: dict[str, list[str]] = {}           # 요청마다 다시 찾아 본 검색어
 
     # ------------------------------------------------------------------
     def search(self, st: dict[str, Any]) -> list[StockCandidate]:
@@ -126,33 +200,39 @@ class StockResearcher:
             thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
                        self._thumb(c))
                       for j, c in enumerate(cands[k], 1)]
-            sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
-            # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그)
-            lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
-                         f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}"
-                         + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
-                         + "".join(f"\n  C{j}: {c.alt[:70]}" for j, c in enumerate(cands[k], 1) if c.alt)
-                         + ("\n  (리서처의 새 검색어로 다시 찾은 후보)" if retried else ""))
+            sheets.append((f"R{n}", contact_sheet(thumbs, contain=str(st.get("kind", "")).startswith("image")),
+                           "image/jpeg"))
+            # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그) + 금지 + 다른 각도
+            lines.append(request_line(n, st, cands[k], retried=retried))
         choice: dict[str, int] = {}
         retry: dict[str, str] = {}
+        self.stats.setdefault("rejected", 0)
         try:
             picks = self.pick("\n".join(lines), sheets) if self.pick else []
             for p in picks:
                 r, c = int(p.get("request", 0)), int(p.get("candidate", -1))
                 if 1 <= r <= len(live):
-                    choice[live[r - 1]] = c - 1 if c >= 1 else -1
-                    if c < 1:
+                    k = live[r - 1]
+                    choice[k] = c - 1 if 1 <= c <= len(cands[k]) else -1     # 없는 번호는 거절로(첫 후보로 바꾸지 않는다)
+                    if choice[k] < 0:
                         self.stats["rejected"] += 1
-                        retry[live[r - 1]] = str(p.get("retry_query_en") or "").strip()
-                        self.log(f"🎞 R{r}: 맞는 소재 없음 → {'제외' if retried or not retry[live[r - 1]] else '다시 검색'}"
+                        retry[k] = str(p.get("retry_query_en") or "").strip()
+                        self.log(f"🎞 R{r}: 맞는 소재 없음 → {'다음 각도로 다시 검색' if retry[k] and not retried else '모션 몫으로'}"
                                  f" ({p.get('reason', '')})")
-            for k in live:
-                choice.setdefault(k, 0)
+            for k in live:          # 답에 빠진 요청 — 태그로 확인되는 후보만
+                if k not in choice:
+                    choice[k] = rule_choice(reqs[k], cands[k])
         except Cancelled:
             raise
-        except Exception as e:  # noqa: BLE001 - 선택 실패 시 첫 후보
-            self.log(f"🎞 자동 선택 실패 → 첫 후보 사용: {e}")
-            choice = {k: 0 for k in live}
+        except Exception as e:  # noqa: BLE001 - 선택 실패 시 태그로 확인되는 후보만(첫 후보를 그냥 쓰지 않는다)
+            self.log(f"🎞 자동 선택 실패 → 태그에 핵심 낱말이 맞는 후보만 사용: {e}")
+            choice = {k: rule_choice(reqs[k], cands[k]) for k in live}
+        # 리서처가 준 다른 각도 검색어가 남아 있으면 그것이 먼저(선택기가 새 검색어를 주지 않았을 때)
+        for k in live:
+            if choice.get(k, 0) < 0 and not retry.get(k):
+                rest = [q for q in reqs[k].get("alt_queries") or [] if q and q not in self._tried.get(k, [])]
+                if rest:
+                    retry[k] = rest[0]
         return choice, retry
 
     def _thumb(self, c: StockCandidate) -> Optional[bytes]:
@@ -203,7 +283,7 @@ class StockResearcher:
             progress(0.3 * (i + 1) / max(1, len(todo)))
         # 2) 선택(Claude 비전) — 후보가 있는 요청만 시트로
         live = [k for k in todo if cands.get(k)]
-        choice: dict[str, int] = {k: 0 for k in live}
+        choice: dict[str, int] = {k: rule_choice(reqs[k], cands[k]) for k in live}     # 비전 선택이 없을 때
         if live and self.pick:
             choice, retry = self._pick_round(live, reqs, cands)
             # 2b) 거절된 요청은 리서처가 적은 새 검색어로 한 번 더(2026-10-03: 거절한 자리가 그대로 얼굴로 남아 뒤 절반이 맨얼굴)
@@ -213,8 +293,9 @@ class StockResearcher:
                 self.stats["retried"] = len(again)
                 live2 = []
                 for k, q in again.items():
+                    self._tried.setdefault(k, []).append(q)
                     try:
-                        found = self.search({**reqs[k], "query_en": q, "query_ko": ""})
+                        found = self.search({**reqs[k], "query_en": q, "query_ko": "", "alt_queries": []})
                     except Cancelled:
                         raise
                     except Exception as e:  # noqa: BLE001
@@ -240,7 +321,7 @@ class StockResearcher:
                 self.cache[k] = {"none": True, "why": "no_results"}      # 다음 실행에 다시 검색
                 continue
             if idx >= len(cands[k]):
-                idx = 0                                                  # 없는 번호를 골랐으면 첫 후보(영구 제외 아님)
+                idx = -1                                                 # 없는 번호 — 첫 후보로 바꾸지 않는다
             if idx < 0:
                 self.cache[k] = {"none": True, "why": "rejected"}        # 에이전트가 뺀 것만 확정
                 continue
@@ -304,30 +385,82 @@ class StockResearcher:
         self.log(f"🎞 스톡 확보 {len(used)}건")
 
     # ------------------------------------------------------------------
-    def resolve_images(self, graphic_lists: list[list[dict[str, Any]]]) -> int:
-        """모션 장면 안의 'pixabay:<vector|illustration|photo>:<영어 검색어>' 이미지(image·device 부품)를 Pixabay 에서
-        받아 broll/img_….png|jpg 로 바꾼다(키가 없으면 사진은 Openverse). 못 구한 이미지 부품은 장면에서 빼고, 기기는
-        화면 그림만 비운다 — 장면은 남는다."""
-        refs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    def resolve_images(self, graphic_lists: list[list[dict[str, Any]]],
+                       context: Optional[Callable[[dict[str, Any]], str]] = None) -> int:
+        """모션 장면 안의 'pixabay:<vector|illustration|photo>:<영어 검색어>' 이미지(image·device 부품)를 받아 broll/img_… 로 바꾼다.
+        **검색 1위를 그냥 쓰지 않는다**(2026-10-04: 'product prototype foam mockup' → 해변 파도 거품, 'product 3d render studio' →
+        거실 인테리어, 'industrial design sketch product' → 병뚜껑): 그림마다 후보를 모아 B-roll 처럼 비전으로 고르고(그 장면의 말·
+        장면 제목·이 영상의 세계와 함께), 모두 거절이면 선택기가 준 새 검색어로 한 번 더. 비전이 없으면 태그에 핵심 낱말이 맞는 후보만.
+        못 구한 이미지 부품은 장면에서 빼고, 기기는 화면 그림만 비운다 — 장면은 남는다. context(g): 그 장면이 붙은 발화(문맥)."""
+        refs: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
         for gl in graphic_lists:
             for g in gl:
                 spec = g.get("spec") if g.get("template") == "motion" else None
                 if not isinstance(spec, dict):
                     continue
-                refs += [(spec, el) for el in stock_refs(spec)]
+                refs += [(g, spec, el) for el in stock_refs(spec)]
         if not refs:
             return 0
-        got: dict[str, Optional[dict[str, Any]]] = {}
-        n = 0
-        for spec, el in refs:
+        reqs: dict[str, dict[str, Any]] = {}
+        for g, spec, el in refs:
             ref = el["src"]
-            if ref not in got:
-                got[ref] = self._image_for(ref)
-            res = got[ref]
+            if ref in reqs:
+                continue
+            kind, query = self._parse_ref(ref)
+            where = "기기 화면 속 그림" if el.get("type") == "device" else "그림 부품"
+            reqs[ref] = {"kind": f"image:{kind}", "query_en": query, "query_ko": "",
+                         "purpose": f"모션 장면 「{str(g.get('title') or spec.get('title') or '')[:30]}」의 {where}",
+                         "must_show": str(el.get("alt") or el.get("label") or el.get("text") or "")[:60],
+                         "context": (context(g) if context else "")[:160], "avoid": ""}
+        got: dict[str, Optional[dict[str, Any]]] = {}
+        todo: list[str] = []
+        for ref in reqs:
+            res = self.cache.get(self._img_key(ref))
+            if res and not res.get("none") and (self.public / res.get("src", "__")).exists():
+                got[ref] = res
+            elif res and res.get("none") and res.get("why") == "rejected":
+                got[ref] = None
+            else:
+                todo.append(ref)
+        cands = {ref: self._image_candidates(*self._parse_ref(ref)) for ref in todo}
+        live = [r for r in todo if cands[r]]
+        choice: dict[str, int] = {r: rule_choice(reqs[r], cands[r]) for r in live}
+        if live and self.pick:
+            self.stats.setdefault("rejected", 0)
+            choice, retry = self._pick_round(live, reqs, cands)
+            again = {r: q for r, q in retry.items() if choice.get(r, 0) < 0 and q}
+            live2 = []
+            for r, q in again.items():
+                kind, _ = self._parse_ref(r)
+                found = self._image_candidates(kind, q)
+                self.log(f"🖼 '{reqs[r]['query_en']}' 후보를 모두 거절 → '{q}' 로 다시: 후보 {len(found)}개")
+                if found:
+                    cands[r] = found
+                    live2.append(r)
+            if live2:
+                choice2, _ = self._pick_round(live2, reqs, cands, retried=True)
+                for r in live2:
+                    choice[r] = choice2.get(r, -1)
+        for ref in todo:
+            idx = choice.get(ref, -1)
+            key = self._img_key(ref)
+            if idx < 0 or idx >= len(cands.get(ref) or []):
+                why = "rejected" if ref in live else "no_results"
+                if why == "rejected":
+                    self.cache[key] = {"none": True, "why": why}      # 고른 결과로 뺀 것만 확정(검색 0건은 다음에 다시)
+                self.log(f"🖼 '{reqs[ref]['query_en']}' 맞는 그림 없음({'선택에서 거절' if why == 'rejected' else '검색 0건'})"
+                         " → 그 부품만 빼고 장면은 그대로")
+                got[ref] = None
+                continue
+            got[ref] = self._download_image(ref, cands[ref][idx])
+        n = 0
+        for _, spec, el in refs:
+            ref = el["src"]
+            res = got.get(ref)
             if res:
                 # 하우스 트리트먼트(07b 7절): 클립아트(vector·illustration)는 언제나 잉크 한 색 선화, 사진은 듀오톤 —
                 # 칠판·크림 화면 위 원색 클립아트(10/1 커피컵·책 더미)가 '붙여 넣은 것'으로 보이던 것
-                kind = (ref.split(":", 2) + ["", ""])[1] or "vector"
+                kind = self._parse_ref(ref)[0]
                 dark = str(spec.get("bg") or "") in ("board", "ink", "dark", "stage", "chalk")
                 clip = kind in ("vector", "illustration")
                 # 기기 화면 속 그림은 화면이라 색을 지키고 톤만 맞춘다(듀오톤 모니터는 고장 난 화면처럼 보인다)
@@ -339,44 +472,50 @@ class StockResearcher:
                 drop_ref(spec, el)
         write_json(self.cache_file, self.cache)
         ok = sum(1 for v in got.values() if v)
-        self.log(f"🖼 모션 그래픽 이미지 {ok}/{len(got)}건 확보(Pixabay)")
+        self.log(f"🖼 모션 그래픽 이미지 {ok}/{len(got)}건 확보" + (" · 비전으로 골랐다" if self.pick else " · 태그 확인"))
         self.stats["images"] = ok
         return n
 
-    def _image_for(self, ref: str) -> Optional[dict[str, Any]]:
+    @staticmethod
+    def _parse_ref(ref: str) -> tuple[str, str]:
         parts = ref.split(":", 2)
-        kind, query = (parts[1], parts[2]) if len(parts) == 3 else ("vector", parts[-1])
-        key = text_hash(ref, "img-v1")
-        res = self.cache.get(key)
-        if res and not res.get("none") and (self.public / res.get("src", "__")).exists():
-            return res
+        return (parts[1], parts[2]) if len(parts) == 3 else ("vector", parts[-1])
+
+    @staticmethod
+    def _img_key(ref: str) -> str:
+        return text_hash(ref, "img-v2")     # v2: 비전 선택(예전 v1 캐시는 검색 1위였다 — 다시 고른다)
+
+    def _image_candidates(self, kind: str, query: str) -> list[StockCandidate]:
+        """그림 후보: Pixabay(벡터·일러스트·사진) → 사진이면 Openverse. 두 낱말 아래로 줄이지 않는다(동음이의어)."""
         from .providers import query_variants
         pix = next((p for p in self.hub.providers if p.name == "Pixabay"), None)
         ov = next((p for p in self.hub.providers if p.name == "Openverse"), None)
         cands: list[StockCandidate] = []
-        for q in query_variants(query):
+        for q in query_variants(query, min_words=2):
             if pix is not None:
-                cands = self.hub._call(pix, "search_images", q, image_type=kind, per_page=5)
+                cands = self.hub._call(pix, "search_images", q, image_type=kind, per_page=6)
             if not cands and kind != "vector" and ov is not None:
-                cands = self.hub._call(ov, "search_photos", q, per_page=5)
+                cands = self.hub._call(ov, "search_photos", q, per_page=6)
             if cands:
                 break
-        for c in cands[:3]:
-            try:
-                raw = self.hub.download(c, self.work / "stock_raw" / f"img_{c.key}.bin")
-                dst = self._prepare_image(raw, f"img_{c.key}")
-                res = {"src": f"broll/{dst.name}", "kind": "image", "credit": c.credit, "url": c.url,
-                       "author_url": c.author_url, "provider": c.provider, "attribution": c.attribution}
-                self.cache[key] = res
-                self.credits.append({"query": query, "origin": c.provider, "credit": c.credit, "url": c.url,
-                                     "author_url": c.author_url, "attribution": c.attribution})
-                return res
-            except Cancelled:
-                raise
-            except Exception as e:  # noqa: BLE001
-                self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
-        self.log(f"🖼 '{query}'({kind}) 이미지 없음 → 그 요소만 뺌")
-        return None
+        return [c for c in cands if not junk(c)][:6] or cands[:6]
+
+    def _download_image(self, ref: str, c: StockCandidate) -> Optional[dict[str, Any]]:
+        query = self._parse_ref(ref)[1]
+        try:
+            raw = self.hub.download(c, self.work / "stock_raw" / f"img_{c.key}.bin")
+            dst = self._prepare_image(raw, f"img_{c.key}")
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            self.log(f"🖼 이미지 다운로드 실패({c.provider} {c.id}): {e}")
+            return None
+        res = {"src": f"broll/{dst.name}", "kind": "image", "credit": c.credit, "url": c.url,
+               "author_url": c.author_url, "provider": c.provider, "attribution": c.attribution}
+        self.cache[self._img_key(ref)] = res
+        self.credits.append({"query": query, "origin": c.provider, "credit": c.credit, "url": c.url,
+                             "author_url": c.author_url, "attribution": c.attribution})
+        return res
 
     def _collage_extras(self, g: dict[str, Any]) -> None:
         """디자인 v3: 전면 스톡 사진의 크기와, 바탕이 고르면 오린 PNG(→ 종이 무대 위 콜라주). 실패해도 그대로 둔다."""

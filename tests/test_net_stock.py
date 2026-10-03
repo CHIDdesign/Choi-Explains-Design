@@ -176,7 +176,7 @@ class _FlakyProvider:
 
     def search_images(self, q, image_type="vector", per_page=6):
         return [StockCandidate(kind="photo", id=99, url="https://pixabay.com/x", thumb="", download="d", width=64,
-                               height=32, author="kim", provider=self.name)]
+                               height=32, author="kim", alt="light bulb, lamp, idea", provider=self.name)]
 
     def download(self, c, dst):
         from PIL import Image

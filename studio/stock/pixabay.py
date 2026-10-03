@@ -86,7 +86,8 @@ class Pixabay(StockProvider):
             if not dl:
                 continue
             out.append(StockCandidate(
-                kind="photo", id=h["id"], url=h.get("pageURL", ""), thumb=h.get("previewURL", ""), download=dl,
+                kind="photo", id=h["id"], url=h.get("pageURL", ""),
+                thumb=h.get("webformatURL") or h.get("previewURL", ""), download=dl,     # 비전 선택용(미리보기 150px 는 작다)
                 width=int(h.get("webformatWidth") or 0), height=int(h.get("webformatHeight") or 0),
                 author=h.get("user", ""), author_url=f"https://pixabay.com/users/{h.get('user', '')}-{h.get('user_id', '')}/",
                 alt=h.get("tags", ""), provider=self.name))

@@ -165,6 +165,24 @@ def brief_for_motion(items: list[dict[str, Any]], outcomes: list[dict[str, Any]]
                      f"{it['need']} · {it['treatment']} · {what} · {str(it.get('claim', ''))[:40]}")
     out = ["## 확보된 자료(자료 리서처 → 조달 결과) — 이 문장들에는 글자 카드를 먼저 놓지 않는다. 자료가 주인공이다."]
     out += lines or ["- (확보된 실물 자료 없음)"]
+    # 조달 실패 — 예전엔 목록에서 조용히 빠져 그 자리가 얼굴로 남았다(2026-10-04 채널 주인: '없으면 비워 두겠다'는 무책임하다)
+    lost = []
+    for raw, o in zip(items, outcomes):
+        it = clean_item(raw)
+        if it["need"] == "code_drawn" or o.get("assets") or o.get("archive") or o.get("stock"):
+            continue
+        st = it.get("stock") or {}
+        idea = st.get("query_en") or (it.get("subject") or {}).get("name_en") or ""
+        lost.append(f"- S{it.get('start_seg')}–S{it.get('end_seg')} 「{str(it.get('claim', ''))[:40]}」 · 보여야 할 것: "
+                    f"{str(it.get('must_show', ''))[:60]}" + (f" · 찾던 그림: {idea}" if idea else "")
+                    + (f" · 못 구한 이유: {o['why']}" if o.get("why") else ""))
+    if lost:
+        out.append("\n## 조달 실패 — 비워 두지 않는다(모션으로 짓는다)")
+        out.append("실물·스톡을 못 구한 자리다. 얼굴이 맞는 문장(고백·의견·결론)이 아니면 이 말을 **모션 장면으로 다시 짓는다**: "
+                   "찾던 그림을 분해해(누가·어디서·무엇을·어떤 느낌·어떤 생각) 이 영상의 세계 안의 사물·손·과정·도식으로 재현하거나, "
+                   "한 문장 은유를 타이포·선 그림으로. 같은 검색어의 그림 부품(pixabay:)을 다시 넣지 않는다 — 이미 못 찾았다. "
+                   "짓지 않기로 했으면 그 장면의 reason 에 왜 얼굴이 맞는지 한 줄.")
+        out += lost[:20]
     if drawn:
         out.append("\n## 재현 요청(code_drawn) — 실물이 없어 선으로 재현해야 하는 것. 모션 장면으로 만든다")
         out += [f"- S{d['start_seg']}–S{d['end_seg']} 「{d.get('name') or ''}」 {d.get('claim', '')} · 그릴 것: "

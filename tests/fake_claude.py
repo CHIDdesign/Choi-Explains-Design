@@ -43,7 +43,7 @@ def main(argv: list[str]) -> int:
     ans = E.fake_answer(agent, {"messages": [{"content": content}]}, n_images, instruction)
     E.record_call({"agent": agent, "images": n_images, "effort": opts.get("--effort"), "backend": "claude_code",
                    "model": opts.get("--model"), "api_key_env": "ANTHROPIC_API_KEY" in os.environ,
-                   "tools": opts.get("--tools")})
+                   "tools": opts.get("--tools"), "world": "이 영상의 세계" in instruction})
     print(json.dumps({"type": "system", "subtype": "init", "model": opts.get("--model")}))
     print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2,
                       "result": json.dumps(ans, ensure_ascii=False), "structured_output": ans,
