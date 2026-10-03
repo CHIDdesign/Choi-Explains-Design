@@ -369,10 +369,14 @@ const BarEl: React.FC<{el: Extract<MotionEl, {type: 'bar'}>; c: Ctx}> = ({el, c}
   );
 };
 
+// 렌더 폴더(public) 안의 파일 경로만 그린다 — 'pixabay:…'·'http…' 처럼 해석되지 않은 참조는 404 로 렌더 전체를 멈춘다
+// (2026-10-04 기기 화면 'pixabay:photo:design portfolio layout'). 파이썬 studio/render/preflight.py 가 먼저 걸러 낸다.
+const localSrc = (src?: string): boolean => !!src && !/^[a-z][a-z0-9+.-]*:/i.test(src) && !src.startsWith('/');
+
 const ImageEl: React.FC<{el: Extract<MotionEl, {type: 'image'}>; c: Ctx}> = ({el, c}) => {
   const st = elementState({...el, enter: el.enter ?? 'scale'}, c);
   // 'pixabay:' 는 스톡 단계에서 파일로 바뀌어야 한다(못 구했으면 그리지 않음)
-  if (!st.visible || !el.src || el.src.startsWith('pixabay:')) return null;
+  if (!st.visible || !localSrc(el.src)) return null;
   const w = (el.w / 100) * c.W;
   const h = (el.h / 100) * c.H;
   const cutout = el.frame === 'cutout' || (!el.frame && el.src.endsWith('.png'));
@@ -518,8 +522,8 @@ const ModernEl: React.FC<{el: Extract<MotionEl, {type: 'panel' | 'chip' | 'bubbl
     node = <UIPanel title={el.title} rows={rows} c={mc} frame={f} w={(el.w / 100) * c.W} size={px(el.size, 2.6)} tilt={el.tilt} />;
   } else if (el.type === 'device') {
     const w = (el.w / 100) * c.W;
-    const inner = el.src ? (
-      <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+    const inner = localSrc(el.src) ? (
+      <Img src={staticFile(el.src!)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
     ) : el.rows && el.rows.length ? (
       <div style={{position: 'absolute', inset: 0, background: mc.bg, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
         <UIPanel title={el.title} rows={el.rows.map((r) => {

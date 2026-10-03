@@ -4,7 +4,7 @@
 - 요청마다 후보 최대 6개를 한 장의 시트(C1~C6 라벨)로 묶어 비전으로 보낸다(이미지 수·토큰 절약).
 - 제공처별 후보를 번갈아 섞는다. 영상 요청이 비면 한국어 검색어 → 사진 순으로 넓힌다. 끝까지 못 찾거나 에이전트가 -1 을 고르면
   그 B-roll 은 쓰지 않는다(틀린 B-roll 보다 없는 게 낫다).
-- 모션 장면 안의 'pixabay:<vector|illustration|photo>:<검색어>' 이미지 요소는 resolve_images 가 broll/img_* 로 바꾼다.
+- 모션 장면 안의 'pixabay:<vector|illustration|photo>:<검색어>' 이미지(image·device 부품)는 resolve_images 가 broll/img_* 로 바꾼다.
 - 결과는 work/stock.json 에 캐시 → 재실행 때 검색·선택·다운로드를 반복하지 않는다.
   단, 캐시에 남기는 '없음'은 에이전트가 직접 뺀 것뿐이다. 검색 0건·네트워크·다운로드 실패는 다음 실행에 다시 시도한다
   (예전에는 한 번 실패하면 영원히 '없음'으로 남았다).
@@ -29,17 +29,32 @@ CELL_W, CELL_H, COLS = 400, 225, 3
 NEED_SEC = 8.0   # broll 템플릿 최대 7초 + 여유
 
 
+def stock_refs(spec: Any) -> list[dict[str, Any]]:
+    """모션 장면 안에서 아직 파일로 바뀌지 않은 'pixabay:' 참조를 가진 부품 — 이미지(image)와 기기 화면(device).
+    2026-10-04: device.src 의 'pixabay:photo:…' 를 image 만 보던 해석이 놓쳐 렌더가 404 로 멈췄다."""
+    if not isinstance(spec, dict):
+        return []
+    return [e for e in spec.get("elements", []) or []
+            if isinstance(e, dict) and str(e.get("src", "")).startswith("pixabay:")]
+
+
+def drop_ref(spec: dict[str, Any], el: dict[str, Any]) -> None:
+    """못 구한 참조: 이미지 부품은 장면에서 빼고, 기기(device)는 화면 그림만 비운다(행·제목으로 그려진다)."""
+    if el.get("type") == "image":
+        spec["elements"] = [e for e in spec.get("elements", []) or [] if e is not el]
+    else:
+        el.pop("src", None)
+
+
 def strip_stock_images(graphic_lists: list[list[dict[str, Any]]]) -> int:
-    """아직 파일로 바뀌지 않은 'pixabay:' 이미지 요소를 뺀다(스톡이 꺼졌을 때)."""
+    """아직 파일로 바뀌지 않은 'pixabay:' 참조를 뺀다(스톡이 꺼졌거나 실패했을 때)."""
     n = 0
     for gl in graphic_lists:
         for g in gl:
             spec = g.get("spec") if g.get("template") == "motion" else None
-            if isinstance(spec, dict):
-                before = len(spec.get("elements", []) or [])
-                spec["elements"] = [e for e in spec.get("elements", []) or []
-                                    if not (isinstance(e, dict) and str(e.get("src", "")).startswith("pixabay:"))]
-                n += before - len(spec["elements"])
+            for el in stock_refs(spec):
+                drop_ref(spec, el)
+                n += 1
     return n
 
 
@@ -290,17 +305,16 @@ class StockResearcher:
 
     # ------------------------------------------------------------------
     def resolve_images(self, graphic_lists: list[list[dict[str, Any]]]) -> int:
-        """모션 장면 안의 'pixabay:<vector|illustration|photo>:<영어 검색어>' 이미지를 Pixabay 에서 받아
-        broll/img_….png|jpg 로 바꾼다(키가 없으면 사진은 Openverse). 못 구한 요소는 장면에서 뺀다 — 장면은 남는다."""
+        """모션 장면 안의 'pixabay:<vector|illustration|photo>:<영어 검색어>' 이미지(image·device 부품)를 Pixabay 에서
+        받아 broll/img_….png|jpg 로 바꾼다(키가 없으면 사진은 Openverse). 못 구한 이미지 부품은 장면에서 빼고, 기기는
+        화면 그림만 비운다 — 장면은 남는다."""
         refs: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for gl in graphic_lists:
             for g in gl:
                 spec = g.get("spec") if g.get("template") == "motion" else None
                 if not isinstance(spec, dict):
                     continue
-                for el in spec.get("elements", []) or []:
-                    if isinstance(el, dict) and el.get("type") == "image" and str(el.get("src", "")).startswith("pixabay:"):
-                        refs.append((spec, el))
+                refs += [(spec, el) for el in stock_refs(spec)]
         if not refs:
             return 0
         got: dict[str, Optional[dict[str, Any]]] = {}
@@ -315,12 +329,14 @@ class StockResearcher:
                 # 칠판·크림 화면 위 원색 클립아트(10/1 커피컵·책 더미)가 '붙여 넣은 것'으로 보이던 것
                 kind = (ref.split(":", 2) + ["", ""])[1] or "vector"
                 dark = str(spec.get("bg") or "") in ("board", "ink", "dark", "stage", "chalk")
-                el["src"] = self._house(res["src"], "vector" if kind in ("vector", "illustration") else "photo",
-                                        "stage" if dark else "paper",
-                                        treatment="lineart" if kind in ("vector", "illustration") else "duotone")
+                clip = kind in ("vector", "illustration")
+                # 기기 화면 속 그림은 화면이라 색을 지키고 톤만 맞춘다(듀오톤 모니터는 고장 난 화면처럼 보인다)
+                el["src"] = self._house(res["src"], "vector" if clip else "photo", "stage" if dark else "paper",
+                                        treatment="lineart" if clip else
+                                        ("graded" if el.get("type") == "device" else "duotone"))
                 n += 1
             else:
-                spec["elements"] = [e for e in spec.get("elements", []) if e is not el]
+                drop_ref(spec, el)
         write_json(self.cache_file, self.cache)
         ok = sum(1 for v in got.values() if v)
         self.log(f"🖼 모션 그래픽 이미지 {ok}/{len(got)}건 확보(Pixabay)")

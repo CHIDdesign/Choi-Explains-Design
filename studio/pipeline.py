@@ -82,7 +82,7 @@ from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resol
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
 from .sound.tracks import track_listing
 from .stock.providers import StockHub
-from .stock.research import StockResearcher, contact_sheet, strip_stock_images
+from .stock.research import StockResearcher, contact_sheet, stock_refs, strip_stock_images
 from .text.align import ScriptAligner, build_utterances, norm
 from .text import fidelity
 from .text.takes import clean_words, vad_pause
@@ -1323,6 +1323,25 @@ class Pipeline:
                              use_motion=self.spec.motion_scenes)
         self.studio.web = bool(getattr(self.settings, "research_web", True))
         return self.studio
+
+    def _resolve_scene_images(self, graphics: list[dict]) -> None:
+        """스톡 단계 뒤에 고친 모션 장면(검수 revise_scene)이 새로 넣은 'pixabay:' 그림(이미지·기기 화면)을 파일로 바꾼다 —
+        스톡이 꺼졌거나 실패하면 그 부품만 뺀다. 남겨 두면 렌더러가 404 로 멈춘다(2026-10-04)."""
+        motion = [g for g in graphics if g.get("template") == "motion" and stock_refs(g.get("spec"))]
+        if not motion:
+            return
+        if self._stock_enabled():
+            try:
+                hub = StockHub.from_settings(self.settings, log=self.log, cache_dir=self.work / "stock_cache")
+                res = StockResearcher(hub, self.ff, work=self.work, public=self.public, fps=self.fps, log=self.log,
+                                      cancel=self.cancel)
+                res.resolve_images([motion])
+                self.broll_log += res.credits
+            except Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - 그림 하나 때문에 검수를 멈추지 않는다
+                self.log(f"🖼 고친 장면의 그림 받기 실패 → 그 부품만 뺌: {e}")
+        strip_stock_images([motion])
 
     def _stock_enabled(self) -> bool:
         s = self.settings
@@ -2816,9 +2835,7 @@ class Pipeline:
         모션 장면의 'pixabay:…' 이미지 요소도 여기서 파일로 바꾼다(스톡이 꺼져 있으면 요소를 뺀다)."""
         lists = [self.plan_long["graphics"]] + [s["graphics"] for s in self.plan_shorts]
         n = sum(1 for gl in lists for g in gl if g["template"] == "broll")
-        imgs = sum(1 for gl in lists for g in gl if g["template"] == "motion" and isinstance(g.get("spec"), dict)
-                   for e in g["spec"].get("elements", []) or []
-                   if isinstance(e, dict) and str(e.get("src", "")).startswith("pixabay:"))
+        imgs = sum(len(stock_refs(g.get("spec"))) for gl in lists for g in gl if g["template"] == "motion")
         self.stock_stats = {"requests": n, "image_requests": imgs}
         if not n and not imgs:
             self.log("🎞 기획에 스톡 B-roll·그래픽 이미지 요청이 없습니다(자료 리서처가 요청을 만들지 않음).")
@@ -2844,6 +2861,7 @@ class Pipeline:
         if n:
             res.run(lists, progress=self._sp("stock"))
         res.resolve_images(lists)
+        strip_stock_images(lists)        # 받는 중 실패·취소된 것까지 — 해석되지 않은 참조를 렌더로 넘기지 않는다
         self.stock_stats = res.stats
         self.broll_log += res.credits + res.fallbacks
         left = hub.remaining()
@@ -3049,6 +3067,7 @@ class Pipeline:
                 self.log(f"🧐 {i.get('target')} [{i.get('severity')}] {i.get('problem')} → {i.get('action')}")
             still_by_id = {s[0]: s for s in stills}
             changed = self._apply_qa(issues, by_id, {g.id: g for g in graphics}, still_by_id, studio)
+            self._resolve_scene_images(changed)
             self.qa_log.append({"round": rnd, "verdict": res.get("verdict"), "summary": res.get("summary", ""),
                                 "issues": res.get("issues", []), "applied": len(changed)})
             self._stage("qa", rnd / rounds)
@@ -3713,6 +3732,12 @@ class Pipeline:
         self._start_mix_job()
         run_render(job, self.render_dir / "job.json", node=node, log=self.log, progress=self._sp("render"),
                    cancel=self.cancel, on_peek=on_peek)
+        # 렌더 전 자산 확인이 뺀 부품은 리포트·자료 대장·XML 에서도 빠지게(화면에 나간 것과 같게)
+        fixed = {Path(f).name for f in job.fixed}
+        if self.long_props and "props_long.json" in fixed:
+            self.long_props = read_json(self.render_dir / "props_long.json", self.long_props)
+        self.short_props = [read_json(self.render_dir / f"props_short_{i}.json", sp)
+                            if f"props_short_{i}.json" in fixed else sp for i, sp in enumerate(self.short_props, 1)]
 
     # ------------------------------------------------------------------
     def stage_master(self) -> None:

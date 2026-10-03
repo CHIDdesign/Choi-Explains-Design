@@ -29,6 +29,40 @@ def render_temp_dir() -> Path:
     return d
 
 
+def preflight_items(job: "RenderJob", log: LogFn = noop_log) -> list["RenderItem"]:
+    """🛫 렌더 전 자산 확인(studio/render/preflight.py): props 마다 가리키는 파일이 publicDir 에 있는지 보고, 없는 것을 가리키는
+    부품은 빼서 props 파일을 다시 쓴다 — 그림 하나가 없다고 Remotion 이 렌더 전체를 멈추지 않게(2026-10-04). 화자 영상이 없으면
+    렌더할 수 없으니 그 이유로 멈추고, 그림이 없는 썸네일은 그 한 장만 건너뛴다."""
+    from . import preflight
+    chk = preflight.MediaCheck(job.public_dir, {dst: Path(src) for src, dst in job.links})
+    done: dict[str, list[str]] = {}
+    keep: list[RenderItem] = []
+    for it in job.items:
+        key = str(it.props_path)
+        if key not in done:
+            done[key] = []
+            try:
+                props = json.loads(Path(it.props_path).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                props = None             # 읽을 수 없으면 렌더러가 그 이유로 실패하게 둔다
+            if isinstance(props, dict):
+                notes, fatal = preflight.fix_props(props, chk)
+                if notes:
+                    write_json(Path(it.props_path), props)
+                    job.fixed.append(Path(it.props_path))
+                    log(f"🛫 렌더 전 자산 확인({Path(it.props_path).name}): 없는 파일을 가리키는 {len(notes)}곳을 빼고 렌더합니다 — "
+                        + preflight.summary(notes))
+                done[key] = fatal
+        fatal = done[key]
+        if fatal and it.composition == "Thumbnail":
+            log(f"🛫 썸네일 {Path(it.output).name} 건너뜀 — " + " · ".join(fatal))
+            continue
+        if fatal:
+            raise RenderError("렌더할 수 없습니다 — " + " · ".join(fatal))
+        keep.append(it)
+    return keep
+
+
 def find_node(custom: str = "") -> str:
     if custom and Path(custom).exists():
         return custom
@@ -83,6 +117,7 @@ class RenderJob:
     bundle_dir: Path
     links: list[tuple[Path, str]] = field(default_factory=list)
     items: list[RenderItem] = field(default_factory=list)
+    fixed: list[Path] = field(default_factory=list)   # 렌더 전 자산 확인이 고쳐 다시 쓴 props 파일
     browser_executable: str = ""
     gl: str = ""
     concurrency: int = 0
@@ -94,6 +129,10 @@ def run_render(job: RenderJob, job_file: Path, *, node: str, log: LogFn = noop_l
                on_peek: Optional[Callable[[dict], None]] = None) -> None:
     """on_peek: 미리보기 이미지가 나올 때마다 {index, frame, file[, k, n]} (렌더 중 프레임·검수 스틸·썸네일)."""
     ensure_renderer_installed()
+    had = bool(job.items)
+    job.items = preflight_items(job, log)
+    if had and not job.items:            # 건너뛴 썸네일뿐이면 부를 것이 없다
+        return
     data = {
         "publicDir": str(job.public_dir),
         "bundleDir": str(job.bundle_dir),
