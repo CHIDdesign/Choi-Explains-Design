@@ -208,7 +208,7 @@ def choose_takes(passes: list[ReadPass], utts: list[Utterance], units: list[tupl
                 assigned.setdefault((p.idx, k), []).append(u)
     out: list[TakeUnit] = []
     for k, (lo, hi) in enumerate(units):
-        tu = TakeUnit(k, lo, hi, text[lo:hi].strip() if text else "")
+        tu = TakeUnit(k, lo, hi, " ".join(text[lo:hi].split()) if text else "")      # 로그·리포트용(줄바꿈 없이)
         tot = sum(weight[lo:hi]) or 1
         for p in passes:
             cov = sum(m & w for m, w in zip(marks[p.idx][lo:hi], weight[lo:hi])) / tot
