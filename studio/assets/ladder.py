@@ -407,7 +407,9 @@ class Ladder:
             self.img_dir.mkdir(parents=True, exist_ok=True)
             dst = self.img_dir / f"own_{re.sub(r'[^0-9A-Za-z가-힣._-]+', '_', path.name)[-60:]}"
             if not dst.exists():
-                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".svg"):
+                    # SVG(로고 카드)는 그대로 — 렌더러가 그린다. 자산 라이브러리에서 꺼낸 로고를 prepare_photo(PIL)로 바꾸려다
+                    # 'cannot identify image file' 로 조달이 실패하던 것(2026-10-03)
                     shutil.copyfile(path, dst)
                 else:
                     from ..stock.process import prepare_photo

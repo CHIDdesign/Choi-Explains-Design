@@ -1842,27 +1842,26 @@ class Pipeline:
 
     def _fill_gaps(self, lp: dict, ed: EditDecisions) -> int:
         """A6·A7 수리: 그래픽 없는 칸의 가운데와, 25초 넘는 맨얼굴 구간 안 18초마다 그 자리 문장의 핵심어 카드(얼굴 옆)를 계획에
-        더한다. 같은 발화에 두 번 넣지 않고, 다른 그래픽이 있는 자리는 피한다."""
+        더한다(자리는 `gate.fill_targets` — 홀드 안이면 홀드 밖 가장 가까운 곳으로). 같은 발화에 두 번 넣지 않고, 다른 그래픽이
+        있는 자리는 피한다."""
         total = self.timemap.duration
         gs = lp.get("graphics", [])
-        targets: list[float] = []
+        holds = self._hold_spans()
         a6 = gate.a6_distribution(gs, total, ed.callouts)
-        targets += [(a + b) / 2 for a, b in a6.measured.get("empty_at", [])]
-        for a, b in gate.face_only_spans(gs, ed.callouts, total):
-            if b - a > 25.0:
-                t = a + 10.0
-                while t < b - 6.0:
-                    targets.append(t)
-                    t += 18.0
+        free = gate.face_only_spans(gs, ed.callouts, total)
+        targets = gate.fill_targets(a6.measured.get("empty_at", []), free, holds)
         if not targets:
             return 0
-        holds = self._hold_spans()
-        free = [(a, b) for a, b in gate.face_only_spans(gs, ed.callouts, total)]
-        # 홀드(편집 감독이 얼굴로 지킨 곳)는 채우지 않는다 — 홀드는 한 곳 25초 이하라 A7 과 부딪치지 않는다
-        targets = [t for t in targets if not any(a - 2.0 <= t <= b for a, b in holds)]
         seg_t = seg_edit_times(self.utts, self.timemap)
         by_id = {u.id: u for u in self.utts}
-        used = {g.get("start_seg") for g in self.plan_long.get("graphics", [])}
+        # 그래픽이 '실제로 화면에 나가는' 발화만 피한다(렌더 id g{i} = 계획 순서) — 계획에는 있지만 홀드·자료 부족으로 안 나가는
+        # 것까지 피하면 채울 발화가 남지 않았다(2026-10-03)
+        plan_gs = self.plan_long.get("graphics", [])
+        used: set = set()
+        for g in gs:
+            m = re.fullmatch(r"g(\d+)", str(g.get("id", "")))
+            if m and int(m.group(1)) < len(plan_gs):
+                used.add(plan_gs[int(m.group(1))].get("start_seg"))
         added = 0
         for t in sorted(targets):
             cands = [(abs(a - t), i) for i, (a, b) in seg_t.items()
@@ -3069,7 +3068,17 @@ class Pipeline:
                     b = min(b, x - 0.3) if x > a else a
             if b - a >= 3.0:
                 out.append((round(a, 3), round(b, 3)))
-        return out
+        # 홀드끼리 hold_gap(20초) 안에 잇달으면 뒤 것을 뺀다 — 한 곳 25초 이하라는 전제는 홀드가 떨어져 있을 때만 A7 과 안 부딪친다
+        # (2026-10-03: 04:47–05:03 · 05:12–05:26 · 05:36–05:46 셋이 이어져 얼굴만 71초, 보충 카드는 홀드를 피해 못 채움)
+        kept: list[tuple[float, float]] = []
+        gone: list[tuple[float, float]] = []
+        for a, b in sorted(out):
+            if kept and a < kept[-1][1] + PARAMS["hold_gap"]:
+                gone.append((a, b))
+            else:
+                kept.append((a, b))
+        self._holds_dropped = gone
+        return kept
 
     def _respect_holds(self, graphics: list[TimedGraphic]) -> list[TimedGraphic]:
         """홀드 안에서 시작하는 그래픽은 뺀다(대본 태그는 남고 홀드가 줄어든다), 홀드로 들어가는 그래픽은 홀드 앞에서 끝낸다."""
@@ -3111,9 +3120,12 @@ class Pipeline:
                 dropped += 1
             else:
                 moved += 1
-        if dropped or moved:
+        gone = getattr(self, "_holds_dropped", [])
+        if dropped or moved or gone:
             self.log(f"🙂 얼굴 홀드 {len(holds)}곳(" + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in holds)
-                     + f") — 그 안의 그래픽 {dropped}개를 뺌" + (f" · 실물 자료 {moved}개는 홀드 뒤로 옮김" if moved else ""))
+                     + f") — 그 안의 그래픽 {dropped}개를 뺌" + (f" · 실물 자료 {moved}개는 홀드 뒤로 옮김" if moved else "")
+                     + (f" · 앞 홀드와 {PARAMS['hold_gap']:.0f}초 안이라 뺀 홀드 {len(gone)}곳("
+                        + " · ".join(f"{fmt_ts(a)}–{fmt_ts(b)}" for a, b in gone) + ")" if gone else ""))
         return sorted(out, key=lambda g: g.start)
 
     def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float,

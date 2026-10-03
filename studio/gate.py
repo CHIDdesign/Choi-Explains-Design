@@ -220,6 +220,34 @@ def face_only_spans(graphics: list[dict], callouts: Optional[list[dict]], total:
     return out
 
 
+def fill_targets(empty_bins: list, face_runs: list[tuple[float, float]], holds: list[tuple[float, float]], *,
+                 soft: float = 25.0, step: float = 18.0, edge: float = 3.0) -> list[float]:
+    """A6·A7 수리용 보충 카드 자리: 빈 칸의 가운데 + 25초 넘는 맨얼굴 구간 안 (시작 +10초부터) 18초마다. 홀드(편집 감독이
+    얼굴로 지킨 곳, 앞 2초 여유) 안에 떨어진 자리는 같은 칸·구간 안에서 홀드 밖 가장 가까운 곳(홀드 끝 +3초 / 시작 −3초)으로
+    옮기고, 옮길 곳이 없으면 버린다 — 2026-10-03: 빈 칸 가운데와 18초 자리가 모두 홀드 안이라 하나도 못 채우고 A7 block."""
+    want: list[tuple[float, float, float]] = [((a + b) / 2, a, b) for a, b in empty_bins]
+    for a, b in face_runs:
+        if b - a > soft:
+            t = a + 10.0
+            while t < b - 6.0:
+                want.append((t, a, b))
+                t += step
+
+    def hold_at(t: float):
+        return next(((x, y) for x, y in holds if x - 2.0 <= t <= y), None)
+
+    out: list[float] = []
+    for t, lo, hi in want:
+        h = hold_at(t)
+        if h is None:
+            out.append(t)
+            continue
+        alts = [x for x in (h[1] + edge, h[0] - edge) if lo + 1.5 <= x <= hi - 1.5 and hold_at(x) is None]
+        if alts:
+            out.append(min(alts, key=lambda x: abs(x - t)))
+    return sorted({round(x, 3) for x in out})
+
+
 def a7_face_run(graphics: list[dict], total: float, callouts: Optional[list[dict]] = None, *,
                 soft: float = 25.0, hard: float = 40.0) -> GateResult:
     """맨얼굴 최장 구간 — 25초 이하(플레이북 절대 상한). 25~40초는 repair, 40초 초과는 block."""

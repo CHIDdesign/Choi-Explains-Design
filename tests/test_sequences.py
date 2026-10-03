@@ -221,3 +221,22 @@ def test_rhythm_levels_cluster_emphasis_in_fast_spans():
     assert 27.0 not in t_plain and 34.0 not in t_plain                    # 40초 간격
     assert {20.0, 27.0, 34.0} <= set(t_fast)                             # fast 구간 안에서는 6초 간격
     assert 130.0 not in t_fast                                           # 밖은 그대로
+
+
+def test_hold_spans_drop_holds_chained_within_hold_gap():
+    """2026-10-03 실제 작업: 홀드 셋이 9~12초 간격으로 이어져 얼굴만 71초(A7 block) — 앞 홀드 끝에서 hold_gap(20초) 안에
+    시작하는 홀드는 뺀다. 떨어진 홀드는 그대로."""
+    import studio.pipeline as pl
+    from studio.edit.grammar import PARAMS
+    p = object.__new__(pl.Pipeline)
+    say = "그 순간이 지금도 또렷하게 기억이 납니다"                     # 6어절 ≈ 2.7초 + hold_pad → 홀드 최소 3초를 넘긴다
+    p.utts = [_utt(0, 0.0, say), _utt(1, 40.0, say), _utt(2, 48.0, say), _utt(3, 100.0, say)]
+    p.timemap = TimeMap([Span(0.0, 150.0)])
+    p.plan_long = {"holds": [{"start_seg": s, "end_seg": s, "reason": "고백"} for s in (0, 1, 2, 3)]}
+    p.log = (logs := []).append
+    holds = p._hold_spans()
+    assert [round(a) for a, _ in holds] == [0, 40, 100]                # 48초 홀드는 40초 홀드 끝(≈43초)에서 20초 안 → 뺌
+    assert len(p._holds_dropped) == 1 and round(p._holds_dropped[0][0]) == 48
+    assert all(b2 >= a1 + PARAMS["hold_gap"] for (_, a1), (b2, _) in zip(holds, holds[1:]))
+    p._respect_holds([])
+    assert any("뺀 홀드 1곳" in m for m in logs)

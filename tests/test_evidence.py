@@ -463,3 +463,17 @@ def test_local_materials_index_and_find(tmp_path):
     assert local_find(items, "M2").name == "최종_렌더링.png"
     assert local_find(items, "", "최종 렌더링").name == "최종_렌더링.png"
     assert local_find(items, "없는파일.jpg") is None
+
+
+def test_ladder_copies_library_svg_logo_without_pil(tmp_path):
+    """2026-10-03 실제 작업: 자산 라이브러리에 저장된 로고 SVG 를 다시 꺼낼 때 prepare_photo(PIL)로 바꾸려다
+    'cannot identify image file' → 조달 오류 → 자료 카드. SVG 는 그대로 복사한다(렌더러가 로고 카드를 그린다)."""
+    svg = tmp_path / "lib" / "00002_logo_pinterest.svg"
+    svg.parent.mkdir()
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000'/>", encoding="utf-8")
+    ld = lad.Ladder(lad.Deps(), public=tmp_path / "pub", work=tmp_path / "w")
+    o = {"assets": [], "rung": "", "info": {}}
+    it = {"subject": {"name_ko": "핀터레스트", "name_en": "Pinterest"}}
+    ld._add_file(o, it, svg, origin="logo", rung="library", kind="logo", role="logo", title="핀터레스트", tier="A")
+    assert o["assets"] and o["assets"][0]["src"].endswith(".svg") and o["assets"][0]["kind"] == "logo"
+    assert (tmp_path / "pub" / o["assets"][0]["src"]).exists() and o["rung"] == "library"

@@ -138,6 +138,17 @@ def test_a6_bins_scale_with_length_and_ignore_auto_cards():
     assert gate.a6_distribution([_g(35, 39)], 60.0, callouts=[{"start": 10.0, "end": 13.0}]).ok
 
 
+def test_fill_targets_move_out_of_holds_instead_of_vanishing():
+    """2026-10-03 실제 작업: 빈 칸 05:04–05:42 의 가운데와 맨얼굴 04:47–05:58 안 18초 자리가 모두 홀드(04:47–05:03 · 05:12–05:26 ·
+    05:36–05:46) 안이라 보충 카드가 하나도 안 들어가고 A7 block — 자리를 홀드 밖 가장 가까운 곳으로 옮긴다."""
+    holds = [(287.0, 303.0), (312.0, 326.0), (336.0, 346.0)]
+    out = gate.fill_targets([[304.0, 342.0]], [(287.0, 358.0)], holds)
+    assert out and not any(x - 2.0 <= t <= y for t in out for x, y in holds)
+    assert 329.0 in out and 306.0 in out and 351.0 in out          # 칸 가운데 323 → 홀드 끝 +3 · 297 → 306 · 351 은 그대로
+    assert gate.fill_targets([], [(0.0, 20.0)], []) == []              # 25초 이하 맨얼굴은 자리 없음
+    assert gate.fill_targets([[0.0, 10.0]], [], [(0.0, 10.0)]) == []   # 칸 전체가 홀드면 버림
+
+
 # ---------------------------------------------------------------------------
 # 게이트 B — 화면 글자 위생
 # ---------------------------------------------------------------------------
