@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 
@@ -116,7 +117,9 @@ class AlignReport:
     # 대본 읽기 회차(passes.py): 대본 전체를 두 번 이상 읽은 녹음 → 주 테이크 하나 + 다른 회차는 보강용
     passes: list[dict] | None = None
     main_pass: int = 0
-    pass_mode: str = "single"     # single | best_pass | stitch
+    pass_mode: str = "single"     # single | best_take | best_pass | stitch
+    take_units: list[dict] | None = None    # best_take: 대목마다 고른 회차(passes.TakeUnit)
+    pass_switches: int = 0
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -205,26 +208,60 @@ class ScriptAligner:
 
     def _split_passes(self, utts: list[Utterance], rep: AlignReport) -> None:
         """대본을 처음부터 다시 읽은 회차를 가린다(docs/upgrade/02). 회차가 여럿이고 모두 대본의 80% 이상을 덮으면
-        best_pass: 주 테이크 하나만 남기고 다른 회차의 발화는 '다른 회차'(retake)로 — 빠진 문장은 뒤의 복원이 채운다.
+        **best_take**: 대목(문단)마다 더 잘 나온 회차를 골라 그 회차의 발화만 남기고 다른 회차는 '다른 회차'(retake)로 —
+        회차가 다른 파일(다른 구도)에서 왔으면 비슷하게 좋은 대목에서 교차해 다시점처럼 구도가 바뀐다(채널 주인 2026-10-03:
+        예전 best_pass 는 1번 영상만 쓰고 2번 영상을 통째로 버렸다). 빠진 문장은 뒤의 복원이 다른 회차에서 채운다.
         아니면 stitch: 회차가 다른 같은 대목은 거리 제한 없이 리테이크로 묶는다."""
-        from .passes import choose_main_pass, detect_passes
+        from .passes import choose_main_pass, choose_takes, detect_passes, script_units, unit_index
         passes = detect_passes(utts, len(self.script.clean), source_of=self.source_of, text=self.script.clean)
         self._pass_of = {i: p.idx for p in passes for i in p.utts}
         if len(passes) < 2:
             return
         quality = (lambda u: self.visual(u.start, u.end)) if self.visual else None
         rep.passes = [p.to_dict() for p in passes]
-        if all(p.coverage >= 0.8 for p in passes):
-            main = choose_main_pass(passes, utts, quality=quality, prefer=self.prefer_pass)
-            rep.pass_mode, rep.main_pass = "best_pass", main
-            rep.passes = [p.to_dict() for p in passes]
-            keep_ids = set(passes[main].utts)
-            for u in utts:
-                if u.id not in keep_ids and u.kept:
-                    u.status = "retake"
-                    u.note = f"다른 회차(대본 전체를 {len(passes)}번 읽음 — 주 테이크는 {main + 1}차)"
-        else:
+        if not all(p.coverage >= 0.8 for p in passes):
             rep.pass_mode = "stitch"
+            return
+        main = choose_main_pass(passes, utts, quality=quality, prefer=self.prefer_pass)
+        rep.passes = [p.to_dict() for p in passes]
+        units = script_units(self.script.sentences, self.script.clean)
+        rates = sorted(len(norm(u.text)) / max(0.3, u.end - u.start) for u in utts if u.script_span) or [5.0]
+        med_rate = rates[len(rates) // 2]
+
+        def take_quality(u: Utterance) -> float:
+            return take_score(u, coverage=1.0, med_rate=med_rate, energy=self._energy(u),
+                              visual=self.visual(u.start, u.end) if self.visual else None)
+        takes = choose_takes(passes, utts, units, take_quality=take_quality, start=main, text=self.script.clean)
+        # 발화 → 대목: 대본 구간의 가운데, 대본 밖 발화(애드리브)는 같은 회차의 바로 앞(없으면 뒤) 대본 발화의 대목
+        unit_of: dict[int, int] = {}
+        for p in passes:
+            seq = sorted((u for u in utts if u.id in set(p.utts)), key=lambda u: u.start)
+            last: Optional[int] = None
+            pending: list[int] = []
+            for u in seq:
+                if u.script_span:
+                    last = unit_index(units, (u.script_span[0] + u.script_span[1]) // 2)
+                    for i in pending:
+                        unit_of[i] = last
+                    pending = []
+                    unit_of[u.id] = last
+                elif last is None:
+                    pending.append(u.id)
+                else:
+                    unit_of[u.id] = last
+            for i in pending:
+                unit_of[i] = 0
+        n_pass = len(passes)
+        for u in utts:
+            c = takes[unit_of.get(u.id, 0)].chosen
+            if self._pass_of.get(u.id, main) != c and u.kept:
+                u.status = "retake"
+                u.note = f"다른 회차(이 대목은 {c + 1}차 테이크 — 대본 전체를 {n_pass}번 읽음)"
+        used = Counter(t.chosen for t in takes)
+        rep.pass_mode = "best_take"
+        rep.main_pass = int(used.most_common(1)[0][0]) if used else main
+        rep.take_units = [t.to_dict() for t in takes]
+        rep.pass_switches = sum(1 for a, b in zip(takes, takes[1:]) if a.chosen != b.chosen)
 
     def _align(self, un: str, lo: int, hi: int) -> Optional[tuple[float, int, int]]:
         window = self.snorm[lo:hi]

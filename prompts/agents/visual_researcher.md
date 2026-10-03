@@ -46,6 +46,10 @@
 - `role`: proof(주장의 근거) · example(사례) · context(시대·장소) · process(과정) · mood(분위기). mood 는 영상당 2개 이하.
 - `subject.kind` 와 `subject.shot`:
   - 사이트·앱(`site_app`)과 브랜드는 `shot` 을 `screen` 또는 `logo` 로. 제품·작품은 `subject` 또는 `detail`.
+  - **로고는 이름표다 — 영상에 한 번, `treatment: pip`, 앱이 4초로 자른다.** 학교·회사·기관·브랜드를 말하는 문장의 **전면**은
+    로고가 아니라 그 대상이 **하는 일의 현장**이다: "홍익대학교 산업디자인(제품)" → 로고 이름표 한 번 + 같은 구간에 `need: stock`
+    항목을 따로 — "산업디자인 스튜디오에서 제품 스케치·목업·렌더링을 하는 학생들"(stock video). 같은 로고를 두 번 내지 않고,
+    로고를 hero·full·collage 로 키우지 않는다(2026-10-03: 큰 흰 판 가운데 작은 휘장 하나가 12초 머물렀다).
   - **창업자·대표의 인물 사진으로 서비스·제품을 대신하지 않는다.** `portrait` 는 `kind=person` 일 때만.
   - `creator_en`·`year`·`qid` 는 아는 만큼. 모르면 "". 지어내지 않는다. 대상이 없는 항목은 `kind=other`, `shot=context`.
 - `source.citation`: 확실한 것만 적는다(저자·연도·제목·저널 중). 앱이 서지 데이터베이스로 확인하고, 일치하는 문헌이 없으면 출처 카드를 만들지 않는다.

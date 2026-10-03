@@ -433,3 +433,31 @@ def test_false_start_fragment_before_restart_is_cut():
     words = _words([("좋은 디자인은 단순합니다.", 0.6), ("좋은 디자인은 정직합니다.", 0.8)])
     utts, _, _ = ScriptAligner(parse_script("좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.")).run(build_utterances(words))
     assert [u.kept for u in utts] == [True, True]
+
+
+def test_shorts_follow_edit_order_when_takes_are_cross_cut():
+    """2026-10-03 E2E(--multi retake + best_take): 숏폼 구간이 편집 순서로는 이어졌는데 녹음 시간순으로는 다른 파일(1000초 뒤)이라
+    '건너뛴 발화'로 보여 연속 구간으로 '고치다' 12초 미만이 되어 숏폼을 통째로 잃었다. 이해 가능성·규칙 기획은 편집 순서(order)로 본다."""
+    from studio.director import fallback
+    from studio.director.context import JobBrief
+    from studio.models import Utterance, Word
+    texts = ["좋은 디자인은 질문에서 시작합니다.", "문 손잡이를 보면 밀지 당길지 압니다.", "이걸 어포던스라고 부릅니다.",
+             "형태가 사용법을 말해 주는 성질이죠.", "여러분의 디자인도 그렇게 말하고 있나요?", "그래서 설명서가 필요 없습니다.",
+             "결국 좋은 디자인은 설명이 필요 없습니다.", "다음 주제는 게슈탈트입니다."]
+    utts = []
+    for i, tx in enumerate(texts):
+        t = (0.0 if i < 4 else 1000.0) + (i % 4) * 9.0            # 앞 네 문장은 1차 파일, 뒤 네 문장은 2차 파일(시간상 멀다)
+        ws = [Word(w, t + k * 1.1, t + k * 1.1 + 1.0) for k, w in enumerate(tx.split())]
+        utts.append(Utterance(i, ws[0].start, ws[-1].end, tx, tx, ws))
+    order = [4, 5, 6, 7, 0, 1, 2, 3]                                 # 편집 순서: 2차 파일 대목이 먼저
+    raw = {"shorts": [{"title": "A", "hook_type": "open_loop", "hook_title": "문 손잡이의\n비밀", "hook_highlight": "",
+                       "cold_open_seg": -1, "segments": [6, 7, 0, 1, 2], "graphics": [], "emphasis": [], "beats": [],
+                       "cta": "", "loop_line": "", "caption": "", "hashtags": [], "viewer_takeaway": "형태가 말한다",
+                       "why": "", "score": 8}]}
+    out = normalize_shorts(raw, utts, count=1, max_sec=60, order=order)
+    assert out and out[0]["segments"] == [6, 7, 0, 1, 2] and out[0]["coherence"] >= 0.9, out      # 편집 순서로는 이어진 구간
+    bad = normalize_shorts(raw, utts, count=1, max_sec=60)                                        # 시간순으로 보면 '순서가 뒤바뀜'
+    assert bad and bad[0]["coherence"] < out[0]["coherence"] and "건너뛰" in bad[0]["why"], bad[0]["why"]
+    plan = fallback.shorts_plan(JobBrief(title="t"), utts, [], count=1, max_sec=60, order=order)
+    segs = plan["shorts"][0]["segments"]
+    assert segs and [order.index(i) for i in segs] == list(range(order.index(segs[0]), order.index(segs[0]) + len(segs))), segs

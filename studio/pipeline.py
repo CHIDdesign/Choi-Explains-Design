@@ -801,7 +801,22 @@ class Pipeline:
         if len(passes) < 2:
             return
         n = len(passes)
-        if rep.pass_mode == "best_pass":
+        used: set[int] = set()
+        if rep.pass_mode == "best_take":
+            from .text.passes import TakeUnit, take_summary
+            units = [TakeUnit(**{k: v for k, v in t.items() if k in ("idx", "lo", "hi", "text", "why", "dur")},
+                              chosen=int(t.get("pass", -1))) for t in (rep.take_units or [])]
+            used = {t.chosen for t in units}
+            cross = len({p.get("source", -1) for p in passes if p.get("source", -1) >= 0}) > 1
+            self.log(f"📜 대본 전체를 {n}번 읽은 녹음입니다 — 대목(문단)마다 더 잘 나온 회차를 골라 "
+                     + ("다른 구도로 교차 편집합니다" if cross else "이어 붙입니다")
+                     + f": {take_summary(units)}. 회차별 대본 커버리지: "
+                     + " · ".join(f"{p['idx'] + 1}차 {p['coverage'] * 100:.0f}%" for p in passes))
+            for t in units:
+                self._log_file_only(f"   대목 {t.idx + 1} 「{t.text[:20]}」 → {t.chosen + 1}차 ({t.why}) "
+                                    + " ".join(f"{int(k) + 1}차 {v:.2f}" for k, v in sorted(
+                                        ((k, v) for k, v in (rep.take_units or [])[t.idx]["scores"].items()))))
+        elif rep.pass_mode == "best_pass":
             self.log(f"📜 대본 전체를 {n}번 읽은 녹음입니다 — {rep.main_pass + 1}차를 주 테이크로 한 편으로 합칩니다"
                      f"(다른 회차는 빠진 문장 보강용). 회차별 대본 커버리지: "
                      + " · ".join(f"{p['idx'] + 1}차 {p['coverage'] * 100:.0f}%" for p in passes))
@@ -812,8 +827,12 @@ class Pipeline:
             roles = {}
             for p in passes:
                 if p.get("source", -1) >= 0:
-                    roles[str(p["source"])] = ("main" if p["idx"] == rep.main_pass else "alt_take") \
-                        if rep.pass_mode == "best_pass" else "continue"
+                    if rep.pass_mode == "best_take":
+                        roles[str(p["source"])] = "take" if p["idx"] in used else "alt_take"
+                    elif rep.pass_mode == "best_pass":
+                        roles[str(p["source"])] = "main" if p["idx"] == rep.main_pass else "alt_take"
+                    else:
+                        roles[str(p["source"])] = "continue"
             src["roles"] = roles
             write_json(self.work / "sources.json", src)
 
@@ -1273,7 +1292,7 @@ class Pipeline:
                                                    refs=self._motion_refs if self.spec.motion_scenes else None)
                 # 숏폼 PD 가 한 편도 못 냈을 때만 규칙으로 채운다 — 둘째 편을 억지로 채우지 않는다(제대로 된 한 편이 우선)
                 if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
-                    raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1,
+                    raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=1, order=self._edit_order_ids(),
                                                       max_sec=self.spec.short_max_sec)
             except Cancelled:
                 raise
@@ -1306,7 +1325,7 @@ class Pipeline:
                 self.log(f"Claude 실패 → 규칙 기반 편집으로 진행: {e}")
                 self.director_name = "규칙 기반(Claude 실패)"
                 raw_long = fallback.long_plan(brief, self.utts, self.tags)
-                raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
+                raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count, order=self._edit_order_ids(),
                                                   max_sec=self.spec.short_max_sec)
         else:
             if self.spec.use_claude:
@@ -1314,7 +1333,7 @@ class Pipeline:
                          "setup_windows.bat 으로 Claude Code 를 설치하고 로그인하세요.")
             self.director_name = "규칙 기반"
             raw_long = fallback.long_plan(brief, self.utts, self.tags)
-            raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count,
+            raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count, order=self._edit_order_ids(),
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
         # 저장된 계획은 검사 → 수정 → 검수(아트 디렉터)를 이미 거쳤다 — 다시 고치면 검수가 고친 장면을 되돌리고
@@ -1325,7 +1344,7 @@ class Pipeline:
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
         self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count,
-                                            max_sec=self.spec.short_max_sec, log=self.log)
+                                            max_sec=self.spec.short_max_sec, log=self.log, order=self._edit_order_ids())
         for i, sh in enumerate(self.plan_shorts, 1):
             self.log(f"📱 숏폼 {i} 「{sh.get('title', '')}」: 발화 {len(sh['segments'])}개 · 점수 {sh.get('score')} · "
                      f"이해 가능성 {sh.get('coherence', 1):.1f}"
@@ -1742,7 +1761,8 @@ class Pipeline:
                 gate.b2_hero_per_chapter(gs, lp.get("chapters", []), total),
                 gate.b6_pick_scores(gs),
                 gate.b7_variety(gs),
-                gate.b10_portraits(getattr(self, "_compose_plans", []))]
+                gate.b10_portraits(getattr(self, "_compose_plans", [])),
+                gate.b11_motif_repeat(gs)]
 
     def _compose_media(self, graphics: list[dict]) -> list[dict]:
         """사진(photo.image · broll 사진 src)마다 구도를 재서(`vision/compose.py`) data 에 safe(빈 쪽·어둠)·face·focus·fit 을 넣는다.
@@ -1804,16 +1824,20 @@ class Pipeline:
             trimmed = self._trim_chains(lp)
         if any(not r.ok and r.repair == "merge_steps" for r in res):
             merged = merge_step_runs(self.plan_long.get("graphics", []))
+        motifs = 0
+        if any(not r.ok and r.repair == "trim_motifs" for r in res):
+            motifs = self._trim_motifs(lp)
         promoted = 0
         b2 = next((r for r in res if r.id == "B2_hero" and not r.ok), None)
         if b2 is not None:
             promoted = gate.promote_hero(self.plan_long.get("graphics", []), lp.get("graphics", []),
                                          b2.measured.get("lacking", []))
-        if added or moved or trimmed or merged or promoted:
+        if added or moved or trimmed or merged or promoted or motifs:
             self.log(f"🚦 게이트 A 수리: " + " · ".join(x for x in [f"빈 구간에 핵심어 카드 {added}개" if added else "",
                                                                "타이틀을 앞으로" if moved else "",
                                                                f"이어 붙은 글자 카드 {trimmed}개 뺌" if trimmed else "",
                                                                f"단계 그래픽 {merged}개 합침" if merged else "",
+                                                               f"되풀이한 도식·로고 {motifs}개 뺌" if motifs else "",
                                                                f"자료 {promoted}장을 전면으로" if promoted else ""] if x))
             graphics, chapters = self._timed_long()
             self.long_chapters = chapters
@@ -1899,6 +1923,21 @@ class Pipeline:
         if drop:
             keep = [g for i, g in enumerate(plan_g) if i not in set(drop)]
             self.plan_long["graphics"] = keep
+        return len(set(drop))
+
+    def _trim_motifs(self, lp: dict) -> int:
+        """B11 수리: 같은 도식·사물을 그린 그래픽이 3회 이상(로고는 2회 이상)이면 시그니처 장면을 남기고 내용이 적은 것부터
+        계획에서 뺀다(2026-10-03 채널 주인: 더블 다이아몬드가 네 번, 학교 휘장이 전면으로 12초)."""
+        plan_g = self.plan_long.get("graphics", []) or []
+        drop: list[int] = []
+        for g in gate.motif_drops(lp.get("graphics", [])):
+            gid = str(g.get("id", ""))
+            if gid.startswith("g") and gid[1:].isdigit() and int(gid[1:]) < len(plan_g):
+                drop.append(int(gid[1:]))
+                self.log(f"   - 「{str((g.get('data') or {}).get('title') or plan_g[int(gid[1:])].get('title') or '')[:30]}」"
+                         f"({g.get('template')}, {fmt_ts(float(g.get('start', 0)))}) 뺌 — 같은 장치의 세 번째 이상")
+        if drop:
+            self.plan_long["graphics"] = [g for i, g in enumerate(plan_g) if i not in set(drop)]
         return len(set(drop))
 
     def _retime_title(self) -> bool:
@@ -2107,13 +2146,39 @@ class Pipeline:
                  + " · ".join(f"「{r.text[:24]}」" for r in restores[:5]))
         return out
 
+    def _edit_order_ids(self) -> list[int]:
+        """남긴 발화 id 를 **최종 롱폼의 순서**로 — 대본을 여러 번 읽은 녹음(best_pass·best_take)은 `_order_by_script` 와 같이
+        대본 자리 순(대본 밖 발화는 바로 앞 발화에 딸림), 아니면 시간순. 숏폼 기획·이해 가능성 검사는 이 순서로 '이어진 구간'을 본다."""
+        kept = sorted((u for u in self.utts if u.kept), key=lambda u: u.start)
+        if getattr(self, "align_report", {}).get("pass_mode") not in ("best_pass", "best_take"):
+            return [u.id for u in kept]
+        keyed: list[tuple[int, float, int]] = []
+        last = -1
+        for u in kept:
+            pos = u.script_span[0] if u.script_span else last
+            keyed.append((pos, u.start, u.id))
+            last = pos
+        return [i for _, _, i in sorted(keyed)]
+
     def _order_by_script(self, keeps: list[Span]) -> list[Span]:
         """대본을 여러 번 읽은 녹음: 주 회차의 구간은 시간순 그대로, 다른 회차에서 보강한 구간은 대본 위치에 맞는
         자리(대본 위치가 그보다 앞인 주 회차 구간 바로 뒤)로 옮긴다 — 시간순이면 앞 회차의 보강 문장이 영상 맨 앞에 나온다."""
         main = int(self.align_report.get("main_pass", 0))
         passes = self.align_report.get("passes") or []
-        if self.align_report.get("pass_mode") != "best_pass" or not passes:
+        mode = self.align_report.get("pass_mode")
+        if mode not in ("best_pass", "best_take") or not passes:
             return keeps
+        if mode == "best_take":
+            # 대목마다 회차가 다르므로 모든 구간을 대본 자리로 — 대본 밖 구간(애드리브)은 시간상 바로 앞 구간에 딸려 간다
+            kept = [u for u in self.utts if u.kept and u.script_span]
+            keyed: list[tuple[int, float, Span]] = []
+            last = -1
+            for k in sorted(keeps, key=lambda k: k.start):
+                hits = [u.script_span[0] for u in kept if u.start < k.end and k.start < u.end]   # type: ignore[index]
+                pos = min(hits) if hits else last
+                keyed.append((pos, k.start, k))
+                last = pos
+            return [k for _, _, k in sorted(keyed, key=lambda x: (x[0], x[1]))]
         by_id = {u.id: u for u in self.utts}
         p = next((x for x in passes if x["idx"] == main), None)
         if p and p.get("utts"):

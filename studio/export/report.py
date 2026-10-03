@@ -113,7 +113,17 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         lines.append(f"- 삭제 거절: {t}")
     passes = align_report.get("passes") or []
     if len(passes) > 1:
-        if align_report.get("pass_mode") == "best_pass":
+        if align_report.get("pass_mode") == "best_take":
+            units = align_report.get("take_units") or []
+            from collections import Counter
+            c = Counter(int(t.get("pass", -1)) for t in units)
+            lines.append(f"- 대본 읽기 회차: {len(passes)}회 — 대목(문단)마다 더 잘 나온 회차를 골라 교차 편집: "
+                         + " · ".join(f"{k + 1}차 {v}대목" for k, v in sorted(c.items()))
+                         + f" · 회차 바뀜 {int(align_report.get('pass_switches', 0))}번. 회차별 커버리지 "
+                         + " · ".join(f"{p['idx'] + 1}차 {p['coverage'] * 100:.0f}%" for p in passes))
+            for t in units:
+                lines.append(f"  - 대목 {int(t.get('idx', 0)) + 1} 「{t.get('text', '')}」 → {int(t.get('pass', -1)) + 1}차 ({t.get('why', '')})")
+        elif align_report.get("pass_mode") == "best_pass":
             lines.append(f"- 대본 읽기 회차: {len(passes)}회 — {int(align_report.get('main_pass', 0)) + 1}차를 주 테이크로 한 편으로 "
                          "합침(다른 회차는 빠진 문장 보강에만). 회차별 커버리지 "
                          + " · ".join(f"{p['idx'] + 1}차 {p['coverage'] * 100:.0f}%" for p in passes))

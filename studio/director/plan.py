@@ -18,7 +18,7 @@ MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "numbe
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
-EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat",
+EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat", "motif",
                    "assets", "treatment", "archive", "caption", "tier",   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
                    "year", "display", "quote", "cut", "w", "h",          # 디자인 v3 콜라주(연도 · 큰 글자 · 인용 · 오린 사진)
                    "safe", "face", "focus", "fit")                       # 사진 위 구도(studio/vision/compose.py)
@@ -33,7 +33,8 @@ EVIDENCE_ASSET_KEYS = ("src", "kind", "w", "h", "focus", "credit", "credit_full"
                        "meta", "mat_src", "cut")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
-                "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason")
+                "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason", "motif")
+LOGO_MAX_SEC = 4.0      # 로고는 이름표 — 길어도 4초(2026-10-03: 큰 흰 판 가운데 작은 휘장 하나가 12.3초)
 
 
 def blank_graphic(template: str, seg: int) -> dict[str, Any]:
@@ -672,10 +673,13 @@ def repair_segments(segs: list[int], by_id: dict[int, Utterance], kept: list[int
 
 
 def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int, max_sec: int = 60,
-                     log: Any = None) -> list[dict[str, Any]]:
+                     log: Any = None, order: Optional[list[int]] = None) -> list[dict[str, Any]]:
     """숏폼 기획 정리. **제대로 된 한 편**이 우선: 이해 가능성(short_coherence)이 낮으면 연속 구간으로 고치고,
-    둘째 편은 첫 편과 다른 구간이면서 점수 8 이상일 때만 남긴다(채널 피드백: 둘을 억지로 채우지 말 것)."""
-    kept = [u.id for u in utts if u.kept]
+    둘째 편은 첫 편과 다른 구간이면서 점수 8 이상일 때만 남긴다(채널 피드백: 둘을 억지로 채우지 말 것).
+    order: 남긴 발화의 **편집 순서**(대본을 여러 번 읽은 녹음은 시간순이 아니라 대본 자리 순 — 2026-10-03 E2E: 회차를 교차한
+    뒤 시간순으로 '건너뛴 발화'로 보여 숏폼을 통째로 잃었다). 없으면 시간순."""
+    kept_set = {u.id for u in utts if u.kept}
+    kept = [i for i in order if i in kept_set] if order else [u.id for u in utts if u.kept]
     by_id = {u.id: u for u in utts}
     out: list[dict[str, Any]] = []
     for s in (raw.get("shorts") or [])[: max(0, count) + 2]:
@@ -875,6 +879,8 @@ def time_graphics(
         end = min(end, start + t.max_dur, total - 0.3)
         if g["template"] == "evidence" and g.get("tier") == "C":
             end = min(end, start + 6.0)          # 인용(C 등급)은 한 번에 6초 이내(저작권 정책 4절 2)
+        if g.get("logo"):
+            end = min(end, start + LOGO_MAX_SEC)   # 로고는 이름표로 잠깐만
         # 진입·퇴장은 역할마다(docs/upgrade/05 3장 — 예전엔 모든 그래픽이 문장보다 0.45초 먼저): 얼굴 옆 자료는 그 낱말 −3f,
         # 보드는 절 시작 −9f, 전면은 말이 먼저(화자가 문장을 얼굴로 시작하고 그 낱말에서 컷, −2f). 퇴장은 문장 끝 +6~8f
         lead, tail = ENTER_EXIT.get(g.get("layout", ""), (0.3, 0.27))

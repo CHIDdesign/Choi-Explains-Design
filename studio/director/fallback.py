@@ -102,9 +102,13 @@ def long_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag]) -> dict:
     }
 
 
-def shorts_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag], *, count: int, max_sec: int) -> dict:
+def shorts_plan(brief: JobBrief, utts: list[Utterance], tags: list[Tag], *, count: int, max_sec: int,
+                order: list[int] | None = None) -> dict:
+    """규칙 숏폼 기획. order: 남긴 발화의 편집 순서(회차를 교차한 녹음은 시간순이 아님) — 창(window)은 이 순서로 이어진 구간."""
     kept = [u for u in utts if u.kept]
     by_id = {u.id: u for u in kept}
+    if order:
+        kept = [by_id[i] for i in order if i in by_id] + [u for u in kept if u.id not in set(order)]
     shorts: list[dict] = []
     used: set[int] = set()
     # 1) 대본의 [숏폼 시작]~[숏폼 끝] 범위

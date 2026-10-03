@@ -167,6 +167,7 @@ MOTION = _obj({
         "hero": INT,                 # 크게 움직이는 주 요소의 번호(elements 인덱스, 없으면 −1)
         "motion_reason": STR,        # 왜 그렇게 움직이는지 한 문장(motion_craft 1번)
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "motif": STR,                # 되풀이하는 도식·사물의 이름(같은 장치는 같은 이름, 영상당 2회까지, 없으면 "")
         "reason": STR,               # 첫머리에 챕터 키 "[키: 모눈 · 붙이기]"
     })},
     "cards": {"type": "array", "items": _obj({
@@ -179,6 +180,7 @@ MOTION = _obj({
         "sequence_id": STR,
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
         "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
+        "motif": STR,                                              # 되풀이하는 도식·사물의 이름(영상당 2회까지, 없으면 "")
         "reason": STR,
     })},
 })

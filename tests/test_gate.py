@@ -497,3 +497,36 @@ def test_assert_bt709_and_nvenc_reason(monkeypatch):
         returncode, stderr = 1, "[h264_nvenc] Driver does not support the required nvenc API version. minimum required Nvidia driver for nvenc is 610.00\nmore"
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
     assert ff._nvenc_variant() is None and "610.00" in ff.nvenc_error
+
+
+def test_b11_motif_repeat_caps_same_diagram_and_logo():
+    """2026-10-03 실제 계획: 더블 다이아몬드 장면 4개(예고 7요소 · 설명 13요소 · 시그니처 카드 · 되돌이 화살표), 학교 휘장 pip + 전면.
+    같은 장치는 2회(시그니처는 남기고 요소가 적은 것부터 뺌), 로고는 1회."""
+    def mg(t0, title, n_el=0, template="motion", signature=False, motif=""):
+        g = _g(t0, t0 + 6.0, template, "fullscreen")
+        g["id"] = f"g{int(t0)}"
+        g["data"] = {"title": title, "spec": {"elements": [{"type": "text"}] * n_el} if n_el else None}
+        if signature:
+            g["data"]["signature"] = True
+        if motif:
+            g["data"]["motif"] = motif
+        return g
+    gs = [mg(10, "사라지는 이론 — 더블 다이아몬드 예고", 7),
+          mg(60, "학교가 가르친 순서 — 씽킹과 더블 다이아몬드", 13),
+          mg(200, "더블 다이아몬드 — 내가 건너뛴 곳", 0, "card", signature=True),
+          mg(240, "실제 과정은 오간다 — 되돌이 화살표", 13, motif="더블 다이아몬드"),
+          mg(300, "간극은 이론과 작업 사이", 11)]
+    logo_pip = _g(30, 33, "photo", "pip"); logo_pip["id"] = "g30"
+    logo_pip["data"] = {"title": "홍익대학교", "logo": True, "image": "images/own_logo_hongik.svg"}
+    logo_full = _g(40, 52, "evidence", "fullscreen"); logo_full["id"] = "g40"
+    logo_full["data"] = {"title": "학교와 현장 사이", "logo": True, "image": "images/own_logo_hongik.svg"}
+    all_g = gs + [logo_pip, logo_full]
+    r = gate.b11_motif_repeat(all_g)
+    assert not r.ok and r.repair == "trim_motifs", r
+    assert r.measured["over"] == {"title:더블 다이아몬드": 3, "logo:own_logo_hongik.svg": 2}, r.measured   # motif 표시는 따로 묶임
+    drops = {g["id"] for g in gate.motif_drops(all_g)}
+    assert drops == {"g10", "g40"}, drops          # 요소가 적은 '예고'와 전면 로고를 뺀다. 시그니처·13요소 설명·pip 이름표는 남는다
+    kept = [g for g in all_g if g["id"] not in drops]
+    assert gate.b11_motif_repeat(kept).ok
+    # 되풀이가 상한 안이면 통과하고 묶음만 적는다
+    assert gate.b11_motif_repeat(gs[1:3]).ok and gate.b11_motif_repeat(gs[1:3]).measured["groups"]

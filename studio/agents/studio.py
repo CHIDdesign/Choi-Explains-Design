@@ -302,7 +302,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         graphics.append(_g("motion", sc.get("layout") or "fullscreen", sc.get("start_seg", -1),
                            sc.get("end_seg", sc.get("start_seg", -1)), sc.get("start_word", ""),
                            title=sc.get("title", ""), reason="모션 디자이너: " + why, spec=spec,
-                           sequence_id=str(sc.get("sequence_id") or "")))
+                           sequence_id=str(sc.get("sequence_id") or ""), motif=str(sc.get("motif") or "")[:24]))
         n_scene += 1
     n_card = 0
     for cd in motion.get("cards", []) or []:
@@ -320,7 +320,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         graphics.append(_g("card", layout, cd.get("start_seg", -1), cd.get("end_seg", cd.get("start_seg", -1)),
                            cd.get("start_word", ""), title=cd.get("title", ""),
                            reason="모션 디자이너(카드): " + str(cd.get("reason", "")), card=card,
-                           sequence_id=str(cd.get("sequence_id") or "")))
+                           sequence_id=str(cd.get("sequence_id") or ""), motif=str(cd.get("motif") or "")[:24]))
         n_card += 1
     # 🛠 시그니처 장면(트리트먼트) — 자유 HTML 카드로 정밀 재현. 겹치면 이긴다(signature → 우선순위 +3)
     n_sig = 0

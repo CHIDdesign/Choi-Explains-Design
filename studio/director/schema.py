@@ -51,6 +51,7 @@ GRAPHIC = _obj({
     # 단계 그래픽: 같은 도식을 단계마다 새로 띄우지 말고 하나에 — 그 낱말을 말할 때 강조가 그 단계로([] = 없음)
     "steps": {"type": "array", "items": _obj({"word": STR, "highlight": INT})},
     "sequence_id": STR,          # 감독 브리프의 시퀀스(같은 묶음의 화면은 같은 틀 안의 컷으로 이어진다, 없으면 "")
+    "motif": STR,                # 되풀이하는 시각 장치(도식·사물)의 이름 — 같은 장치는 같은 이름(영상당 2회까지, 없으면 "")
     "author": STR,
     "source": STR,
     "image": STR,

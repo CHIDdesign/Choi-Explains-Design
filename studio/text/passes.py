@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -117,3 +118,133 @@ def choose_main_pass(passes: list[ReadPass], utts: list[Utterance], *,
         if best_key is None or key > best_key:
             best, best_key = p.idx, key
     return best
+
+
+# ---------------------------------------------------------------------------
+# 대목(unit)마다 더 잘 나온 회차 고르기 — best_take(설계 02 3-2 '문장 단위 교체' + 3-3 'B캠')
+# 채널 주인 2026-10-03: "다른 각도로 찍은 영상 중 각 장면마다 더 잘 나온 장면을 선택해서 편집해야 하는데 1번 영상만 쓴다"
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TakeUnit:
+    idx: int
+    lo: int
+    hi: int                                             # 대본 clean 글자 구간
+    text: str = ""                                      # 첫 문장 앞부분(리포트용)
+    chosen: int = -1                                    # 고른 회차
+    scores: dict[int, float] = field(default_factory=dict)
+    cov: dict[int, float] = field(default_factory=dict)
+    why: str = ""
+    dur: float = 0.0                                    # 고른 회차로 이 대목이 차지하는 시간(초)
+
+    def to_dict(self) -> dict:
+        return {"idx": self.idx, "lo": self.lo, "hi": self.hi, "text": self.text[:24], "pass": self.chosen,
+                "scores": {str(k): round(v, 3) for k, v in self.scores.items()},
+                "cov": {str(k): round(v, 3) for k, v in self.cov.items()}, "why": self.why, "dur": round(self.dur, 1)}
+
+
+def script_units(sentences: list[tuple[int, int, str]], clean: str, *, min_chars: int = 45,
+                 max_chars: int = 220) -> list[tuple[int, int]]:
+    """교차 편집의 단위(대목): 대본의 문단(줄바꿈)마다 하나 — 45자 미만(두 문장 안 됨)의 짧은 문단은 다음 문단과 합치고, 문단 구분이 없는
+    긴 글은 220자쯤(서너 문장, 20~30초)마다 끊는다. 반환은 clean 글자 구간 [lo, hi)."""
+    units: list[tuple[int, int]] = []
+    a: Optional[int] = None
+    chars = 0
+    for i, (s0, e0, t) in enumerate(sentences):
+        if a is None:
+            a, chars = s0, 0
+        chars += sum(1 for ch in t if ch.isalnum())
+        last = i + 1 == len(sentences)
+        para_end = (not last) and ("\n" in clean[e0:sentences[i + 1][0]] or "\n" in t.rstrip()[-1:])
+        if last or (para_end and chars >= min_chars) or chars >= max_chars:
+            units.append((a, e0))
+            a = None
+    if a is not None and sentences:
+        units.append((a, sentences[-1][1]))
+    return units
+
+
+def unit_index(units: list[tuple[int, int]], pos: int) -> int:
+    """대본 위치 → 대목 번호(경계는 다음 대목의 시작)."""
+    k = 0
+    for i, (lo, _) in enumerate(units):
+        if pos >= lo:
+            k = i
+    return k
+
+
+def choose_takes(passes: list[ReadPass], utts: list[Utterance], units: list[tuple[int, int]], *,
+                 take_quality: Callable[[Utterance], float], start: int, text: str = "", alternate: Optional[bool] = None,
+                 margin: float = 0.06, alt_margin: float = 0.03, min_hold_s: float = 20.0, min_cov: float = 0.6
+                 ) -> list[TakeUnit]:
+    """대목마다 회차를 고른다. 회차별 대목 점수 = 0.55·커버리지(그 대목의 글자를 얼마나 담았나, 0.95 면 만점)
+    + 0.45·테이크 품질(take_score: 대본 일치·확신도·유창성·속도·음량·화면) − 0.10·끊긴 토막 비율(3어절 이하 발화).
+    히스테리시스: 지금 회차가 그 대목을 60% 미만으로 담으면 바꾸고, 다른 회차가 0.06 넘게 나으면 바꾸고, 그 밖에는 유지 —
+    단 회차가 다른 파일(다른 구도)에서 왔으면(alternate) 20초 넘게 한 회차가 이어진 뒤 비슷하게 좋은(−0.03 안) 다른
+    회차로 교차한다(다시점 교차 편집처럼 구도가 바뀌어 보인다). 같은 파일을 두 번 읽은 것이면 품질로만 고른다."""
+    if alternate is None:
+        srcs = {p.source for p in passes}
+        alternate = all(p.source >= 0 for p in passes) and len(srcs) > 1
+    by_id = {u.id: u for u in utts}
+    pass_of = {i: p.idx for p in passes for i in p.utts}
+    n = len(text) or (max(hi for _, hi in units) if units else 1)
+    weight = bytes(1 if ch.isalnum() else 0 for ch in text[:n]) + bytes(max(0, n - len(text))) if text else bytes([1]) * n
+    # 회차별 대본 덮음 표시
+    marks: dict[int, bytearray] = {p.idx: bytearray(n) for p in passes}
+    for p in passes:
+        for i in p.utts:
+            u = by_id.get(i)
+            if u and u.script_span:
+                a, b = max(0, u.script_span[0]), min(n, u.script_span[1])
+                if b > a:
+                    marks[p.idx][a:b] = b"\x01" * (b - a)
+    # 발화 → 대목(대본 구간 가운데)
+    assigned: dict[tuple[int, int], list[Utterance]] = {}
+    for p in passes:
+        for i in p.utts:
+            u = by_id.get(i)
+            if u and u.script_span:
+                k = unit_index(units, (u.script_span[0] + u.script_span[1]) // 2)
+                assigned.setdefault((p.idx, k), []).append(u)
+    out: list[TakeUnit] = []
+    for k, (lo, hi) in enumerate(units):
+        tu = TakeUnit(k, lo, hi, text[lo:hi].strip() if text else "")
+        tot = sum(weight[lo:hi]) or 1
+        for p in passes:
+            cov = sum(m & w for m, w in zip(marks[p.idx][lo:hi], weight[lo:hi])) / tot
+            us = assigned.get((p.idx, k), [])
+            qual = sum(take_quality(u) for u in us) / len(us) if us else 0.0
+            frag = sum(1 for u in us if len(u.words) <= 3) / len(us) if us else 0.0
+            tu.cov[p.idx] = cov
+            tu.scores[p.idx] = 0.55 * min(1.0, cov / 0.95) + 0.45 * qual - 0.10 * frag
+        out.append(tu)
+    cur: Optional[int] = start if any(p.idx == start for p in passes) else passes[0].idx
+    hold = 0.0
+    for tu in out:
+        sc = tu.scores
+        elig = [p for p in sc if tu.cov[p] >= min_cov] or sorted(sc, key=lambda p: (tu.cov[p], p))[-1:]
+        best = max(elig, key=lambda p: (round(sc[p], 3), p))          # 동점이면 나중 회차
+        pick, why = cur, "유지"
+        if cur not in elig:
+            pick, why = best, "지금 회차가 이 대목을 덜 담음"
+        elif best != cur and sc[best] - sc[cur] > margin:
+            pick, why = best, "더 잘 말한 테이크"
+        elif alternate and hold >= min_hold_s and len(elig) > 1:
+            alt = max((p for p in elig if p != cur), key=lambda p: (round(sc[p], 3), p))
+            if sc[alt] >= sc[cur] - alt_margin:
+                pick, why = alt, "교차(구도 바꾸기)"
+        if pick != cur:
+            hold = 0.0
+        cur = pick
+        tu.chosen, tu.why = int(pick), why
+        us = assigned.get((pick, tu.idx), [])
+        tu.dur = sum(u.end - u.start for u in us) if us else (tu.hi - tu.lo) / 5.0
+        hold += tu.dur
+    return out
+
+
+def take_summary(units: list[TakeUnit]) -> str:
+    """'1차 7대목 · 2차 5대목 · 회차 바뀜 6번'."""
+    c = Counter(t.chosen for t in units)
+    sw = sum(1 for a, b in zip(units, units[1:]) if a.chosen != b.chosen)
+    return " · ".join(f"{k + 1}차 {v}대목" for k, v in sorted(c.items())) + f" · 회차 바뀜 {sw}번"

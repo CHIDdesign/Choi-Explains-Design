@@ -60,6 +60,7 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
     """→ (그래픽, 모션 디자이너에게 넘길 code_drawn 요청)."""
     graphics: list[dict[str, Any]] = []
     drawn: list[dict[str, Any]] = []
+    seen_logos: set[str] = set()      # 같은 로고는 한 영상에 한 번(2026-10-03 채널 주인: 로고가 여러 번 나오면 안 된다)
     by_i = {o.get("i", n): o for n, o in enumerate(outcomes)}
     for n, raw in enumerate(items):
         it = clean_item(raw)
@@ -98,6 +99,17 @@ def to_graphics(items: list[dict[str, Any]], outcomes: list[dict[str, Any]], *,
             t = drawn_treatment(it["treatment"], len(assets), tier, kind0) if assets else "archive_card"
             if t == "hero" and kind0 == "photo" and (assets[0].get("cut") or it.get("display")):
                 t = "collage"      # 디자인 v3: 오린 사진·큰 글자가 있으면 바닥 타원 위 콜라주(운영자 레퍼런스)
+            if kind0 == "logo":
+                # 로고는 이름표다 — 전면·콜라주로 키우지 않고(큰 흰 판 가운데 작은 휘장이 12초), 같은 로고는 한 번만.
+                # 그 문장 구간의 전면은 그 대상이 '하는 일'의 현장(스톡 영상)이 맡는다(자료 리서처 프롬프트 1절).
+                key = str(assets[0].get("src") or name)
+                if key in seen_logos:
+                    log(f"🎞 '{name or it.get('label') or ''}' 로고는 이미 한 번 보였다 → 이 자리는 비움(말로 충분)")
+                    continue
+                seen_logos.add(key)
+                if t != "pip":
+                    log(f"🎞 '{name or it.get('label') or ''}' 로고는 전면({t})이 아니라 이름표(pip)로")
+                    t = "pip"
             if t == "pip" and kind0 in ("photo", "logo"):
                 a = assets[0]
                 g = _g("photo", "pip", s, s, word, title=it.get("label") or name, image=a.get("mat_src") or a["src"],
