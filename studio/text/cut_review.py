@@ -67,10 +67,13 @@ def draft_text(sentences: list[tuple[int, int, str]], utts: list[Utterance], rem
             b, a = _context(raw, r["start"], r["end"])
             lines.append(f"R{i} {fmt_ts(r['start'], True)} [{r.get('reason', '')}] 「{r.get('text', '')}」 (앞: {b} / 뒤: {a})")
     if events:
-        lines.append("\n# 비언어 소리(말소리는 있는데 인식 단어가 없는 토막 — 기침·헛기침·숨·입소리일 수 있다. 자를지 정한다)")
+        lines.append("\n# 비언어 소리(말소리는 있는데 인식 단어가 없는 토막 — 기침·헛기침·숨·입소리일 수 있다. 자를지 정한다. "
+                     "'의심 단어'는 인식기가 단어로 적었지만 홀로 떨어진 추임새·헛기침일 수 있는 토막)")
         for e in events:
+            kind = ("파열음" if e["kind"] == "burst" else f"의심 단어 「{e.get('text', '')}」(확신 {e.get('prob', 0):.2f})"
+                    if e["kind"] == "word" else "약한 소리")
             lines.append(f"A{e['id']} {fmt_ts(e['start'], True)} {e['dur']:.2f}초 {e['dbfs']:.0f}dBFS "
-                         f"{'파열음' if e['kind'] == 'burst' else '약한 소리'} (앞 말: {e.get('prev', '')} {e.get('gap_prev', 0):.2f}초 전 / "
+                         f"{kind} (앞 말: {e.get('prev', '')} {e.get('gap_prev', 0):.2f}초 전 / "
                          f"뒤 말: {e.get('next', '')} {e.get('gap_next', 0):.2f}초 뒤)")
     return "\n".join(lines)
 

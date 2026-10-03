@@ -417,3 +417,19 @@ def test_quantize_keeps_reordered_spans_cold_open():
     assert [round(k.start, 2) for k in out] == [388.0, 340.0, 345.0, 393.0]      # 재배치 유지 · 겹침 0.1초만 밀림
     assert abs(sum(k.dur for k in out) - (4 + 5 + 5 + 3)) < 0.2
     assert [round(k.start, 2) for k in quantize([Span(10.0, 12.0), Span(11.5, 14.0)], 30.0, 100.0)] == [10.0, 12.0]
+
+
+def test_false_start_fragment_before_restart_is_cut():
+    """2026-10-03 실제 영상: '바로' 한 토막 뒤에 같은 문장을 처음부터 다시 읽었는데, 토막이 '대본 밖' 짧은 발화라 어떤 규칙에도
+    안 걸리고 컷 총괄도 '대본 내용'이라 남겨 더듬는 소리가 들어갔다. 바로 뒤 발화가 그 말로 다시 시작하면 앞 토막은 뺀다."""
+    p = parse_script(SCRIPT)
+    words = _words([("안녕하세요.", 0.8), ("오늘은", 0.6), ("오늘은 더블 다이아몬드 이야기를 해볼게요.", 0.9),
+                    ("디자인은 먼저 넓게 펼쳐야 합니다.", 0.7), ("그 다음에 좁히죠.", 0.8)])
+    utts, _, _ = ScriptAligner(p).run(build_utterances(words))
+    frag = next(u for u in utts if u.asr_text.strip() == "오늘은")
+    full = next(u for u in utts if u.asr_text.startswith("오늘은 더블"))
+    assert frag.status == "retake" and "끊긴 앞부분" in frag.note and full.kept
+    # 같은 말로 시작하는 다른 완결 문장은 둘 다 남는다(8자 넘고 맺은 문장 → 리테이크 판정에 맡김)
+    words = _words([("좋은 디자인은 단순합니다.", 0.6), ("좋은 디자인은 정직합니다.", 0.8)])
+    utts, _, _ = ScriptAligner(parse_script("좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.")).run(build_utterances(words))
+    assert [u.kept for u in utts] == [True, True]

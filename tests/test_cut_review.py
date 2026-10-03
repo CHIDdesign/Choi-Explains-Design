@@ -74,3 +74,20 @@ def test_draft_lists_events_and_apply_returns_event_cuts():
     rv, remaining = cut_review.apply(res, [u0], [], raw)
     assert u0.kept and rv.summary() == "초안 그대로"
     assert cut_review.event_cuts(res, events) == ([0], {0: "헛기침"})
+
+
+def test_vocal_events_flag_isolated_filler_words_for_the_editor():
+    """2026-10-03 채널 주인: 헛기침 같은 소리 NG 가 그대로 들어간다 — 인식기가 '흠'·'음' 같은 단어로 적은 홀로 떨어진 토막을
+    '의심 단어' 이벤트로 컷 총괄에게 넘기고, 자르기로 하면 그 낱말로 removed 구간이 된다."""
+    import numpy as np
+    from studio.media.vocal_events import SR, as_removals, default_cuts, vocal_events
+    from studio.models import Word
+    words = [Word("디자인은", 1.0, 1.5, 0.95), Word("흠", 2.0, 2.3, 0.4), Word("먼저", 2.8, 3.2, 0.95),
+             Word("넓게", 3.25, 3.6, 0.95), Word("음", 3.62, 3.8, 0.3)]      # 마지막 '음'은 말에 붙어 있다 → 의심하지 않음
+    audio = np.full(int(4.5 * SR), 0.1, dtype=np.float32)
+    ev = vocal_events(audio, [(0.9, 4.0)], words)
+    words_ev = [e for e in ev if e["kind"] == "word"]
+    assert [e["text"] for e in words_ev] == ["흠"] and words_ev[0]["gap_prev"] == 0.5 and words_ev[0]["gap_next"] == 0.5
+    assert default_cuts(ev) == [e["id"] for e in ev if e["kind"] == "burst" and e["gap_prev"] >= 0.25 and e["gap_next"] >= 0.25]
+    rem = as_removals(ev, [words_ev[0]["id"]], {words_ev[0]["id"]: "헛기침"})
+    assert rem == [{"start": 2.0, "end": 2.3, "text": "흠", "reason": "비언어 소리: 헛기침"}]

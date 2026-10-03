@@ -147,6 +147,7 @@ class ScriptAligner:
             self._match_all(utts)
             self._split_passes(utts, rep)
         self._mark_meta(utts)
+        self._mark_false_starts(utts)
         if has_script:
             self._mark_retakes_by_script(utts)
         self._mark_retakes_by_similarity(utts)
@@ -264,6 +265,22 @@ class ScriptAligner:
                                   or (any(p in un for p in META_WEAK) and ("다시" in un or len(un) <= 8))):
                 u.status = "meta"
                 u.note = "NG/메타 발화"
+
+    def _mark_false_starts(self, utts: list[Utterance]) -> None:
+        """끊긴 앞부분: 짧은 발화(24자 이하) 바로 뒤(2.5초 안)의 발화가 그 말로 다시 시작하면(처음부터 다시 읽음) 앞 발화를
+        뺀다. 대본 조각이라 대본 점수가 낮거나 span 이 없어 리테이크 묶음(50% 겹침)·반복 판정(6자 이상)에 걸리지 않았고, 컷
+        총괄은 '대본 내용'이라 남겼다 — 2026-10-03 실제: U3 '바로' · U31 '이' · U53 '이번엔' · U71 '중요한' 토막이 들어가
+        더듬는 소리가 들리고 자막이 어긋났다. 8자 넘는 맺은 문장(…다·요·죠·까)은 두 번 말한 것이라 리테이크 판정에 맡긴다."""
+        kept = [u for u in utts if u.kept]
+        for u, v in zip(kept, kept[1:]):
+            un, vn = norm(u.asr_text), norm(v.asr_text)
+            if not un or len(un) > 24 or v.start - u.end > 2.5 or len(vn) <= len(un):
+                continue
+            if len(un) > 8 and un[-1] in "다요죠까":
+                continue
+            if fuzz.ratio(un, vn[:len(un)]) >= 85:
+                u.status = "retake"
+                u.note = f"끊긴 앞부분 — 바로 뒤 #{v.id} 가 처음부터 다시 말함"
 
     def _mark_retakes_by_script(self, utts: list[Utterance]) -> None:
         """같은 대본 구간을 여러 번 말한 테이크들을 묶고, 가장 또렷한 테이크만 남긴다."""
