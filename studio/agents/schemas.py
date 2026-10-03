@@ -276,6 +276,7 @@ EVIDENCE_PICK = _obj({
             "focus_box": {"type": "array", "items": NUM},  # [x, y, w, h] 0~1, 없으면 []
         })},
         "reason": STR,
+        "retry_query_en": STR,     # 2점 이상이 없을 때: 맞는 자료를 찾을 영어 검색어 3~6낱말(다른 대상·행동·화각), 아니면 ""
     })},
 })
 

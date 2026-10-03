@@ -327,7 +327,8 @@ def test_pipeline_fills_face_only_stretches_with_sentence_keywords(tmp_path):
     gs = p.plan_long["graphics"]
     assert added == len(gs) >= 10 and all(g["template"] == "keyword" and g["layout"] == "overlay" for g in gs)
     assert all(g["title"] and not gate._internal(g["title"]) for g in gs)
-    assert any(g["start_seg"] == 30 and g["title"] == "원칙" for g in gs) or all(g["start_seg"] != 30 for g in gs)
+    # 강조어 '원칙'(2자 한 낱말)은 카드가 아니다 → 문장의 명사 구절 '디자인 원칙'
+    assert any(g["start_seg"] == 30 and g["title"] == "디자인 원칙" for g in gs) or all(g["start_seg"] != 30 for g in gs)
     assert len({g["start_seg"] for g in gs}) == len(gs)             # 같은 문장에 두 번 넣지 않는다
     # 채운 자리로 다시 재면 맨얼굴 25초 이하·빈 칸 없음(카드 4초)
     from studio.director.plan import seg_edit_times
@@ -530,3 +531,25 @@ def test_b11_motif_repeat_caps_same_diagram_and_logo():
     assert gate.b11_motif_repeat(kept).ok
     # 되풀이가 상한 안이면 통과하고 묶음만 적는다
     assert gate.b11_motif_repeat(gs[1:3]).ok and gate.b11_motif_repeat(gs[1:3]).measured["groups"]
+
+
+def test_gap_keyword_rejects_adverbs_and_verbs_and_prefers_concept_phrases(tmp_path):
+    """2026-10-03 실제 출력 05:25~06:02: 보충 카드 넷이 '결국'·'이론'·'가르치려'·'디자인' — 아트 디렉터가 label_leak 로 뺐다.
+    카드 글은 대본 용어 → 콜아웃 → 쓸 만한 강조어 → 두 낱말 명사 구절 → 4자 이상 명사. 없으면 카드를 넣지 않는다."""
+    import studio.pipeline as pl
+    texts = {40: "결국 디자인 이론 책들을 다시 펼쳐서 하나씩 공부할 거예요.", 41: "그래서 더 이상했어요.",
+             42: "이걸 디자인 고착이라고 부릅니다.", 43: "여러분이 가르치려 하지 않아도 됩니다.", 44: "핀터레스트부터 열면 비슷해집니다."}
+    utts = [_utt(k, k, 4.0 * k) for k in range(40)] + [_utt(k, -1, 4.0 * k, text=t) for k, t in texts.items()]
+    p = _pipe(tmp_path, utts)
+    p.spec.script = SCRIPT + "\n디자인 이론 책들을 다시 펼쳐서 하나씩 공부할 거예요. 이걸 '디자인 고착'이라고 부릅니다. 디자인 이론은 브레이크다."
+    p.plan_long["emphasis"] = [{"seg": 40, "word": "결국", "kind": "highlight"}, {"seg": 43, "word": "가르치려", "kind": "highlight"},
+                               {"seg": 44, "word": "핀터레스트부터", "kind": "highlight"}]
+    by = {u.id: u for u in utts}
+    assert p._gap_keyword(by[40]) == ("디자인 이론", "디자인")                 # 강조어 '결국'은 부사 → 명사 구절(대본에 자주 나옴)
+    assert p._gap_keyword(by[41]) == ("", "")                               # 올릴 말이 없다 → 카드 없음
+    assert p._gap_keyword(by[42])[0] == "디자인 고착"                          # 대본 용어가 먼저
+    assert p._gap_keyword(by[43]) == ("", "")                               # '가르치려'는 동사 토막
+    assert p._gap_keyword(by[44]) == ("핀터레스트", "핀터레스트부터")             # 4자 이상 고유명사 강조어는 쓴다
+    assert p._gap_keyword(by[41], strict=False)[0] != ""                    # A7 block 을 막을 때만 예전 낱말
+    assert pl.card_worthy("결국") is False and pl.card_worthy("이론") is False and pl.card_worthy("디자인") is False
+    assert pl.card_worthy("프로세스 장표") and pl.card_worthy("어포던스") and not pl.card_worthy("이렇게 합니다")

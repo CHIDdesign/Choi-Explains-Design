@@ -1846,24 +1846,45 @@ class Pipeline:
         self._gate_record(res, "화면 구조")
         return lp, ed
 
-    def _gap_keyword(self, u: Utterance) -> tuple[str, str]:
-        """빈 구간을 채울 핵심어(화면 글자, 그 낱말) — 편집 감독의 강조어 → 콜아웃 문구 → 대본 용어 → 자주 나온 명사."""
-        part = r"(은|는|이|가|을|를|의|에|에서|으로|로|와|과|도|만|까지|부터|이라는|라는|이란|란|입니다|이에요|예요|이죠|죠)$"
+    def _gap_keyword(self, u: Utterance, *, strict: bool = True) -> tuple[str, str]:
+        """빈 구간을 채울 핵심어(화면 글자, 그 낱말). 카드에 올릴 만한 말만: 대본 용어(개념 이름) → 콜아웃 문구 → 강조어 →
+        문장 속 두 낱말 명사 구절('디자인 이론', '프로세스 장표') → 4자 이상 명사. 부사·동사·흔한 한 낱말은 카드가 아니다 —
+        2026-10-03 실제 출력 05:25~06:02 에 '결국'·'이론'·'가르치려'·'디자인' 카드 넷이 떠 아트 디렉터가 label_leak 로 뺐다.
+        strict=False 는 40초 넘는 맨얼굴(A7 block)을 막을 때만: 예전처럼 자주 나온 낱말이라도 쓴다."""
+        glossary = [t for t in glossary_terms(parse_script(self.spec.script)) if len(t) >= 2] if self.spec.script else []
+        gl_lower = {t.lower() for t in glossary}
+        terms = [t for t in glossary if t in u.text]
+        if terms:
+            t = max(terms, key=len)
+            return t[:14], t
+        for m in self.plan_long.get("moments", []) or []:
+            c = str(m.get("callout") or "").strip()
+            if m.get("seg") == u.id and 2 <= len(c) <= 14 and card_worthy(c, gl_lower):
+                return c[:14], str(m.get("word") or "")
         for e in self.plan_long.get("emphasis", []) or []:
             w = str(e.get("word") or "").strip()
             if e.get("seg") == u.id and len(w) >= 2:
-                return re.sub(part, "", w)[:12] or w[:12], w
-        for m in self.plan_long.get("moments", []) or []:
-            c = str(m.get("callout") or "").strip()
-            if m.get("seg") == u.id and 2 <= len(c) <= 14:
-                return c[:14], str(m.get("word") or "")
-        terms = [t for t in glossary_terms(parse_script(self.spec.script))
-                 if len(t) >= 2 and t in u.text] if self.spec.script else []
-        if terms:
-            t = max(terms, key=len)
-            return t[:12], t
+                core = strip_particle(w)
+                if card_worthy(core, gl_lower):
+                    return core[:12], w
+        freq = self._script_freq()
+        phrase = noun_phrase(u.text, freq, gl_lower)
+        if phrase:
+            return phrase[0][:14], phrase[1]
+        if strict:
+            return "", ""
         kw = fallback._keywords([u.text], 1)
         return (kw[0][:12], kw[0]) if kw else ("", "")
+
+    def _script_freq(self) -> dict[str, int]:
+        """대본의 낱말(조사 뗀 어절) 빈도 — 보충 카드 구절을 고를 때 '이 영상의 말'인지 본다."""
+        cached = getattr(self, "_gap_freq", None)
+        if cached is None:
+            from collections import Counter
+            text = parse_script(self.spec.script).clean if self.spec.script else ""
+            cached = dict(Counter(strip_particle(t) for t in re.findall(r"[가-힣A-Za-z0-9]+", text)))
+            self._gap_freq = cached
+        return cached
 
     def _fill_gaps(self, lp: dict, ed: EditDecisions) -> int:
         """A6·A7 수리: 그래픽 없는 칸의 가운데와, 25초 넘는 맨얼굴 구간 안 18초마다 그 자리 문장의 핵심어 카드(얼굴 옆)를 계획에
@@ -1888,22 +1909,36 @@ class Pipeline:
             if m and int(m.group(1)) < len(plan_gs):
                 used.add(plan_gs[int(m.group(1))].get("start_seg"))
         added = 0
+        skipped: list[str] = []
         for t in sorted(targets):
             cands = [(abs(a - t), i) for i, (a, b) in seg_t.items()
                      if i in by_id and by_id[i].kept and i not in used and b - a >= 1.5
                      and any(x <= a and a + 1.5 <= y for x, y in free) and abs(a - t) <= 12.0
                      and not any(h0 - 4.0 <= a <= h1 for h0, h1 in holds)]
-            for _, i in sorted(cands):
-                title, word = self._gap_keyword(by_id[i])
-                if not title:
-                    continue
-                g = blank_graphic("keyword", i)
-                g.update({"layout": "overlay", "title": title, "start_word": word if word in by_id[i].text else "",
-                          "reason": "품질 게이트: 그래픽이 없던 구간을 그 문장의 핵심어로 채움", "source": "gate"})
-                self.plan_long.setdefault("graphics", []).append(g)
-                used.add(i)
-                added += 1
-                break
+            # 카드에 올릴 만한 말(개념 이름·명사 구절)이 있는 문장만. 없으면 비워 둔다 — 단, 그 맨얼굴 구간이 A7 block(40초)을
+            # 넘으면 멈추는 것보다는 약한 낱말이라도 넣는다
+            run_len = next((b - a for a, b in free if a - 0.5 <= t <= b + 0.5), 0.0)
+            for strict in ((True, False) if run_len > gate.A7_HARD else (True,)):
+                hit = False
+                for _, i in sorted(cands):
+                    title, word = self._gap_keyword(by_id[i], strict=strict)
+                    if not title:
+                        continue
+                    g = blank_graphic("keyword", i)
+                    g.update({"layout": "overlay", "title": title, "start_word": word if word in by_id[i].text else "",
+                              "reason": "품질 게이트: 그래픽이 없던 구간을 그 문장의 핵심어로 채움"
+                                        + ("" if strict else " (약한 낱말 — 40초 넘는 맨얼굴을 막기 위해)"), "source": "gate"})
+                    self.plan_long.setdefault("graphics", []).append(g)
+                    used.add(i)
+                    added += 1
+                    hit = True
+                    break
+                if hit:
+                    break
+            else:
+                skipped.append(fmt_ts(t))
+        if skipped:
+            self._log_file_only("🚦 보충 카드: 카드에 올릴 말(개념 이름·명사 구절)이 없어 비워 둔 자리 " + " · ".join(skipped[:8]))
         return added
 
     def _trim_chains(self, lp: dict) -> int:
@@ -4272,6 +4307,65 @@ def covered_elsewhere(u: Utterance, utts: list[Utterance], drop_ids: set[int], *
         if y > x:
             marks[x - a:y - a] = b"\x01" * (y - x)
     return sum(marks) / n >= need
+
+
+# 보충 카드에 올리지 않는 말(2026-10-03: '결국'·'가르치려' 같은 부사·동사 토막이 카드로 떴다)
+GAP_STOP = {"결국", "그래서", "그런데", "그리고", "하지만", "그러나", "사실", "정말", "진짜", "그냥", "이제", "바로", "다시", "이렇게",
+            "그렇게", "많이", "조금", "아마", "분명히", "분명", "오늘", "여러분", "우리", "저는", "제가", "그게", "이게", "그거", "이거",
+            "먼저", "지금", "여기", "거기", "하나", "모두", "너무", "아주", "매우", "역시", "물론", "굉장히", "되게", "어떤", "무슨",
+            "이런", "그런", "저런", "같은", "다른", "모든", "어느", "누구", "언제", "어디", "왜냐하면", "그래도", "그러면", "그러니까",
+            "하지", "않아", "않아도", "않고", "않는", "않으면", "됩니다", "되지", "있어", "있어요", "없어", "없어요", "있는", "없는",
+            "하는", "하고", "해서", "해요", "합니다", "했어요", "때문", "때문에", "같아요", "거예요", "거죠", "겁니다", "것", "수",
+            "번", "적", "중", "안", "못", "또", "약간", "거의", "별로", "항상", "늘", "자주", "가끔", "한번", "진짜로", "정말로"}
+_PARTICLE = re.compile(r"(은|는|이|가|을|를|의|에|에서|으로|로|와|과|도|만|까지|부터|이라는|라는|이란|란|입니다|이에요|예요|이죠|죠|에요|이라고|라고)$")
+_VERBISH = re.compile(r"(려|려고|고|게|히|다|요|죠|며|면|서|니까|지만|는데|하기|하는|했다|합니다|습니다|세요|어요|아요|을까|라서|라도|든지|거든|더니|듯|했|했던|하던|되는|된|될|할"
+                      r"|않아|않고|않는|없어|없는|있어|있는|하지|되지|이지|겠|겠다|네요|군요|구나)$")
+
+
+def strip_particle(word: str) -> str:
+    core = _PARTICLE.sub("", word.strip())
+    return core if len(core) >= 2 else word.strip()
+
+
+def card_worthy(text: str, glossary_lower: set[str] | None = None) -> bool:
+    """화면 카드에 올릴 만한 말인가: 대본 용어(개념 이름)면 그대로, 구절은 낱말마다 2자 이상·부사·동사 아님·4~14자, 한 낱말은
+    4자 이상 명사(흔한 2~3자 한 낱말 '이론'·'디자인'·'결과'는 카드가 아니다)."""
+    t = " ".join(text.split())
+    if not t:
+        return False
+    if glossary_lower and t.lower() in glossary_lower:
+        return True
+    toks = t.split()
+    if any(len(x) < 2 or x in GAP_STOP or _VERBISH.search(x) for x in toks):
+        return False
+    if len(toks) >= 2:
+        return 4 <= len(t.replace(" ", "")) <= 14
+    return len(t) >= 4
+
+
+def noun_phrase(text: str, freq: dict[str, int], glossary_lower: set[str] | None = None) -> Optional[tuple[str, str]]:
+    """문장에서 카드에 올릴 두 낱말 명사 구절(원문에서 바로 이어진 두 어절) → (구절, 첫 어절 원문). 둘 다 대본에 자주 나오는
+    말을 먼저, 없으면 아무 구절, 그것도 없으면 4자 이상 명사 하나(대본에 2번 이상)."""
+    raw = re.findall(r"[가-힣A-Za-z0-9]+", text)
+    toks = [strip_particle(w) for w in raw]
+    ok = [len(t) >= 2 and t not in GAP_STOP and not _VERBISH.search(t) for t in toks]
+    best: Optional[tuple[float, str, str]] = None
+    for i in range(len(toks) - 1):
+        if not (ok[i] and ok[i + 1]):
+            continue
+        phrase = f"{toks[i]} {toks[i + 1]}"
+        if not card_worthy(phrase, glossary_lower):
+            continue
+        score = min(freq.get(toks[i], 0), freq.get(toks[i + 1], 0)) * 10 + len(phrase)
+        if best is None or score > best[0]:
+            best = (score, phrase, raw[i])
+    if best is not None:
+        return best[1], best[2]
+    singles = [(freq.get(t, 0), t, raw[i]) for i, t in enumerate(toks) if ok[i] and len(t) >= 4 and freq.get(t, 0) >= 2]
+    if singles:
+        _, t, w = max(singles)
+        return t, w
+    return None
 
 
 def _minus(a: float, b: float, words: list[Word], pad: float = 0.08) -> list[tuple[float, float]]:

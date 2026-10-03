@@ -248,8 +248,11 @@ def fill_targets(empty_bins: list, face_runs: list[tuple[float, float]], holds: 
     return sorted({round(x, 3) for x in out})
 
 
+A7_HARD = 40.0          # 맨얼굴이 이보다 길면 block(수리 뒤에도 남으면 멈춤)
+
+
 def a7_face_run(graphics: list[dict], total: float, callouts: Optional[list[dict]] = None, *,
-                soft: float = 25.0, hard: float = 40.0) -> GateResult:
+                soft: float = 25.0, hard: float = A7_HARD) -> GateResult:
     """맨얼굴 최장 구간 — 25초 이하(플레이북 절대 상한). 25~40초는 repair, 40초 초과는 block."""
     runs = face_only_spans(graphics, callouts, total)
     longest = max((b - a for a, b in runs), default=0.0)

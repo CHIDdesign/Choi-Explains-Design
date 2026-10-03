@@ -692,7 +692,8 @@ class Studio:
             n = max([int(c.get("candidate", 0) or 0) for c in pk.get("choices") or []] + [0])
             best = choose(pk, n, 1, "")
             out.append({"request": pk.get("request"), "candidate": best[0][0] + 1 if best else -1,
-                        "reason": pk.get("reason", ""), "shows": best[0][1].get("shows", "") if best else ""})
+                        "reason": pk.get("reason", ""), "shows": best[0][1].get("shows", "") if best else "",
+                        "retry_query_en": str(pk.get("retry_query_en") or "").strip() if not best else ""})
         return out
 
     def pick_portrait(self, ctx: str, requests_text: str, sheets: list[tuple[str, bytes, str]]) -> list[dict[str, Any]]:

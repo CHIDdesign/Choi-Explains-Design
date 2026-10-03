@@ -102,6 +102,44 @@ class StockResearcher:
     def search(self, st: dict[str, Any]) -> list[StockCandidate]:
         return self.hub.search(st, self.per_request)
 
+    def _pick_round(self, live: list[str], reqs: dict[str, dict[str, Any]], cands: dict[str, list[StockCandidate]],
+                    *, retried: bool = False) -> tuple[dict[str, int], dict[str, str]]:
+        """후보 시트 → Claude 비전 선택 → (요청 → 후보 번호(0부터, 거절은 −1), 요청 → 다시 찾을 검색어). 선택 실패면 첫 후보."""
+        sheets, lines = [], []
+        for n, k in enumerate(live, 1):
+            st = reqs[k]
+            thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
+                       self._thumb(c))
+                      for j, c in enumerate(cands[k], 1)]
+            sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
+            # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그)
+            lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
+                         f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}"
+                         + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
+                         + "".join(f"\n  C{j}: {c.alt[:70]}" for j, c in enumerate(cands[k], 1) if c.alt)
+                         + ("\n  (리서처의 새 검색어로 다시 찾은 후보)" if retried else ""))
+        choice: dict[str, int] = {}
+        retry: dict[str, str] = {}
+        try:
+            picks = self.pick("\n".join(lines), sheets) if self.pick else []
+            for p in picks:
+                r, c = int(p.get("request", 0)), int(p.get("candidate", -1))
+                if 1 <= r <= len(live):
+                    choice[live[r - 1]] = c - 1 if c >= 1 else -1
+                    if c < 1:
+                        self.stats["rejected"] += 1
+                        retry[live[r - 1]] = str(p.get("retry_query_en") or "").strip()
+                        self.log(f"🎞 R{r}: 맞는 소재 없음 → {'제외' if retried or not retry[live[r - 1]] else '다시 검색'}"
+                                 f" ({p.get('reason', '')})")
+            for k in live:
+                choice.setdefault(k, 0)
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 - 선택 실패 시 첫 후보
+            self.log(f"🎞 자동 선택 실패 → 첫 후보 사용: {e}")
+            choice = {k: 0 for k in live}
+        return choice, retry
+
     def _thumb(self, c: StockCandidate) -> Optional[bytes]:
         if not c.thumb:
             return None
@@ -152,35 +190,31 @@ class StockResearcher:
         live = [k for k in todo if cands.get(k)]
         choice: dict[str, int] = {k: 0 for k in live}
         if live and self.pick:
-            sheets, lines = [], []
-            for n, k in enumerate(live, 1):
-                st = reqs[k]
-                thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
-                           self._thumb(c))
-                          for j, c in enumerate(cands[k], 1)]
-                sheets.append((f"R{n}", contact_sheet(thumbs), "image/jpeg"))
-                # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그)
-                lines.append(f"- R{n} ({st.get('kind')}) 검색어: {st.get('query_en')} / {st.get('query_ko')}"
-                             f" · 목적: {st.get('purpose', '')} · must_show: {st.get('must_show', '')}"
-                             + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
-                             + "".join(f"\n  C{j}: {c.alt[:70]}" for j, c in enumerate(cands[k], 1) if c.alt))
-            try:
-                picks = self.pick("\n".join(lines), sheets)
-                choice = {}
-                for p in picks:
-                    r, c = int(p.get("request", 0)), int(p.get("candidate", -1))
-                    if 1 <= r <= len(live):
-                        choice[live[r - 1]] = c - 1 if c >= 1 else -1
-                        if c < 1:
-                            self.stats["rejected"] += 1
-                            self.log(f"🎞 R{r}: 맞는 소재 없음 → 제외 ({p.get('reason', '')})")
-                for k in live:
-                    choice.setdefault(k, 0)
-            except Cancelled:
-                raise
-            except Exception as e:  # noqa: BLE001 - 선택 실패 시 첫 후보
-                self.log(f"🎞 자동 선택 실패 → 첫 후보 사용: {e}")
-                choice = {k: 0 for k in live}
+            choice, retry = self._pick_round(live, reqs, cands)
+            # 2b) 거절된 요청은 리서처가 적은 새 검색어로 한 번 더(2026-10-03: 거절한 자리가 그대로 얼굴로 남아 뒤 절반이 맨얼굴)
+            again = {k: q for k, q in retry.items() if choice.get(k, 0) < 0 and q
+                     and q.strip().lower() != str(reqs[k].get("query_en", "")).strip().lower()}
+            if again:
+                self.stats["retried"] = len(again)
+                live2 = []
+                for k, q in again.items():
+                    try:
+                        found = self.search({**reqs[k], "query_en": q, "query_ko": ""})
+                    except Cancelled:
+                        raise
+                    except Exception as e:  # noqa: BLE001
+                        self.log(f"🎞 다시 검색 실패 '{q}': {e}")
+                        found = []
+                    self.log(f"🎞 '{reqs[k].get('query_en')}' → 리서처의 검색어 '{q}' 로 다시: 후보 {len(found)}개")
+                    if found:
+                        cands[k] = found
+                        live2.append(k)
+                if live2:
+                    choice2, _ = self._pick_round(live2, reqs, cands, retried=True)
+                    for k in live2:
+                        choice[k] = choice2.get(k, -1)
+                        if choice[k] >= 0:
+                            self.stats["retry_ok"] = self.stats.get("retry_ok", 0) + 1
         progress(0.5)
         # 3) 다운로드·정리
         for i, k in enumerate(todo):
