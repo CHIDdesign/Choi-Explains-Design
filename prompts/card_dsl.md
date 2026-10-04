@@ -126,7 +126,7 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
   - 트윈 값: `drawSVG: '0% 100%'`(선 그리기, `'50% 50%'` 에서 시작하면 가운데서 양쪽으로) · `morphSVG: q('#target')[0]` ·
     `motionPath: {path: q('#route')[0], align: q('#route')[0], alignOrigin: [0.5, 0.5], start: 0, end: 1}`.
 - 결정론: 값은 `seek(t)` 로만 정해진다. **금지**: 콜백(onUpdate·onComplete…), `Date`·난수·타이머·`window`·`document`·네트워크·`eval`·`import`·`while`. 6000자 이하. 쓰면 카드가 거절된다.
-- 길이: 마지막 트윈 끝 ≤ 카드 길이 − 1.0초(`anim_ends_too_late`). 0.3초 안에 판·제목이 서 있어야 한다(`anim_first_frame_empty`).
+- 길이: 마지막 1초는 멈춰 보여야 한다(`anim_ends_too_late` — 검사가 카드 끝 −1.0초와 끝의 화면을 비교한다). 머무는 동안의 느린 흐름(16px 이하 이동 · 긴 변의 4% 이하 크기 변화 · 1~2° 회전)은 끝까지 이어져도 된다 — 등장·강조·선 그리기·불투명도 변화는 `ctx.duration - 1.0` 전에 끝낸다. 카드 길이는 말의 길이로 정해져 짧을 수 있으니 마지막 박자는 `Math.min(4.3, ctx.duration - 1.6)` 처럼 `ctx.duration` 기준으로 둔다. 0.3초 안에 판·제목이 서 있어야 한다(`anim_first_frame_empty`).
 - `data-anim` 과 같이 써도 된다(선언이 먼저 붙고, 코드가 그 뒤에 얹힌다). 숫자 카운트업은 `data-anim="count-up"` 으로.
 예(플러그인):
 ```js

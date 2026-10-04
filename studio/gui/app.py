@@ -567,11 +567,15 @@ class MainWindow(QMainWindow):
         self.r_upload.clicked.connect(lambda: self._open(self.results.get("upload_info", "")))
         self.r_folder = QPushButton("결과 폴더 열기")
         self.r_folder.clicked.connect(lambda: self._open(self.results.get("output", "")))
+        self.r_rate = QPushButton("장면 평가 👍/👎")
+        self.r_rate.setToolTip("장면마다 좋다/별로를 남기면 다음 작업부터 디자이너와 심사가 이 취향을 봅니다")
+        self.r_rate.clicked.connect(self._rate_scenes)
         again = QPushButton("새 영상 만들기")
         again.setObjectName("hero")
         again.clicked.connect(self._new)
         row.addWidget(self.r_upload)
         row.addWidget(self.r_folder)
+        row.addWidget(self.r_rate)
         row.addStretch(1)
         row.addWidget(again)
         v.addLayout(row)
@@ -902,7 +906,23 @@ class MainWindow(QMainWindow):
         self.r_grid.addWidget(side, 0, len(cards), Qt.AlignTop)
         self.r_grid.setColumnStretch(len(cards) + 1, 1)
         self.r_upload.setEnabled(bool(res.get("upload_info")))
+        self.r_rate.setEnabled(bool(self._rate_file(res)))
         self.pages.setCurrentIndex(2)
+
+    @staticmethod
+    def _rate_file(res: dict) -> str:
+        """장면 평가용 목록(work/rate.json) — 결과에 없으면 작업 폴더에서 찾는다(예전 결과)."""
+        p = res.get("rate") or ""
+        if not p and res.get("output"):
+            p = str(Path(res["output"]).parent / "work" / "rate.json")
+        return p if p and Path(p).exists() else ""
+
+    def _rate_scenes(self) -> None:
+        from .rate_dialog import RateDialog
+        path = self._rate_file(self.results)
+        if not path:
+            return
+        RateDialog(path, Path(path).parent.parent.name, self).exec()      # work/rate.json → 작업 폴더 이름
 
     def _new(self) -> None:
         self.pages.setCurrentIndex(0)

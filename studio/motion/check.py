@@ -44,6 +44,8 @@ def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: i
             "settle": min(float(durations.get(c["id"], 8.0)) - 0.2, card_settle_time(c) + 0.3),
             "layout": c.get("layout", "fullscreen"),
             "timeline": str(c.get("timeline") or ""),      # 직접 쓴 GSAP 타임라인(card_dsl.md 7절)
+            # 미리보기 프레임: 초 목록 또는 "auto"(정착을 잰 뒤 0.5초 · 35% · 70% · 정착 · 머무는 끝)
+            **({"shots": "auto" if c["shots"] == "auto" else [float(t) for t in c["shots"]][:8]} if c.get("shots") else {}),
         } for c in cards],
     }
     job_file = out_dir / "check_job.json"
@@ -61,7 +63,8 @@ def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: i
             return
         if ev.get("type") == "card":
             results[ev["id"]] = {"ok": bool(ev.get("ok")), "problems": ev.get("problems", []), "metrics": ev.get("metrics", {}),
-                                 "shot": str(ev.get("shot") or "")}
+                                 "shot": str(ev.get("shot") or ""),
+                                 "shots": [s for s in ev.get("shots") or [] if isinstance(s, dict) and s.get("path")]}
         elif ev.get("type") == "error":
             err["msg"] = str(ev.get("message", ""))[:600]
 
@@ -80,3 +83,38 @@ def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: i
         else:
             log(f"🃏 카드 {c['id']} 검사 실패: " + " · ".join(problem_lines(r)[:4]))
     return results
+
+
+def preview_images(card: dict[str, Any], res: dict[str, Any], *, label: str) -> list[tuple[str, bytes, str]]:
+    """check_cards(shots=…) 결과 → Claude 에게 보낼 그림: 정착 화면 한 장(label) + 움직임 시트 한 장(label#seq, 시간 순서).
+    정착 화면은 검사가 잰 정착 시각(metrics.settle)에 가장 가까운 칸, 모르면 마지막 칸."""
+    from pathlib import Path as _P
+    shots = [s for s in res.get("shots") or [] if _P(s["path"]).exists()]
+    if not shots:
+        p = res.get("shot")
+        return [(label, _P(p).read_bytes(), "image/jpeg")] if p and _P(p).exists() else []
+    settle = (res.get("metrics") or {}).get("settle")
+    main = (min(shots, key=lambda s: abs(float(s["t"]) - float(settle))) if isinstance(settle, (int, float))
+            else shots[-1])
+    out = [(label, _P(main["path"]).read_bytes(), "image/jpeg")]
+    if len(shots) > 1:
+        try:
+            import io
+            from PIL import Image, ImageDraw
+            ims = [Image.open(s["path"]).convert("RGB") for s in shots]
+            cw = 480
+            ch = int(ims[0].height * cw / ims[0].width)
+            cols = min(4, len(ims))
+            rows = (len(ims) + cols - 1) // cols
+            sheet = Image.new("RGB", (cols * cw + (cols + 1) * 8, rows * (ch + 24) + 8), (28, 28, 28))
+            d = ImageDraw.Draw(sheet)
+            for i, (im, s) in enumerate(zip(ims, shots)):
+                x, y = 8 + (i % cols) * (cw + 8), 8 + (i // cols) * (ch + 24)
+                sheet.paste(im.resize((cw, ch)), (x, y + 18))
+                d.text((x, y + 2), f"+{s['t']:.1f}s", fill=(240, 240, 240))
+            buf = io.BytesIO()
+            sheet.save(buf, "JPEG", quality=84)
+            out.append((f"{label}#seq", buf.getvalue(), "image/jpeg"))
+        except Exception:  # noqa: BLE001 - 움직임 시트는 덤
+            pass
+    return out

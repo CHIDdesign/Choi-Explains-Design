@@ -39,8 +39,11 @@ def main(argv: list[str]) -> int:
         content = [{"type": "text", "text": system.split(mark, 1)[1]}] + list(content)
     import e2e_studio as E  # noqa: E402 - 같은 가짜 답변 로직
     agent = E.agent_of(schema)
-    # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만
-    if agent in ("research", "setpiece"):
+    # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만.
+    # 시그니처 장면 시안 경쟁은 첫 안(A)만 웹 도구를 쓴다
+    if agent == "setpiece" and opts["--tools"] == "":
+        pass
+    elif agent in ("research", "setpiece"):
         assert opts["--tools"] == "WebSearch,WebFetch" and opts.get("--allowedTools") == "WebSearch,WebFetch", opts
     else:
         assert opts["--tools"] == "", f"도구는 꺼져 있어야 한다({agent})"

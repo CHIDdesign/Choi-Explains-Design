@@ -237,3 +237,30 @@ def test_merge_plan_keeps_card_and_setpiece_timelines():
     assert [g["card"].get("archetype") for g in cards] == ["statement", "process_path"]
     again = _clean_graphic(cards[0], [1, 2, 3, 4])           # 저장된 계획을 다시 정규화해도 남는다
     assert again["card"]["timeline"] == tl and again["card"]["archetype"] == "statement"
+
+
+def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
+    """anim_ends_too_late(2026-10-04): 타임라인이 카드 끝 −1초를 넘어도 마지막 1초가 멈춰 보이면(몇 px 흐름·아주 느린 확대) 통과 —
+    Jitter 템플릿은 마지막 움직임이 길이의 97% 에서 끝난다. 마지막 1초에 크게 움직이면 걸린다(5.6초 장면에 5.5초 흐름이 수정 호출을 부르던 것)."""
+    import json as _json
+    import shutil
+
+    import pytest
+
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))["statement"]
+    drift = ex["timeline"] + "\ntl.fromTo(q('.root'), {scale: 1.03}, {scale: 1, duration: ctx.duration, ease: 'none'}, 0);"
+    late = ex["timeline"] + "\ntl.from(q('.root'), {y: 200, opacity: 0, duration: 0.5}, ctx.duration - 0.8);"
+    cards = [clean_card({"html": ex["html"], "timeline": t}, layout="fullscreen", card_id=cid)
+             for cid, t in (("drift", drift), ("late", late))]
+    res = check_cards([dict(c, layout="fullscreen") for c in cards], node=find_node(""), out_dir=tmp_path, fps=30,
+                      durations={"drift": 5.0, "late": 5.0}, browser_executable=browser)
+    assert res["drift"]["ok"], res["drift"]["problems"]
+    assert res["drift"]["metrics"]["tail"] == "drift" and res["drift"]["metrics"]["timeline"] >= 4.9
+    codes = [p["code"] for p in res["late"]["problems"]]
+    assert "anim_ends_too_late" in codes and "not settled" in next(p["detail"] for p in res["late"]["problems"]
+                                                                    if p["code"] == "anim_ends_too_late")

@@ -415,6 +415,30 @@ SETPIECE = _obj({
     "notes": STR,
 })
 
+# 🎨 스타일 프레임 — 이 영상의 룩을 한 장으로 먼저 확정(모든 디자이너가 그림 + 규칙으로 받는다)
+STYLE_FRAME = _obj({
+    "archetype": {"type": "string", "enum": ARCHETYPES},
+    "html": STR,                  # 1920×1080 카드 조각(카드 DSL)
+    "timeline": STR,              # 이 영상의 움직임 서명(GSAP)
+    "rules": _obj({
+        "grid": STR,              # 여백·열·정렬 축
+        "type": STR,              # 글자 크기 단계·굵기·강조 어절 쓰는 법
+        "color": STR,             # 채널 토큰 안에서 이 영상의 배분(오렌지 어디에, 어두운 무대 몇 번)
+        "shape": STR,             # 모서리·선 굵기·판·그림자·도형 언어
+        "motif": STR,             # 이 영상만의 시각 모티프(세계의 사물·재료에서)
+        "motion": STR,            # 움직임 서명(등장 방식·간격·이징·머무는 동안의 흐름)
+        "do": STR_LIST, "dont": STR_LIST,
+    }),
+    "notes": STR,
+})
+# 🧑‍⚖️ 시안 심사 — 같은 장면의 시안 여럿(렌더 그림)을 레퍼런스·스타일 프레임과 나란히 보고 하나를 고른다
+DESIGN_JUDGE = _obj({
+    "ranking": {"type": "array", "items": _obj({"variant": INT, "score": NUM, "strengths": STR, "flaws": STR})},
+    "winner": INT,
+    "reason": STR,
+    "fix": STR,                   # 이긴 시안에서 고칠 것 한두 가지(없으면 "")
+})
+
 # 🎨 모션 디자이너(수정 라운드)
 MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
 # 🃏 카드 디자이너(수정 라운드) — html 은 고친 카드 조각 전체
@@ -422,7 +446,7 @@ CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["RESEARCH", "SETPIECE", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "DESIGN_JUDGE", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

@@ -77,6 +77,9 @@ class Settings:
     research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
     sfx_motion_auto: bool = True      # 장면 전환·모션 등장에 흔한 효과음(우시·스우시·팝·클릭·타이핑·딩)을 자동으로(감독 지정과 함께)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
+    # 🎨 디자인 취향(채널 주인 2026-10-04: "PPT 같다 — 디자인 taste 를 대폭 업그레이드")
+    style_frame: bool = True          # 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 먼저 확정해 모든 디자이너에게
+    design_variants: int = 3          # 🛠 시그니처 장면마다 시안 수(렌더해 🧑‍⚖️ 심사가 고름) — 1 이면 경쟁 없이 한 안
     # (예전) 에이전트별 덮어쓰기 — 설정 창에서 뺐다(모델·사고 강도는 전역 하나). 파일에 남아 있으면 그 에이전트에만 적용된다
     agent_effort: dict[str, str] = field(default_factory=dict)
     agent_models: dict[str, str] = field(default_factory=dict)

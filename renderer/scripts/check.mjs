@@ -121,20 +121,22 @@ const audit = async (opts) => {
   let compiled = null;
   try {
     compiled = window.__compileCard(root, {fps: opts.fps, duration: opts.duration, timeline: window.__cardTimeline || ''});
+    window.__compiled = compiled;   // 미리보기 프레임(shots)을 찍을 때 다시 seek 한다
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
     // 정착 = 선언(data-anim)이 끝난 때와 타임라인 전체가 끝난 때 중 늦은 쪽 — 직접 쓴 타임라인만 있는 카드를 0.3초(움직이는 중)에
     // 재서 마스크 아래 글자를 '잘림'으로 보던 것(2026-10-04)
     opts.settle = Math.min(opts.duration - 0.05, Math.max(opts.settle, compiled.duration + 0.05));
     compiled.seek(opts.settle);
+    out.metrics.settle = Number(opts.settle.toFixed(2));
   } catch (e) {
     push('runtime_error', 'compile: ' + (e && e.message ? e.message : e));
   }
   for (const e of window.__errors || []) push('runtime_error', e);
   out.metrics.anims = compiled ? compiled.kinds : [];
   out.metrics.timeline = compiled ? Number(compiled.duration.toFixed(2)) : 0;
-  if (compiled && compiled.duration > opts.duration - 1.0 + 0.01) {
-    push('anim_ends_too_late', `timeline ${compiled.duration.toFixed(2)}s > card ${opts.duration.toFixed(2)}s − 1.0`);
-  }
+  // 마지막 1초는 읽히게 멈춰 있어야 한다 — 다만 머무는 동안의 느린 흐름(Jitter 템플릿의 기본: 몇 px 떠오름·아주 느린 확대)은
+  // 멈춤으로 본다. 타임라인이 길면 아래(잉크 검사 뒤)에서 마지막 1초의 실제 움직임을 잰다(2026-10-04: 5.6초 장면에 5.5초 흐름)
+  const lateTail = !!(compiled && compiled.duration > opts.duration - 1.0 + 0.01);
 
   const R = root.getBoundingClientRect();
   const parse = (c) => {
@@ -298,6 +300,54 @@ const audit = async (opts) => {
       push('runtime_error', 'first-frame check: ' + (e && e.message ? e.message : e));
     }
   }
+  if (compiled && lateTail) {
+    // 마지막 1초(카드 끝 −1.0초 → −0.05초)에 보이는 요소가 얼마나 움직이나: 중심 이동 · 크기 · 불투명도 · 선 그리기(dashoffset)
+    try {
+      const snap = () => {
+        const m = new Map();
+        for (const el of root.querySelectorAll('*')) {
+          if (el.closest('style')) continue;
+          const tag = el.tagName.toLowerCase();
+          const hasText = Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim());
+          const inSvg = !!el.closest('svg') && tag !== 'svg';
+          const bgc = parse(getComputedStyle(el).backgroundColor);
+          if (!hasText && !inSvg && tag !== 'img' && tag !== 'svg' && !(bgc && bgc.a > 0.5)) continue;
+          const r = el.getBoundingClientRect();
+          const cs = getComputedStyle(el);
+          m.set(el, {x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, o: opacityOf(el),
+            d: parseFloat(cs.strokeDashoffset) || 0, text: hasText});
+        }
+        return m;
+      };
+      const t0 = Math.max(0, opts.duration - 1.0);
+      compiled.seek(t0);
+      const a = snap();
+      compiled.seek(Math.max(t0, opts.duration - 0.05));
+      const b = snap();
+      let worst = null;
+      const note = (el, why, v) => {
+        if (!worst || v > worst.v) worst = {el, why, v};
+      };
+      for (const [el, p] of a) {
+        const q = b.get(el);
+        if (!q || (p.o < 0.12 && q.o < 0.12)) continue;
+        const move = Math.hypot(q.x - p.x, q.y - p.y);
+        // 크기 변화는 긴 변 기준(가는 선이 조금 돌면 짧은 변이 몇 배가 된다 — 움직임이 아니다)
+        const grow = Math.max(Math.abs(q.w - p.w), Math.abs(q.h - p.h)) / Math.max(p.w, p.h, 1);
+        if (move > 16) note(el, `moves ${move.toFixed(0)}px`, move / 16);
+        if (grow > 0.04 && Math.max(p.w, p.h) > 24) note(el, `scales ${(100 * grow).toFixed(0)}%`, grow / 0.04);
+        if (Math.abs(q.o - p.o) > 0.15) note(el, `opacity ${p.o.toFixed(2)}→${q.o.toFixed(2)}`, Math.abs(q.o - p.o) / 0.15);
+        if (Math.abs(q.d - p.d) > 4) note(el, `stroke still drawing`, Math.abs(q.d - p.d) / 4);
+      }
+      out.metrics.tail = worst ? worst.why : 'drift';
+      if (worst) {
+        push('anim_ends_too_late', `timeline ${compiled.duration.toFixed(2)}s, card ${opts.duration.toFixed(2)}s: last 1s not settled (${worst.why})`, desc(worst.el));
+      }
+      compiled.seek(opts.settle);
+    } catch (e) {
+      push('runtime_error', 'tail check: ' + (e && e.message ? e.message : e));
+    }
+  }
   // 같은 코드·요소 중복 정리
   const seen = new Set();
   out.problems = out.problems.filter((p) => {
@@ -336,6 +386,33 @@ const main = async () => {
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
           minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE, firstFrame: FIRST_FRAME_SHARE,
           captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX});
+        // 미리보기(shots: 카드 시작 기준 초 목록) — 스타일 프레임·시안 경쟁이 렌더 없이 같은 Chrome 으로 장면을 본다(정착 화면 + 움직임 칸)
+        // 'auto' = 정착 시각을 잰 뒤 정한다: 0.5초 · 정착의 35% · 70% · 정착 · 머무는 끝(드리프트) — 시간 순서, 정착 화면은 넷째
+        const settleAt = (res && res.metrics && res.metrics.settle) || card.settle || 2;
+        const dur = card.duration || 8;
+        const shotTimes = card.shots === 'auto'
+          ? [0.5, 0.35 * settleAt, 0.7 * settleAt, settleAt, Math.max(settleAt, dur - 0.35)]
+            .map((t) => Number(Math.min(dur - 0.05, Math.max(0, t)).toFixed(2)))
+            .filter((t, k, a) => k === 0 || t - a[k - 1] > 0.1)      // 정착이 끝 무렵이면 같은 칸이 겹친다
+          : (Array.isArray(card.shots) ? card.shots : []);
+        if (res && shotTimes.length) {
+          res.shots = [];
+          for (let k = 0; k < Math.min(shotTimes.length, 8); k++) {
+            const t = Number(shotTimes[k]) || 0;
+            try {
+              await page.evaluate((tt) => window.__compiled && window.__compiled.seek(tt), t);
+              const {value} = await page._client().send('Page.captureScreenshot', {
+                format: 'jpeg', quality: 86, fromSurface: true, clip: {x: 0, y: 0, width: card.w, height: card.h, scale: 1},
+              });
+              const f = path.join(outDir, `${card.id}_s${k}.jpg`);
+              fs.writeFileSync(f, Buffer.from(value.data, 'base64'));
+              res.shots.push({t, path: f});
+            } catch (e) {
+              /* 한 장 실패는 건너뛴다 */
+            }
+          }
+          await page.evaluate((tt) => window.__compiled && window.__compiled.seek(tt), settleAt).catch(() => undefined);
+        }
         // 걸린 카드는 정착 시각의 화면을 찍어 둔다 — 카드 디자이너가 오류 목록만이 아니라 실제 모습을 보고 고친다(audit 끝에서 settle 로 seek 돼 있다)
         if (res && res.problems && res.problems.length) {
           try {
@@ -355,7 +432,8 @@ const main = async () => {
       }
       res.ok = res.problems.length === 0;
       results[card.id] = res;
-      emit({type: 'card', id: card.id, ok: res.ok, problems: res.problems, metrics: res.metrics, shot: res.shot || ''});
+      emit({type: 'card', id: card.id, ok: res.ok, problems: res.problems, metrics: res.metrics, shot: res.shot || '',
+        shots: res.shots || []});
     }
   } finally {
     await browser.close({silent: true}).catch(() => undefined);

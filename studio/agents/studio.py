@@ -66,6 +66,10 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("timeline_review", "🧐 타임라인 검수", "timeline_review", S.TIMELINE_QA, "high", 16000),
     # 🎼 음악 감독 — SPECIALISTS 에 넣지 않는다: 컷이 확정된 뒤 따로 부른다(13 문서 3절)
     Agent("music", "🎼 음악 감독", "music_supervisor", S.MUSIC, "high", 12000),
+    # 🎨 스타일 프레임 — 장면을 짓기 전에 이 영상의 룩을 한 장 + 규칙으로 확정(모든 디자인 역할이 그림으로 받는다)
+    Agent("style_frame", "🎨 스타일 프레임", "style_frame", S.STYLE_FRAME, "high", 32000),
+    # 🧑‍⚖️ 시안 심사 — 시그니처 장면의 시안 여럿을 렌더해 나란히 보고 하나를 고른다(설정 design_variants)
+    Agent("design_judge", "🧑‍⚖️ 시안 심사", "design_judge", S.DESIGN_JUDGE, "high", 8000),
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
@@ -119,11 +123,26 @@ def lean_system_prompt(extra: tuple[str, ...] = ()) -> str:
 # 에이전트별 스킬 노트(prompts/skills/agents/*.md — 전문가·제작자 자료에서 정리, 그 에이전트의 지시 끝에만 붙는다)
 AGENT_SKILLS: dict[str, tuple[str, ...]] = {
     "research": ("research",), "director": ("director", "sound_design"), "editor": ("editor",),
-    "cut_editor": ("editor",), "motion": ("motion",), "motion_revise": ("motion",), "setpiece": ("setpiece", "motion"),
-    "card_revise": ("setpiece",), "art_director": ("art_director",), "timeline_review": ("art_director", "editor"),
+    "cut_editor": ("editor",), "motion": ("motion", "jitter"), "motion_revise": ("motion",),
+    "setpiece": ("setpiece", "motion", "jitter"),
+    "card_revise": ("setpiece", "jitter"), "art_director": ("art_director",), "timeline_review": ("art_director", "editor"),
     "music": ("music",), "captions": ("captions",), "copy": ("copy",), "shorts": ("shorts",),
     "stock": ("stock",), "stock_pick": ("stock",), "portrait_pick": ("stock",),
+    "style_frame": ("setpiece", "motion", "jitter"), "design_judge": ("art_director", "jitter"),
 }
+
+# 🎨 스타일 프레임·🎯 취향 보드를 그림으로 받는 역할 — 짓는 역할·심사는 둘 다(정지 화면 + 움직임 칸 + 보드),
+# 고치는 역할은 스타일 프레임 정지 화면 한 장만(여러 번 불려 그림 토큰이 쌓인다)
+REF_FULL = frozenset({"motion", "setpiece", "design_judge", "art_director"})
+REF_STILL = frozenset({"motion_revise", "card_revise"})
+# 시안 경쟁(Best-of-N)의 방향 — 같은 장면을 서로 다른 구도로 지어 심사가 고른다. 첫 안만 웹 도구를 쓴다(사양 확인은 한 번이면 된다)
+VARIANT_HINTS = (
+    "A안 — 장면 정보·트리트먼트가 가리키는 가장 정확한 구도(원형은 네 판단).",
+    "B안 — A안과 다른 구도 원형으로: 주인공을 하나의 큰 사물·숫자·도형으로 키우고 글자는 최소로(화면의 60% 이상이 형태).",
+    "C안 — 또 다른 방향: 과정·변화·관계를 움직임으로 보여 준다(경로 이동·쌓임·모양 바꾸기·선 그리기 중 하나가 주인공).",
+    "D안 — 어두운 무대(.root 배경 var(--ink))와 큰 타이포 하나로 대담하게, 오렌지는 한 곳.",
+)
+Image3 = tuple[str, bytes, str]
 
 
 def _images(x: Any) -> Optional[list[tuple[str, bytes, str]]]:
@@ -499,6 +518,7 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
             "evidence_items": len(ev_items), "evidence_notes": str(stock.get("notes", "") or "")[:400],
             "integrity": brief.get("integrity") or {},
             "treatment": brief.get("treatment") or {},
+            **({"style_frame": results["style_frame"]} if results.get("style_frame") else {}),
         },
     }
     return raw_long, shorts
@@ -534,6 +554,14 @@ class Studio:
         self.evidence: tuple[str, Optional[bytes]] = ("", None)         # 확보 목록 + 컨택트 시트(모션 디자이너에게)
         # 🌍 세계 블록 — 저장된 기획을 다시 쓸 때는 파이프라인이 계획의 treatment·주제 설명으로 준다(호출 때 읽는다)
         self.world_fn: Optional[Callable[[], str]] = None
+        # 🖼 카드 미리보기(파이프라인이 준다: check.mjs 를 렌더와 같은 Chrome 으로 — 정착 화면 + 움직임 칸)
+        #   items [{id, card(clean_card), layout, dur, label}] → {id: {ok, problems[str], images[(label, bytes, mime)]}}
+        self.preview: Optional[Callable[[list[dict[str, Any]]], dict[str, dict[str, Any]]]] = None
+        self.style_on = True                  # 🎨 스타일 프레임(설정 style_frame)
+        self.variants = 1                     # 🧑‍⚖️ 시그니처 장면 시안 수(설정 design_variants, 1 = 경쟁 없음)
+        self.style: dict[str, Any] = {}       # {rules, archetype, notes, card, images}
+        self.house_board: Optional[Callable[[], Optional[bytes]]] = None   # 운영자 보드가 없을 때 하우스 예시 카드 보드
+        self._board: Optional[list[Image3]] = None
 
     def world_text(self) -> str:
         """지금 쓸 🌍 세계 블록 — 이번 기획의 총괄 감독 treatment 가 있으면 그것, 없으면 파이프라인이 준 것."""
@@ -548,17 +576,25 @@ class Studio:
 
     # ------------------------------------------------------------------
     def call(self, key: str, ctx: str, instruction: str, *, images=None, system: Optional[str] = None,
-             label: str = "") -> dict[str, Any]:
+             label: str = "", web: Optional[bool] = None) -> dict[str, Any]:
         a = AGENTS[key]
         # 사고 강도: 파일의 에이전트별 덮어쓰기 → 설정의 전역 값(모든 에이전트 같은 강도) → 에이전트 기본
         eff = self.effort.get(key) or getattr(self.claude, "effort", "") or a.effort
         model = self.models.get(key) or None
         kw: dict[str, Any] = {}
-        if a.tools and self.web:
+        if a.tools and (self.web if web is None else (web and self.web)):
             kw = {"tools": a.tools, "max_turns": a.max_turns}
             if a.timeout:
                 kw["timeout"] = a.timeout
         instruction = instruction + agent_skill_block(key)
+        if key in DESIGN_AGENTS:
+            # 🎨 스타일 프레임 규칙 + 🎯 운영자 취향 메모 — 그림(스타일 프레임·보드)은 앞에(같은 역할의 호출마다 같은 앞부분)
+            if key != "style_frame":
+                instruction += self.style_block()
+                refs = self.design_refs(key)
+                if refs:
+                    images = refs + (_images(images) or [])
+            instruction += self.taste_notes()
         if system is None and key in LEAN_AGENTS:
             system = self._lean.get(key) or self._lean.setdefault(key, lean_system_prompt(LEAN_AGENTS[key]))
         elif system is None and key not in DESIGN_AGENTS:
@@ -595,6 +631,162 @@ class Studio:
             if self.cancel:
                 self.cancel.check()
             time.sleep(min(0.5, max(0.0, end - time.time())))
+
+    # ------------------------------------------------------------------
+    # 🎨 스타일 프레임 · 🎯 취향 보드 · 🧑‍⚖️ 시안 심사
+    # ------------------------------------------------------------------
+    def board(self) -> list[Image3]:
+        """🎯 레퍼런스 보드(운영자 그림 · 좋아한/싫어한 장면). 하나도 없으면 하우스 예시 카드 보드. 작업마다 한 번 만든다."""
+        if self._board is None:
+            from . import taste
+            try:
+                b = taste.board_images()
+            except Exception as e:  # noqa: BLE001 - 보드 없이도 짓는다
+                self.log(f"🎯 레퍼런스 보드를 읽지 못했습니다: {e}")
+                b = []
+            if not b and self.house_board is not None:
+                try:
+                    hb = self.house_board()
+                except Exception:  # noqa: BLE001
+                    hb = None
+                if hb:
+                    b = [("하우스 예시 보드(렌더로 확인한 카드 예시 — 이 수준이 바닥)", hb, "image/jpeg")]
+            self._board = b
+        return self._board
+
+    def taste_notes(self) -> str:
+        from . import taste
+        try:
+            text = taste.notes_block()
+        except Exception:  # noqa: BLE001
+            return ""
+        return ("\n\n" + text) if text else ""
+
+    def design_refs(self, key: str) -> list[Image3]:
+        """디자인 역할에게 앞에 붙일 기준 그림 — 스타일 프레임(정지 화면 · 움직임 칸)과 레퍼런스 보드."""
+        out: list[Image3] = []
+        imgs = list(self.style.get("images") or [])
+        if key in REF_STILL:
+            out += imgs[:1]
+        elif key in REF_FULL:
+            out += imgs[:2] + self.board()
+        return out
+
+    def style_block(self) -> str:
+        """🎨 스타일 프레임 규칙 → 디자인 역할의 지시 끝(그림은 design_refs 가 따로 붙인다)."""
+        r = self.style.get("rules") or {}
+        if not any(r.get(k) for k in ("grid", "type", "color", "shape", "motif", "motion", "do", "dont")):
+            return ""
+        lines = ["", "", "## 🎨 이 영상의 스타일 프레임(먼저 확정한 룩 — 모든 장면이 같은 결로; 첨부 그림 '스타일 프레임')"]
+        for k, lab in (("grid", "그리드"), ("type", "글자"), ("color", "색"), ("shape", "도형·재질"), ("motif", "모티프"),
+                       ("motion", "움직임 서명")):
+            if str(r.get(k) or "").strip():
+                lines.append(f"- {lab}: {str(r[k]).strip()[:400]}")
+        if r.get("do"):
+            lines.append("- 한다: " + " · ".join(str(x)[:120] for x in r["do"][:6]))
+        if r.get("dont"):
+            lines.append("- 하지 않는다: " + " · ".join(str(x)[:120] for x in r["dont"][:6]))
+        lines.append("- 스타일 프레임의 좌표·문장을 베끼지 않는다 — 결(재질·도형·모티프·움직임 서명)을 맞추고, 구도 원형은 장면마다 바꾼다.")
+        return "\n".join(lines) + "\n"
+
+    def load_style(self, saved: dict[str, Any], images: list[Image3]) -> None:
+        """저장된 계획의 스타일 프레임(규칙)과 그 그림을 다시 쓴다 — 기획을 다시 쓰는 작업의 자기 검토·검수도 같은 기준으로."""
+        if isinstance(saved, dict) and saved.get("rules"):
+            self.style = {"rules": saved.get("rules") or {}, "archetype": saved.get("archetype", ""),
+                          "notes": saved.get("notes", ""), "card": None, "images": list(images or [])}
+
+    def _preview(self, items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        if self.preview is None or not items:
+            return {}
+        try:
+            return self.preview(items) or {}
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 - 미리보기 없이도 진행(그림 없이 규칙만)
+            self.log(f"🖼 카드 미리보기 실패 → 그림 없이: {str(e)[:160]}")
+            return {}
+
+    def make_style_frame(self, ctx: str, director: dict[str, Any]) -> dict[str, Any]:
+        """🎨 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 확정한다 — 실패하면 {}(스타일 프레임 없이)."""
+        tr = {k: v for k, v in (director.get("treatment") or {}).items() if k not in ("segments", "signature_scenes")}
+        text = (load_prompt("agents/style_frame.md")
+                .replace("{{treatment}}", json.dumps(tr, ensure_ascii=False, indent=1))
+                .replace("{{thesis}}", str(director.get("thesis") or director.get("logline") or ""))
+                .replace("{{user_direction}}", direction_block(self.direction)))
+        board = self.board()
+        self.log("🎨 스타일 프레임: 이 영상의 룩을 한 장으로 먼저 정합니다" + (f"(레퍼런스 그림 {len(board)}장)" if board else ""))
+        try:
+            res = self.call("style_frame", ctx, text, images=board or None)
+        except DirectorError as e:
+            self.errors["style_frame"] = str(e)
+            self.log(f"🎨 스타일 프레임 실패({e}) → 스타일 프레임 없이 진행")
+            return {}
+        rules = res.get("rules") if isinstance(res.get("rules"), dict) else {}
+        card = clean_card({"html": res.get("html", ""), "timeline": res.get("timeline", "")}, layout="fullscreen",
+                          card_id="styleframe")
+        style: dict[str, Any] = {"rules": rules, "archetype": str(res.get("archetype") or ""),
+                                 "notes": str(res.get("notes") or "")[:300], "card": card, "images": []}
+        if card:
+            pv = self._preview([{"id": "styleframe", "card": card, "layout": "fullscreen", "dur": 7.0,
+                                 "label": "스타일 프레임"}]).get("styleframe") or {}
+            style["images"] = list(pv.get("images") or [])
+            if pv and not pv.get("ok", True):
+                self.log("🎨 스타일 프레임 검사: " + " · ".join(str(x) for x in (pv.get("problems") or [])[:3])
+                         + " (기준 그림으로는 그대로 쓴다)")
+        self.style = style
+        self.results["style_frame"] = {"rules": rules, "archetype": style["archetype"], "notes": style["notes"],
+                                       "html": fragment(card) if card else "", "timeline": (card or {}).get("timeline", "")}
+        self.log(f"🎨 스타일 프레임: 원형 {style['archetype'] or '-'} · 모티프 {str(rules.get('motif') or '-')[:60]}"
+                 + (" · 그림 확인" if style["images"] else ""))
+        return style
+
+    def judge_variants(self, ctx: str, sc: dict[str, Any], variants: list[tuple[int, dict[str, Any]]],
+                       layout_of: Callable[[dict[str, Any]], str]) -> tuple[int, str, list[Image3]]:
+        """🧑‍⚖️ 시안 여럿 → 렌더 → 심사 → (이긴 시안의 목록 위치, 고칠 것, 이긴 시안 그림). 렌더·심사를 못 하면 첫 시안."""
+        items, meta = [], []
+        for pos, (k, v) in enumerate(variants):
+            card = clean_card({"html": v.get("html", ""), "timeline": v.get("timeline", "")}, layout=layout_of(v),
+                              card_id=f"{sc['id'][:10]}v{k + 1}")
+            if card:
+                items.append({"id": card["id"], "card": card, "layout": layout_of(v), "dur": 8.0,
+                              "label": f"V{k + 1}"})
+                meta.append((pos, k, v, card["id"]))
+        if len(meta) < 2:
+            return (meta[0][0] if meta else 0), "", []
+        pv = self._preview(items)
+        if not pv:
+            return meta[0][0], "", []
+        imgs: list[Image3] = []
+        lines = []
+        for pos, k, v, cid in meta:
+            r = pv.get(cid) or {}
+            imgs += list(r.get("images") or [])
+            probs = [str(x) for x in r.get("problems") or []]
+            lines.append(f"- V{k + 1}: {VARIANT_HINTS[k % len(VARIANT_HINTS)]} · 원형 {v.get('archetype') or '-'} · "
+                         + ("검사 통과" if r.get("ok", True) else "검사 실패: " + " · ".join(probs[:3])))
+        if not imgs:
+            return meta[0][0], "", []
+        instr = (load_prompt("agents/design_judge.md").replace("{{n}}", str(len(meta)))
+                 .replace("{{scene}}", json.dumps({x: sc.get(x) for x in ("title", "kind", "brief")}, ensure_ascii=False))
+                 .replace("{{speech}}", f"공유 컨텍스트 전사본의 S{sc['start_seg']}–S{sc['end_seg']}")
+                 + "\n\n## 시안\n" + "\n".join(lines)
+                 + "\n\n검사 실패(넘침·작은 글자·대비·잘림)는 고치기 어려우면 지게 한다. `winner` 는 V 뒤의 번호.\n")
+        try:
+            res = self.call("design_judge", ctx, instr, images=imgs, label=f"🧑‍⚖️ 시안 심사 「{sc['title'][:16]}」")
+        except DirectorError as e:
+            self.log(f"🧑‍⚖️ 시안 심사 실패({e}) → A안")
+            return meta[0][0], "", []
+        try:
+            w = int(res.get("winner", 1))
+        except (TypeError, ValueError):
+            w = 1
+        pick = next((m for m in meta if m[1] + 1 == w), meta[0])
+        scores = {int(x.get("variant", 0) or 0): x.get("score") for x in res.get("ranking") or [] if isinstance(x, dict)}
+        self.log(f"🧑‍⚖️ 「{sc['title'][:20]}」 시안 {len(meta)}개 → V{pick[1] + 1} 선택"
+                 + (" (" + " · ".join(f"V{k}:{v}" for k, v in sorted(scores.items())) + ")" if scores else "")
+                 + f" — {str(res.get('reason') or '')[:100]}")
+        win_imgs = list((pv.get(pick[3]) or {}).get("images") or [])
+        return pick[0], str(res.get("fix") or "").strip(), win_imgs
 
     def research(self, *, title: str, topic: str, script: str) -> dict[str, Any]:
         """🔎 주제 조사 — 대본·주제 설명만 보고(영상·전사 없이) 웹에서 조사한 노트. 실패하면 DirectorError."""
@@ -673,10 +865,30 @@ class Studio:
                     self.log(f"🎞 모션 레퍼런스 캡처 실패 → 레퍼런스 없이: {e}")
         chain = procure is not None and "stock" in jobs and "motion" in jobs
         done = [0]
+        # 🎨 스타일 프레임 — 다른 전문가와 동시에 짓고, 🎨 모션·🛠 시그니처 장면은 그것이 끝난 뒤 시작한다(같은 룩에서 출발)
+        style_ready = threading.Event()
+        want_style = (self.style_on and self.use_motion and not self.style
+                      and ("motion" in jobs or bool(scenes)))
+        if not want_style:
+            style_ready.set()
+
+        def make_style() -> list[tuple[str, Optional[dict[str, Any]]]]:
+            try:
+                self.make_style_frame(ctx, director)
+            finally:
+                style_ready.set()
+            return []
+
+        def wait_style() -> None:
+            while not style_ready.wait(0.5):
+                if self.cancel:
+                    self.cancel.check()
 
         def run(key: str, extra: str = "") -> tuple[str, Optional[dict[str, Any]]]:
             if self.cancel:
                 self.cancel.check()
+            if key == "motion":
+                wait_style()
             imgs = None
             if key == "stock" and self.materials[1]:
                 imgs = [("자료폴더", self.materials[1], "image/jpeg")]
@@ -713,6 +925,7 @@ class Studio:
         def build_scene(sc: dict[str, Any]) -> tuple[str, Optional[dict[str, Any]]]:
             if self.cancel:
                 self.cancel.check()
+            wait_style()
             text = (load_prompt("agents/setpiece.md")
                     .replace("{{scene}}", json.dumps(sc, ensure_ascii=False, indent=1))
                     .replace("{{treatment}}", json.dumps({k: v for k, v in (director.get("treatment") or {}).items()
@@ -726,16 +939,21 @@ class Studio:
                          "그 **움직임**(무엇이 어떤 순서로·어떤 이징으로 들어오고 쌓이고 사라지는지, 마스크·흐림·늘어남·회전)을 읽어 "
                          "이 장면의 내용과 우리 종이 콜라주 스타일(서체·색·질감)로 다시 짓는다. 레퍼런스의 글자·로고·사진·색을 "
                          "그대로 옮기지 않는다. `notes` 에 무엇을 가져왔는지 한 줄.")
-            try:
-                res = self.call("setpiece", ctx, text, images=imgs, label=f"🛠 시그니처 장면 「{sc['title'][:16]}」")
-                return "setpiece", {"scene": sc, **res}
-            except DirectorError as e:
-                self.errors[f"setpiece:{sc['id']}"] = str(e)
-                self.log(f"🛠 시그니처 장면 「{sc['title']}」 실패({e}) → 이 장면 없이 진행")
-                return "setpiece", None
+            n = max(1, min(len(VARIANT_HINTS), int(self.variants or 1)))
+            if n == 1:
+                try:
+                    res = self.call("setpiece", ctx, text, images=imgs, label=f"🛠 시그니처 장면 「{sc['title'][:16]}」")
+                    return "setpiece", {"scene": sc, **res}
+                except DirectorError as e:
+                    self.errors[f"setpiece:{sc['id']}"] = str(e)
+                    self.log(f"🛠 시그니처 장면 「{sc['title']}」 실패({e}) → 이 장면 없이 진행")
+                    return "setpiece", None
+            return "setpiece", self._build_variants(ctx, sc, text, imgs, n)
 
-        with ThreadPoolExecutor(max_workers=min(self.workers + len(scenes), len(jobs) + len(scenes) or 1)) as pool:
-            futs = [pool.submit(run, k) for k in jobs if not (chain and k in ("stock", "motion"))]
+        workers = min(self.workers + len(scenes), len(jobs) + len(scenes) or 1) + (1 if want_style else 0)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(make_style)] if want_style else []
+            futs += [pool.submit(run, k) for k in jobs if not (chain and k in ("stock", "motion"))]
             if chain:
                 futs.append(pool.submit(research_then_motion))
             futs += [pool.submit(build_scene, sc) for sc in scenes]
@@ -755,6 +973,52 @@ class Studio:
             self.cancel.check()
         self._report()
         return merge_plan(self.results, log=self.log)
+
+    def _build_variants(self, ctx: str, sc: dict[str, Any], text: str, imgs: Optional[list[Image3]],
+                        n: int) -> Optional[dict[str, Any]]:
+        """🧑‍⚖️ 시안 경쟁: 같은 장면을 n 개 방향으로 동시에 짓고(첫 안만 웹 도구) → 렌더해 심사가 고르고 → 심사의 '고칠 것'을
+        한 번 반영(렌더 전 검사를 통과할 때만). 모두 실패하면 None."""
+        def one(k: int) -> Optional[dict[str, Any]]:
+            hint = (f"\n\n## 이번 시안의 방향 ({k + 1}/{n})\n{VARIANT_HINTS[k]}\n같은 장면을 다른 디자이너들도 다른 방향으로 짓고, "
+                    "심사가 렌더한 화면을 나란히 보고 하나를 고른다 — 이 방향을 끝까지 밀고 간다.")
+            try:
+                return self.call("setpiece", ctx, text + hint, images=imgs, web=(k == 0),
+                                 label=f"🛠 시그니처 장면 「{sc['title'][:14]}」 {chr(65 + k)}안")
+            except DirectorError as e:
+                self.log(f"🛠 「{sc['title'][:20]}」 {chr(65 + k)}안 실패({e})")
+                return None
+
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            outs = list(pool.map(one, range(n)))
+        got = [(k, r) for k, r in enumerate(outs) if r]
+        if not got:
+            self.errors[f"setpiece:{sc['id']}"] = "모든 시안 실패"
+            return None
+
+        def layout_of(v: dict[str, Any]) -> str:
+            return v.get("layout") if v.get("layout") in ("fullscreen", "split", "overlay") else "fullscreen"
+
+        pos, fix, win_imgs = self.judge_variants(ctx, sc, got, layout_of) if len(got) > 1 else (0, "", [])
+        k, best = got[pos]
+        best = dict(best, notes=(f"[{chr(65 + k)}안/{len(got)}] " + str(best.get("notes") or ""))[:400])
+        if fix and win_imgs:
+            card = clean_card({"html": best.get("html", ""), "timeline": best.get("timeline", "")}, layout=layout_of(best),
+                              card_id=f"{sc['id'][:10]}fix")
+            new = None
+            if card:
+                try:
+                    new = self.revise_card(ctx, card, 8.0, "시안 심사가 고칠 것", fix, win_imgs, layout=layout_of(best))
+                except DirectorError as e:
+                    self.log(f"🧑‍⚖️ 심사 반영 실패({e}) → 이긴 시안 그대로")
+            if new:
+                chk = self._preview([{"id": new["id"], "card": new, "layout": layout_of(best), "dur": 8.0,
+                                      "label": "수정안"}]).get(new["id"]) or {}
+                if chk.get("ok", False):
+                    best = dict(best, html=fragment(new), timeline=new.get("timeline", ""))
+                    self.log(f"🧑‍⚖️ 「{sc['title'][:20]}」 심사의 지적 반영: {fix[:80]}")
+                else:
+                    self.log(f"🧑‍⚖️ 「{sc['title'][:20]}」 심사 반영본이 검사에 걸려 이긴 시안 그대로")
+        return {"scene": sc, **best}
 
     def _procure(self, res: dict[str, Any], procure: Callable[[dict[str, Any], int], dict[str, Any]],
                  run: Callable[..., tuple[str, Optional[dict[str, Any]]]]) -> None:
@@ -872,8 +1136,10 @@ class Studio:
         still: 그림 하나 또는 여럿(정지 화면 + 움직임 시트 · 검사 화면). self_review: 자기 검토 지시(그대로면 html 을 비움)."""
         instr = (load_prompt("agents/card_revise.md").replace("{{dur}}", f"{dur:.1f}")
                  .replace("{{canvas}}", f"{card.get('w', 1920)}×{card.get('h', 1080)}")
-                 .replace("{{card}}", fragment(card) + (f"\n\n지금 timeline(직접 쓴 GSAP):\n```js\n{card['timeline']}\n```"
-                                                         if card.get("timeline") else ""))
+                 # 지금 timeline 은 html 코드 블록 밖에 따로(안에 넣으면 html 블록 끝에 설명 글이 붙어 그대로 돌려받는다 — 2026-10-04)
+                 .replace("{{card}}\n```", fragment(card) + "\n```" + (
+                     f"\n\n지금 timeline(직접 쓴 GSAP — html 의 선택자를 바꾸면 함께 고쳐 낸다):\n```js\n{card['timeline']}\n```"
+                     if card.get("timeline") else ""))
                  .replace("{{problem}}", problem or "(없음)").replace("{{direction}}", direction or "(없음)")
                  .replace("{{checks}}", "\n".join(f"- {c}" for c in checks) or "- (없음)"))
         if self_review:

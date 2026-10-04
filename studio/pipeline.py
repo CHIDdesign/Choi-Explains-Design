@@ -47,7 +47,7 @@ from .director.claude_code import ClaudeCodeClient, find_claude, resolve_backend
 from .director.context import (JobBrief, load_prompt, long_instruction, shared_context, shorts_instruction,
                                system_prompt)
 from .motion.card import card_settle_time, card_text
-from .motion.check import CheckError, check_cards, problem_lines
+from .motion.check import CheckError, check_cards, preview_images, problem_lines
 from .director.plan import EVIDENCE as EVIDENCE_TEMPLATES
 from .director.plan import (TimedGraphic, blank_graphic, merge_step_runs, type_card, normalize_long, normalize_shorts, seg_edit_times,
                             spec_settle_time, time_graphics, word_edit_time)
@@ -1366,7 +1366,93 @@ class Pipeline:
                              use_motion=self.spec.motion_scenes)
         self.studio.web = bool(getattr(self.settings, "research_web", True))
         self.studio.world_fn = self._world_block
+        # 🎨 스타일 프레임 · 🧑‍⚖️ 시안 경쟁 — 지은 카드를 렌더(check.mjs, 렌더와 같은 Chrome)해 그림으로 보게 한다
+        self.studio.preview = self._preview_cards
+        self.studio.house_board = self._house_board
+        self.studio.style_on = bool(getattr(self.settings, "style_frame", True))
+        self.studio.variants = max(1, min(4, int(getattr(self.settings, "design_variants", 3) or 1)))
         return self.studio
+
+    def _keep_style_frame(self, studio: Optional[Studio]) -> None:
+        """🎨 스타일 프레임 그림을 작업 폴더·부가자료에 남기고, 저장된 계획을 다시 쓰는 작업이면 그것을 다시 읽어
+        자기 검토·검수가 같은 기준으로 보게 한다."""
+        if studio is None:
+            return
+        files = (self.work / "style_frame.jpg", self.work / "style_frame_seq.jpg")
+        labels = ("스타일 프레임", "스타일 프레임#seq")
+        if studio.style.get("images"):
+            for f, (_lab, data, _m) in zip(files, studio.style["images"]):
+                f.write_bytes(data)
+            try:
+                shutil.copyfile(files[0], self.extras / "스타일프레임.jpg")
+            except OSError:
+                pass
+            return
+        sf = (self.plan_long.get("studio") or {}).get("style_frame") or {}
+        if sf and not studio.style:
+            studio.load_style(sf, [(lab, f.read_bytes(), "image/jpeg") for f, lab in zip(files, labels) if f.exists()])
+            if studio.style:
+                self.log("🎨 저장된 스타일 프레임을 다시 씁니다(자기 검토·검수의 기준)")
+
+    def _preview_cards(self, items: list[dict]) -> dict[str, dict]:
+        """🖼 카드 미리보기(스타일 프레임·시안 경쟁): items [{id, card, layout, dur, label}] → {id: {ok, problems, images}}.
+        렌더 전 검사(check.mjs)와 같은 Chrome 에서 0.5초 · 정착의 35%·70% · 정착 · 머무는 끝을 찍는다."""
+        if not items:
+            return {}
+        rs = self.settings.render
+        res = check_cards([dict(it["card"], layout=it.get("layout", "fullscreen"), shots="auto") for it in items],
+                          node=find_node(self.settings.node_path), out_dir=self.work / "design_preview", fps=self.fps,
+                          durations={it["card"]["id"]: float(it.get("dur") or 8.0) for it in items},
+                          browser_executable=rs.browser_executable, gl=rs.gl, log=self._log_file_only, cancel=self.cancel)
+        out: dict[str, dict] = {}
+        for it in items:
+            cid = it["card"]["id"]
+            r = res.get(cid) or {}
+            out[it["id"]] = {"ok": bool(r.get("ok")), "problems": problem_lines(r),
+                             "images": preview_images(it["card"], r, label=str(it.get("label") or cid))}
+        return out
+
+    def _house_board(self) -> Optional[bytes]:
+        """하우스 예시 카드(prompts/examples/card_examples.json)의 정착 화면 보드 — 운영자 레퍼런스가 없을 때의 기준.
+        예시 파일이 바뀔 때만 다시 찍는다(user/cache/house_board_<해시>.jpg)."""
+        from .agents import taste
+        from .motion.card import clean_card
+        from .paths import PROMPTS_DIR
+        src = PROMPTS_DIR / "examples" / "card_examples.json"
+        try:
+            raw = src.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            return None
+        cache = USER_DIR / "cache" / f"house_board_{text_hash(raw)[:12]}.jpg"
+        if cache.exists():
+            return cache.read_bytes()
+        cards = []
+        for n, (name, ex) in enumerate(data.items()):
+            c = clean_card({"html": ex.get("html", ""), "timeline": ex.get("timeline", "")},
+                           layout=ex.get("layout") or "fullscreen", card_id=f"ex{n}")
+            if c and (ex.get("layout") or "fullscreen") == "fullscreen":
+                cards.append((c, float(ex.get("duration") or 6)))
+        if not cards:
+            return None
+        rs = self.settings.render
+        out_dir = USER_DIR / "cache" / "house_board"
+        res = check_cards([dict(c, layout="fullscreen", shots="auto") for c, _ in cards], node=find_node(self.settings.node_path),
+                          out_dir=out_dir, fps=self.fps, durations={c["id"]: d for c, d in cards},
+                          browser_executable=rs.browser_executable, gl=rs.gl, log=self._log_file_only, cancel=self.cancel)
+        paths = []
+        for c, _ in cards:
+            ims = preview_images(c, res.get(c["id"]) or {}, label=c["id"])      # [0] = 정착 화면
+            if not ims:
+                continue
+            f = out_dir / f"{c['id']}_settle.jpg"
+            f.write_bytes(ims[0][1])
+            paths.append(f)
+        board = taste.sheet(paths, cols=4, cell_w=480) if paths else None
+        if board:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_bytes(board)
+        return board
 
     def _world_block(self) -> str:
         """🌍 이 영상의 세계 — 계획의 총괄 감독 treatment.world, 없으면 주제 설명(자료 고르기·그림 부품·검수가 받는다)."""
@@ -1485,6 +1571,7 @@ class Pipeline:
             raw_shorts = fallback.shorts_plan(brief, self.utts, self.tags, count=self.spec.shorts_count, order=self._edit_order_ids(),
                                               max_sec=self.spec.short_max_sec)
         self.plan_long = normalize_long(raw_long, self.utts, self.tags)
+        self._keep_style_frame(studio)
         # 저장된 계획은 검사 → 수정 → 검수(아트 디렉터)를 이미 거쳤다 — 다시 고치면 검수가 고친 장면을 되돌리고
         # 검수 캐시까지 깨진다(재실행마다 모션 디자이너·아트 디렉터를 다시 부르던 것). 검사만 다시 하고 기록한다.
         self._check_cards(tm0, revise=not reused)
@@ -4338,6 +4425,7 @@ class Pipeline:
         for i, sp in enumerate(self.short_props, 1):
             write_text(self.extras / f"숏폼{i}_자막.srt", cues_to_srt(sp["captions"]))
         self._review_sheets()
+        self._rating_stills()
         self._color_tags()
         self._timeline_review()
         text = youtube_text(self.plan_long, chapters, self.plan_shorts, credits)
@@ -4495,6 +4583,43 @@ class Pipeline:
                 self.log(f"검토 시트 생략({title}): {e}")
         if n:
             self.log(f"🗂 검토 시트 {n}장 → 부가자료/검토시트_*.jpg (2.5초마다 한 장, 시간·자막 포함)")
+
+    def _rating_stills(self) -> None:
+        """🎯 장면 평가용 정지 화면 — 완성 롱폼에서 그래픽마다 한 장(정착 무렵) → work/rate/*.jpg + work/rate.json.
+        결과 화면의 '장면 평가'가 이것으로 👍/👎 를 받아 user/taste 에 쌓는다(다음 작업의 디자이너·심사가 본다)."""
+        if not (self.long_props and self.masters and not self.masters[0]["short"]):
+            return
+        video = Path(self.masters[0]["dst"])
+        if not video.exists():
+            return
+        rdir = self.work / "rate"
+        shutil.rmtree(rdir, ignore_errors=True)
+        rdir.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for g in self.long_props.get("graphics") or []:
+            gid = str(g.get("id") or "")
+            if not gid or gid.startswith("h") or g.get("template") in ("endcard",):
+                continue            # 오프닝 하이라이트(h*)는 본편 장면의 되풀이
+            a, b = float(g.get("start", 0)), float(g.get("end", 0))
+            if b - a < 0.8:
+                continue
+            t = min(b - 0.2, a + min(3.0, max(1.0, 0.6 * (b - a))))
+            data = g.get("data") or {}
+            card = data.get("card") if isinstance(data.get("card"), dict) else {}
+            f = rdir / f"{gid}.jpg"
+            try:
+                self.ff.grab_frame(video, t, f, width=960)
+            except Exception:  # noqa: BLE001 - 한 장 실패는 건너뛴다
+                continue
+            if f.exists():
+                rows.append({"gid": gid, "template": g.get("template", ""), "layout": g.get("layout", ""),
+                             "kind": str(card.get("archetype") or g.get("template") or ""),
+                             "title": str(data.get("title") or data.get("keyword") or "")[:60], "t": round(t, 2),
+                             "still": str(f)})
+            if len(rows) >= 40:
+                break
+        write_json(self.work / "rate.json", rows)
+        self.results["rate"] = str(self.work / "rate.json")
 
     def _craft_report(self) -> str:
         """리포트 뒤에 붙일 '어떻게 편집했나' 요약(색·소리·편집 기술)."""

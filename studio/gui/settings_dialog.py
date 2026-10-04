@@ -153,6 +153,17 @@ class SettingsDialog(QDialog):
         self.research_web = QCheckBox("웹 조사 — 🔎 리서치 디렉터·🛠 시그니처 장면이 인물·제품·개념을 검색해 확인한다(권장)")
         self.research_web.setChecked(bool(getattr(s, "research_web", True)))
         m.addRow("조사", self.research_web)
+        self.style_frame = QCheckBox("스타일 프레임 — 장면을 짓기 전에 이 영상의 룩을 한 장으로 먼저 정해 모든 디자이너가 따른다(권장)")
+        self.style_frame.setChecked(bool(getattr(s, "style_frame", True)))
+        m.addRow("디자인", self.style_frame)
+        self.variants = QSpinBox()
+        self.variants.setRange(1, 4)
+        self.variants.setValue(int(getattr(s, "design_variants", 3) or 1))
+        self.variants.setToolTip("시그니처 장면마다 서로 다른 방향의 시안을 이만큼 지어 렌더한 뒤 심사가 하나를 고릅니다. "
+                                 "1 이면 경쟁 없이 한 안(토큰이 가장 적음).")
+        m.addRow("시안 수", self.variants)
+        m.addRow("", hint("레퍼런스 보드: user/taste 폴더에 좋아하는 모션 디자인의 정지 화면을 넣으면 모든 디자이너·심사가 매번 그림으로 봅니다. "
+                          "결과 화면의 '장면 평가'(👍/👎)도 여기에 쌓여 다음 작업부터 반영됩니다."))
         v.addLayout(m)
         # 📊 사용량·한도
         self.usage_lbl = QLabel(usage_summary())
@@ -364,6 +375,8 @@ class SettingsDialog(QDialog):
         s.agent_models, s.agent_effort = {}, {}      # 전역 하나로 통합 — 옛 에이전트별 덮어쓰기는 저장할 때 지운다
         s.studio_workers = self.workers.value()
         s.research_web = self.research_web.isChecked()
+        s.style_frame = self.style_frame.isChecked()
+        s.design_variants = self.variants.value()
         s.pixabay_api_key = self.pixabay.text().strip()
         s.unsplash_access_key = self.unsplash.text().strip()
         s.coverr_api_key = self.coverr.text().strip()

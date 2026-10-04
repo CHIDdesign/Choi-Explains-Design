@@ -118,12 +118,30 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "script_checks": [{"sentence": "더블 다이아몬드라는 모델이 있습니다", "verdict": "ok", "note": "", "source_url": ""}],
                 "visual_directions": ["마름모 두 개를 종이 위 선 그림으로 그리고 단계마다 형광펜"],
                 "sources": [{"title": "Design Council", "url": "https://www.designcouncil.org.uk/"}]}
-    if agent == "setpiece":    # 🛠 시그니처 장면 하나 — 검사를 통과한 예제 카드를 그대로
+    if agent == "style_frame":  # 🎨 스타일 프레임 — 레퍼런스 보드(운영자 그림 또는 하우스 예시 보드)를 보고 룩 한 장 + 규칙
+        assert "## 만드는 것" in instruction and n_images >= 1, (n_images, instruction[:300])
+        ex = CARD_EXAMPLES["statement"]
+        return {"archetype": "statement", "html": ex["html"], "timeline": ex.get("timeline", ""),
+                "rules": {"grid": "왼쪽 150px 축", "type": "제목 150px 800 · 본문 44px", "color": "오렌지는 한 낱말만",
+                          "shape": "모서리 28px · 선 3px", "motif": "모이는 점", "motion": "어절 마스크 상승 + 느린 드리프트",
+                          "do": ["주인공 하나"], "dont": ["가운데 3단"]},
+                "notes": "하우스 보드의 statement 결"}
+    if agent == "design_judge":  # 🧑‍⚖️ 시안 심사 — 시안마다 정착 화면 + 움직임 시트, 앞에 스타일 프레임·보드
+        assert "## 시안" in instruction and "V1" in instruction and n_images >= 4, (n_images, instruction[-400:])
+        return {"ranking": [{"variant": 1, "score": 7.2, "strengths": "정확", "flaws": "평범"},
+                            {"variant": 2, "score": 8.4, "strengths": "주인공이 크다", "flaws": "라벨이 작다"}],
+                "winner": 2, "reason": "0.5초에 무엇을 볼지 분명", "fix": "라벨을 40px 로"}
+    if agent == "setpiece":    # 🛠 시그니처 장면 — 시안 방향(A·B·C안)마다 다른 예제 카드(검사 통과한 것)
         assert "## 이번 장면" in instruction and "🔎 주제 조사 노트" in json.dumps(body, ensure_ascii=False)
-        assert n_images == 1 and "## 모션 레퍼런스" in instruction, (n_images, instruction[-300:])   # 레퍼런스 프레임 시트
-        ex = CARD_EXAMPLES["slam_minimal"]
-        return {"layout": "fullscreen", "style": ex.get("style") or "editorial", "title": "근접성 재현",
-                "html": ex["html"], "start_word": "", "notes": "조사 노트의 근접성 은유"}
+        # 레퍼런스 프레임 시트 + 스타일 프레임(정지·움직임) + 보드
+        assert n_images >= 2 and "## 모션 레퍼런스" in instruction, (n_images, instruction[-300:])
+        assert "## 🎨 이 영상의 스타일 프레임" in instruction, instruction[-800:]
+        m = re.search(r"## 이번 시안의 방향 \((\d)/", instruction)
+        key = ("statement", "object_callouts", "data_bars", "bento")[int(m.group(1)) - 1 if m else 0]
+        ex = CARD_EXAMPLES[key]
+        return {"layout": "fullscreen", "style": ex.get("style") or "editorial", "archetype": ex.get("archetype", key),
+                "title": "근접성 재현", "html": ex["html"], "timeline": ex.get("timeline", ""), "start_word": "",
+                "notes": "조사 노트의 근접성 은유"}
     segs = _segs(body)
     ids = sorted(segs)
     first, last = ids[0], ids[-1]
@@ -194,9 +212,11 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             "pacing_notes": "차분하게"}
     if agent == "motion":
         # 자료가 먼저, 모션이 나중(13 문서 2-2): 확보 목록 + 재현 요청 + 컨택트 시트를 받는다
-        assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images == 1, (n_images, instruction[:300])
+        # 확보 자료 컨택트 시트 + 🎨 스타일 프레임(정지·움직임) + 레퍼런스 보드
+        assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images >= 2, (n_images, instruction[:300])
+        assert "## 🎨 이 영상의 스타일 프레임" in instruction, instruction[-600:]
         spec = copy.deepcopy(EXAMPLES["fixation_two_groups"])
-        card = CARD_EXAMPLES["slam_minimal"]["html"]   # 글자가 적어(35자) 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
+        card = CARD_EXAMPLES["stat_ring"]   # 글자가 적어 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
         # 🎨 트리트먼트의 시그니처 장면 구간(S{s_ask})은 🛠 빌더 몫 — 지시에 그 구간이 적혀 있으면 카드를 내지 않는다(진짜 모션 디자이너처럼)
         sig = f"S{s_ask}–S{s_ask}" in instruction and "시그니처 장면 구간" in instruction
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
@@ -204,7 +224,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                                             "reason": "모이는 움직임이 곧 설명"}],
                 # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
                 "cards": [] if sig else [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen",
-                                          "style": "editorial", "title": "문제를 정의하라", "html": card,
+                                          "style": "editorial", "title": "문제를 정의하라", "html": card["html"],
+                                          "timeline": card.get("timeline", ""), "archetype": "stat_ring",
                                           "reason": "한 문장 한 방"}]}
     if agent == "card_revise":
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
@@ -308,7 +329,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
     # 🎼 음악 감독(MUSIC)도 'shorts' 필드를 가지니 숏폼 PD 보다 먼저 가른다
-    for key, marker in (("research", "recreations"), ("setpiece", "start_word"), ("music", "suite"),
+    for key, marker in (("research", "recreations"), ("style_frame", "rules"), ("design_judge", "winner"),
+                        ("setpiece", "start_word"), ("music", "suite"),
                         ("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
                         ("stock", "requests"), ("stock", "items"),
                         ("colorist", "strength"),
@@ -548,8 +570,15 @@ def main() -> int:
     # 🔎 주제 조사는 총괄 감독보다 먼저(소리·얼굴과 동시에), 웹 도구는 조사·시그니처 장면에만
     assert agents.index("research") < agents.index("director") < agents.index("setpiece"), agents
     if args.backend == "claude_code":
-        assert all((c.get("tools") or "") == ("WebSearch,WebFetch" if c["agent"] in ("research", "setpiece") else "")
+        # 시그니처 장면 시안 중 첫 안(A)만 웹 도구 — 사양 확인은 한 번이면 된다
+        assert all((c.get("tools") or "") in (("WebSearch,WebFetch", "") if c["agent"] == "setpiece" else
+                                              ("WebSearch,WebFetch",) if c["agent"] == "research" else ("",))
                    for c in CALLS if c.get("backend") == "claude_code"), CALLS
+        assert sum(1 for c in CALLS if c["agent"] == "setpiece" and c.get("tools")) == 1, CALLS
+    # 🎨 스타일 프레임 → 🛠 시안 3개 → 🧑‍⚖️ 심사(V2) → 심사의 지적 반영(카드 수정 1회)
+    assert agents.count("style_frame") == 1 and agents.count("setpiece") == 3 and agents.count("design_judge") == 1, agents
+    assert agents.index("style_frame") < agents.index("setpiece") and agents.index("style_frame") < agents.index("motion"), agents
+    assert (job / "work" / "style_frame.jpg").exists() and (out / "부가자료" / "스타일프레임.jpg").exists()
     assert (out / "부가자료" / "조사노트.md").exists()
     assert ref_calls == [["the-stack-testimonial"]], ref_calls
     # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전
