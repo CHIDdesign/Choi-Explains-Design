@@ -2,8 +2,10 @@
 
 출처 표기만으로는 남의 사진을 쓸 권리가 생기지 않는다(저작권법 제28조 인용은 '내 영상이 주, 그림은 종'이고 그 그림 자체를 다룰 때만).
 그래서 Google 이미지를 **두 길로만** 쓴다.
-1. 재사용 가능 라이선스(`licenses=fmc`: 상업적 이용·수정 가능) 결과 → **원문 페이지에서 라이선스를 다시 확인**한 것만
-   (CC BY·BY-SA·CC0·PDM 링크가 있고 NC·ND 링크가 없을 때, 또는 Pixabay·Unsplash·Pexels 자체 라이선스 페이지). 확인 못 하면 버린다.
+1. 재사용 가능 라이선스(`licenses=fmc`: 상업적 이용·수정 가능) 결과 → **원문 페이지에서 라이선스를 다시 확인**한 것만:
+   그림마다 라이선스를 붙이는 사진 사이트(`PHOTO_SITES` — Flickr·PxHere·rawpixel…)의 CC BY·BY-SA·CC0·PDM 링크(NC·ND 가 섞이면 버림),
+   Pixabay·Unsplash·Pexels 자체 약관, 커먼즈 파일 페이지는 커먼즈 API 의 그 파일 라이선스, 미국 연방 기관 사진(PD). 일반 사이트의
+   CC 링크는 글의 라이선스라 믿지 않는다. 확인 못 하면 버린다.
    위키백과·위키미디어 페이지는 쓰지 않는다(페이지 아래 글 라이선스 링크가 그림의 라이선스가 아니고, 그 그림은 위키미디어 칸이 API 로
    정확히 다룬다). → StockHub 의 제공처 'Google' · 사다리의 고유명사 칸.
 2. 인용(C 등급) — 그 작품·제품·화면 **자체를 설명하는 문장**에서만(자료 리서처의 tier_max C), 설정 '인용 자료 쓰기'가 켜져 있을 때만.
@@ -33,6 +35,17 @@ STOCK_SITES = {"pixabay.com": ("pixabay", "Pixabay Content License", "https://pi
                "unsplash.com": ("unsplash", "Unsplash License", "https://unsplash.com/license"),
                "pexels.com": ("pexels", "Pexels License", "https://www.pexels.com/license/")}
 # 그림의 라이선스를 페이지로 확인할 수 없는 곳: 위키(아래 글 라이선스 링크가 그림 것이 아님) · 위키 농장 · 스톡 판매처(워터마크 미리보기)
+# 미국 연방정부 저작물(17 U.S.C. §105) — 기관이 직접 찍은 사진은 퍼블릭 도메인. 단 외부 제공('courtesy')·저작권 표시가 있으면 아니다.
+# 주(州)·지방 정부(.gov 일부)는 해당 없음 → 연방 기관 도메인만
+FEDERAL = ("af.mil", "army.mil", "navy.mil", "marines.mil", "defense.gov", "dvidshub.net", "nasa.gov", "nps.gov",
+           "noaa.gov", "usda.gov", "fws.gov", "usgs.gov", "nih.gov", "cdc.gov")
+FEDERAL_CREDIT = re.compile(r"U\.S\. (Air Force|Army|Navy|Marine Corps|Space Force|Coast Guard|National Guard) (photo|graphic|"
+                            r"illustration)|\b(NASA|NPS|NOAA|USDA|USGS) (photo|image)|public domain", re.I)
+# 그림마다 라이선스를 따로 붙이는 사진 사이트 — CC 링크는 여기서만 믿는다. 일반 사이트의 CC 링크는 대개 글(사이트 전체)의
+# 라이선스라 그 안의 책 표지·보도 사진에는 해당하지 않는다(2026-10-04 실제 키 확인: 법률 블로그의 CC BY-SA 바닥글로 책 표지가 통과)
+PHOTO_SITES = ("flickr.com", "pxhere.com", "rawpixel.com", "stocksnap.io", "publicdomainpictures.net", "picryl.com",
+               "nappy.co", "burst.shopify.com", "freerangestock.com", "openverse.org")
+COMMONS_FILE = re.compile(r"commons\.wikimedia\.org/wiki/File:([^?#]+)", re.I)
 SKIP_HOSTS = ("wikipedia.org", "wikimedia.org", "wikidata.org", "fandom.com", "wikia.com", "wikiwand.com", "namu.wiki",
               "shutterstock.com", "gettyimages.", "istockphoto.com", "alamy.com", "dreamstime.com", "123rf.com",
               "depositphotos.com", "adobe.com", "freepik.com", "vecteezy.com", "pinterest.", "instagram.com",
@@ -97,21 +110,58 @@ def license_from_html(url: str, html: str) -> Optional[License]:
     return None
 
 
+def _federal(h: str) -> bool:
+    return any(h == d or h.endswith("." + d) for d in FEDERAL)
+
+
+def commons_license(url: str, *, fetch: FetchFn = net.request) -> Optional[dict[str, Any]]:
+    """위키미디어 커먼즈 파일 페이지 — 페이지 아래 글 라이선스 링크가 아니라 커먼즈 API 의 그 파일 라이선스로(정확하다)."""
+    from urllib.parse import unquote
+    m = COMMONS_FILE.search(url or "")
+    if not m:
+        return None
+    name = unquote(m.group(1)).replace("_", " ")
+    try:
+        r = fetch("https://commons.wikimedia.org/w/api.php",
+                  params={"action": "query", "titles": f"File:{name}", "prop": "imageinfo", "iiprop": "extmetadata",
+                          "iiextmetadatafilter": "LicenseShortName|Artist|Restrictions|NonFree", "format": "json",
+                          "formatversion": "2"},
+                  headers={"User-Agent": "ChoiStudio/1.0 (https://github.com/chiddesign/choi-explains-design)"},
+                  timeout=10, rounds=1)
+        page = ((r.json().get("query") or {}).get("pages") or [{}])[0] if r.ok else {}
+    except Exception:  # noqa: BLE001
+        return None
+    meta = ((page.get("imageinfo") or [{}])[0].get("extmetadata")) or {}
+    val = lambda k: re.sub(r"<[^>]+>", "", str((meta.get(k) or {}).get("value") or "")).strip()  # noqa: E731
+    lic = classify(val("LicenseShortName"), nonfree=bool(val("NonFree")), restrictions=val("Restrictions"))
+    if lic.tier not in ("A", "A-sa"):
+        return None
+    return {"license": lic, "author": val("Artist")[:80], "site": "Wikimedia Commons", "title": name.rsplit(".", 1)[0]}
+
+
 def verify_page(url: str, *, fetch: FetchFn = net.request) -> Optional[dict[str, Any]]:
-    """원문 페이지를 열어 라이선스·작가·사이트 이름을 확인한다. 확인 못 하면 None(그 그림은 쓰지 않는다)."""
+    """원문 페이지를 열어 라이선스·작가·사이트 이름을 확인한다. 확인 못 하면 None(그 그림은 쓰지 않는다).
+    2026-10-04 실제 키로 확인: 결과의 상당수가 미국 연방 기관(af.mil·nps.gov — CC 링크 없이 퍼블릭 도메인)과 커먼즈 파일 페이지였다."""
+    if COMMONS_FILE.search(url or ""):
+        return commons_license(url, fetch=fetch)
     if skip_host(url):
         return None
     h = host(url)
     if any(h == d or h.endswith("." + d) for d in STOCK_SITES):
         return {"license": license_from_html(url, ""), "author": "", "site": h.split(".")[-2].capitalize(), "title": ""}
     try:
-        r = fetch(url, timeout=15, rounds=1)
+        r = fetch(url, timeout=8, rounds=1)
     except Exception:  # noqa: BLE001 - 열 수 없으면 확인 못 함
         return None
     if not r.ok:
         return None
     html = (r.text or "")[:1_500_000]
-    lic = license_from_html(url, html)
+    photo_site = any(h == d or h.endswith("." + d) for d in PHOTO_SITES)
+    lic = license_from_html(url, html) if photo_site else None
+    if lic is None and _federal(h) and FEDERAL_CREDIT.search(html) and not re.search(r"courtesy|©|copyright \d{4}", html,
+                                                                                       re.I):
+        lic = License("PD-USGov", "퍼블릭 도메인(미국 연방정부 저작물)", "https://www.usa.gov/government-copyright", "A",
+                      True, True, False, False)
     if lic is None:
         return None
     return {"license": lic, "author": page_author(html), "site": _meta(html, "og:site_name") or h,
@@ -254,9 +304,12 @@ class GoogleImages(StockProvider):
         return self._verified[page]
 
     def search_photos(self, query: str, *, per_page: int = 6, locale: str = "") -> list[StockCandidate]:
-        raw = [r for r in self.serp.images(query, reusable=True, n=per_page * 2, locale=locale)
-               if not skip_host(str(r.get("link") or ""))]
-        with ThreadPoolExecutor(max_workers=6) as ex:
+        raw = [r for r in self.serp.images(query, reusable=True, n=per_page * 3, locale=locale)
+               if COMMONS_FILE.search(str(r.get("link") or "")) or not skip_host(str(r.get("link") or ""))]
+        # 같은 페이지가 여러 번 나온다(실측: 한 기사 페이지 7번) — 페이지마다 한 번만 열고, 같은 페이지의 그림은 하나만 후보로
+        seen: set[str] = set()
+        raw = [r for r in raw if not (str(r["link"]) in seen or seen.add(str(r["link"])))]
+        with ThreadPoolExecutor(max_workers=8) as ex:
             checks = list(ex.map(lambda r: self.verified(str(r["link"])), raw))
         out: list[StockCandidate] = []
         for r, v in zip(raw, checks):

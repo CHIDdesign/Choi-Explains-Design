@@ -115,6 +115,21 @@ def test_license_is_confirmed_on_the_source_page():
     assert px.tier == "stock" and px.id == "pixabay"
     assert G.skip_host("https://en.wikipedia.org/wiki/Chair") and G.skip_host("https://www.shutterstock.com/x")
     assert G.verify_page("https://en.wikipedia.org/wiki/Chair", fetch=lambda *a, **k: _R(body=flickr)) is None
+    # 일반 사이트의 CC 바닥글은 그 안 그림(책 표지)의 라이선스가 아니다 — 2026-10-04 실제 키 확인에서 법률 블로그가 통과했다
+    footer = '<footer><a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a></footer>'
+    assert G.verify_page("https://itsartlaw.org/book-review/x", fetch=lambda *a, **k: _R(body=footer)) is None
+    assert G.verify_page("https://www.flickr.com/photos/a/1", fetch=lambda *a, **k: _R(body=footer))["license"].tier == "A-sa"
+    nasa = "<p>Image credit: NASA photo / public domain</p>"
+    assert G.verify_page("https://www.nasa.gov/image-detail/x", fetch=lambda *a, **k: _R(body=nasa))["license"].id == "PD-USGov"
+    assert G.verify_page("https://www.nasa.gov/image-detail/y",
+                         fetch=lambda *a, **k: _R(body=nasa + " Photo courtesy of SpaceX")) is None
+
+    def commons_api(url, params=None, **k):
+        assert params["titles"] == "File:Foam model 1.jpg"
+        return _R(body={"query": {"pages": [{"imageinfo": [{"extmetadata": {
+            "LicenseShortName": {"value": "CC BY 4.0"}, "Artist": {"value": "<a>Kim</a>"}}}]}]}})
+    v = G.verify_page("https://commons.wikimedia.org/wiki/File:Foam_model_1.jpg", fetch=commons_api)
+    assert v["license"].name == "CC BY 4.0" and v["author"] == "Kim" and v["site"] == "Wikimedia Commons"
 
 
 SERP = {"images_results": [
