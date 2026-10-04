@@ -405,3 +405,59 @@ def test_evidence_shifts_to_free_slot_after_title_card():
     big = TimedGraphic("g41", "process", "fullscreen", 300.5, 305.0, {}, 9)
     out = {g.id: g for g in resolve_overlaps([ph, big], total=700.0)}
     assert out["g41"].start == 300.5 and out["g40"].start >= 305.0
+
+
+def test_quantize_keeps_reordered_spans_cold_open():
+    """2026-10-03 숏폼: 콜드 오픈(S57, 388초)을 맨 앞에 두면 그 뒤의 S47–S56(340초~)이 '앞 구간 끝 뒤'로 밀려 사라졌다
+    (45초 → 11.8초). 뒤로 돌아가는 구간은 그대로, 1초 안에서 겹치는 이음새만 앞 구간 끝으로."""
+    from studio.edit.cuts import quantize
+    from studio.models import Span
+    keeps = [Span(388.0, 392.0), Span(340.0, 345.0), Span(344.9, 350.0), Span(393.0, 396.0)]
+    out = quantize(keeps, 30.0, 600.0)
+    assert [round(k.start, 2) for k in out] == [388.0, 340.0, 345.0, 393.0]      # 재배치 유지 · 겹침 0.1초만 밀림
+    assert abs(sum(k.dur for k in out) - (4 + 5 + 5 + 3)) < 0.2
+    assert [round(k.start, 2) for k in quantize([Span(10.0, 12.0), Span(11.5, 14.0)], 30.0, 100.0)] == [10.0, 12.0]
+
+
+def test_false_start_fragment_before_restart_is_cut():
+    """2026-10-03 실제 영상: '바로' 한 토막 뒤에 같은 문장을 처음부터 다시 읽었는데, 토막이 '대본 밖' 짧은 발화라 어떤 규칙에도
+    안 걸리고 컷 총괄도 '대본 내용'이라 남겨 더듬는 소리가 들어갔다. 바로 뒤 발화가 그 말로 다시 시작하면 앞 토막은 뺀다."""
+    p = parse_script(SCRIPT)
+    words = _words([("안녕하세요.", 0.8), ("오늘은", 0.6), ("오늘은 더블 다이아몬드 이야기를 해볼게요.", 0.9),
+                    ("디자인은 먼저 넓게 펼쳐야 합니다.", 0.7), ("그 다음에 좁히죠.", 0.8)])
+    utts, _, _ = ScriptAligner(p).run(build_utterances(words))
+    frag = next(u for u in utts if u.asr_text.strip() == "오늘은")
+    full = next(u for u in utts if u.asr_text.startswith("오늘은 더블"))
+    assert frag.status == "retake" and "끊긴 앞부분" in frag.note and full.kept
+    # 같은 말로 시작하는 다른 완결 문장은 둘 다 남는다(8자 넘고 맺은 문장 → 리테이크 판정에 맡김)
+    words = _words([("좋은 디자인은 단순합니다.", 0.6), ("좋은 디자인은 정직합니다.", 0.8)])
+    utts, _, _ = ScriptAligner(parse_script("좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.")).run(build_utterances(words))
+    assert [u.kept for u in utts] == [True, True]
+
+
+def test_shorts_follow_edit_order_when_takes_are_cross_cut():
+    """2026-10-03 E2E(--multi retake + best_take): 숏폼 구간이 편집 순서로는 이어졌는데 녹음 시간순으로는 다른 파일(1000초 뒤)이라
+    '건너뛴 발화'로 보여 연속 구간으로 '고치다' 12초 미만이 되어 숏폼을 통째로 잃었다. 이해 가능성·규칙 기획은 편집 순서(order)로 본다."""
+    from studio.director import fallback
+    from studio.director.context import JobBrief
+    from studio.models import Utterance, Word
+    texts = ["좋은 디자인은 질문에서 시작합니다.", "문 손잡이를 보면 밀지 당길지 압니다.", "이걸 어포던스라고 부릅니다.",
+             "형태가 사용법을 말해 주는 성질이죠.", "여러분의 디자인도 그렇게 말하고 있나요?", "그래서 설명서가 필요 없습니다.",
+             "결국 좋은 디자인은 설명이 필요 없습니다.", "다음 주제는 게슈탈트입니다."]
+    utts = []
+    for i, tx in enumerate(texts):
+        t = (0.0 if i < 4 else 1000.0) + (i % 4) * 9.0            # 앞 네 문장은 1차 파일, 뒤 네 문장은 2차 파일(시간상 멀다)
+        ws = [Word(w, t + k * 1.1, t + k * 1.1 + 1.0) for k, w in enumerate(tx.split())]
+        utts.append(Utterance(i, ws[0].start, ws[-1].end, tx, tx, ws))
+    order = [4, 5, 6, 7, 0, 1, 2, 3]                                 # 편집 순서: 2차 파일 대목이 먼저
+    raw = {"shorts": [{"title": "A", "hook_type": "open_loop", "hook_title": "문 손잡이의\n비밀", "hook_highlight": "",
+                       "cold_open_seg": -1, "segments": [6, 7, 0, 1, 2], "graphics": [], "emphasis": [], "beats": [],
+                       "cta": "", "loop_line": "", "caption": "", "hashtags": [], "viewer_takeaway": "형태가 말한다",
+                       "why": "", "score": 8}]}
+    out = normalize_shorts(raw, utts, count=1, max_sec=60, order=order)
+    assert out and out[0]["segments"] == [6, 7, 0, 1, 2] and out[0]["coherence"] >= 0.9, out      # 편집 순서로는 이어진 구간
+    bad = normalize_shorts(raw, utts, count=1, max_sec=60)                                        # 시간순으로 보면 '순서가 뒤바뀜'
+    assert bad and bad[0]["coherence"] < out[0]["coherence"] and "건너뛰" in bad[0]["why"], bad[0]["why"]
+    plan = fallback.shorts_plan(JobBrief(title="t"), utts, [], count=1, max_sec=60, order=order)
+    segs = plan["shorts"][0]["segments"]
+    assert segs and [order.index(i) for i in segs] == list(range(order.index(segs[0]), order.index(segs[0]) + len(segs))), segs

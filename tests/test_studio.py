@@ -231,6 +231,47 @@ def test_stock_researcher_pick_fallback_and_cache(tmp_path, monkeypatch):
     assert request_key(lists2[0][0]["stock"]) in json.loads((tmp_path / "stock.json").read_text(encoding="utf-8"))
 
 
+def test_stock_researcher_retries_with_the_pickers_query(tmp_path, monkeypatch):
+    """2026-10-03: 비전 선택이 후보를 거절하면 그 자리가 그대로 얼굴로 남았다. 리서처가 `retry_query_en` 을 주면 그 검색어로
+    한 번 더 찾아 다시 고른다(한 번만). 새 검색어가 없거나 두 번째도 거절이면 예전처럼 제외."""
+    class Prov(FakePexels):
+        def search_videos(self, q, **k):
+            self.calls.append(("v", q, k.get("locale", "")))
+            if any(w in q for w in ("drawing", "sketch", "product", "hand")):     # 새 검색어(와 그 줄임말)에만 다른 후보
+                return [StockCandidate("video", 20 + i, f"https://pexels.com/v/{20 + i}", "", f"dl{20 + i}", 1920, 1080, 6.0, "작가")
+                        for i in range(3)]
+            return [StockCandidate("video", 10 + i, f"https://pexels.com/v/{i}", "", f"dl{i}", 1920, 1080, 6.0, f"작가{i}")
+                    for i in range(3)]
+    px = Prov()
+    public = tmp_path / "public"
+
+    def fake_fetch(self, c):
+        dst = public / "broll" / f"{c.kind[0]}{c.id}.bin"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(b"x")
+        return {"src": f"broll/{dst.name}", "kind": c.kind, "credit": c.credit, "url": c.url, "author_url": ""}
+    monkeypatch.setattr(StockResearcher, "_fetch", fake_fetch)
+    monkeypatch.setattr(StockResearcher, "_thumb", lambda self, c: None)
+    texts: list[str] = []
+
+    def pick(text, sheets):
+        texts.append(text)
+        if len(texts) == 1:        # 첫 라운드: 둘 다 거절 — 1번은 새 검색어, 2번은 없음
+            return [{"request": 1, "candidate": -1, "reason": "회의 장면뿐", "retry_query_en": "hand drawing product sketch"},
+                    {"request": 2, "candidate": -1, "reason": "없음", "retry_query_en": ""}]
+        assert "다시 찾은 후보" in text and "R1" in text and "R2" not in text
+        return [{"request": 1, "candidate": 2, "reason": "스케치하는 손"}]
+
+    def g(qe):
+        return {"template": "broll", "stock": {"kind": "video", "query_en": qe, "query_ko": "", "purpose": "", "must_show": ""}}
+    lists = [[g("designer meeting"), g("abstract")]]
+    r = StockResearcher(StockHub([px]), ff=None, work=tmp_path, public=public, pick=pick)
+    r.run(lists)
+    assert len(texts) == 2 and ("v", "hand drawing product sketch", "") in px.calls
+    assert [x["template"] for x in lists[0]] == ["broll"] and lists[0][0]["src"] == "broll/v21.bin"
+    assert r.stats["retried"] == 1 and r.stats["retry_ok"] == 1 and r.stats["rejected"] == 2
+
+
 # ---------------------------------------------------------------------------
 # 무료 스톡 제공처(응답 예시는 각 API 문서의 필드 구조를 따름)
 # ---------------------------------------------------------------------------

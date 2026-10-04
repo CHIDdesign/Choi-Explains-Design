@@ -25,7 +25,7 @@ class StockCandidate:
     author: str = ""
     author_url: str = ""
     alt: str = ""
-    provider: str = "Pexels"  # Pixabay | Unsplash | Coverr | Pexels
+    provider: str = "Pexels"  # Pixabay | Unsplash | Coverr | Pexels | Openverse | Google
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -41,6 +41,9 @@ class StockCandidate:
             lic = license_label(self.extra.get("license", ""), self.extra.get("license_version", ""))
             src = self.extra.get("source") or "Openverse"
             return " · ".join(x for x in (self.author, lic, f"{src} via Openverse") if x)
+        if self.provider == "Google":
+            # 원문 페이지에서 확인한 라이선스 · 사이트(구글은 찾아 준 곳일 뿐 출처가 아니다)
+            return " · ".join(x for x in (self.author, self.extra.get("license", ""), self.extra.get("site", "")) if x)
         return f"{self.author} / {self.provider}" if self.author else self.provider
 
     @property

@@ -46,8 +46,19 @@ PLAN_LAYOUTS = ["face", "face_callout", "face_photo", "collage", "photo_full", "
 SFX_KINDS = ["none", "whoosh_soft", "swoosh_short", "swipe", "pop", "click", "typing", "camera_shutter", "paper", "ding",
              "bell_soft", "notification", "paper_slide", "page_turn", "pencil_tick", "stamp"]
 SIGNATURE_KINDS = ["ui_recreation", "object_recreation", "data_story", "diagram", "timeline", "document", "collage"]
+# 🌍 이 영상의 세계(2026-10-04 채널 주인: '학교'라는 말에 아이들 색연필 스톡 — 맥락은 미술대학 디자인과다) — 모든 자료·스톡·
+# 그림이 이 안에 있어야 한다. 자료 리서처의 검색어·비전 선택·모션 디자이너의 그림 부품·검수가 모두 이것을 받는다
+WORLD = _obj({
+    "who": STR,        # 화자·등장인물(나이·신분·전공) — "한국 미술대학 산업디자인과 2학년(20대 초반), 휴학 중"
+    "where": STR,      # 장소들 — "대학 디자인 실기실·모형실·크리틱 벽, 자취방 책상"
+    "era": STR,        # 시대 — "2020년대 중반"
+    "props": STR,      # 이 세계의 사물·도구 — "스케치북·마커·폼 모형·사포·노트북의 3D 렌더(키샷·블렌더)"
+    "look": STR,       # 화면 결 — "자연광·낮은 채도·정돈된 작업대, 손과 도구가 보이는 컷"
+    "never": STR,      # 이 세계가 아닌 것 — "초중고 교실·칠판·아이들·크레용·색연필 세트·사무실 회의·AI 생성 그림"
+})
 TREATMENT = _obj({
     "concept": STR,                        # 이 영상만의 시각 콘셉트(조사에 근거한 한 문단)
+    "world": WORLD,
     "motifs": STR_LIST,                    # 되풀이되는 시각 장치 3~5개(예: '밀까 당길까 문 손잡이', '빨간 펜 교정 표시')
     "texture_note": STR,                   # 종이 콜라주 안에서 이 주제의 질감·색 쓰임(강조색 설정은 그대로)
     "type_note": STR,                      # 서체 역할 중 이 영상에서 앞세울 것과 이유
@@ -139,6 +150,9 @@ EDITOR = _obj({
     # 🎬 오프닝 하이라이트(콜드 오픈): 본편 앞에 붙일 가장 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내).
     # 결론·반전·질문·숫자처럼 앞뒤 없이도 서는 문장. 첫 두 발화는 제외(바로 뒤에 다시 나온다)
     "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
+    # 🫁 호흡: 그 발화가 끝난 뒤 둘 쉼(초, 0.5~1.6) — 무거운 문장·고백·질문 뒤의 여운. 앱이 원본의 실제 무음으로 채운다
+    # (studio/edit/breath.py). 지정하지 않은 경계는 문장 0.6초 · 문단 1.0초가 기본(2026-10-04 '훅훅 넘어간다')
+    "pauses": {"type": "array", "items": _obj({"after_seg": INT, "sec": NUM, "reason": STR})},
     "pacing_notes": STR,
 })
 
@@ -154,6 +168,9 @@ GRADE = _obj({
 
 # 🃏 자유 HTML 카드의 스타일(prompts/card_dsl.md · studio/motion/card.py STYLES 와 같게)
 CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
+# 구도 원형(prompts/layouts.md — 2026-10-04 'PPT 같다': 빈 좌표에서 시작하지 않는다). free = 원형 밖(이유를 reason 에)
+ARCHETYPES = ["statement", "object_callouts", "data_bars", "bento", "before_after", "process_path", "ui_screen", "timeline",
+              "fan_stack", "stat_ring", "term_split", "lower_third", "free"]
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
@@ -167,6 +184,8 @@ MOTION = _obj({
         "hero": INT,                 # 크게 움직이는 주 요소의 번호(elements 인덱스, 없으면 −1)
         "motion_reason": STR,        # 왜 그렇게 움직이는지 한 문장(motion_craft 1번)
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "archetype": {"type": "string", "enum": ARCHETYPES},
+        "motif": STR,                # 되풀이하는 도식·사물의 이름(같은 장치는 같은 이름, 영상당 2회까지, 없으면 "")
         "reason": STR,               # 첫머리에 챕터 키 "[키: 모눈 · 붙이기]"
     })},
     "cards": {"type": "array", "items": _obj({
@@ -178,7 +197,9 @@ MOTION = _obj({
         "timeline": STR,          # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 없으면 ""
         "sequence_id": STR,
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "archetype": {"type": "string", "enum": ARCHETYPES},
         "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
+        "motif": STR,                                              # 되풀이하는 도식·사물의 이름(영상당 2회까지, 없으면 "")
         "reason": STR,
     })},
 })
@@ -220,6 +241,7 @@ TREATMENTS = ["hero", "full", "pip", "sequence", "grid", "stack", "cutout", "arc
               "doc_highlight", "browser_frame", "detail_zoom", "annotate", "compare_pair", "collage"]
 TIERS = ["A", "B", "C"]
 FALLBACKS = ["type_card", "code_drawn", "stock", "face"]
+STOCK_ANGLES = ["literal", "detail", "process", "place", "metaphor"]
 
 EVIDENCE = _obj({
     "items": {"type": "array", "items": _obj({
@@ -238,7 +260,11 @@ EVIDENCE = _obj({
             "as_of": STR,                # "2012-03" — 과거 시점 화면
             "locator": STR,              # 밑줄 칠 문장·그림 번호
         }),
-        "stock": _obj({"kind": {"type": "string", "enum": ["video", "photo"]}, "query_en": STR, "query_ko": STR}),
+        # 역추상화(2026-10-04 채널 주인: 낱말 검색어만 띡 적고 없으면 비우는 건 무책임하다): angle = 이 장면을 무엇으로 보여 줄지
+        # (literal 그 세계의 실물 · detail 손·도구·재료 · process 과정 · place 장소·분위기 · metaphor 바로 읽히는 은유),
+        # query_en 은 1~4낱말 구체 명사(+동작), alt_queries 는 다른 각도의 검색어 2~3개(앱이 함께 찾아 섞는다)
+        "stock": _obj({"kind": {"type": "string", "enum": ["video", "photo"]}, "query_en": STR, "query_ko": STR,
+                       "angle": {"type": "string", "enum": STOCK_ANGLES}, "alt_queries": STR_LIST}),
         "local_file": STR,               # own_material: 자료 폴더의 파일명(없으면 "")
         "must_show": STR, "avoid": STR,
         "count": INT,                    # 1~5
@@ -274,6 +300,7 @@ EVIDENCE_PICK = _obj({
             "focus_box": {"type": "array", "items": NUM},  # [x, y, w, h] 0~1, 없으면 []
         })},
         "reason": STR,
+        "retry_query_en": STR,     # 2점 이상이 없을 때: 맞는 자료를 찾을 영어 검색어 3~6낱말(다른 대상·행동·화각), 아니면 ""
     })},
 })
 
@@ -379,12 +406,37 @@ RESEARCH = _obj({
 # 🛠 시그니처 장면 빌더 — 트리트먼트의 시그니처 장면 하나를 자유 HTML 카드로(카드 DSL, check.mjs 로 검사)
 SETPIECE = _obj({
     "layout": {"type": "string", "enum": ["fullscreen", "split", "overlay"]},
+    "archetype": {"type": "string", "enum": ARCHETYPES},
     "style": {"type": "string", "enum": CARD_STYLES},
     "title": STR,
     "html": STR,
     "timeline": STR,              # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 시그니처 장면은 거의 늘 쓴다
     "start_word": STR,
     "notes": STR,
+})
+
+# 🎨 스타일 프레임 — 이 영상의 룩을 한 장으로 먼저 확정(모든 디자이너가 그림 + 규칙으로 받는다)
+STYLE_FRAME = _obj({
+    "archetype": {"type": "string", "enum": ARCHETYPES},
+    "html": STR,                  # 1920×1080 카드 조각(카드 DSL)
+    "timeline": STR,              # 이 영상의 움직임 서명(GSAP)
+    "rules": _obj({
+        "grid": STR,              # 여백·열·정렬 축
+        "type": STR,              # 글자 크기 단계·굵기·강조 어절 쓰는 법
+        "color": STR,             # 채널 토큰 안에서 이 영상의 배분(오렌지 어디에, 어두운 무대 몇 번)
+        "shape": STR,             # 모서리·선 굵기·판·그림자·도형 언어
+        "motif": STR,             # 이 영상만의 시각 모티프(세계의 사물·재료에서)
+        "motion": STR,            # 움직임 서명(등장 방식·간격·이징·머무는 동안의 흐름)
+        "do": STR_LIST, "dont": STR_LIST,
+    }),
+    "notes": STR,
+})
+# 🧑‍⚖️ 시안 심사 — 같은 장면의 시안 여럿(렌더 그림)을 레퍼런스·스타일 프레임과 나란히 보고 하나를 고른다
+DESIGN_JUDGE = _obj({
+    "ranking": {"type": "array", "items": _obj({"variant": INT, "score": NUM, "strengths": STR, "flaws": STR})},
+    "winner": INT,
+    "reason": STR,
+    "fix": STR,                   # 이긴 시안에서 고칠 것 한두 가지(없으면 "")
 })
 
 # 🎨 모션 디자이너(수정 라운드)
@@ -394,7 +446,7 @@ CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["RESEARCH", "SETPIECE", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "DESIGN_JUDGE", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

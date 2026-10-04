@@ -85,7 +85,7 @@ class _Prov:
         self.calls.append(q)
         if len(q.split()) > self.hit_words:        # 단어가 많으면 0건(AND 검색)
             return []
-        return [StockCandidate("video", f"{q}{i}", "u", "", "d", 1920, 1080, 8.0, "a", provider="Pixabay")
+        return [StockCandidate("video", f"{q}{i}", "u", "", "d", 1920, 1080, 8.0, "a", alt=q, provider="Pixabay")
                 for i in range(4)]
 
     search_photos = search_videos
@@ -116,7 +116,8 @@ def test_failures_are_not_cached_forever_but_rejections_are(tmp_path, monkeypatc
     r = StockResearcher(StockHub([_Prov()]), ff=None, work=tmp_path, public=public,
                         pick=lambda t, s: [{"request": 1, "candidate": 1}, {"request": 2, "candidate": -1}])
     r.run(lists)
-    assert r.stats["download_failed"] == 1 and r.stats["rejected"] == 1 and boom["n"] == 3   # 다른 후보까지 시도
+    # 다른 후보까지 시도 — 고르지 않은 후보는 태그에 검색어가 맞는 것만(여기서는 모두 'desk')
+    assert r.stats["download_failed"] == 1 and r.stats["rejected"] == 1 and boom["n"] == 3
     cache = json.loads((tmp_path / "stock.json").read_text(encoding="utf-8"))
     assert sorted(v["why"] for v in cache.values()) == ["download_failed", "rejected"]
 
@@ -176,7 +177,7 @@ class _FlakyProvider:
 
     def search_images(self, q, image_type="vector", per_page=6):
         return [StockCandidate(kind="photo", id=99, url="https://pixabay.com/x", thumb="", download="d", width=64,
-                               height=32, author="kim", provider=self.name)]
+                               height=32, author="kim", alt="light bulb, lamp, idea", provider=self.name)]
 
     def download(self, c, dst):
         from PIL import Image

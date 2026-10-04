@@ -3,6 +3,8 @@
 
   own_material   ④ 자료 폴더 → 채널 라이브러리 → (fallback: code_drawn → 모션 디자이너 / type_card)
   entity         자료 폴더 → 라이브러리 → 위키데이터·커먼즈 후보 여러 장(P18·문서 대표·문서 안 이미지·depicts·분류)
+                 + 후보가 모자라면 넓혀서(_wider): 미술관 오픈 액세스(CC0) → Google 이미지 재사용 가능(원문에서 라이선스 확인)
+                 → (tier_max C·인용 켜짐) 공식 페이지 대표 이미지(og:image)·Google 이미지 인용 — 모두 한 시트에서 비전이 고른다
                  · 사람 = 품위 있는 초상 · 브랜드·서비스 = 로고 → 위키백과 대표/커먼즈 검색 → Openverse(상업·변형 허용) → 자료 카드
   primary_source 서지 확인(Crossref) → 출처 카드(자체 제작) (+ allow_quote 면 DOI 첫 화면 캡처, C)
   screenshot     화면 캡처(C — allow_quote 일 때만) → 로고 → 자료 카드
@@ -55,12 +57,25 @@ def clean_item(it: dict[str, Any]) -> dict[str, Any]:
     d["fallback"] = d.get("fallback") if d.get("fallback") in ("type_card", "code_drawn", "stock", "face") else "type_card"
     for k in ("subject", "source", "stock", "pair"):
         d[k] = dict(d.get(k) or {}) if isinstance(d.get(k), dict) else {}
-    d["label"] = str(d.get("label") or "").strip()[:14]
-    d["caption"] = str(d.get("caption") or "").strip()[:24]
+    d["label"] = clip_words(d.get("label"), 14)
+    d["caption"] = clip_words(d.get("caption"), 24)
     d["commons_files"] = [str(x).strip() for x in d.get("commons_files") or [] if str(x).strip()][:6]
+    d["web_pages"] = [str(x).strip() for x in d.get("web_pages") or [] if str(x).strip().startswith("http")][:3]
     d["display"] = str(d.get("display") or "").strip()[:8]
-    d["quote"] = str(d.get("quote") or "").strip()[:36]
+    d["quote"] = clip_words(d.get("quote"), 36)
     return d
+
+
+def clip_words(s: Any, n: int) -> str:
+    """화면 글자를 n 자 안으로 — 낱말 가운데서 자르지 않는다(2026-10-04 캡션 'Leahy 외 · J. Mech. Desig').
+    n 자 안의 마지막 낱말 경계(공백·가운뎃점·쉼표)에서 자르고, 그러면 너무 짧아질 때만 글자로 자른다."""
+    t = re.sub(r"\s+", " ", str(s or "")).strip()
+    if len(t) <= n:
+        return t
+    cut = t[: n + 1]
+    k = max(cut.rfind(" "), cut.rfind("·"), cut.rfind(","))
+    out = cut[:k].rstrip(" ·,") if k >= n * 0.5 else t[:n]
+    return out.strip()
 
 
 def drawn_treatment(t: str, n_assets: int, tier: str, kind: str = "photo") -> str:
@@ -93,7 +108,11 @@ class Deps:
     pick: Optional[PickFn] = None
     pick_portraits: Optional[Callable[[MediaResolver, list[MediaPlan]], None]] = None
     stock: Optional[Callable[[list[dict[str, Any]]], list[Optional[dict[str, Any]]]]] = None
+    museums: Optional[Any] = None                       # assets.museums.Museums — 이름 있는 작품·제품·사물(CC0)
+    web: Optional[Any] = None                           # stock.google.GoogleImages — reusable_candidates · quote_candidates
+    page_image: Optional[Callable[[str], Optional[dict[str, Any]]]] = None   # 공식 페이지 og:image(인용 칸, 키 없음)
     allow_quote: bool = False
+    context: Optional[Callable[[Any], str]] = None      # 발화 id → 그 문장(스톡 후보를 문장의 뜻으로 고르게)
 
 
 class Ladder:
@@ -104,6 +123,7 @@ class Ladder:
         self.thumbs = work / "evidence_thumbs"
         self.work = work
         self.log = log
+        self._web_off: set[str] = set()
 
     # ------------------------------------------------------------------
     def run(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -137,7 +157,12 @@ class Ladder:
         if stock_ix and self.d.stock is not None:
             reqs = [{"kind": items[i]["stock"].get("kind") or "photo", "query_en": items[i]["stock"].get("query_en", ""),
                      "query_ko": items[i]["stock"].get("query_ko", ""), "purpose": items[i].get("claim", ""),
-                     "must_show": items[i].get("must_show", "")} for i in stock_ix]
+                     "must_show": items[i].get("must_show", ""), "avoid": items[i].get("avoid", ""),
+                     # 역추상화(자료 리서처): 같은 장면을 다른 각도(손·과정·장소·질감)로 찾는 검색어와 화면 전략
+                     "alt_queries": [str(q) for q in items[i]["stock"].get("alt_queries") or [] if str(q).strip()][:3],
+                     "angle": str(items[i]["stock"].get("angle") or ""),
+                     "context": self.d.context(items[i].get("start_seg")) if self.d.context else ""}
+                    for i in stock_ix]
             try:
                 got = self.d.stock(reqs)
             except Exception as e:  # noqa: BLE001
@@ -244,15 +269,19 @@ class Ladder:
                 info = self.d.resolver.wp.entity(names[0], tuple(names[1:]))
             except Exception as e:  # noqa: BLE001
                 self.log(f"위키데이터 조회 실패({names[0]}): {e}")
+        cands: list[dict[str, Any]] = []
         if info and self.d.media is not None:
             cands = self.d.media.candidates(info, kind=kind, tier_max=it["tier_max"],
                                             min_long=1600 if it["treatment"] in ("hero", "full") else 900)
             if not cands and it["treatment"] in ("hero", "full"):
                 cands = self.d.media.candidates(info, kind=kind, tier_max=it["tier_max"], min_long=900)
             if cands:
-                pending.append((i, it, cands))
                 o["info"] = {k: info.get(k) for k in ("qid", "title", "description", "page")}
-                return
+        cands += self._wider(it, names, kind, have=len(cands))
+        if cands:
+            pending.append((i, it, cands))
+            o.setdefault("info", {"title": names[0], "qid": str(subj.get("qid") or "")})
+            return
         res = self.d.resolver._lead_or_search(names[0], tuple(names[1:]))
         if res is None and self.d.openverse is not None:
             res = self.d.openverse(names[0], subj.get("name_en") or "", self.img_dir)
@@ -263,6 +292,70 @@ class Ladder:
         o["why"] = "위키미디어·Openverse 에 쓸 수 있는 이미지 없음"
 
     # ------------------------------------------------------------------
+    def _wider(self, it: dict[str, Any], names: list[str], kind: str, *, have: int) -> list[dict[str, Any]]:
+        """위키미디어 후보가 모자랄 때 넓혀 찾는다(채널 주인 2026-10-04: "엄격하게 찾아서 수를 줄이라는 게 아니라 더 폭넓게"):
+        미술관(CC0) → Google 재사용 가능(원문 확인) → 인용(tier_max C · 인용 켜짐): 공식 페이지 og:image → Google 인용.
+        고르기는 한 시트에서 비전이 한다(2점 이상만)."""
+        want = it["count"] + 2
+        subj = it["subject"]
+        q_en = str(subj.get("name_en") or "").strip()
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add(ms: list[dict[str, Any]], why: str) -> None:
+            n0 = len(out)
+            for m in ms:
+                if m.get("url") and m["url"] not in seen:
+                    seen.add(m["url"])
+                    out.append(m)
+            if len(out) > n0:
+                self.log(f"🎞 '{self._name(it)}' {why} 후보 {len(out) - n0}장")
+
+        if have + len(out) < want and self.d.museums is not None and q_en and kind in ("work", "product", "publication",
+                                                                                         "other"):
+            q = q_en if not subj.get("creator_en") or str(subj["creator_en"]).lower() in q_en.lower() \
+                else f"{subj['creator_en']} {q_en}"
+            try:
+                add(self.d.museums.search(q, limit=6) or (self.d.museums.search(q_en, limit=6) if q != q_en else []),
+                    "미술관 소장품")
+            except Exception as e:  # noqa: BLE001 - 넓히기는 덤
+                self.log(f"🏛 미술관 검색 실패({q}): {e}")
+        if have + len(out) < want and self.d.web is not None and getattr(self.d.web, "name", "") not in self._web_off:
+            try:
+                add(self.d.web.reusable_candidates(q_en or names[0], n=6), "Google(재사용 가능·라이선스 확인)")
+            except Exception as e:  # noqa: BLE001
+                self._web_failed(e)
+        quote = it["tier_max"] == "C" and self.d.allow_quote
+        if quote and have + len(out) < want and self.d.page_image is not None:
+            from ..stock.google import QUOTE, quote_credit
+            for url in it.get("web_pages") or []:
+                try:
+                    pi = self.d.page_image(url)
+                except Exception:  # noqa: BLE001
+                    pi = None
+                if pi and pi.get("url"):
+                    add([{"name": f"{(pi.get('title') or names[0])[:60]} ({pi['site']}).jpg", "url": pi["url"],
+                          "thumb_url": pi["url"], "width": pi.get("width", 0), "height": pi.get("height", 0),
+                          "mime": "image/jpeg", "page": url, "artist": "", "title": pi.get("title", ""),
+                          "description": f"{pi.get('title', '')} — {pi['site']} 공식 페이지 대표 이미지",
+                          "license": QUOTE.name, "lic": QUOTE.to_dict(), "tier": "C", "src": "official", "origin": "web",
+                          "institution": pi["site"], "credit": list(quote_credit(pi.get("title", ""), pi["site"], url))}],
+                        "공식 페이지 대표 이미지(인용)")
+        if quote and have + len(out) < want and self.d.web is not None and getattr(self.d.web, "name", "") not in self._web_off:
+            try:
+                add(self.d.web.quote_candidates(q_en or names[0], n=6), "Google(인용)")
+            except Exception as e:  # noqa: BLE001
+                self._web_failed(e)
+        return out
+
+    def _web_failed(self, e: Exception) -> None:
+        from ..stock.base import StockError
+        if isinstance(e, StockError) and e.fatal:
+            self._web_off.add(getattr(self.d.web, "name", "web"))
+            self.log(f"🎞 {e} → 이번 작업에서 Google 이미지를 쓰지 않습니다")
+        else:
+            self.log(f"🎞 Google 이미지 검색 실패: {e}")
+
     def _from_library(self, o: dict[str, Any], it: dict[str, Any], names: list[str], qid: str = "") -> bool:
         if self.d.library is None:
             return False
@@ -323,7 +416,8 @@ class Ladder:
             for j, m in enumerate(cands):
                 dst = self.thumbs / f"{_safe(self._name(it), 24)}_{j}{Path(m['name']).suffix.lower() or '.jpg'}"
                 try:
-                    net.download(_thumb_url(m["url"]), dst, timeout=40, headers={"User-Agent": ua}, rounds=2)
+                    net.download(m.get("thumb_url") or _thumb_url(m["url"]), dst, timeout=40, headers=_headers(m, ua),
+                                 rounds=2)
                     keep.append({**m, "thumb": dst})
                 except Exception as e:  # noqa: BLE001
                     self.log(f"자료 후보 썸네일 실패({m['name']}): {e}")
@@ -348,11 +442,16 @@ class Ladder:
                     cells.append((f"C{j} {m.get('src', '')[:8]} {m.get('width', 0)}x{m.get('height', 0)}", data))
                 sheets.append((f"R{r}", contact_sheet(cells, cell=(320, 320), contain=True), "image/jpeg"))
                 s = it["subject"]
+                ctx = self.d.context(it.get("start_seg")) if self.d.context else ""
                 lines.append(f"- R{r} [{it['need']}/{s.get('kind')}/{s.get('shot')}] {s.get('name_ko', '')} "
-                             f"({s.get('name_en', '')}) · claim: {it.get('claim', '')} · must_show: {it.get('must_show', '')}"
+                             f"({s.get('name_en', '')}) · role: {it.get('role', '')} · claim: {it.get('claim', '')}"
+                             f" · must_show: {it.get('must_show', '')}"
                              f" · avoid: {it.get('avoid', '')} · label: {it.get('label', '')} · count {it['count']}"
+                             + (f"\n  그 장면의 말: 「{ctx[:160]}」" if ctx else "")
                              + "".join(f"\n  C{j}: {m['name'][:60]} — {str(m.get('description', ''))[:70]}"
-                                       f" ({m.get('src')}, {m.get('lic', {}).get('name', '')})"
+                                       f" ({m.get('src')}, {m.get('lic', {}).get('name', '')}"
+                                       + (" · 인용 — 그 대상 자체를 설명하는 문장에서만" if m.get("tier") == "C" else "")
+                                       + ")"
                                        for j, m in enumerate(cands, start=1)))
             try:
                 picks = self.d.pick("\n".join(lines), sheets)
@@ -375,16 +474,25 @@ class Ladder:
                 try:
                     self.img_dir.mkdir(parents=True, exist_ok=True)
                     if not dst.exists():
-                        net.download(m["url"], dst, timeout=60, headers={"User-Agent": ua})
+                        net.download(m["url"], dst, timeout=60, headers=_headers(m, ua))
+                    _check_image(dst)
                 except Exception as e:  # noqa: BLE001
+                    dst.unlink(missing_ok=True)
                     self.log(f"자료 다운로드 실패({m['name']}): {e}")
                     continue
                 lic = License(**m["lic"]) if isinstance(m.get("lic"), dict) else classify(m.get("license", ""))
-                self._add_file(outs[i], it, dst, origin="commons", rung="commons", kind="photo",
-                               role=it["subject"].get("shot") or "subject", title=Path(m["name"]).stem,
+                origin = m.get("origin") or "commons"
+                cr = m.get("credit")
+                self._add_file(outs[i], it, dst, origin=origin,
+                               rung={"museum": "museum", "web": "web"}.get(origin, "commons"), kind="photo",
+                               role=it["subject"].get("shot") or "subject",
+                               title=str(m.get("title") or Path(m["name"]).stem),
                                creator=re.sub(r"\s+", " ", m.get("artist") or ""), source_url=m.get("page", ""),
                                lic_obj=lic, copy=False, focus=ch.get("focus_box") or [], shows=ch.get("shows", ""),
-                               score=int(ch.get("score", -1)))
+                               score=int(ch.get("score", -1)), institution=str(m.get("institution") or ""),
+                               year=str(m.get("year") or ""),
+                               credit=(cr[0], cr[1]) if isinstance(cr, (list, tuple)) and len(cr) == 2 else
+                               ((None, m["credit_full"]) if m.get("credit_full") else None))
 
     # ------------------------------------------------------------------
     def _add_result(self, o: dict[str, Any], it: dict[str, Any], res: ImageResult, *, rung: str, kind: str,
@@ -401,13 +509,16 @@ class Ladder:
     def _add_file(self, o: dict[str, Any], it: dict[str, Any], path: Path, *, origin: str, rung: str, kind: str,
                   role: str, title: str = "", creator: str = "", source_url: str = "", lic_text: str = "",
                   lic_obj: Optional[License] = None, tier: str = "", copy: bool = True, focus: list | None = None,
-                  shows: str = "", score: int = -1, credit: Optional[tuple[str, str]] = None) -> None:
+                  shows: str = "", score: int = -1, credit: Optional[tuple[Optional[str], str]] = None,
+                  institution: str = "", year: str = "") -> None:
         from PIL import Image
         if copy:
             self.img_dir.mkdir(parents=True, exist_ok=True)
             dst = self.img_dir / f"own_{re.sub(r'[^0-9A-Za-z가-힣._-]+', '_', path.name)[-60:]}"
             if not dst.exists():
-                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".svg"):
+                    # SVG(로고 카드)는 그대로 — 렌더러가 그린다. 자산 라이브러리에서 꺼낸 로고를 prepare_photo(PIL)로 바꾸려다
+                    # 'cannot identify image file' 로 조달이 실패하던 것(2026-10-03)
                     shutil.copyfile(path, dst)
                 else:
                     from ..stock.process import prepare_photo
@@ -416,7 +527,7 @@ class Ladder:
             path = dst
         lic = lic_obj or (License(tier=tier, name=lic_text) if tier else classify(lic_text, origin=origin))
         orig = path
-        if kind == "photo" and origin in ("commons", "wikipedia", "openverse") and lic.tier != "C" \
+        if kind == "photo" and origin in ("commons", "wikipedia", "openverse", "museum", "web") and lic.tier != "C" \
                 and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
             # 하우스 트리트먼트 T1(07b): 색이 정보인 실물(작품·제품·건물)이라 색은 그대로 두고 레벨만 [잉크, 종이] 안으로
             from ..grade.house import HOUSE_VERSION, treat_file
@@ -441,11 +552,12 @@ class Ladder:
                     w, h = im.size
             except Exception:  # noqa: BLE001
                 pass
-        meta = finish(AssetMeta(path=str(path), origin=origin, source_url=source_url, title=title, creator=creator,
-                                license=lic, shows=shows, role=role, width=w, height=h, focus_box=list(focus or []),
-                                score=score))
+        meta = AssetMeta(path=str(path), origin=origin, source_url=source_url, title=title, creator=creator,
+                         license=lic, shows=shows, role=role, width=w, height=h, focus_box=list(focus or []),
+                         score=score, institution=institution, year=year)
         if credit:
-            meta.credit_short, meta.credit_full = credit
+            meta.credit_short, meta.credit_full = credit[0] or "", credit[1] or ""
+        meta = finish(meta)
         rel = path.relative_to(self.public).as_posix() if path.is_relative_to(self.public) else f"images/{path.name}"
         mat = ""
         if kind == "photo" and w and h and w / h < 1.0:      # 세로 사진: 얼굴 옆 액자에는 크림 종이 여백 액자 사본(P0-11)
@@ -518,3 +630,20 @@ def summary(items: list[dict[str, Any]], outs: list[dict[str, Any]]) -> dict[str
         st["acquired"] += int(got)
         st["rungs"][o.get("rung") or "?"] = st["rungs"].get(o.get("rung") or "?", 0) + 1
     return st
+
+
+def _headers(m: dict[str, Any], ua: str) -> dict[str, str]:
+    """후보 출처에 맞는 요청 머리: 위키미디어는 연락처가 든 UA, 미술관·웹은 브라우저형 UA(시카고 미술관 IIIF 는 없으면 403) + 원문 Referer."""
+    if m.get("origin") in ("museum", "web"):
+        h = {"User-Agent": net.BROWSER_UA, "Accept": "image/avif,image/webp,image/*,*/*;q=0.8"}
+        if m.get("page"):
+            h["Referer"] = str(m["page"])
+        return h
+    return {"User-Agent": ua}
+
+
+def _check_image(p: Path) -> None:
+    """받은 파일이 그림인가(오류 페이지·로그인 벽을 .jpg 로 받는 일이 있다 — 렌더 전 확인이 빼기 전에 여기서)."""
+    from PIL import Image
+    with Image.open(p) as im:
+        im.verify()

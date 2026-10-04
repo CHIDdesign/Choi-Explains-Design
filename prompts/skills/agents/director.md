@@ -73,6 +73,20 @@
 30. `sound_concept` 는 음악이 들어오고 빠지는 자리로 쓴다(Joss Fong: 곡의 시작과 끝은 감정의 신호이자 주의를 끄는 신호다).
     예: "훅과 타이틀에 주제 → 문서를 읽는 동안 비움 → 정점 앞에서 비움 → 엔딩에서 다시". 분위기 형용사만 적지 않는다.
 
+## 3-1. 세계와 리듬 — 이 사람의 세계 안에서, 정지 박자를 처방한다
+
+31. `treatment.world` 는 팀 전원의 필터다. 자료 리서처의 검색어·비전 선택·모션 그림 부품·검수가 모두 받는다(2026-10-04: '학교'에
+    아이 공책·색연필 스톡 — 맥락은 미대 산업디자인과였다). 누구(나이·전공)·어디·언제·사물·**이 세계가 아닌 것**을 구체 명사로 쓴다.
+    Getty VisualGPS: "Go to real places and photograph real people." 억지스러운 그림은 바로 티가 난다.
+32. 대본-화면 2열 표처럼 생각한다(Vox 출신 제작자: "Put your script on the left side and use the column on the right to lay out visual
+    idea"). Kurzgesagt 는 스케치 단계에서 장면마다 가장 좋은 시각 은유를 두고 고민하고, 내레이션이 애니메이션의 타이밍을 준다.
+33. 영화는 "visual music"이다(Murch) — 구절의 교대와 전개. 챕터 하나의 틀: 질문(얼굴) → 근거(자료·도식, 밀도 높음) → **정지 박자**
+    (쉼 1~1.5초, 오래 잡는 이미지나 얼굴) → 전환. 정보가 몰린 구간 바로 뒤에 정지 박자를 하나씩 처방한다 — Joss Fong 의 경고:
+    "There's a really high risk of charging forward and not realizing that the viewer is not with you."
+34. 결정적 자료는 그 의미가 선 다음에 보여 준다(Jacob Bricca, ACE: "Delay Gratification", "Say what you mean in the most direct
+    way you can. Simple is better."). Fong 도 블랙홀 사진을 영상 중간까지 미뤄 왜 중요한지 먼저 이해시켰다.
+35. 화면을 바꿀지 검토하는 신호는 정적인 문장이 두 개쯤 이어질 때다 — "a prompt to evaluate, not a quota". 시계로 바꾸지 않는다.
+
 ## 4. 다큐멘터리 시각 문법 — 자료를 다루는 법
 
 31. 사진 한 장도 움직이며 읽힌다(Ken Burns 효과: 천천히 밀거나 훑는다). 움직임은 화자가 지금 말하는 대상 위에서 멈춰야 한다.
@@ -124,3 +138,10 @@
 - https://10.studio/the-incredible-amount-of-work-behind-kurzgesagts-beautiful-animated-videos/
 - https://en.wikipedia.org/wiki/Ken_Burns_effect
 - https://www.pbs.org/standards/blogs/standards-articles/archival-producers-alliance-develops-guidelines-for-ai-use-in-documentaries/
+- https://www.gettyimages.com/visualgps/creative-trends/culture/on-authenticity
+- https://jea.org/digital-media/video-explainers-engage-readers/
+- https://kurzgesagt.org/youtube/
+- https://www.npr.org/transcripts/4994411
+- https://blogs.chapman.edu/dodge/2016/11/03/documentary-editing-workshop-gave-tips/
+- https://www.theopennotebook.com/2020/01/07/videogram-how-a-vox-video-explains-the-science-behind-the-first-photo-of-a-black-hole/
+- https://jupitrr.com/how-to/add-b-roll-to-talking-head-videos

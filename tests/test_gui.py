@@ -141,3 +141,39 @@ def test_result_page_flags_needs_review(app, tmp_path):
     assert w.r_title.text().startswith("⚠ 검토 필요") and "⚠검토필요.md" in w.r_sub.text()
     w._show_results({"title": "질문이 먼저다", "output": str(tmp_path)})
     assert w.r_title.text().startswith("완성!")
+
+
+def test_scene_rating_dialog_records_taste(app, tmp_path, monkeypatch):
+    """🎯 결과 화면 '장면 평가': rate.json(완성 영상의 장면 정지 화면) → 👍/👎 + 한 줄 → user/taste 기억."""
+    from PIL import Image
+
+    from studio.agents import taste
+    from studio.gui.app import MainWindow
+    from studio.gui.rate_dialog import RateDialog
+    from studio.util import write_json
+    monkeypatch.setattr(taste, "TASTE_DIR", tmp_path / "taste")
+    job = tmp_path / "job1"
+    (job / "work" / "rate").mkdir(parents=True)
+    (job / "output").mkdir()
+    rows = []
+    for gid, tpl in (("g1", "card"), ("g2", "keyword"), ("g3", "motion")):
+        f = job / "work" / "rate" / f"{gid}.jpg"
+        Image.new("RGB", (480, 270), (200, 90, 40)).save(f)
+        rows.append({"gid": gid, "template": tpl, "kind": tpl, "title": f"장면 {gid}", "t": 12.5, "still": str(f)})
+    write_json(job / "work" / "rate.json", rows)
+    w = MainWindow()
+    w._show_results({"title": "t", "long": "", "shorts": [], "output": str(job / "output")})
+    assert w.r_rate.isEnabled()                                  # 결과에 rate 가 없어도 작업 폴더에서 찾는다
+    d = RateDialog(str(job / "work" / "rate.json"), "job1")
+    assert len(d.rows) == 3
+    d.rows[0].up.setChecked(True)
+    d.rows[0].note.setText("큰 숫자 하나가 시원하다")
+    d.rows[1].up.setChecked(True)
+    d.rows[1].down.setChecked(True)                              # 둘 중 하나만
+    d.rows[1].note.setText("제목+목록이라 PPT 같다")
+    es = d.entries()
+    assert [(e["gid"], e["verdict"]) for e in es] == [("g1", "up"), ("g2", "down")]
+    monkeypatch.setattr("studio.gui.rate_dialog.QMessageBox.information", lambda *a, **k: None)
+    d._save()
+    assert (tmp_path / "taste" / "liked" / "job1_g1.jpg").exists()
+    assert "PPT 같다" in taste.notes_block()

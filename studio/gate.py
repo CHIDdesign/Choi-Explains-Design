@@ -220,8 +220,39 @@ def face_only_spans(graphics: list[dict], callouts: Optional[list[dict]], total:
     return out
 
 
+def fill_targets(empty_bins: list, face_runs: list[tuple[float, float]], holds: list[tuple[float, float]], *,
+                 soft: float = 25.0, step: float = 18.0, edge: float = 3.0) -> list[float]:
+    """A6·A7 수리용 보충 카드 자리: 빈 칸의 가운데 + 25초 넘는 맨얼굴 구간 안 (시작 +10초부터) 18초마다. 홀드(편집 감독이
+    얼굴로 지킨 곳, 앞 2초 여유) 안에 떨어진 자리는 같은 칸·구간 안에서 홀드 밖 가장 가까운 곳(홀드 끝 +3초 / 시작 −3초)으로
+    옮기고, 옮길 곳이 없으면 버린다 — 2026-10-03: 빈 칸 가운데와 18초 자리가 모두 홀드 안이라 하나도 못 채우고 A7 block."""
+    want: list[tuple[float, float, float]] = [((a + b) / 2, a, b) for a, b in empty_bins]
+    for a, b in face_runs:
+        if b - a > soft:
+            t = a + 10.0
+            while t < b - 6.0:
+                want.append((t, a, b))
+                t += step
+
+    def hold_at(t: float):
+        return next(((x, y) for x, y in holds if x - 2.0 <= t <= y), None)
+
+    out: list[float] = []
+    for t, lo, hi in want:
+        h = hold_at(t)
+        if h is None:
+            out.append(t)
+            continue
+        alts = [x for x in (h[1] + edge, h[0] - edge) if lo + 1.5 <= x <= hi - 1.5 and hold_at(x) is None]
+        if alts:
+            out.append(min(alts, key=lambda x: abs(x - t)))
+    return sorted({round(x, 3) for x in out})
+
+
+A7_HARD = 40.0          # 맨얼굴이 이보다 길면 block(수리 뒤에도 남으면 멈춤)
+
+
 def a7_face_run(graphics: list[dict], total: float, callouts: Optional[list[dict]] = None, *,
-                soft: float = 25.0, hard: float = 40.0) -> GateResult:
+                soft: float = 25.0, hard: float = A7_HARD) -> GateResult:
     """맨얼굴 최장 구간 — 25초 이하(플레이북 절대 상한). 25~40초는 repair, 40초 초과는 block."""
     runs = face_only_spans(graphics, callouts, total)
     longest = max((b - a for a, b in runs), default=0.0)
@@ -468,6 +499,94 @@ def b7_variety(graphics: list[dict], *, run_max: int = 2, share_max: float = 0.2
     if bad:
         return _bad("B7_variety", "warn", m, "같은 구조 반복: " + " · ".join(bad) + " — 글자가 아니라 구조를 바꾼다")
     return _ok("B7_variety", "warn", m, f"변주 최다 {top_t} {m['top_template_share']:.0%} · 연속 최대 {worst}")
+
+
+# ---------------------------------------------------------------------------
+# 게이트 B11 — 같은 시각 장치의 되풀이(2026-10-03 채널 주인: "더블 다이아몬드 모션 그래픽이 너무 많이 나와", 로고도 한 번만)
+# ---------------------------------------------------------------------------
+
+MOTIF_TEMPLATES = ("motion", "card", "evidence", "photo", "broll", "double_diamond", "process", "cycle", "pyramid",
+                   "venn", "timeline", "compare", "diagram")
+_MOTIF_STOP = {"내가", "우리", "그리고", "그래서", "하지만", "이론", "디자인", "과정", "순서", "실제", "결국", "오늘", "장면",
+               "이야기", "질문", "예고", "다시", "같은", "하나", "모든", "위에", "사이"}
+_MOTIF_TOKEN = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+
+
+def _motif_phrases(title: str) -> set[str]:
+    """제목의 이어진 두 낱말(바이그램) — '더블 다이아몬드' 처럼 이름이 두 낱말인 장치를 잡는다."""
+    toks = [t for t in _MOTIF_TOKEN.findall(title or "") if t not in _MOTIF_STOP]
+    return {toks[i] + " " + toks[i + 1] for i in range(len(toks) - 1)}
+
+
+def motif_groups(graphics: list[dict]) -> dict[str, list[dict]]:
+    """같은 장치를 그린 그래픽 묶음(시간순). 열쇠는 `data.motif`(에이전트가 적음) · 로고 파일 · 제목의 같은 두 낱말 구절."""
+    gs = [g for g in _content(graphics) if g.get("template") in MOTIF_TEMPLATES]
+    groups: dict[str, list[dict]] = {}
+    seen: set[int] = set()
+    for g in gs:
+        d = g.get("data") or {}
+        key = ""
+        if d.get("logo"):
+            key = "logo:" + str(d.get("image") or d.get("src") or d.get("title") or "").rsplit("/", 1)[-1]
+        elif d.get("motif"):
+            key = "motif:" + str(d["motif"]).strip().lower()
+        if key:
+            groups.setdefault(key, []).append(g)
+            seen.add(id(g))
+    rest = [g for g in gs if id(g) not in seen]
+    phrases = [_motif_phrases(str((g.get("data") or {}).get("title") or "")) for g in rest]
+    used: set[int] = set()
+    for i, g in enumerate(rest):
+        if i in used or not phrases[i]:
+            continue
+        members = [i] + [j for j in range(i + 1, len(rest)) if j not in used and phrases[i] & phrases[j]]
+        if len(members) > 1:
+            key = "title:" + sorted(phrases[i] & phrases[members[1]])[0]
+            groups[key] = [rest[j] for j in members]
+            used.update(members)
+    return groups
+
+
+def b11_motif_repeat(graphics: list[dict], *, cap: int = 2, logo_cap: int = 1) -> GateResult:
+    """B11 같은 장치 되풀이: 같은 도식·사물(`motif` 또는 제목의 같은 두 낱말)은 영상당 2회(처음 + 결론)까지, 같은 로고는 1회.
+    넘으면 수리 `trim_motifs`(시그니처 장면은 남기고, 요소가 적은 장면부터 뺌)."""
+    groups = motif_groups(graphics)
+    over = {k: v for k, v in groups.items() if len(v) > (logo_cap if k.startswith("logo:") else cap)}
+    m = {"groups": {k: [str(g.get("id", "")) for g in v] for k, v in groups.items() if len(v) > 1},
+         "over": {k: len(v) for k, v in over.items()}}
+    if over:
+        return _bad("B11_motif_repeat", "repair", m, "같은 장치 되풀이: " + " · ".join(
+            f"{k.split(':', 1)[1]} {len(v)}회" for k, v in over.items()) + f" — 도식·사물은 {cap}회, 로고는 {logo_cap}회까지",
+            "trim_motifs")
+    return _ok("B11_motif_repeat", "repair", m, "되풀이 없음" if not m["groups"] else
+               "되풀이 " + " · ".join(f"{k.split(':', 1)[1]} {len(v)}회" for k, v in groups.items() if len(v) > 1))
+
+
+def motif_drops(graphics: list[dict], *, cap: int = 2, logo_cap: int = 1) -> list[dict]:
+    """B11 수리: 묶음마다 상한을 넘는 그래픽 — 시그니처 장면은 늘 남기고, 나머지는 내용이 많은 것(요소·글자 수) → 먼저 나온 것 순으로
+    남긴다. 반환은 뺄 그래픽(렌더 props 의 그래픽)."""
+    def weight(g: dict) -> float:
+        d = g.get("data") or {}
+        if d.get("signature") or g.get("signature"):
+            return 1e9
+        spec = d.get("spec") if isinstance(d.get("spec"), dict) else None
+        if spec:
+            return len(spec.get("elements") or []) + len(spec.get("els") or [])
+        if isinstance(d.get("card"), dict):
+            return len(re.sub(r"<[^>]+>", "", str(d["card"].get("html", "")))) / 8.0
+        return 1.0 + float(g.get("end", 0) - g.get("start", 0)) / 100.0
+    drops: list[dict] = []
+    for k, members in motif_groups(graphics).items():
+        limit = logo_cap if k.startswith("logo:") else cap
+        if len(members) <= limit:
+            continue
+        if k.startswith("logo:"):
+            # 로고는 이름표(pip) · 먼저 나온 것을 남긴다 — 전면으로 키운 쪽이 빠진다
+            keep = sorted(members, key=lambda g: (g.get("layout") != "pip", g.get("start", 0)))[:limit]
+        else:
+            keep = sorted(members, key=lambda g: (-weight(g), g.get("start", 0)))[:limit]
+        drops += [g for g in members if g not in keep]
+    return drops
 
 
 # ---------------------------------------------------------------------------

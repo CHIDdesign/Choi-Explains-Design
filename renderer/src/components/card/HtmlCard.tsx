@@ -1,6 +1,11 @@
 import React, {useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {continueRender, delayRender} from 'remotion';
 import gsap from 'gsap';
+import {CustomEase} from 'gsap/CustomEase';
+import {DrawSVGPlugin} from 'gsap/DrawSVGPlugin';
+import {MorphSVGPlugin} from 'gsap/MorphSVGPlugin';
+import {MotionPathPlugin} from 'gsap/MotionPathPlugin';
+import {SplitText} from 'gsap/SplitText';
 import {compileCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import type {CompiledCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import {FONT, rgba, MODERN} from '../../design/tokens';
@@ -15,6 +20,11 @@ import type {TemplateProps} from '../graphics/common';
  * 카드는 정해진 캔버스(card.w × card.h)로 쓰고 여기서 상자에 맞춰 축소한다. 호스트의 등장·퇴장은 GraphicLayer 가 맡는다.
  */
 export const HtmlCard: React.FC<TemplateProps> = (p) => (p.data.card ? <CardBody {...p} card={p.data.card} /> : null);
+
+// GSAP 3.13+ 의 무료 플러그인(마스크 글자 분할 · 선 그리기 · 모양 바꾸기 · 경로 이동 · 사용자 이징) — card_dsl.md 의 split-*·draw-svg·
+// morph-svg·follow-path 와 timeline 의 gsap.splitText·gsap.customEase. check.mjs 도 같은 것을 등록한다(검사와 렌더가 같아야 한다)
+gsap.registerPlugin(SplitText, CustomEase, DrawSVGPlugin, MorphSVGPlugin, MotionPathPlugin);
+export const CARD_LIBS = {SplitText, CustomEase, drawSVG: true, morphSVG: true, motionPath: true};
 
 /** 카드 CSS 가 쓰는 채널 토큰(변수) — prompts/card_dsl.md 의 표와 같아야 한다 */
 // 한 재질(docs/upgrade/06 3-1, F-10): 카드의 '흰 바탕'·'잉크 바탕'은 순백(#FFF)·순흑(#111)이 아니라 메모·로고 카드와 같은
@@ -51,8 +61,9 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
 });
 
 /** 카드 조각(내부 HTML + 스코프 CSS) → 마운트할 문자열. .card 는 호스트(작성 캔버스)를 꽉 채운다 — 안 그러면 .root 의 height:100% 가 내용 높이가 된다 */
+// 한국어 줄바꿈은 어절 단위(keep-all) — 기본값은 음절마다 끊어 '그 특 / 징'처럼 낱말 가운데서 줄이 바뀐다(2026-10-04 렌더 확인)
 export const wrapCard = (card: CardSpec): string =>
-  `<div class="card" data-card-id="${card.id}"><style>.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden}` +
+  `<div class="card" data-card-id="${card.id}"><style>.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}` +
   `.card[data-card-id="${card.id}"] *{box-sizing:border-box}${card.css}</style>${card.html}</div>`;
 
 const FAMILIES: [RegExp, string][] = [
@@ -79,16 +90,24 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
   const h = card.h || 1080;
   const scale = Math.min(box.w / w, box.h / h);
 
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
   useLayoutEffect(() => {
     const el = hostRef.current;
     if (!el) return;
     el.innerHTML = html;
-    compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || ''});
-    compiled.current.seek(frame / fps);
-    // 카드 글꼴(분할 웹폰트 포함)이 이 글자들을 다 받을 때까지 첫 프레임을 멈춘다 — 조용한 폴백 글꼴 렌더 방지
+    // 카드 글꼴(분할 웹폰트 포함)이 이 글자들을 다 받을 때까지 첫 프레임을 멈춘다 — 조용한 폴백 글꼴 렌더 방지.
+    // 타임라인은 글꼴을 받은 뒤에 짓는다 — SplitText 가 줄을 나누려면 실제 글꼴의 줄바꿈이어야 한다
     const text = el.textContent || '가';
     const fams = FAMILIES.filter(([re]) => re.test(card.css + card.html)).map(([, f]) => f);
+    let alive = true;
+    const build = () => {
+      if (!alive || compiled.current) return;
+      compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || '', libs: CARD_LIBS});
+      compiled.current.seek(frameRef.current / fps);
+    };
     const release = () => {
+      build();
       if (!released.current) {
         released.current = true;
         continueRender(handle);
@@ -99,6 +118,7 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
       .then(release, release);
     const t = setTimeout(release, 8000);
     return () => {
+      alive = false;
       clearTimeout(t);
       compiled.current?.timeline.kill();
       compiled.current = null;

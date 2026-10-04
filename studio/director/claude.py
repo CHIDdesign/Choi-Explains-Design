@@ -76,19 +76,22 @@ class ClaudeClient:
         tools: tuple[str, ...] = (),
         max_turns: int = 0,
         timeout: Optional[float] = None,
+        ctx_in_system: bool = False,
     ) -> dict:
         """system + (캐시되는) 공통 컨텍스트 + [이미지들] + 작업 지시 → 스키마에 맞는 dict.
 
         images: [(라벨, 바이트, media_type)] — 아트 디렉터 검수·스톡 선택용
         tools: ("WebSearch", "WebFetch") — 서버 도구(web_search · web_fetch)로 웹 조사(🔎 주제 조사). 거부되면 웹 검색만 →
         도구 없이 순서로 물러난다. max_turns 는 도구 사용 횟수 상한(검색·가져오기 각각).
+        ctx_in_system: CLI 판과 같은 인터페이스용(API 는 공통 컨텍스트에 캐시 지점을 직접 두므로 그대로 둔다).
         """
         import base64
         system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         user_blocks: list[dict[str, Any]] = [
             {"type": "text", "text": shared_context, "cache_control": {"type": "ephemeral"}},
         ]
-        for lab, data, media in images or []:
+        from .images import fit_images
+        for lab, data, media in fit_images(images, self.log) or []:
             user_blocks.append({"type": "text", "text": f"[이미지 {lab}]"})
             user_blocks.append({"type": "image", "source": {"type": "base64", "media_type": media,
                                                             "data": base64.b64encode(data).decode("ascii")}})

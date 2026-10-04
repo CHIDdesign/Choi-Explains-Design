@@ -116,6 +116,18 @@ def files_for(d: dict[str, Any], *names: Any) -> list[str]:
     return out
 
 
+def pages_for(d: dict[str, Any], *names: Any) -> list[str]:
+    """대상 이름 → 리서치 디렉터가 확인한 공식 페이지(official_url) — 인용 칸에서 그 페이지의 대표 이미지(og:image)를 찾는다."""
+    keys = {norm_name(n) for n in names if norm_name(n)}
+    out: list[str] = []
+    for e in d.get("entities") or []:
+        if keys & {norm_name(e.get("name_ko")), norm_name(e.get("name_en"))}:
+            u = str(e.get("official_url") or "").strip()
+            if u.startswith("http") and u not in out:
+                out.append(u)
+    return out
+
+
 def research_block(d: dict[str, Any]) -> str:
     """공유 컨텍스트에 붙이는 조사 노트 — 팀 전원이 같은 사실·같은 자료 목록에서 출발한다."""
     if not d or is_empty(d):

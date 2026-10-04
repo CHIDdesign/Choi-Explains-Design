@@ -34,8 +34,11 @@ def test_schedule_keeps_dependencies():
     order = [k for st in pl.SCHEDULE for lane in st for k in lane if k in pl.STAGE_LABEL]
     assert sorted(order) == sorted(pl.STAGE_LABEL)            # 모든 단계가 한 번씩
     pos = {k: i for i, st in enumerate(pl.SCHEDULE) for lane in st for k in lane}
-    # 음성 인식은 목소리 뒤, 정렬은 인식·얼굴 뒤, 색보정·기획은 정렬 뒤, 컷 검사·자료는 기획 뒤, 렌더는 그 모두 뒤
-    assert pos["asr"] == pos["audio"] and pos["face"] == pos["asr"] < pos["align"]
+    # 음성 인식은 목소리 뒤, 정렬은 인식 바로 뒤(같은 줄 — 얼굴은 stage_align 이 기다리고, 🔎 조사는 기다리지 않는다),
+    # 색보정·기획은 정렬·조사 뒤, 컷 검사·자료는 기획 뒤, 렌더는 그 모두 뒤
+    lane = next(lane for st in pl.SCHEDULE for lane in st if "asr" in lane)
+    assert lane.index("audio") < lane.index("asr") < lane.index("align")
+    assert pos["face"] == pos["research"] == pos["align"]
     assert pos["align"] < pos["grade"] == pos["proxy"] == pos["director"]
     lane = next(lane for st in pl.SCHEDULE for lane in st if "grade" in lane)
     assert lane.index("grade") < lane.index("proxy")          # 프록시는 색보정 LUT 가 필요

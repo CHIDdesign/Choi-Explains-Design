@@ -41,7 +41,7 @@ class Settings:
     claude_code_path: str = ""        # 비우면 자동 탐색(%USERPROFILE%\.local\bin\claude.exe, PATH)
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
-    claude_effort: str = "high"
+    claude_effort: str = "xhigh"      # 사고 강도 하나가 모든 에이전트에(채널 주인 2026-10-03: 에이전트별 조절 대신 전역 하나)
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
@@ -57,6 +57,10 @@ class Settings:
     coverr_api_key: str = ""         # https://coverr.co/developers (영상 전용, 데모 시간당 50회)
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
+    # Google 이미지(SerpApi — serpapi.com 가입하면 대시보드에 키, 무료 월 250회·카드 없음). 재사용 가능 라이선스만 쓰고 원문 페이지에서
+    # 라이선스를 다시 확인한다. 인용(아래 allow_quote)이 켜져 있으면 그 대상 자체를 설명하는 문장에서 인용 이미지도(출처·사유 표기)
+    serpapi_key: str = ""
+    museum_search: bool = True       # 미술관 오픈 액세스(시카고·메트·클리블랜드, CC0) — 이름 있는 작품·제품·사물(키 없음)
     # C 등급(인용) 자료 — 웹·앱 화면 캡처, 논문 첫 화면, 비자유 대표 이미지. 그 대상을 설명하는 문장에서만 6초 이내·종이 위.
     # 기본 끔(작업지시서 WP7) — 켜면 자료 대장·검토 시트에 인용 목록이 남는다(docs/upgrade/저작권_위험등급_정책.md)
     allow_quote: bool = False
@@ -73,8 +77,12 @@ class Settings:
     research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
     sfx_motion_auto: bool = True      # 장면 전환·모션 등장에 흔한 효과음(우시·스우시·팝·클릭·타이핑·딩)을 자동으로(감독 지정과 함께)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
-    agent_effort: dict[str, str] = field(default_factory=dict)   # 예: {"motion": "max", "copy": "low", "timeline_review": "high"}
-    agent_models: dict[str, str] = field(default_factory=dict)   # 예: {"copy": "claude-sonnet-5-5"}
+    # 🎨 디자인 취향(채널 주인 2026-10-04: "PPT 같다 — 디자인 taste 를 대폭 업그레이드")
+    style_frame: bool = True          # 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 먼저 확정해 모든 디자이너에게
+    design_variants: int = 3          # 🛠 시그니처 장면마다 시안 수(렌더해 🧑‍⚖️ 심사가 고름) — 1 이면 경쟁 없이 한 안
+    # (예전) 에이전트별 덮어쓰기 — 설정 창에서 뺐다(모델·사고 강도는 전역 하나). 파일에 남아 있으면 그 에이전트에만 적용된다
+    agent_effort: dict[str, str] = field(default_factory=dict)
+    agent_models: dict[str, str] = field(default_factory=dict)
     glossary: dict[str, str] = field(default_factory=lambda: {
         "디자인 띵킹": "디자인 씽킹",
         "더블 다이어몬드": "더블 다이아몬드",

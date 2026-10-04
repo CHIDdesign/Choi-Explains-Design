@@ -309,7 +309,8 @@ def test_merge_plan_uses_outcomes_or_legacy_paths():
     assert t == [("photo", "brand"), ("broll", "")], t                     # 조달 결과 없음 → 예전 단계가 찾는다
     outs = [_outcome(0, assets=[_asset(kind="logo")], rung="logo"), _outcome(1, rung="face"), _outcome(2, rung="face")]
     raw2, _ = merge_plan({"director": {"title": "t"}, "stock": {"items": items, "notes": ""}, "evidence_outcomes": outs})
-    assert [g["template"] for g in raw2["graphics"]] == ["evidence"]
+    # 로고(hero 요청)는 전면 자료가 아니라 이름표 pip 한 번(2026-10-03: 큰 흰 판 가운데 작은 휘장 12초)
+    assert [(g["template"], g["layout"], g.get("logo")) for g in raw2["graphics"]] == [("photo", "pip", True)]
     assert raw2["studio"]["evidence_items"] == 3
 
 
@@ -463,3 +464,40 @@ def test_local_materials_index_and_find(tmp_path):
     assert local_find(items, "M2").name == "최종_렌더링.png"
     assert local_find(items, "", "최종 렌더링").name == "최종_렌더링.png"
     assert local_find(items, "없는파일.jpg") is None
+
+
+def test_ladder_copies_library_svg_logo_without_pil(tmp_path):
+    """2026-10-03 실제 작업: 자산 라이브러리에 저장된 로고 SVG 를 다시 꺼낼 때 prepare_photo(PIL)로 바꾸려다
+    'cannot identify image file' → 조달 오류 → 자료 카드. SVG 는 그대로 복사한다(렌더러가 로고 카드를 그린다)."""
+    svg = tmp_path / "lib" / "00002_logo_pinterest.svg"
+    svg.parent.mkdir()
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000'/>", encoding="utf-8")
+    ld = lad.Ladder(lad.Deps(), public=tmp_path / "pub", work=tmp_path / "w")
+    o = {"assets": [], "rung": "", "info": {}}
+    it = {"subject": {"name_ko": "핀터레스트", "name_en": "Pinterest"}}
+    ld._add_file(o, it, svg, origin="logo", rung="library", kind="logo", role="logo", title="핀터레스트", tier="A")
+    assert o["assets"] and o["assets"][0]["src"].endswith(".svg") and o["assets"][0]["kind"] == "logo"
+    assert (tmp_path / "pub" / o["assets"][0]["src"]).exists() and o["rung"] == "library"
+
+
+def test_logo_is_a_name_tag_once_and_short():
+    """2026-10-03 실제 영상: 홍익대 휘장이 pip 와 전면(큰 흰 판 가운데 작은 휘장 12초) 두 번. 로고는 이름표(pip) 한 번, 4초까지."""
+    items = [_item("entity", 1, subject={"name_ko": "홍익대학교", "kind": "organization", "shot": "logo"}, treatment="pip"),
+             _item("entity", 2, subject={"name_ko": "홍익대학교", "kind": "organization", "shot": "logo"}, treatment="hero",
+                   label="학교와 현장 사이"),
+             _item("entity", 5, subject={"name_ko": "핀터레스트", "kind": "brand", "shot": "logo"}, treatment="collage")]
+    logo = _asset("images/own_logo_hongik.svg", kind="logo")
+    outs = [_outcome(0, assets=[logo]), _outcome(1, assets=[logo]),
+            _outcome(2, assets=[_asset("images/own_logo_pinterest.svg", kind="logo")])]
+    logs: list[str] = []
+    gs, _ = evg.to_graphics(items, outs, log=logs.append)
+    assert [(g["template"], g["layout"], g.get("logo")) for g in gs] == [("photo", "pip", True), ("photo", "pip", True)], gs
+    assert gs[0]["title"] == "홍익대학교" and gs[1]["title"] == "핀터레스트"
+    assert any("이미 한 번" in m for m in logs) and any("이름표(pip)로" in m for m in logs)
+    # 시간: 로고 pip 는 4초를 넘지 않는다
+    utts = _utts()
+    for g in gs:
+        g["start_seg"] = g["end_seg"] = 1
+    tm = TimeMap([Span(0.0, 20.0)])
+    timed = time_graphics(gs[:1], utts, tm, total=20.0)
+    assert timed and timed[0].end - timed[0].start <= 4.0 + 0.3 and timed[0].data.get("logo") is True

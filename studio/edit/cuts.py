@@ -22,15 +22,19 @@ class Pace:
 
 PACES: dict[str, Pace] = {
     # 레퍼런스 채널처럼 생각하는 '호흡'이 살아있는 설명형. 문장 사이 0.8초·문장 안 1.0초까지의 쉼은 그대로 둔다 — 예전(0.55·0.6)엔
-    # 생각하는 쉼마다 점프컷이 생겨 말이 이상하게 이어졌다(채널 피드백). 줄일 때도 0.55초는 남긴다.
-    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.8, inner_gap=1.3, max_silence=1.0,
-                 pause_after=0.3, pause_before=0.25),
+    # 생각하는 쉼마다 점프컷이 생겨 말이 이상하게 이어졌다(채널 피드백). 1.4초 넘는 무음만 줄이고 줄여도 0.75초는 남긴다
+    # (2026-10-04 '훅훅 넘어간다': 예전 1.0초 → 0.55초). 이어 붙인 곳의 쉼은 studio/edit/breath.py 가 경계에 맞춘다.
+    "calm": Pace("calm", pre_pad=0.12, post_pad=0.22, keep_gap=0.8, inner_gap=1.3, max_silence=1.4,
+                 pause_after=0.45, pause_before=0.3),
     "normal": Pace("normal", pre_pad=0.08, post_pad=0.16, keep_gap=0.5, inner_gap=0.9, max_silence=0.6,
                    pause_after=0.22, pause_before=0.16),
     "fast": Pace("fast", pre_pad=0.05, post_pad=0.10, keep_gap=0.22, inner_gap=0.4, max_silence=0.32),
-    # 숏폼: 데드에어 제거
+    # 숏폼(예전 기본): 데드에어 제거 — 말 사이 0.12초. 빠른 정보형 채널용으로 남김(JobSpec.shorts_pace="shorts")
     "shorts": Pace("shorts", pre_pad=0.04, post_pad=0.08, keep_gap=0.14, inner_gap=0.28, min_keep=0.15,
                    max_silence=0.24, pause_after=0.1, pause_before=0.1),
+    # 숏폼 기본(2026-10-04 채널 주인: "릴스 포함 너무 호흡 빠른 편집은 아니다"): 머뭇거림은 자르되 문장 사이 숨은 남긴다
+    "shorts_calm": Pace("shorts_calm", pre_pad=0.07, post_pad=0.16, keep_gap=0.36, inner_gap=0.55, min_keep=0.15,
+                        max_silence=0.7, pause_after=0.22, pause_before=0.14),
     # 오프닝 하이라이트: 문장 조각 사이에 숨 한 번(앞 0.12 + 뒤 0.38초)이 남게
     "highlight": Pace("highlight", pre_pad=0.12, post_pad=0.38, keep_gap=0.3, inner_gap=0.6, min_keep=0.2,
                       max_silence=0.45, pause_after=0.16, pause_before=0.12),
@@ -235,7 +239,9 @@ def trim_dead_air(spans: list[Span], vad: list[tuple[float, float]], word_starts
 
 
 def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]:
-    """프레임 격자에 맞춰 영상/음성 길이가 정확히 일치하도록."""
+    """프레임 격자에 맞춰 영상/음성 길이가 정확히 일치하도록. 앞 구간과 1초 안에서 겹치는 시작은 앞 구간 끝으로 밀되,
+    **뒤로 돌아가는 구간(콜드 오픈·대본 순서 재배치)은 그대로 둔다** — 2026-10-03 숏폼: 콜드 오픈 S57 뒤의 S47–S56 이
+    모두 앞 구간 끝 뒤로 밀려 2프레임 미만이 되어 사라졌다(계획 45초 → 결과 11.8초, 편집 검사 drop 이 있을 때만)."""
     out: list[Span] = []
     last_frame = int(media_duration * fps)
     for s in spans:
@@ -243,7 +249,8 @@ def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]
         b = min(int(round(s.end * fps)), last_frame)
         if out:
             prev_b = int(round(out[-1].end * fps))
-            a = max(a, prev_b)
+            if prev_b - int(round(fps)) <= a < prev_b:
+                a = prev_b
         if b - a >= 2:
             out.append(Span(a / fps, b / fps))
     return out

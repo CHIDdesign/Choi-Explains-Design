@@ -749,6 +749,22 @@ def bridge_split_gaps(graphics: list[dict[str, Any]], *, gap: float = 1.0) -> in
     return n
 
 
+def bridge_fullscreen_gaps(graphics: list[dict[str, Any]], *, gap: float = 0.5) -> int:
+    """전면 그래픽끼리 0.5초 이하로 떨어져 있으면 앞 그래픽을 다음 시작까지 늘린다 — 2026-10-03: 전면 그래픽 사이 0.2~0.5초
+    틈에서 앞 그래픽이 디졸브로 나가고 다음이 디졸브로 들어오는 동안 화자 얼굴이 몇 프레임 비쳤다(채널 주인: "순간적으로 내
+    모습이 보인다"). 렌더러(`LongForm` coverSpans·abutNext)는 이어지는 전면 그래픽 앞의 퇴장을 생략하고 접합부 아래에 무대판을
+    깐다. 타이틀·이름 자막은 뺀다. 반환: 늘린 수."""
+    fulls = sorted((g for g in graphics if g.get("layout") == "fullscreen"
+                    and g.get("template") not in ("title", "lower_third")), key=lambda g: g["start"])
+    n = 0
+    for a, b in zip(fulls, fulls[1:]):
+        d = b["start"] - a["end"]
+        if 0 < d <= gap:
+            a["end"] = round(b["start"], 3)
+            n += 1
+    return n
+
+
 def stack_avoid_spans(props: dict[str, Any]) -> list[tuple[float, float]]:
     """F-9: 두 층 강조 자막을 피할 구간 — 글자 그래픽 + 콜아웃 + 얼굴 옆 메모·사진(pip/overlay). 같은 순간 글자 층은 둘까지."""
     out = text_graphic_spans(props.get("graphics") or [])

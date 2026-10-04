@@ -8,6 +8,8 @@
                                 `tools=("WebSearch", "WebFetch")` — 그 둘만 켜고 `--allowedTools` 로 미리 허락한다(묻지 않음)
 - ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 을 빼고 실행 → 구독 대신 API 종량제로 새지 않게
 - 빈 작업 폴더에서 실행하고 MCP·스킬을 끈다 → 다른 프로젝트 설정이 섞이지 않게
+- 작업 폴더는 위에 CLAUDE.md 가 없는 곳(`scratch_dir`: 시스템 임시 폴더 → 사용자 로컬 임시 폴더 → 홈)이고,
+  CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 로 어느 폴더에서 돌든 CLAUDE.md 를 한 장도 읽지 않게 한다
 
 2026-06-15 공지 기준 `claude -p` 사용량은 구독 한도(5시간·주간)에서 차감된다. 정책이 바뀌면 설정에서 API 키 방식으로 바꾸면 된다.
 """
@@ -29,24 +31,73 @@ from typing import Any, Optional
 from ..util import CancelToken, LogFn, noop_log
 from .claude import DirectorError, extract_json
 
-# 구독 로그인 대신 API 키로 과금되게 만드는 환경변수(실행할 때 뺀다)
-def scratch_dir(tag: str) -> Path:
-    """CLI 를 돌릴 작업 폴더 — **설치·저장소 폴더 밖**(시스템 임시 폴더). Claude Code 는 현재 폴더에서 위로 올라가며
-    CLAUDE.md·.claude/ 를 자동으로 읽어 매 호출의 컨텍스트에 넣는다: 설치 폴더 안(projects/<job>/work)에서 부르면
-    개발 메모 CLAUDE.md(약 3만 토큰)가 모든 에이전트 호출에 딸려 들어가 "너는 이 저장소의 코딩 비서"를 먼저 읽었다
-    (2026-10-02 측정: 저장소 안 35,505 토큰 · 빈 폴더 1,733 토큰)."""
+def _scratch_bases() -> list[Path]:
+    """CLI 작업 폴더 후보(앞이 우선). 실행 .bat 이 TEMP/TMP 를 설치 폴더 안 `tools\\tmp` 로 돌려 두므로(C 드라이브 절약)
+    `tempfile.gettempdir()` 하나만 믿으면 설치 폴더 — 개발 메모 CLAUDE.md — 아래가 된다(2026-10-03 실제 작업: 주제 조사는
+    건너뛰고 ✂️ 컷 총괄에서 중단). 그래서 시스템 임시 폴더 → 사용자 로컬 임시 폴더(TEMP 를 돌리기 전의 자리) → 홈 순으로
+    위에 CLAUDE.md 가 없는 첫 곳을 쓴다."""
     import tempfile
-    d = Path(tempfile.gettempdir()) / "choi_studio" / "claude_code" / re.sub(r"[^A-Za-z0-9_.-]+", "_", tag)[:60]
-    d.mkdir(parents=True, exist_ok=True)
-    stray = [p / "CLAUDE.md" for p in (d, *d.parents) if (p / "CLAUDE.md").exists()]
-    if stray:
-        raise RuntimeError(f"CLI 작업 폴더 위에 CLAUDE.md 가 있습니다(에이전트 컨텍스트에 섞입니다): {stray[0]}")
-    return d
+    bases: list[Path] = [Path(tempfile.gettempdir())]
+    if sys.platform == "win32":
+        for var, sub in (("LOCALAPPDATA", ("Temp",)), ("USERPROFILE", ("AppData", "Local", "Temp")),
+                         ("SystemRoot", ("Temp",))):
+            v = os.environ.get(var)
+            if v:
+                bases.append(Path(v).joinpath(*sub))
+    else:
+        bases += [Path("/tmp"), Path("/var/tmp")]
+    bases.append(Path.home() / ".choi_studio")
+    out: list[Path] = []
+    for b in bases:
+        if b not in out:
+            out.append(b)
+    return out
 
 
+def _stray_claude_md(d: Path) -> Optional[Path]:
+    """d 와 그 위 폴더들 중 Claude Code 가 자동으로 읽는 메모 파일이 있으면 그 경로."""
+    for p in (d, *d.parents):
+        for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            if (p / name).exists():
+                return p / name
+    return None
+
+
+def scratch_dir(tag: str, bases: Optional[list[Path]] = None, log: LogFn = noop_log) -> Path:
+    """CLI 를 돌릴 작업 폴더 — **설치·저장소 폴더 밖**. Claude Code 는 현재 폴더에서 위로 올라가며 CLAUDE.md·.claude/ 를
+    자동으로 읽어 매 호출의 컨텍스트에 넣는다: 설치 폴더 안(projects/<job>/work)에서 부르면 개발 메모 CLAUDE.md(약 3만 토큰)가
+    모든 에이전트 호출에 딸려 들어가 "너는 이 저장소의 코딩 비서"를 먼저 읽었다(2026-10-02 측정: 저장소 안 35,505 토큰 ·
+    빈 폴더 1,733 토큰). 후보(`_scratch_bases`) 가운데 위에 CLAUDE.md 가 없고 만들 수 있는 첫 폴더를 쓰고, 하나도 없으면
+    멈춘다(어느 파일인지와 함께)."""
+    sub = Path("choi_studio") / "claude_code" / re.sub(r"[^A-Za-z0-9_.-]+", "_", tag)[:60]
+    strays: list[Path] = []
+    failed: list[Path] = []
+    for base in bases or _scratch_bases():
+        d = base / sub
+        stray = _stray_claude_md(d)
+        if stray is not None:
+            strays.append(stray)
+            continue
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            failed.append(d)
+            continue
+        if strays:
+            log(f"CLI 작업 폴더: {d} (임시 폴더 위에 CLAUDE.md 가 있어 피함: {strays[0]})")
+        return d
+    why = [f"위에 CLAUDE.md: {s}" for s in strays] + [f"만들 수 없음: {f}" for f in failed]
+    raise RuntimeError("CLI 작업 폴더로 쓸 수 있는 곳이 없습니다(에이전트 컨텍스트에 섞입니다): " + " · ".join(why)
+                       + " — 그 CLAUDE.md 를 옮기거나 지우고 다시 실행하세요")
+
+
+# 구독 로그인 대신 API 키로 과금되게 만드는 환경변수(실행할 때 뺀다)
 STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+# 어느 폴더에서 돌든 CLAUDE.md(프로젝트·사용자 메모)를 한 장도 읽지 않게 — 공식 환경변수(옛 버전은 모르면 무시)
+GUARD_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
 # 오래된 Claude Code 에 없을 수 있는 선택 옵션(모르는 옵션이라고 하면 빼고 다시 실행)
 OPTIONAL_FLAGS = ("--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence")
+WEB_TOOL_NAMES = ("WebSearch", "WebFetch", "web_search", "web_fetch")
 # 켤 수 있는 도구는 웹 조사 둘뿐(🔎 주제 조사·🛠 시그니처 장면) — 파일·명령·MCP 는 언제나 끈다
 WEB_TOOLS = ("WebSearch", "WebFetch")
 
@@ -56,7 +107,9 @@ def _popen_kw() -> dict[str, Any]:
 
 
 def clean_env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    env.update(GUARD_ENV)
+    return env
 
 
 def _exe_near_cmd(cmd: Path) -> Optional[str]:
@@ -141,13 +194,11 @@ def probe_quota(exe: str, *, model: str = "claude-haiku-4-5-20251001", timeout: 
     """아주 작은 호출 한 번으로 구독 한도 창(5시간·주간) 사용률을 받는다 — Claude Code 는 stream-json 에 rate_limit_event 를
     낸다(2026-10-02 확인). 가장 싼 모델로, 도구 없이. 반환: {quota, usage, model, error}."""
     import subprocess
-    import tempfile
     out: dict[str, Any] = {"quota": {}, "usage": {}, "model": "", "error": ""}
     try:
-        with tempfile.TemporaryDirectory() as td:
-            proc = subprocess.run([exe, "-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--model", model],
-                                  input="Reply with the single word OK", capture_output=True, text=True, encoding="utf-8",
-                                  timeout=timeout, cwd=td, env=clean_env(), **_no_window())
+        proc = subprocess.run([exe, "-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--model", model],
+                              input="Reply with the single word OK", capture_output=True, text=True, encoding="utf-8",
+                              timeout=timeout, cwd=str(scratch_dir("probe")), env=clean_env(), **_no_window())
         for ln in (proc.stdout or "").splitlines():
             ln = ln.strip()
             if not ln.startswith("{"):
@@ -250,11 +301,19 @@ class ClaudeCodeClient:
                    max_tokens: int = 48000, cancel: Optional[CancelToken] = None, label: str = "Claude",
                    images: Optional[list[tuple[str, bytes, str]]] = None, effort: Optional[str] = None,
                    model: Optional[str] = None, tools: tuple[str, ...] = (), max_turns: int = 0,
-                   timeout: Optional[float] = None) -> dict:
-        """tools: 웹 조사 도구(WebSearch·WebFetch)만 켤 수 있다 — 파일·명령 도구는 언제나 꺼져 있다."""
+                   timeout: Optional[float] = None, ctx_in_system: bool = False) -> dict:
+        """tools: 웹 조사 도구(WebSearch·WebFetch)만 켤 수 있다 — 파일·명령 도구는 언제나 꺼져 있다.
+        ctx_in_system: 공통 자료(대본·전사·조사·브리프)를 시스템 프롬프트 끝에 붙인다 — CLI 는 시스템 프롬프트를 캐시하므로
+        같은 역할을 여러 번 부르는 호출(그림 고르기·장면 수정·자기 검토·검수)이 그 자료를 매번 새로 읽지 않고 캐시에서 읽는다
+        (캐시 읽기는 새로 읽기의 1/10). 사용자 메시지에는 그림과 지시만 남는다."""
         import base64
-        content: list[dict[str, Any]] = [{"type": "text", "text": shared_context}]
-        for lab, data, media in images or []:
+        if ctx_in_system and shared_context.strip():
+            system = system + "\n\n# 이 작업의 공통 자료(모든 호출이 같은 것을 본다)\n\n" + shared_context
+            content: list[dict[str, Any]] = []
+        else:
+            content = [{"type": "text", "text": shared_context}]
+        from .images import fit_images
+        for lab, data, media in fit_images(images, self.log) or []:
             content.append({"type": "text", "text": f"[이미지 {lab}]"})
             content.append({"type": "image", "source": {"type": "base64", "media_type": media,
                                                         "data": base64.b64encode(data).decode("ascii")}})
@@ -354,8 +413,10 @@ class ClaudeCodeClient:
                     self.rate_limit = dict(ev["rate_limit_info"], at=time.time())
                 elif ev.get("type") == "assistant":
                     served = str(((ev.get("message") or {}).get("model")) or served)
+                    # 웹 도구만 센다 — 구조화 출력(--json-schema)도 도구 호출로 오므로 그것까지 '웹 조사'로 세던 것
                     searches += sum(1 for b in (ev.get("message") or {}).get("content") or []
-                                    if isinstance(b, dict) and b.get("type") == "tool_use")
+                                    if isinstance(b, dict) and b.get("type") == "tool_use"
+                                    and str(b.get("name", "")) in WEB_TOOL_NAMES)
             if time.time() - last_log > 10:
                 last_log = time.time()
                 self.log(f"{label}: 작업 중… ({int(time.time() - t0)}초, Claude Code"
@@ -397,8 +458,8 @@ class ClaudeCodeClient:
                "model": actual or requested or self.model, "requested": requested or self.model,
                "backend": "claude_code", "api_equiv_usd": ev.get("total_cost_usd") or 0}
         self.usage.append(rec)
-        self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {rec['input']} (캐시 {rec['cache_read']}) · "
-                 f"출력 {rec['output']} 토큰 · {actual or '모델 미확인'} · Claude 구독")
+        self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {rec['input']} · 캐시 읽기 {rec['cache_read']} · "
+                 f"캐시 쓰기 {rec['cache_write']} · 출력 {rec['output']} 토큰 · {actual or '모델 미확인'} · Claude 구독")
         want = (requested or self.model).split("[")[0]
         if actual and want and not actual.startswith(want) and "opus" in want and "opus" not in actual:
             if not getattr(self, "_warned_model", False):

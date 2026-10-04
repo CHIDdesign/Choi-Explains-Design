@@ -127,6 +127,11 @@
 67. 실물이 기호보다 먼저다. 자료가 있으면 `frame: "print"` 사진이 주인공이고, 그 위에 `mark` 로 볼 곳을 가리킨다.
 68. 직전 장면과 구도나 진입 가운데 하나는 바꾼다. 챕터의 키(종이 무늬 + 주 진입)는 그 챕터 그래픽의 60% 이상이 따른다.
 69. 움직임의 양보다 정지의 질이 중요하다. 큰 움직임 뒤에 1.2초 이상 멈춘 화면이 리듬을 만든다.
+70. 그림 부품은 🌍 이 영상의 세계 안의 구체 명사로 찾는다. 낱말을 그대로 검색하지 않는다 — '렌더링' → `3d model screen`, '목업' →
+    `foam model sanding`, '스케치' → `marker drawing paper`. 앱이 후보를 비전으로 고르고 맞는 것이 없으면 그 부품을 뺀다.
+71. 확보 목록의 '조달 실패' 자리는 비워 두지 않는다. Kurzgesagt 처럼 그 문장의 시각 은유를 먼저 찾고(스케치 단계에서 장면마다
+    은유를 고민한다), 이론·프레임워크는 도식으로, 이 사람의 작업 이야기는 재현(장표·스케치·모형의 선 그림)으로 짓는다.
+    Johnny Harris 계열의 손맛(실물 소품·손으로 놓는 움직임)은 우리 '놓이는' 진입(place)으로 옮긴다.
 
 ## 체크리스트
 
@@ -168,3 +173,5 @@
 - https://www.elevatelearning.org/insights/mayers-twelve-principles-of-multimedia/
 - https://www.joshwcomeau.com/animation/squash-and-stretch/
 - https://www.remotion.dev/docs/spring
+- https://kurzgesagt.org/youtube/
+- https://rndr.beehiiv.com/p/5-visuals-next-video-ead0

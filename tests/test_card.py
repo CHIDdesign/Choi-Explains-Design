@@ -27,11 +27,18 @@ GOOD = '''<div class="card" data-card-id="c-x">
 
 
 def test_examples_are_clean_and_render_ready():
+    """예시 카드(구도 원형 12, prompts/layouts.md)는 정화에 걸리는 것이 없고, 안무(data-anim 또는 GSAP timeline)가 있다.
+    렌더 전 검사·실제 렌더는 예시를 바꿀 때 직접 돌려 확인한다(2026-10-04 12개 모두 check 통과·Remotion 렌더 확인)."""
+    import re
+    layouts = (ROOT / "prompts" / "layouts.md").read_text(encoding="utf-8")
+    assert len(EXAMPLES) >= 10
     for name, ex in EXAMPLES.items():
-        c = clean_card(ex["html"], layout=ex.get("layout", "fullscreen"))
+        c = clean_card({"html": ex["html"], "timeline": ex.get("timeline", "")}, layout=ex.get("layout", "fullscreen"))
         assert c and not c.get("problems"), (name, c and c.get("problems"))
-        assert c["w"], c["h"] == CANVAS[ex.get("layout", "fullscreen")]
-        assert card_settle_time(c) > 0 and card_text(c)
+        assert (c["w"], c["h"]) == CANVAS[ex.get("layout", "fullscreen")]
+        assert (card_settle_time(c) > 0 or c.get("timeline")) and card_text(c)
+        assert f"`{ex['archetype']}`" in layouts, name                    # 예시마다 원형 설명이 있다
+        assert not re.search(r"font-size:\s*(1\d|2[0-7])px", ex["html"]), name   # 28px 미만 글자 없음
 
 
 def test_clean_card_rescopes_css_and_strips_wrapper():
@@ -165,3 +172,95 @@ def test_card_timeline_is_kept_and_forbidden_tokens_reject_it():
     assert c3 and "timeline" not in c3 and "timeline_no_tweens" in c3.get("problems", [])
     c4 = clean_card({"html": html, "timeline": good, "settle_s": 2.4}, card_id="t")
     assert c4 and c4["settle_s"] == 2.4 and card_settle_time(c4) >= 2.4
+
+
+
+def test_gsap_plugin_kinds_are_validated_and_render_in_the_checker(tmp_path):
+    """2026-10-04 '기본 PPT 같다': GSAP 무료 플러그인(SplitText·DrawSVG·MorphSVG·MotionPath·CustomEase)을 카드에서 쓴다 —
+    정화가 새 종류·선택자를 받아들이고, 렌더와 같은 Chrome 검사가 실제로 트윈을 짓는다(렌더러도 같은 것을 등록)."""
+    import shutil
+
+    import pytest
+
+    from studio.motion.card import clean_anim
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    probs: list[str] = []
+    assert clean_anim({"data-anim": "morph-svg", "data-anim-target": "#sq", "data-anim-at": "1"}, probs)["data-anim-target"] == "#sq"
+    assert "data-anim-path" not in clean_anim({"data-anim": "follow-path", "data-anim-path": "url(x)"}, probs)
+    assert any(p.startswith("anim_bad_selector") for p in probs)
+    assert clean_anim({"data-anim": "draw-svg", "data-anim-origin": "center"})["data-anim-origin"] == "center"
+    tsx = (ROOT / "renderer" / "src" / "components" / "card" / "HtmlCard.tsx").read_text(encoding="utf-8")
+    chk = (ROOT / "renderer" / "scripts" / "check.mjs").read_text(encoding="utf-8")
+    for name in ("SplitText", "CustomEase", "DrawSVGPlugin", "MorphSVGPlugin", "MotionPathPlugin"):
+        assert name in tsx and name in chk
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    html = ('<div class="card" data-card-id="p1"><style>.card[data-card-id="p1"] .root{width:100%;height:100%;'
+            'position:relative;background:var(--paper)}.card[data-card-id="p1"] .h{position:absolute;left:140px;top:150px;'
+            'font-family:var(--font-head);font-size:120px;margin:0;color:var(--ink)}.card[data-card-id="p1"] svg{position:absolute;'
+            'left:900px;top:420px;width:820px;height:420px}.card[data-card-id="p1"] .dot{position:absolute;left:0;top:0;'
+            'width:36px;height:36px;border-radius:50%;background:var(--accent)}</style><div class="root">'
+            '<h1 class="h" data-anim="split-words" data-anim-at="0.1" data-anim-duration="0.7">처음 본 것에 붙잡힌다</h1>'
+            '<svg viewBox="0 0 820 420"><path id="route" d="M20 380 C 220 380, 260 60, 420 60 S 640 360, 800 40" fill="none" '
+            'stroke="var(--ink)" stroke-width="6" data-anim="draw-svg" data-anim-at="0.2" data-anim-duration="1.2"/>'
+            '<path id="blob" d="M60 200 a80 80 0 1 0 160 0 a80 80 0 1 0 -160 0" fill="var(--accent)" data-anim="morph-svg" '
+            'data-anim-target="#sq" data-anim-at="1.8" data-anim-duration="0.8"/><path id="sq" d="M560 120 h180 v180 h-180 z" '
+            'fill="none" stroke="none"/></svg><div class="dot" data-anim="follow-path" data-anim-path="#route" '
+            'data-anim-at="1.0" data-anim-duration="1.6"></div></div></div>')
+    tl = ("const p = gsap.splitText('.h', {type: 'chars'});\nconst e = gsap.customEase('M0,0 C0.12,0.9 0.2,1 1,1');\n"
+          "tl.fromTo(p.chars, {opacity: 0.4}, {opacity: 1, duration: 0.3, stagger: 0.02, ease: e}, 1.0);")
+    card = clean_card({"id": "p1", "html": html, "timeline": tl, "style": "editorial"}, layout="fullscreen", card_id="p1")
+    res = check_cards([card], node=find_node(""), out_dir=tmp_path, fps=30, durations={"p1": 6.0}, browser_executable=browser)
+    assert res["p1"]["ok"], res["p1"]["problems"]
+    assert {"split-words", "draw-svg", "morph-svg", "follow-path"} <= set(res["p1"]["metrics"]["anims"])
+
+
+def test_merge_plan_keeps_card_and_setpiece_timelines():
+    """2026-10-04 발견: merge_plan 이 카드 HTML 만 정리해 넘겨 모션 디자이너·시그니처 빌더가 쓴 GSAP timeline 이 모두 버려졌다
+    (실제 10/04 계획의 카드 6개 모두 timeline 없음). 카드·시그니처·수정 카드 모두 timeline 과 구도 원형을 지킨다."""
+    from studio.agents.studio import merge_plan
+    from studio.director.plan import _clean_graphic
+    html = ('<div class="card" data-card-id="x"><style>.card[data-card-id="x"] .root{background:var(--paper)}</style>'
+            '<div class="root"><h1 class="h">처음 본 것이 답을 잡는다</h1></div></div>')
+    tl = "tl.from(q('.h'), {yPercent: 110, duration: 0.7}, 0.1);"
+    results = {"director": {"beats": []},
+               "motion": {"graphics": [], "scenes": [], "cards": [{"start_seg": 1, "end_seg": 2, "start_word": "", "layout": "fullscreen",
+                                                                   "style": "editorial", "title": "t", "html": html,
+                                                                   "timeline": tl, "archetype": "statement", "reason": ""}]},
+               "setpieces": [{"scene": {"start_seg": 3, "end_seg": 4, "title": "s", "kind": "diagram"}, "layout": "fullscreen",
+                              "style": "editorial", "archetype": "process_path", "html": html, "timeline": tl, "notes": ""}]}
+    long_plan, _ = merge_plan(results)
+    cards = [g for g in long_plan["graphics"] if g["template"] == "card"]
+    assert len(cards) == 2 and all(g["card"].get("timeline") == tl for g in cards)
+    assert [g["card"].get("archetype") for g in cards] == ["statement", "process_path"]
+    again = _clean_graphic(cards[0], [1, 2, 3, 4])           # 저장된 계획을 다시 정규화해도 남는다
+    assert again["card"]["timeline"] == tl and again["card"]["archetype"] == "statement"
+
+
+def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
+    """anim_ends_too_late(2026-10-04): 타임라인이 카드 끝 −1초를 넘어도 마지막 1초가 멈춰 보이면(몇 px 흐름·아주 느린 확대) 통과 —
+    Jitter 템플릿은 마지막 움직임이 길이의 97% 에서 끝난다. 마지막 1초에 크게 움직이면 걸린다(5.6초 장면에 5.5초 흐름이 수정 호출을 부르던 것)."""
+    import json as _json
+    import shutil
+
+    import pytest
+
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))["statement"]
+    drift = ex["timeline"] + "\ntl.fromTo(q('.root'), {scale: 1.03}, {scale: 1, duration: ctx.duration, ease: 'none'}, 0);"
+    late = ex["timeline"] + "\ntl.from(q('.root'), {y: 200, opacity: 0, duration: 0.5}, ctx.duration - 0.8);"
+    cards = [clean_card({"html": ex["html"], "timeline": t}, layout="fullscreen", card_id=cid)
+             for cid, t in (("drift", drift), ("late", late))]
+    res = check_cards([dict(c, layout="fullscreen") for c in cards], node=find_node(""), out_dir=tmp_path, fps=30,
+                      durations={"drift": 5.0, "late": 5.0}, browser_executable=browser)
+    assert res["drift"]["ok"], res["drift"]["problems"]
+    assert res["drift"]["metrics"]["tail"] == "drift" and res["drift"]["metrics"]["timeline"] >= 4.9
+    codes = [p["code"] for p in res["late"]["problems"]]
+    assert "anim_ends_too_late" in codes and "not settled" in next(p["detail"] for p in res["late"]["problems"]
+                                                                    if p["code"] == "anim_ends_too_late")

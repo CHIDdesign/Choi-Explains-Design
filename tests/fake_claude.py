@@ -28,13 +28,22 @@ def main(argv: list[str]) -> int:
             return 2
     opts = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
     schema = json.loads(opts["--json-schema"])
-    assert Path(opts["--system-prompt-file"]).read_text(encoding="utf-8").strip(), "빈 시스템 프롬프트"
+    system = Path(opts["--system-prompt-file"]).read_text(encoding="utf-8")
+    assert system.strip(), "빈 시스템 프롬프트"
     msg = json.loads(sys.stdin.readline())
     content = msg["message"]["content"]
+    # 같은 역할을 여러 번 부르는 호출은 공통 자료(대본·전사)를 시스템 프롬프트 끝에 둔다(ctx_in_system — 캐시) —
+    # 진짜 모델처럼 그 자료도 본다
+    mark = "# 이 작업의 공통 자료"
+    if mark in system:
+        content = [{"type": "text", "text": system.split(mark, 1)[1]}] + list(content)
     import e2e_studio as E  # noqa: E402 - 같은 가짜 답변 로직
     agent = E.agent_of(schema)
-    # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만
-    if agent in ("research", "setpiece"):
+    # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만.
+    # 시그니처 장면 시안 경쟁은 첫 안(A)만 웹 도구를 쓴다
+    if agent == "setpiece" and opts["--tools"] == "":
+        pass
+    elif agent in ("research", "setpiece"):
         assert opts["--tools"] == "WebSearch,WebFetch" and opts.get("--allowedTools") == "WebSearch,WebFetch", opts
     else:
         assert opts["--tools"] == "", f"도구는 꺼져 있어야 한다({agent})"
@@ -43,7 +52,7 @@ def main(argv: list[str]) -> int:
     ans = E.fake_answer(agent, {"messages": [{"content": content}]}, n_images, instruction)
     E.record_call({"agent": agent, "images": n_images, "effort": opts.get("--effort"), "backend": "claude_code",
                    "model": opts.get("--model"), "api_key_env": "ANTHROPIC_API_KEY" in os.environ,
-                   "tools": opts.get("--tools")})
+                   "tools": opts.get("--tools"), "world": "이 영상의 세계" in instruction})
     print(json.dumps({"type": "system", "subtype": "init", "model": opts.get("--model")}))
     print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2,
                       "result": json.dumps(ans, ensure_ascii=False), "structured_output": ans,
