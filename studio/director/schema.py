@@ -72,8 +72,8 @@ LONG_PLAN = _obj({
     "graphics": {"type": "array", "items": GRAPHIC},
     "emphasis": {"type": "array", "items": EMPHASIS},
     "drop": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
-    # 🎬 오프닝 하이라이트: 본편 앞에 붙일 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내) — 그 뒤 처음부터 시작
-    "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
+    # 🎬 오프닝 하이라이트: 본편 앞에 붙일 알맹이 조각 2~4개 — 조각 = 이어지는 발화 seg~end_seg(한 생각, 6~12초), 합쳐 20~30초
+    "highlights": {"type": "array", "items": _obj({"seg": INT, "end_seg": INT, "reason": STR})},
     "youtube": _obj({
         "titles": STR_LIST,
         "description": STR,

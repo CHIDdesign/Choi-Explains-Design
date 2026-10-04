@@ -191,9 +191,9 @@ def _make_short(ids: list[int], by_id: dict[int, Utterance], hint: str, max_sec:
     }
 
 
-def highlight_segs(utts: list[Utterance], *, max_sec: float = 20.0, each_max: float = 7.0, n: int = 3) -> list[dict]:
-    """🎬 오프닝 하이라이트 후보(규칙): 첫 두 발화 뒤에서 훅 신호(결론·반전·질문·숫자)가 강한 짧은 문장 2~3개 —
-    앞 문맥에 매달리는 첫말('그래서·이게…')은 뺀다. 시간순."""
+def highlight_segs(utts: list[Utterance], *, max_sec: float = 30.0, each_max: float = 12.0, n: int = 4) -> list[dict]:
+    """🎬 오프닝 하이라이트 후보(규칙): 첫 두 발화 뒤에서 훅 신호(결론·반전·질문·숫자)가 강한 문장 2~4개 —
+    앞 문맥에 매달리는 첫말('그래서·이게…')은 뺀다. 시간순. 조각을 20초 넘게 채우는 것은 파이프라인이 뒤 발화를 붙여서 한다."""
     from .plan import DANGLING_START
     kept = [u for u in utts if u.kept]
     cands = []
@@ -218,4 +218,4 @@ def highlight_segs(utts: list[Utterance], *, max_sec: float = 20.0, each_max: fl
         picked.append(u)
         total += d
     picked.sort(key=lambda u: u.start)
-    return [{"seg": u.id, "reason": "규칙: 훅 신호가 강한 문장"} for u in picked] if len(picked) >= 2 else []
+    return [{"seg": u.id, "end_seg": u.id, "reason": "규칙: 훅 신호가 강한 문장"} for u in picked] if len(picked) >= 2 else []

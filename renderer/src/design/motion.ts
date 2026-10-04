@@ -15,7 +15,8 @@ export const EASE = {
   outCubic: Easing.bezier(0.33, 1, 0.68, 1),
   inOutCubic: Easing.bezier(0.645, 0.045, 0.355, 1), // 화면 안 이동
   inCubic: Easing.bezier(0.32, 0, 0.67, 0), // 퇴장
-  outBack: Easing.bezier(0.34, 1.56, 0.64, 1), // 아주 가끔: 숫자·아이콘 팝
+  // 2026-10-04 채널 주인: '바운시한 느낌은 싫다 — 플로팅처럼 젠틀하게'. 되튐(오버슛) 곡선은 이름만 남기고 모두 되튐 없는 감속으로
+  outBack: Easing.bezier(0.22, 1, 0.36, 1), // (예전 되튐) → 부드러운 감속
   inExpo: Easing.bezier(0.7, 0, 0.84, 0), // 전환: 나가는 장면이 컷으로 빨려 들어감
   inQuart: Easing.bezier(0.5, 0, 0.75, 0),
   linear: Easing.linear,
@@ -25,9 +26,9 @@ export const EASE = {
   enterLarge: Easing.bezier(0.05, 0.7, 0.1, 1), // 큰 면(종이 판·전면) — Material 3 emphasized-decelerate
   move: Easing.bezier(0.2, 0, 0, 1), // 화면 안 A→B — Material 3 standard(빨리 떠나 길게 앉는다)
   exit: Easing.bezier(0.3, 0, 0.8, 0.15), // 퇴장 — Material 3 emphasized-accelerate
-  settle: Easing.bezier(0.34, 1.2, 0.64, 1), // 미세 정착, 피크 약 +1.3% — 숫자 끝·칩
-  settlePaper: Easing.bezier(0.34, 1.35, 0.64, 1), // 종이 안착, 피크 약 +4.1%
-  pop: Easing.bezier(0.34, 1.56, 0.64, 1), // 피크 약 +9.8% — 펀치 구간·숏폼 훅 전용(롱폼 본문 금지)
+  settle: Easing.bezier(0.25, 0.9, 0.3, 1), // 정착 — 되튐 없이 길게 내려앉는다(숫자 끝·칩)
+  settlePaper: Easing.bezier(0.2, 0.85, 0.25, 1), // 종이 안착 — 되튐 없이
+  pop: Easing.bezier(0.16, 1, 0.3, 1), // 펀치 구간·숏폼 훅 — 빠르게 오되 되튀지 않는다
 } as const;
 
 export type EaseName = keyof typeof EASE;
@@ -83,10 +84,10 @@ export const STAGGER = {
 // 감쇠비 ζ = damping / (2·√(stiffness·mass)), 오버슛 = exp(−ζπ/√(1−ζ²)). Remotion 기본값(100/10, ζ 0.5 · 약 16%)은 쓰지 않는다.
 export const SPRING = {
   gentle: {stiffness: 100, damping: 20, mass: 1}, // ζ 1.0  · 0%
-  stiff: {stiffness: 400, damping: 30, mass: 1}, // ζ 0.75 · 약 2.8%
+  stiff: {stiffness: 400, damping: 40, mass: 1}, // ζ 1.0 · 0% (되튐 없음)
   slow: {stiffness: 50, damping: 20, mass: 1}, // ζ 1.41 · 0%
-  paper: {stiffness: 260, damping: 22, mass: 1}, // ζ 0.68 · 약 5% — 메모의 '회전' 정착에만
-  snap: {stiffness: 500, damping: 32, mass: 1}, // ζ 0.72 · 약 4% — 칩·배지·테이프
+  paper: {stiffness: 260, damping: 33, mass: 1}, // ζ 1.02 · 0% — 메모의 '회전' 정착
+  snap: {stiffness: 500, damping: 45, mass: 1}, // ζ 1.0 · 0% — 칩·배지·테이프
   heavy: {stiffness: 120, damping: 22, mass: 1}, // ζ 1.0  · 0% — 종이 판·전면
   float: {stiffness: 40, damping: 18, mass: 1}, // ζ 1.42 · 0% — 배경·시차
 } as const;
@@ -182,3 +183,20 @@ export const peelOut = (frame: number, end: number, rest: number, dur = 8) => {
 /** 역할 이름으로 쓰는 진입 진행도(0→1). tween() 과 같고 기본 곡선만 다르다. */
 export const enterP = (frame: number, start: number, dur: number, role: 'enter' | 'enterText' | 'enterLarge' = 'enter') =>
   interpolate(frame, [start, start + Math.max(1, dur)], [0, 1], {...clamp, easing: EASE[role]});
+
+/**
+ * 떠다니는 움직임(플로팅) — 2026-10-04 채널 주인: "모션 그래픽은 떠다니는 움직임이 젠틀하게, 모션이 많아야 한다".
+ * 결정적(같은 프레임은 늘 같은 값)인 느린 사인 두 개를 겹쳐 규칙적인 왕복처럼 보이지 않게 한다. amp px, period 초.
+ */
+export const floatOffset = (frame: number, fps: number, seed = 0, amp = 6, period = 6.5) => {
+  const t = frame / fps;
+  const ph = seed * 1.7;
+  const y = amp * (0.7 * Math.sin((2 * Math.PI * t) / period + ph) + 0.3 * Math.sin((2 * Math.PI * t) / (period * 0.53) + ph * 2.3));
+  const x = amp * 0.35 * Math.sin((2 * Math.PI * t) / (period * 1.37) + ph * 0.7);
+  const rot = 0.35 * Math.sin((2 * Math.PI * t) / (period * 1.21) + ph * 1.3);
+  return {x, y, rot};
+};
+
+/** 앰비언트 카메라 — 장면 내내 아주 느리게 다가간다(scale 1 → 1+push, 선형). 화면 가장자리가 드러나지 않게 1 이상만 */
+export const ambientPush = (frame: number, dur: number, push = 0.03) =>
+  1 + push * Math.min(1, Math.max(0, frame / Math.max(1, dur)));

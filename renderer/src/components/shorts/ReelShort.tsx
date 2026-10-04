@@ -1,6 +1,7 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {cameraAt, punchFactor} from '../../compositions/LongForm';
+import {ScreenLook} from '../fx/ScreenLook';
 import {DUR, tween, tweenOut} from '../../design/motion';
 import {surface as mkSurface, TEMPLATE_LABEL} from '../../design/surfaces';
 import {FONT, makeTheme, MODERN, softShadow} from '../../design/tokens';
@@ -260,9 +261,10 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
         return (
           <div key={`${i}-${s.start}`} style={{position: 'absolute', left: CARD.x, top: CARD.y, width: CARD.w, height: CARD.h,
             borderRadius: 30, overflow: 'hidden', boxShadow: softShadow(3), background: MODERN.card,
-            opacity: leaving ? 1 : p * k, rotate: `${leaving ? 0 : interpolate(p, [0, 1], [seedTilt + 1.5, 0])}deg`,
+            // 새 카드는 불투명한 채 아래에서 올라와 앞 카드 위에 쌓인다(카드 스택) — 반투명으로 겹치는 페이드 없음(2026-10-04)
+            opacity: k, rotate: `${leaving ? 0 : interpolate(p, [0, 1], [seedTilt + 1.5, 0])}deg`,
             scale: `${leaving ? interpolate(tween((t - slides[si].start) * fps, 0, 14), [0, 1], [1, 0.96]) : interpolate(p, [0, 1], [0.97, 1])}`,
-            translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 40, 0])}px`,
+            translate: `0 ${leaving ? 0 : interpolate(p, [0, 1], [isMedia ? -90 : 140, 0])}px`,
             filter: !leaving && isMedia && p < 1 ? `blur(${interpolate(p, [0, 1], [10, 0])}px)` : undefined}}>
             <Sequence from={toFrame(s.start, fps)} layout="none">
               <CardContent s={s} f={f} fps={fps} props={props} theme={theme} marker={marker}
@@ -271,6 +273,13 @@ export const ReelShort: React.FC<ShortProps> = (props) => {
           </div>
         );
       })}
+      {props.screenLook && k > 0 ? (
+        // 🖥 모니터 질감 — 위 카드에만(얼굴·자막에는 얹지 않는다)
+        <div style={{position: 'absolute', left: CARD.x, top: CARD.y, width: CARD.w, height: CARD.h, borderRadius: 30,
+          overflow: 'hidden', pointerEvents: 'none'}}>
+          <ScreenLook frame={frame} strength={props.screenLook} opacity={k} />
+        </div>
+      ) : null}
       {k > 0 ? (   // 첫 장면(부채꼴 카드) 동안은 보이지 않으니 화자 영상을 디코딩하지 않는다
         <div style={{opacity: k}}>
           <TalkingHead clips={props.clips} fps={fps} region={faceRegion} box={box} />

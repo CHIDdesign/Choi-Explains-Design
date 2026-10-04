@@ -59,6 +59,10 @@ SVG_ATTRS = {"viewBox", "preserveAspectRatio", "xmlns", "d", "cx", "cy", "r", "r
              "stop-color", "stop-opacity", "gradientUnits", "clip-path", "href", "xlink:href", "vector-effect",
              "paint-order", "pathLength"}
 IMG_ATTRS = {"src", "width", "height", "loading", "decoding"}
+# HTMLParser 는 속성 이름을 소문자로 준다 — viewBox 처럼 대소문자가 섞인 SVG 속성은 소문자로 맞춰 보고 원래 이름으로 쓴다
+# (2026-10-04: viewBox 가 모두 지워져 아이콘·도형이 24px 원래 크기로 작게 그려졌다)
+SVG_CANON = {a.lower(): a for a in SVG_ATTRS}
+TAG_CANON = {t.lower(): t for t in ALLOWED_TAGS}      # linearGradient·clipPath 도 같은 이유
 ATTR_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9:_-]*$")
 ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
 LOCAL_SRC_RE = re.compile(r"^(images|fx|broll|stock|cards)/[A-Za-z0-9_./-]+$")
@@ -124,7 +128,7 @@ class _Sanitizer(HTMLParser):
             self._depth += 1
             self.out.append("")
             return
-        if tag_l not in ALLOWED_TAGS:
+        if tag_l not in TAG_CANON:
             self.problems.append(f"html_tag_removed:{tag_l}")
             if tag_l not in VOID_TAGS:
                 self._skip.append(tag_l)
@@ -133,7 +137,7 @@ class _Sanitizer(HTMLParser):
         if tag_l == "img" and not any(k == "src" for k, _ in clean):
             return   # 로컬 파일이 아닌 이미지는 요소째 버린다
         self.n_elements += 1
-        self.out.append("<" + tag + "".join(f' {k}="{escape(v, quote=True)}"' for k, v in clean) + ">")
+        self.out.append("<" + TAG_CANON[tag_l] + "".join(f' {k}="{escape(v, quote=True)}"' for k, v in clean) + ">")
         if tag_l not in VOID_TAGS:
             self._depth += 1
 
@@ -141,14 +145,14 @@ class _Sanitizer(HTMLParser):
         tag_l = tag.lower()
         if self._skip or self._in_style:
             return
-        if tag_l not in ALLOWED_TAGS:
+        if tag_l not in TAG_CANON:
             self.problems.append(f"html_tag_removed:{tag_l}")
             return
         clean = self._attrs(tag_l, {k: (v or "") for k, v in attrs if k})
         if tag_l == "img" and not any(k == "src" for k, _ in clean):
             return
         self.n_elements += 1
-        self.out.append("<" + tag + "".join(f' {k}="{escape(v, quote=True)}"' for k, v in clean) + "/>")
+        self.out.append("<" + TAG_CANON[tag_l] + "".join(f' {k}="{escape(v, quote=True)}"' for k, v in clean) + "/>")
 
     def handle_endtag(self, tag: str) -> None:
         tag_l = tag.lower()
@@ -162,13 +166,13 @@ class _Sanitizer(HTMLParser):
             return
         if tag_l in VOID_TAGS:
             return
-        if tag_l not in ALLOWED_TAGS:
+        if tag_l not in TAG_CANON:
             return
         self._depth -= 1
         if self._depth == 0 and self.card_attrs is not None and tag_l == "div":
             self.out.append("")   # 래퍼 닫힘
             return
-        self.out.append(f"</{tag}>")
+        self.out.append(f"</{TAG_CANON[tag_l]}>")
 
     def handle_data(self, data: str) -> None:
         if self._in_style:
@@ -204,6 +208,13 @@ class _Sanitizer(HTMLParser):
             if kl.startswith("data-anim"):
                 anim[kl] = v.strip()
                 continue
+            if kl in ("data-float", "data-float-at", "data-float-period"):
+                # 떠다니는 움직임(card-anim.mjs) — 숫자만
+                try:
+                    out.append((kl, f"{max(0.0, min(60.0, float(v))):g}"))
+                except ValueError:
+                    self.problems.append(f"html_attr_removed:{kl}")
+                continue
             if kl == "href" or kl == "xlink:href":
                 # svg <use href="#id"> 만
                 if tag == "use" and v.startswith("#") and ID_RE.match(v[1:] or "x"):
@@ -227,7 +238,9 @@ class _Sanitizer(HTMLParser):
                 if ID_RE.match(v.strip()):
                     out.append(("id", v.strip()))
                 continue
-            if kl in COMMON_ATTRS or kl in SVG_ATTRS or (tag == "img" and kl in IMG_ATTRS):
+            if kl in SVG_CANON:
+                out.append((SVG_CANON[kl], v))
+            elif kl in COMMON_ATTRS or (tag == "img" and kl in IMG_ATTRS):
                 out.append((k, v))
         if anim:
             cleaned = clean_anim(anim, self.problems)

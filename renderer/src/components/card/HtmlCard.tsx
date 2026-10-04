@@ -9,6 +9,7 @@ import {SplitText} from 'gsap/SplitText';
 import {compileCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import type {CompiledCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import {FONT, rgba, MODERN} from '../../design/tokens';
+import {ambientPush, floatOffset} from '../../design/motion';
 import type {Theme} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {CardSpec} from '../../lib/types';
@@ -80,7 +81,10 @@ const FAMILIES: [RegExp, string][] = [
   [/anton|--font-latin/i, 'Anton'],
 ];
 
-const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, fps, dur, box, theme, surface}) => {
+const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, fps, dur, box, theme, surface, data}) => {
+  // 나가기 안무(LongForm 이 이어지는 장면에 맞춰 넣는다): {at, dur} 초 — 요소가 흩어져 나간다
+  const exitPlan = (data as {__exit?: {at: number; dur: number}}).__exit;
+  const exitKey = exitPlan ? `${exitPlan.at}:${exitPlan.dur}` : '';
   const hostRef = useRef<HTMLDivElement>(null);
   const compiled = useRef<CompiledCard | null>(null);
   const [handle] = useState(() => delayRender(`card ${id}`));
@@ -103,7 +107,8 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
     let alive = true;
     const build = () => {
       if (!alive || compiled.current) return;
-      compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || '', libs: CARD_LIBS});
+      compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || '', libs: CARD_LIBS,
+        ...(exitPlan ? {exit: exitPlan} : {})});
       compiled.current.seek(frameRef.current / fps);
     };
     const release = () => {
@@ -125,22 +130,29 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
     };
     // frame 은 아래 effect 가 맡는다
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, fps, dur]);
+  }, [html, fps, dur, exitKey]);
 
   useLayoutEffect(() => {
     compiled.current?.seek(frame / fps);
   }, [frame, fps]);
 
   const vars = cardVars(theme, surface) as React.CSSProperties;
+  // 앰비언트 카메라 + 떠다니는 흐름(2026-10-04 채널 주인: '모션이 많아야 한다 — 떠다니듯 젠틀하게'): 카드 전체가 장면 내내
+  // 아주 느리게 다가가며(1.012 → 1.04) 몇 px 떠다닌다. 가장자리가 드러나지 않게 늘 1보다 크게. 결정적(프레임만으로 정해진다)
+  const fl = floatOffset(frame, fps, id.length + w, 4, 7.5);
+  const cam = 1.012 + (ambientPush(frame, dur, 0.028) - 1);
   return (
     <div style={{position: 'absolute', left: 0, top: 0, width: box.w, height: box.h, overflow: 'hidden'}}>
-      <div
-        ref={hostRef}
-        className="card-host"
-        style={{...vars, position: 'absolute', left: (box.w - w * scale) / 2, top: (box.h - h * scale) / 2, width: w, height: h,
-          transform: `scale(${scale})`, transformOrigin: 'top left', color: theme.ink, fontFamily: FONT.sans,
-          lineHeight: 1.25}}
-      />
+      <div style={{position: 'absolute', inset: 0, transformOrigin: '50% 50%',
+        transform: `translate(${fl.x.toFixed(2)}px, ${fl.y.toFixed(2)}px) scale(${cam.toFixed(4)})`}}>
+        <div
+          ref={hostRef}
+          className="card-host"
+          style={{...vars, position: 'absolute', left: (box.w - w * scale) / 2, top: (box.h - h * scale) / 2, width: w, height: h,
+            transform: `scale(${scale})`, transformOrigin: 'top left', color: theme.ink, fontFamily: FONT.sans,
+            lineHeight: 1.25}}
+        />
+      </div>
     </div>
   );
 };

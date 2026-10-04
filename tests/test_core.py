@@ -377,10 +377,37 @@ def test_highlights_normalized_and_fallback_picks_hooky_sentences():
     raw["highlights"] = [{"seg": kept[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": kept[-1], "reason": "결론"},
                          {"seg": kept[-1], "reason": "중복"}, {"seg": 999, "reason": "없는 발화"}]
     plan = normalize_long(raw, utts, tags)
-    assert plan["highlights"] == [{"seg": kept[-1], "reason": "결론"}]
-    # 규칙 후보: 첫 두 발화 뒤, 앞 문맥에 매달리지 않는 짧은 문장만
+    assert plan["highlights"] == [{"seg": kept[-1], "end_seg": kept[-1], "reason": "결론"}]   # 예전 모양 = 한 발화 조각
+    # 조각 = 이어지는 발화 seg~end_seg(한 생각): 뒤집힌 끝은 seg 로, 4발화까지, 겹치는 조각은 뺀다
+    raw["highlights"] = [{"seg": kept[2], "end_seg": kept[-1], "reason": "길게"}, {"seg": kept[3], "end_seg": kept[2], "reason": "겹침"}]
+    plan = normalize_long(raw, utts, tags)
+    assert plan["highlights"] == [{"seg": kept[2], "end_seg": kept[min(len(kept) - 1, 5)], "reason": "길게"}]
+    # 규칙 후보: 첫 두 발화 뒤, 앞 문맥에 매달리지 않는 문장만
     hl = fallback.highlight_segs(utts)
-    assert all(h["seg"] not in kept[:2] for h in hl)
+    assert all(h["seg"] not in kept[:2] and h["end_seg"] == h["seg"] for h in hl)
+
+
+def test_highlight_runs_fill_twenty_to_thirty_seconds():
+    """2026-10-04 채널 주인: "하이라이트가 10초대라 너무 압축돼 알맹이 없이 잘린다 — 20~30초". 한 문장 조각 셋(합 12초)이면
+    조각마다 바로 뒤 발화(같은 흐름)를 붙여 20초를 넘기고, 30초·조각 상한·다른 조각·긴 쉼은 넘지 않는다."""
+    from studio.director.plan import fit_highlight_runs
+    from studio.models import Utterance
+    # 4초짜리 발화 20개, 0.5초 간격 — 10번 뒤에만 6초 쉼(다른 흐름)
+    utts, t = [], 0.0
+    for i in range(20):
+        utts.append(Utterance(i, t, t + 4.0, f"문장{i}", f"문장{i}"))
+        t += 4.5 + (6.0 if i == 10 else 0.0)
+    span = lambda r: utts[r[-1]].end - utts[r[0]].start      # noqa: E731
+    used, grown = fit_highlight_runs([[3], [10], [15]], utts, span, lo=20.0, hi=30.0, piece_max=14.0)
+    total = sum(span(r) for r in used)
+    assert 20.0 <= total <= 30.0 and grown >= 2, (used, total)
+    assert [10] in used                                       # 10 뒤는 6초 쉼 — 다른 흐름이라 붙이지 않는다
+    assert all(span(r) <= 14.0 for r in used) and len({x for r in used for x in r}) == sum(len(r) for r in used)
+    # 바로 뒤가 다른 조각이면 붙이지 않는다 · 상한을 넘기는 조각은 뺀다
+    used, _ = fit_highlight_runs([[3], [4]], utts, span, lo=20.0, hi=30.0, piece_max=14.0)
+    assert used[0] == [3]
+    used, _ = fit_highlight_runs([[3, 4, 5], [8, 9, 10], [13, 14, 15]], utts, span, lo=20.0, hi=30.0, piece_max=14.0)
+    assert len(used) == 2 and sum(span(r) for r in used) <= 30.0
 
 
 def test_evidence_shifts_to_free_slot_after_title_card():

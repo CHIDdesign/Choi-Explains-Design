@@ -49,7 +49,7 @@ from .director.context import (JobBrief, load_prompt, long_instruction, shared_c
 from .motion.card import card_settle_time, card_text
 from .motion.check import CheckError, check_cards, preview_images, problem_lines
 from .director.plan import EVIDENCE as EVIDENCE_TEMPLATES
-from .director.plan import (TimedGraphic, blank_graphic, merge_step_runs, type_card, normalize_long, normalize_shorts, seg_edit_times,
+from .director.plan import (TimedGraphic, blank_graphic, fit_highlight_runs, merge_step_runs, type_card, normalize_long, normalize_shorts, seg_edit_times,
                             spec_settle_time, time_graphics, word_edit_time)
 from .director.schema import LONG_PLAN, SHORTS_PLAN
 from .edit.assemble import build_proxy, cut_audio, proxy_height_for
@@ -178,8 +178,9 @@ class JobSpec:
     make_long: bool = True
     shorts_count: int = 2               # 최대 편수 — 제대로 된 1편이 우선, 둘째는 다른 아이디어·8점 이상일 때만
     short_max_sec: int = 55
-    opening_highlight: bool = True      # 롱폼 맨 앞에 임팩트 있는 문장 2~4개(≤20초)를 붙이고 처음부터 시작
-    highlight_max_sec: int = 20
+    opening_highlight: bool = True      # 롱폼 맨 앞에 영상의 알맹이 조각 2~4개(20~30초)를 붙이고 처음부터 시작
+    highlight_max_sec: int = 30         # 2026-10-04 채널 주인: "10초대라 너무 압축돼 알맹이 없이 잘린다 — 20~30초"
+    highlight_min_sec: int = 20
     out_height: int = 1080
     pace: str = "calm"
     shorts_pace: str = "shorts_calm"    # 숏폼 컷 템포 — shorts_calm(짧은 숨은 남김) | shorts(예전: 데드에어 제거)
@@ -248,6 +249,28 @@ def new_job_dir(settings: Settings, title: str) -> Path:
     return d
 
 
+CARD_MEASURED = ("dark", "settle_s")      # 렌더 전 검사가 카드 내용에서 재는 값 — 디자인 결정이 아니다
+
+
+def apply_card_metrics(card: dict, met: dict) -> None:
+    """렌더 전 검사(check.mjs)의 측정값을 카드에 적는다: 어두운 판(🖥 화면 질감이 빛 번짐을 screen 으로) ·
+    직접 쓴 타임라인의 정착 시각(떠다니기·나가기 제외 — 검수 스틸·읽기 시간)."""
+    if isinstance(met.get("bg_lum"), (int, float)):
+        card["dark"] = met["bg_lum"] < 0.3
+    tl_s = met.get("timeline")
+    if card.get("timeline") and isinstance(tl_s, (int, float)) and tl_s > 0:
+        card["settle_s"] = round(float(tl_s), 2)
+
+
+def qa_view(g: dict) -> dict:
+    """검수 캐시 키에 들어가는 그래픽 모양 — 이유 글과 카드 측정값(CARD_MEASURED)은 뺀다. 측정값은 재실행 때 다시 재므로
+    키에 넣으면 검수가 고친 카드(측정 전)의 키가 재실행마다 달라져 디자이너·아트 디렉터를 다시 불렀다(2026-10-04 E2E)."""
+    out = {k: v for k, v in g.items() if k != "reason"}
+    if isinstance(out.get("card"), dict):
+        out["card"] = {k: v for k, v in out["card"].items() if k not in CARD_MEASURED}
+    return out
+
+
 class Pipeline:
     def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, *, log: LogFn = noop_log,
                  progress: Optional[StageProgress] = None, cancel: Optional[CancelToken] = None,
@@ -290,6 +313,7 @@ class Pipeline:
         self.hl_map: Optional[TimeMap] = None          # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 컷
         self.hl_pieces: list[Piece] = []
         self.hl_segs: list[int] = []
+        self.hl_runs: list[list[int]] = []     # 하이라이트 조각(이어지는 발화 묶음)
         self.hl_duration = 0.0
         self.fps = 30
         self.utts: list[Utterance] = []
@@ -1499,10 +1523,12 @@ class Pipeline:
         mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
                         self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
-                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v7")
+                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v8")
         # plan-v6(2026-10-04): 🌍 TREATMENT.world · EDITOR.pauses · EVIDENCE.stock.angle/alt_queries — 예전 계획엔 없어 다시 짠다
         # plan-v7(2026-10-04): 카드·시그니처 장면의 GSAP timeline 이 merge_plan 에서 버려지던 것 + 구도 원형(archetype) — 예전 계획의
         #   카드에는 안무가 없다
+        # plan-v8(2026-10-04): 글자 예산·아이콘 인포그래픽·되튐 없음·떠다니기·이어 가기(data-carry) 디자인 규칙 +
+        #   하이라이트 조각 seg~end_seg(합쳐 20~30초) — 예전 계획의 카드는 글이 많고 하이라이트는 한 문장 조각
         saved = read_json(self.work / "plan.json", {})
         use_api = self._use_api()
         studio = self._ensure_studio()
@@ -1712,9 +1738,7 @@ class Pipeline:
                 return
             results.update(res)
             for g in todo:
-                tl_s = (res.get(g["card"]["id"], {}).get("metrics") or {}).get("timeline")
-                if g["card"].get("timeline") and isinstance(tl_s, (int, float)) and tl_s > 0:
-                    g["card"]["settle_s"] = round(float(tl_s), 2)      # 직접 쓴 타임라인의 정착 시각(검수 스틸·읽기 시간)
+                apply_card_metrics(g["card"], res.get(g["card"]["id"], {}).get("metrics") or {})
             failed = [g for g in todo if not res.get(g["card"]["id"], {}).get("ok")]
             # 글꼴 파일을 못 읽은 것(font load NetworkError · font_not_loaded 만)은 카드가 아니라 설치·환경 문제 — 디자이너에게
             # 고치라고 보내지도, 키워드 카드로 바꾸지도 않는다(2026-10-02 실제 실행: 5개 카드가 전부 이 이유로 두 번 실패할 뻔)
@@ -2621,45 +2645,87 @@ class Pipeline:
             longest = max(longest, EXPLICIT_RANGE[1])
         return max(self._pace().max_silence, longest + 0.15)
 
+    HL_PIECE_MAX = 14.0     # 하이라이트 조각 하나(원본 발화 구간)의 상한 — 한 생각(1~3문장)
+
+    def _highlight_budget(self) -> tuple[float, float]:
+        """(목표 하한, 상한) 초 — 기본 20~30초. 본편이 짧으면 본편의 12% 까지만(같은 말을 곧 또 듣는다)."""
+        hi = min(float(self.spec.highlight_max_sec), max(12.0, 0.12 * self.timemap.duration))
+        return min(float(self.spec.highlight_min_sec), 0.75 * hi), hi
+
+    def _highlight_runs(self) -> list[list[int]]:
+        """편집 감독의 조각(seg~end_seg, 이어지는 발화) → 발화 id 묶음(시간순, 겹침 없음, 많아야 4개). 조각 하나가
+        HL_PIECE_MAX 를 넘으면 뒤 발화부터 덜어 낸다(한 발화가 넘으면 그 조각은 뺀다)."""
+        by_id = {u.id: u for u in self.utts}
+        kept = [u.id for u in self.utts if u.kept]
+        pos = {sid: i for i, sid in enumerate(kept)}
+        runs: list[list[int]] = []
+        for h in self.plan_long.get("highlights", []) or []:
+            a = h.get("seg")
+            if a not in pos:
+                continue
+            b = h.get("end_seg", a)
+            b = b if b in pos and pos[b] >= pos[a] else a
+            run = kept[pos[a]:pos[b] + 1]
+            while len(run) > 1 and by_id[run[-1]].end - by_id[run[0]].start > self.HL_PIECE_MAX:
+                run = run[:-1]
+            if by_id[run[-1]].end - by_id[run[0]].start > self.HL_PIECE_MAX:
+                continue
+            if any(set(run) & set(r) for r in runs):
+                continue
+            runs.append(run)
+        return sorted(runs, key=lambda r: by_id[r[0]].start)[:4]
+
     def _make_highlight_cuts(self, drops: list[Span], starts: list[float]) -> None:
-        """🎬 오프닝 하이라이트: 편집 감독이 고른 임팩트 문장 2~4개(각 ≤7초, 합쳐 ≤highlight_max_sec)를 본편 앞에 붙일
-        컷(원본 시각 순, 조각 사이 숨 한 번). 목소리는 하이라이트 + 본편을 이어 long_voice_full.wav 로."""
+        """🎬 오프닝 하이라이트: 편집 감독이 고른 알맹이 조각 2~4개(조각 = 이어지는 발화 한 생각, 합쳐 20~30초)를 본편 앞에
+        붙일 컷(원본 시각 순). 합이 목표 하한보다 짧으면 조각마다 바로 뒤 발화(그 생각의 근거·끝맺음)를 하나씩 붙여 늘린다 —
+        한 문장씩 7초 이하로 자르던 예전 방식은 10초대가 되어 '너무 압축돼 알맹이 없이 잘린다'(2026-10-04 채널 주인).
+        조각 사이·안의 쉼은 호흡 설계(highlight)로. 목소리는 하이라이트 + 본편을 이어 long_voice_full.wav 로."""
         self.hl_map, self.hl_pieces, self.hl_segs, self.hl_duration = None, [], [], 0.0
+        self.hl_runs = []
         if not self.spec.opening_highlight or self.timemap.duration < 45.0:     # 아주 짧은 영상은 하이라이트가 되풀이로 들린다
             return
-        by_id = {u.id: u for u in self.utts}
-        segs = [h["seg"] for h in self.plan_long.get("highlights", []) or [] if h.get("seg") in by_id and by_id[h["seg"]].kept]
-        segs = [s for s in segs if by_id[s].end - by_id[s].start <= 7.5]
-        segs = sorted(dict.fromkeys(segs), key=lambda i: by_id[i].start)[:4]
-        if len(segs) < 2:
+        runs = self._highlight_runs()
+        if len(runs) < 2:
             return
         from .edit.cuts import quantize
-        keeps: list[Span] = []
-        total = 0.0
-        used: list[int] = []
-        for sid in segs:
-            ks = keeps_for_segments(self.utts, [sid], pace=PACES["highlight"], vad=self.vad,
+        by_id = {u.id: u for u in self.utts}
+        kept = [u.id for u in self.utts if u.kept]
+        lo, hi = self._highlight_budget()
+
+        def piece(run: list[int]) -> list[Span]:
+            ks = keeps_for_segments(self.utts, run, pace=PACES["highlight"], vad=self.vad,
                                     media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
             if drops:
                 ks = quantize(subtract(ks, drops), self.fps, self.info.duration)
-            ks = self.smap.clamp_keeps(ks, self.fps)
-            d = sum(k.dur for k in ks)
-            if not ks or total + d > float(self.spec.highlight_max_sec):
-                continue
-            keeps += ks
-            total += d
-            used.append(sid)
+            return self.smap.clamp_keeps(ks, self.fps)
+
+        cache: dict[tuple[int, ...], list[Span]] = {}
+
+        def piece_keeps(run: list[int]) -> list[Span]:
+            if tuple(run) not in cache:
+                cache[tuple(run)] = piece(run)
+            return cache[tuple(run)]
+
+        used, grown = fit_highlight_runs(runs, [by_id[i] for i in kept],
+                                         lambda r: sum(k.dur for k in piece_keeps(r)) if piece_keeps(r) else -1.0,
+                                         lo=lo, hi=hi, piece_max=self.HL_PIECE_MAX)
+        keeps = [k for r in used for k in piece_keeps(r)]
+        total = sum(k.dur for k in keeps)
         if len(used) < 2:
             return
+        keeps, _ = self._breathe(keeps, "highlight", drops, budget=max(1.0, hi + 2.0 - total), explicit=False)
         self.hl_map = TimeMap(keeps, preserve_order=True)
-        self.hl_segs = used
+        self.hl_segs = [sid for r in used for sid in r]
+        self.hl_runs = used
         self.hl_duration = self.hl_map.duration
         self.hl_pieces = choose_angles(self.hl_map.keeps, self.smap, self.quality, sentence_starts=starts,
                                        prefer_close=True, max_hold=7.0)
         cut_audio(self.ff, self.work / "voice.wav", list(self.hl_map.keeps) + list(self.timemap.keeps),
                   self.media / "long_voice_full.wav", self.work, log=self.log, cancel=self.cancel)
-        self.log("🎬 오프닝 하이라이트 " + f"{len(used)}조각 · {total:.1f}초: "
-                 + " / ".join(f"「{by_id[i].text[:24]}」" for i in used))
+        short = "" if self.hl_duration >= lo else f" — 목표 {lo:.0f}초보다 짧음(이어 붙일 발화가 없음)"
+        self.log("🎬 오프닝 하이라이트 " + f"{len(used)}조각 · {self.hl_duration:.1f}초"
+                 + (f"(뒤 발화 {grown}개를 붙여 늘림)" if grown else "") + short + ": "
+                 + " / ".join("「" + " ".join(by_id[i].text for i in r)[:36] + "」" for r in used))
 
     # ------------------------------------------------------------------
     def stage_verify(self) -> None:
@@ -3118,7 +3184,8 @@ class Pipeline:
         ch = {c["seg"]: c for c in self.plan_long.get("chapters", []) or []}
         holds = [(h["start_seg"], h["end_seg"]) for h in self.plan_long.get("holds", []) or []]
         strong = {m.get("seg") for m in self.plan_long.get("moments", []) or [] if int(m.get("intensity", 0) or 0) >= 3}
-        hl = f" · 앞에 오프닝 하이라이트(약 {self.spec.highlight_max_sec:.0f}초 이내)" if self.spec.opening_highlight else ""
+        hl = (f" · 앞에 오프닝 하이라이트(약 {self.spec.highlight_min_sec:.0f}~{self.spec.highlight_max_sec:.0f}초)"
+              if self.spec.opening_highlight else "")
         lines = [f"본편 길이 {fmt_ts(self.timemap.duration)} · 남은 발화 {len(seg_t)}개{hl}"]
         for u in kept:
             if u.id not in seg_t:
@@ -3214,8 +3281,7 @@ class Pipeline:
             self.log("🧐 아트 디렉터 검수 건너뜀(Claude Code 또는 API 키 필요)")
             return
         self._ensure_space("render")
-        gkey = lambda: text_hash([{k: v for k, v in g.items() if k != "reason"} for g in self.plan_long["graphics"]],
-                                 "qa-v2")
+        gkey = lambda: text_hash([qa_view(g) for g in self.plan_long["graphics"]], "qa-v3")
         if self.plan_long.get("qa", {}).get("key") == gkey():
             self.log("🧐 검수: 이전 검수 결과 사용(그래픽 변경 없음)")
             return
@@ -3301,9 +3367,28 @@ class Pipeline:
             self._stage("qa", rnd / rounds)
             if res.get("verdict") == "pass" or not changed:
                 break
+        self._measure_cards()
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
         self._qa_escalate(escalated)
+
+    def _measure_cards(self) -> None:
+        """검수가 고친 카드(측정값이 없는 것)를 렌더 전 검사로 잰다 — 어두운 판(화면 질감의 빛 번짐)·정착 시각(읽기 시간).
+        고치지는 않는다(검사 실패는 다음 실행의 _check_cards 몫). 재실행 때 _check_cards 가 같은 값을 다시 쓴다."""
+        todo = [g for g in self.plan_long.get("graphics", []) if g.get("template") == "card" and isinstance(g.get("card"), dict)
+                and "dark" not in g["card"]]
+        if not todo:
+            return
+        rs = self.settings.render
+        try:
+            res = check_cards([dict(g["card"], layout=g["layout"]) for g in todo], node=find_node(self.settings.node_path),
+                              out_dir=self.work / "cards", fps=self.fps, durations={g["card"]["id"]: 8.0 for g in todo},
+                              browser_executable=rs.browser_executable, gl=rs.gl, log=self._log_file_only, cancel=self.cancel)
+        except CheckError as e:
+            self._log_file_only(f"🃏 고친 카드 측정 실패: {str(e)[:200]}")
+            return
+        for g in todo:
+            apply_card_metrics(g["card"], res.get(g["card"]["id"], {}).get("metrics") or {})
 
     def _speech_for(self, g: dict) -> str:
         """그 그래픽이 걸친 발화들(시작~끝)의 말 — 자기 검토가 '말을 따라가는가'를 본다."""
@@ -3416,6 +3501,7 @@ class Pipeline:
                               cancel=self.cancel)
             for g, src, new in fixed_c:
                 if res.get(new["id"], {}).get("ok"):
+                    apply_card_metrics(new, res[new["id"]].get("metrics") or {})
                     src["card"] = new
                     kept_c += 1
                 else:
@@ -3807,6 +3893,7 @@ class Pipeline:
                         skin="classic" if self._hybrid else self.spec.skin, paper_texture=self._paper,
                         grain=0.05 if self._grain else 0.0, caption_preset=self._caption_presets()[0],
                         endcard=self.spec.endcard, use_sfx=False, speech_onsets=self._edit_onsets(self.timemap))
+        lp["screenLook"] = float(getattr(self.settings, "screen_look", 1.0) or 0.0)   # 🖥 모니터 질감(전면 그래픽만)
         # 자료 사진 바로 뒤(또는 안)의 키워드는 사진 위 키워드 슬램으로(사진이 어두워지며 큰 키워드)
         folded = fold_keywords_into_media(lp["graphics"])
         if folded:
@@ -3890,13 +3977,15 @@ class Pipeline:
                   if g.get("start_seg") in segs and g.get("template") not in ("chapter", "title", "lower_third")]
         seg_t = seg_edit_times([u for u in self.utts if u.id in segs], tm)
         timed = time_graphics([g for _, g in subset], self.utts, tm, total=tm.duration, min_start=0.2, id_prefix="h")
-        # 그래픽은 자기 문장 조각 안에서만(읽기 시간으로 다음 조각까지 늘어나면 다른 문장 위에 남는다)
+        # 그래픽은 자기 조각 안에서만(읽기 시간으로 다음 조각까지 늘어나면 다른 이야기 위에 남는다)
+        piece_end = {sid: seg_t[r[-1]][1] for r in (self.hl_runs or [[x] for x in self.hl_segs])
+                     if r and r[-1] in seg_t for sid in r}
         kept_t: list[TimedGraphic] = []
         for g in timed:
             k = int(g.id[1:]) if g.id[1:].isdigit() else -1
             sid = subset[k][1].get("start_seg") if 0 <= k < len(subset) else None
-            if sid in seg_t:
-                g.end = min(g.end, seg_t[sid][1] + 0.15)
+            if sid in piece_end:
+                g.end = min(g.end, piece_end[sid] + 0.15)
             if g.end - g.start >= 1.5:
                 kept_t.append(g)
         timed = kept_t
@@ -3949,10 +4038,10 @@ class Pipeline:
         ed.bgm_swells = list(ed_h.bgm_swells) + ed.bgm_swells
         ed.bgm_dips = list(ed_h.bgm_dips) + ed.bgm_dips
         ed.bgm_anchors = [round(hd, 3)] + ed.bgm_anchors        # 한 곡 그대로 — 곡이 끝났으면 본편 시작에서 다시
-        # 하이라이트 → 본편(타이틀): 빛샘 전환 + 페이지 넘김 한 번(04c 6절 — 라이저는 팔레트에서 뺐다)
+        # 하이라이트 → 본편(타이틀): 줌스루(겹침 없는 다이브 — 빛샘·디졸브 같은 PPT 전환은 쓰지 않는다, 2026-10-04) + 페이지 넘김 한 번
         fps = float(self.fps)
-        lp["transitions"] = sorted(lp["transitions"] + [{"t": round(hd, 3), "type": "leak",
-                                                         "dur": round(PARAMS["tx_frames"]["leak"] / fps, 3)}],
+        lp["transitions"] = sorted(lp["transitions"] + [{"t": round(hd, 3), "type": "zoom",
+                                                         "dur": round(PARAMS["tx_frames"]["zoom"] / fps, 3)}],
                                    key=lambda t: t["t"])
         ed.sfx.append({"t": round(max(0.0, hd - 0.15), 3), "category": "page_turn",
                        "gain_db": PARAMS["sfx_gain"].get("page_turn", -26), "prio": 5, "why": "하이라이트 → 본편"})
@@ -4032,6 +4121,7 @@ class Pipeline:
                 ed.sfx = directed_sfx(sp["graphics"], [], total=sp["duration"],
                                       speech_starts=sorted(a for a, _ in seg_edit_times(self.utts, tm).values()),
                                       auto=bool(getattr(self.settings, "sfx_motion_auto", True)), transitions=ed.transitions)
+            sp["screenLook"] = float(getattr(self.settings, "screen_look", 1.0) or 0.0)   # 🖥 위 카드에만
             sp["camera"] = ed.camera
             sp["transitions"] = ed.transitions
             sp["punches"] = sorted(sp.get("punches", [])[:1] + ed.punches, key=lambda p: p["t"])
@@ -4631,8 +4721,10 @@ class Pipeline:
                 lines.append("- 앵글(롱폼): " + angle_summary(self.long_pieces, self.smap))
         if self.hl_map is not None and self.hl_segs:
             by_id = {u.id: u for u in self.utts}
-            lines.append(f"- 오프닝 하이라이트 {self.hl_duration:.1f}초: "
-                         + " / ".join(f"「{by_id[i].text[:30]}」" for i in self.hl_segs if i in by_id) + " → 처음부터")
+            runs = self.hl_runs or [[i] for i in self.hl_segs]
+            lines.append(f"- 오프닝 하이라이트 {self.hl_duration:.1f}초 · {len(runs)}조각: "
+                         + " / ".join("「" + " ".join(by_id[i].text for i in r if i in by_id)[:48] + "」" for r in runs)
+                         + " → 처음부터")
         br = getattr(self, "breath_long", None)
         if br is not None and br.joins:
             lines.append("- 🫁 호흡(이어 붙인 곳마다 경계에 맞는 쉼): " + br.summary())

@@ -147,9 +147,10 @@ EDITOR = _obj({
     "rhythm": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT,
                                                "level": {"type": "string", "enum": RHYTHM}, "reason": STR})},
     "peak_seg": INT,                                          # 영상에서 가장 큰 순간(-1 = 없음)
-    # 🎬 오프닝 하이라이트(콜드 오픈): 본편 앞에 붙일 가장 임팩트 있는 문장 2~4개(각 7초 이내, 합쳐 20초 이내).
-    # 결론·반전·질문·숫자처럼 앞뒤 없이도 서는 문장. 첫 두 발화는 제외(바로 뒤에 다시 나온다)
-    "highlights": {"type": "array", "items": _obj({"seg": INT, "reason": STR})},
+    # 🎬 오프닝 하이라이트(콜드 오픈): 본편 앞에 붙일 알맹이 조각 2~4개 — 조각 = 이어지는 발화 seg~end_seg 한 생각(1~3문장,
+    # 6~12초), 합쳐 20~30초(2026-10-04 채널 주인: "10초대라 너무 압축돼 알맹이 없이 잘린다"). 앞뒤 없이도 서는 결론·반전·
+    # 질문·숫자와 그 근거. 첫 두 발화는 제외(바로 뒤에 다시 나온다)
+    "highlights": {"type": "array", "items": _obj({"seg": INT, "end_seg": INT, "reason": STR})},
     # 🫁 호흡: 그 발화가 끝난 뒤 둘 쉼(초, 0.5~1.6) — 무거운 문장·고백·질문 뒤의 여운. 앱이 원본의 실제 무음으로 채운다
     # (studio/edit/breath.py). 지정하지 않은 경계는 문장 0.6초 · 문단 1.0초가 기본(2026-10-04 '훅훅 넘어간다')
     "pauses": {"type": "array", "items": _obj({"after_seg": INT, "sec": NUM, "reason": STR})},

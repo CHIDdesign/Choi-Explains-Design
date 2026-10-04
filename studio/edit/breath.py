@@ -47,7 +47,8 @@ BREATHS: dict[str, Breath] = {
     "fast": Breath(inner=0.12, sentence=0.26, paragraph=0.36, beat=0.5),
     "shorts_calm": Breath(inner=0.15, sentence=0.42, paragraph=0.6, beat=0.9),
     "shorts": Breath(inner=0.08, sentence=0.16, paragraph=0.22, beat=0.3),
-    "highlight": Breath(inner=0.2, sentence=0.45, paragraph=0.45, beat=0.45),
+    # 오프닝 하이라이트: 조각 안은 차분하게, 조각 사이는 한 박자(2026-10-04 "너무 압축되는 느낌")
+    "highlight": Breath(inner=0.24, sentence=0.5, paragraph=0.7, beat=0.8),
 }
 KINDS = ("inner", "sentence", "paragraph", "beat")
 EXPLICIT_RANGE = (0.5, 1.6)      # 편집 감독이 지정한 쉼(초)의 범위 — 편집 검사의 '긴 무음'(max_silence + 0.25) 아래

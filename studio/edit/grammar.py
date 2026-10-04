@@ -58,11 +58,16 @@ PARAMS: dict[str, Any] = {
     "framed_every": 0,
     "framed_min": 8.0,
     "framed_glide": 0.6,
-    # 강조: 하드컷 펀치인(+15~20%) 대신 0.7초에 걸쳐 천천히 당기는 글라이드(+4~9%), 영상당 8회·40초 간격
-    "punch": {1: 0.04, 2: 0.06, 3: 0.09},
+    # 강조: 아주 느린 밀기(2026-10-04 채널 주인: '인물 확대·이완이 너무 빨라 가벼워 보인다 — 아주 느리게, 교양 있고 차분하고 딥하게').
+    # 핵심어보다 push_lead 초 먼저 밀기 시작해 push_in 초에 걸쳐 그 말에 닿고, 머문 뒤 push_out 초에 걸쳐 천천히 풀린다(+3~6.5%).
+    # 예전: 0.7초에 당기고 0.9초에 풀림(+4~9%)
+    "punch": {1: 0.03, 2: 0.045, 3: 0.065},
     "punch_min_gap": 40.0,
-    "punch_max": 4.5,           # 강조 유지 최대(초)
+    "punch_max": 9.0,           # 핵심어부터 풀림이 끝날 때까지 최대(초)
     "punch_cap": 8,
+    "push_lead": 2.2,
+    "push_in": 3.0,
+    "push_out": 3.5,
     # 전환 — 프리미엄 채널은 하드컷·펀치컷이 95% 이상. 눈에 띄는 전환은 롱폼 45~90초에 하나, 챕터 경계는 항상.
     "tx_min_gap": 45.0,         # 챕터 외 전환 사이 최소 간격(초) — 부드러운 전환만(블러·푸시·와이프)
     "tx_per_min": 1,            # ±30초 창 안의 최대 전환 수(챕터 포함)
@@ -93,7 +98,8 @@ PARAMS: dict[str, Any] = {
     "callout_center": 0.14,     # 얼굴이 가운데에서 이 비율 안이면 콜아웃 동안 반대쪽으로 리프레이밍
     "callout_zoom": 1.10,
     "callout_shift": 0.06,      # 화면 폭 비율(확대 여유 안에서만 실제로 움직인다)
-    "callout_glide": 0.7,       # 콜아웃 자리 만들기: 컷 대신 0.7초에 걸쳐 천천히 옮기고(돌아올 때 0.9초)
+    "callout_glide": 2.2,       # 콜아웃 자리 만들기: 컷 대신 2.2초에 걸쳐 아주 천천히 옮기고(돌아올 때 2.8초) — 예전 0.7·0.9초
+    "reframe_glide": 4.0,       # 같은 프레이밍이 길게 이어질 때 바꾸는 글라이드(예전 1.2초)
     # 배경음악
     "swell_intro": 1.4,
 }
@@ -101,10 +107,14 @@ PARAMS: dict[str, Any] = {
 # ⚡ 펀치 구간(✂️ 편집 감독의 energy_spans) 안에서만 쓰는 값 — 크리에이터식 펀치 편집(참고: Claude+HyperFrames 계열 편집
 # 데모의 하드 펀치인·단어 슬램·휩·임팩트). 훅·클라이맥스·빠른 열거 같은 특정 부분에만, 전체의 20% 이하. 그 밖은 PARAMS 그대로.
 PUNCH: dict[str, Any] = {
-    "punch": {1: 0.06, 2: 0.10, 3: 0.14},   # 하드 펀치인(cut) 배율
+    # 2026-10-04 채널 주인: 확대·이완은 어디서나 아주 느리게 — 펀치 구간도 하드 펀치인(한 프레임에 당김) 대신 느린 밀기
+    "punch": {1: 0.035, 2: 0.05, 3: 0.07},
     "punch_min_gap": 6.0,
-    "punch_max": 2.2,                        # 당긴 채 오래 두지 않는다 — 다음 말에서 되돌아옴
-    "punch_style": "cut",
+    "punch_max": 6.0,
+    "punch_style": "glide",
+    "push_lead": 1.6,
+    "push_in": 2.4,
+    "push_out": 3.0,
     "impact_min_gap": 8.0,                   # 큰 단어 슬램 자막·콜아웃 간격
     "tx_min_gap": 8.0,                       # 휩·푸시 전환 간격
     "tx_kind": "whip",                       # 사진·스톡·키워드가 들어올 때의 전환
@@ -448,7 +458,7 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
         shot = {"start": round(a, 3), "end": round(b, 3), "zoom": round(zoom, 4),
                 "zoomEnd": round(zoom * (1 + push), 4), "x": round(x, 4)}
         if round(a, 3) in fillers and not any(abs(a - c) < 0.05 for c in cut_set):
-            shot["glide"] = 1.2
+            shot["glide"] = P.get("reframe_glide", 4.0)
         if level == "framed":
             shot["framed"] = True
             shot["glide"] = P["framed_glide"]
@@ -526,7 +536,11 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
     tx = sorted(major + _cap_per_minute(calm, P["tx_per_min"]) + _thin_by_gap(hot, PU["tx_min_gap"]), key=lambda e: e["t"])
     for e in tx:
         e["dur"] = round(P["tx_frames"].get(e["type"], 14) / fps, 3)
-    ed.transitions = [{k: v for k, v in e.items() if k in ("t", "type", "dur", "dir") and v is not None} for e in tx]
+    # 화면 전환 효과(블러 디졸브·푸시·와이프·빛샘·휩)는 렌더러에 보내지 않는다 — 2026-10-04 채널 주인: 'PPT 장면 전환 금지'.
+    # 전면 그래픽의 들고 나기는 렌더러의 장면 안무(원형 열기·흩어지기·다이브, LongForm Choreo)가 맡는다. 목록(tx)은 강조
+    # 밀기의 간격 계산에만 남긴다(stage_tx=True 면 예전처럼 보낸다)
+    ed.transitions = [{k: v for k, v in e.items() if k in ("t", "type", "dur", "dir") and v is not None}
+                      for e in tx] if P.get("stage_tx", False) else []
 
     # ---- 강조 글라이드 + 강조 자막 ------------------------------------------
     punches: list[dict] = []
@@ -548,20 +562,24 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
             return gap if hot else min(gap, gap_at(p["t"], P["punch_min_gap"]))
         if any(abs(m.t - p["t"]) < need(p) for p in punches):
             continue
-        end = min(max(m.end + 0.15, m.t + 1.0), m.t + (PU["punch_max"] if hot else P["punch_max"]))
+        # 아주 느린 밀기: 핵심어(t)보다 lead 초 먼저 밀기 시작(from) → in 초에 걸쳐 닿고 → 말이 끝난 뒤 out 초에 걸쳐 풀린다
+        Q = PU if hot else P
+        end = min(max(m.end + 0.6, m.t + 2.0) + Q["push_out"], m.t + Q["punch_max"])
         nxt_cover = min([a for a, _, _ in covers if a > m.t] + [speech_total])
         end = min(end, nxt_cover - 0.05)
+        prev_cover = max([b for _, b, _ in covers + side if b <= m.t] + [0.0])
+        start = max(m.t - Q["push_lead"], prev_cover + 0.2, max([p["end"] for p in punches if p["end"] <= m.t] + [0.0]))
         if end - m.t < 0.6:
             continue
-        # ⚡ 펀치 구간: 하드 펀치인(한 프레임에 당김) — 그 밖은 교육 영상용 글라이드
         style = PU["punch_style"] if hot else "glide"
-        amt = (PU if hot else P)["punch"].get(max(1, min(3, m.intensity)), 0.16)
+        amt = Q["punch"].get(max(1, min(3, m.intensity)), 0.05)
         punches.append({"t": round(m.t, 3), "end": round(end, 3), "amount": amt, "style": style,
+                        "from": round(min(start, m.t), 3), "in": Q["push_in"], "out": Q["push_out"],
                         "kind": m.kind, "intensity": m.intensity, "hot": hot})
     calm_p = sorted([p for p in punches if not p["hot"]], key=lambda p: (-p["intensity"], p["t"]))[: P["punch_cap"]]
     punches = sorted(calm_p + [p for p in punches if p["hot"]], key=lambda p: p["t"])
     ed.camera = _merge_shots_near(ed.camera, [p["t"] for p in punches], 1.0)
-    ed.punches = [{k: p[k] for k in ("t", "end", "amount", "style")} for p in punches]
+    ed.punches = [{k: p[k] for k in ("t", "end", "amount", "style", "from", "in", "out")} for p in punches]
 
     text_spans = [(a, b, None) for a, b in (text_graphic_spans or [])]
     # 화면 한쪽을 그래픽이 차지하는(패널·얼굴 옆 사진 액자·오버레이) 구간에는 콜아웃을 두지 않는다
@@ -615,7 +633,7 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
         x = -P["callout_shift"] if c["side"] == "right" else P["callout_shift"]
         ed.camera = _carve_shot(ed.camera, c["start"], c["end"], {
             "start": c["start"], "end": c["end"], "zoom": P["callout_zoom"], "zoomEnd": P["callout_zoom"], "x": x,
-            "glide": P["callout_glide"]}, glide_back=P["callout_glide"] + 0.2)
+            "glide": P["callout_glide"]}, glide_back=P["callout_glide"] + 0.6)
         reframed.add(round(c["start"] + 0.08, 3))
         c["pop"] = True        # 리프레이밍이 강조를 대신하니 콜아웃이 놓일 때의 종이 소리는 남긴다
     if reframed:
@@ -758,7 +776,7 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
     for i in range(1, len(keeps)):
         if keeps[i].start < keeps[i - 1].start:
             t = timemap.edit_span_of(i).start
-            ed.transitions.append({"t": round(t, 3), "type": "blur", "dur": 0.3})
+            ed.transitions.append({"t": round(t, 3), "type": "zoom", "dur": 0.33})   # 디졸브 대신 줌스루(겹침 없음)
             break
     # 3) 강조 글라이드: 강조 순간(최대 3개, 5초 간격)
     for m in sorted(moments, key=lambda m: -m.intensity):
@@ -767,12 +785,15 @@ def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cu
         hot = in_spans(m.t, spans)
         if any(abs(m.t - p["t"]) < (3 if hot else 5) for p in ed.punches) or m.t < (0.4 if hot else 1.0) or m.t > total - 1.0:
             continue
+        # 숏폼도 확대·이완은 느리게(2026-10-04) — 밀기 1.6초 · 풀기 2.2초, 짧은 영상이라 앞당김은 1초
         if hot:
-            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.2, m.t + 1.2), m.t + PU["punch_max"], total), 3),
-                               "amount": PU["punch"][3 if m.intensity >= 3 else 2], "style": PU["punch_style"]})
+            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.4, m.t + 1.6) + 2.2, m.t + PU["punch_max"], total), 3),
+                               "amount": PU["punch"][3 if m.intensity >= 3 else 2], "style": PU["punch_style"],
+                               "from": round(max(0.0, m.t - 1.0), 3), "in": 1.6, "out": 2.2})
         else:
-            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.3, m.t + 1.8), m.t + 3.0, total), 3),
-                               "amount": 0.07 if m.intensity >= 3 else 0.05, "style": "glide"})
+            ed.punches.append({"t": round(m.t, 3), "end": round(min(max(m.end + 0.4, m.t + 1.8) + 2.2, m.t + 5.0, total), 3),
+                               "amount": 0.05 if m.intensity >= 3 else 0.035, "style": "glide",
+                               "from": round(max(0.0, m.t - 1.0), 3), "in": 1.6, "out": 2.2})
     ed.punches.sort(key=lambda p: p["t"])
     # 4) 효과음 — 참고 채널(Nick Saraev 숏폼) 실측: 컷에는 whoosh 가 없고(컷 지점 고음 에너지가 평소와 같음),
     #    카드·아이콘이 떨어질 때 작은 pop, 그 밖은 잔잔한 음악만. 그래픽 성격에 맞춰 종류는 다양하게, 5초에 하나 이하.

@@ -1,7 +1,7 @@
 import React from 'react';
 import {Bubble, DeviceFrame, IsoBlocks, modernColorsFromSurface, Pill, UIPanel} from '../modern/Modern';
 import {Img, interpolate, staticFile} from 'remotion';
-import {DUR, EASE, exitFrames, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
+import {ambientPush, DUR, EASE, exitFrames, floatOffset, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
 import type {EaseName} from '../../design/motion';
 import {FONT, HOUSE, paperDropShadow, paperRotate, paperShadow} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
@@ -581,16 +581,24 @@ export const MotionScene: React.FC<{spec: MotionSpec; frame: number; fps: number
           <ParenLabel text={spec.label} surface={surface} frame={frame} size={22} />
         </div>
       ) : null}
-      {spec.elements.map((el, i) => {
-        // 자리 표시: 진입이 끝날 때까지 흐린 윤곽이 그 자리에 있다(그 뒤엔 본 요소만)
-        const ghostOn = el.ghost && frame < ((el.at ?? 0) + (el.dur ?? 0.4)) * fps + 2;
-        return (
-          <React.Fragment key={i}>
-            {ghostOn ? renderEl(ghostOf(el), `g${i}`, c) : null}
-            {renderEl(el, i, c)}
-          </React.Fragment>
-        );
-      })}
+      {/* 떠다니는 내용 층(2026-10-04 채널 주인: '모션이 많아야 한다 — 떠다니듯 젠틀하게'): 요소 전체가 함께 몇 px 떠다니고
+          장면 내내 아주 느리게 다가간다 — 요소마다 따로 흔들면 글이 판에서 어긋나므로 한 층으로 */}
+      <div style={{position: 'absolute', inset: 0, transformOrigin: '50% 50%',
+        transform: (() => {
+          const fl = floatOffset(frame, fps, id.length, 5, 7);
+          return `translate(${fl.x.toFixed(2)}px, ${fl.y.toFixed(2)}px) rotate(${(fl.rot * 0.4).toFixed(3)}deg) scale(${ambientPush(frame, dur, 0.022).toFixed(4)})`;
+        })()}}>
+        {spec.elements.map((el, i) => {
+          // 자리 표시: 진입이 끝날 때까지 흐린 윤곽이 그 자리에 있다(그 뒤엔 본 요소만)
+          const ghostOn = el.ghost && frame < ((el.at ?? 0) + (el.dur ?? 0.4)) * fps + 2;
+          return (
+            <React.Fragment key={i}>
+              {ghostOn ? renderEl(ghostOf(el), `g${i}`, c) : null}
+              {renderEl(el, i, c)}
+            </React.Fragment>
+          );
+        })}
+      </div>
     </div>
   );
 };

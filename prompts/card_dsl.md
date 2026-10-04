@@ -21,7 +21,14 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 - **금지**: `<script>` · `<iframe>` · `<video>` · 외부 URL(`src`·`href`·`url()`) · `on*` 이벤트 · `@import` · `@font-face` · `@keyframes` ·
   `transition` · `animation` · `position:fixed`. 이미지는 앱이 준 로컬 경로(`images/…`)만.
 - 글꼴은 **변수만** 쓴다(`var(--font-head)` …). 글꼴 이름을 직접 쓰면 번들에 없는 것은 본문 글꼴로 바뀐다.
-- 크기 상한: HTML 24KB · CSS 24KB · 요소 260개. 한 카드 = 한 생각, 글자 수 60자 이내(🛠 시그니처 장면의 UI 재현은 화면 속 글자를 빼고 셈).
+- 크기 상한: HTML 24KB · CSS 24KB · 요소 260개. 한 카드 = 한 생각.
+- **읽는 글자 예산**(공백 빼고, `aria-hidden="true"` 장식 글자 제외): fullscreen **48** · split **32** · overlay **20**, 목표는 그 3분의 2.
+  넘으면 `too_much_text`. 설명 문장·부제 대신 그림으로 — 아이콘(시스템 프롬프트의 아이콘 목록, `<svg viewBox="0 0 24 24">` 그대로) ·
+  픽토그램(사람 열 명 중 일곱) · 화살표 · 막대 · 숫자. 🛠 시그니처 장면의 UI 재현에서 화면 속 가짜 글자(주소창·메뉴)는 `aria-hidden`.
+- **떠다니기** `data-float="4~10"`(px, 선택 `data-float-at`=시작 초 · `data-float-period`=주기 초): 등장이 끝난 요소가 카드 끝까지
+  아주 느리게 오르내리고 1° 안쪽으로 기운다(요소마다 위상이 다르다). 주인공·아이콘·작은 판 2~5곳에. 글자 문단에는 걸지 않는다.
+- **이어 가기** `data-carry`: 카드 끝에서 앱이 요소들을 각자 바깥으로 흩어 보낼 때 이 요소(와 그 안)는 남는다. 다음 카드가 같은 요소를
+  같은 자리·같은 크기로 0초에 두고 시작하면 매치 컷이 된다. 나가는 애니메이션은 직접 쓰지 않는다.
 
 ### 캔버스(px) — layout 별
 | layout | 캔버스 | 쓰임 |
@@ -87,11 +94,13 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 | `morph-svg` | 한 `<path>` 가 다른 path 모양으로 바뀜(MorphSVG — 원 → 사각, 스케치 → 완성) | `target="#id"`(카드 안 다른 path, `fill="none" stroke="none"` 로 숨겨 둔다) |
 | `follow-path` | 요소가 SVG 경로를 따라 이동(MotionPath — 과정·여정·흐름) | `path="#id"`(카드 안 path) |
 
-`ease`: `power2.out`(기본) · `power2.inOut` · `power3.out` · `expo.out` · `back.out(1.6)` · `sine.inOut` · `none`.
+`ease`: `power2.out`(기본) · `power2.inOut` · `power3.out` · `expo.out` · `sine.inOut` · `sine.out` · `none`. 되튐(`back`·`elastic`·`bounce`)과
+넘쳤다 돌아오는 `customEase` 는 쓰지 않는다 — 런타임이 `power3.out` 으로 바꾼다(채널 주인: "바운시한 느낌은 싫다, 떠다니듯 젠틀하게").
 
 ### 타이밍 규칙
 - `data-anim-at` 은 **카드 시작 기준 초**. 말하는 순서대로, 화자가 그 말을 하기 0.2초 전에 도착. 등장 0.35~0.6초.
-- 모든 애니메이션은 **카드 길이 − 1.2초** 안에 끝난다(마지막 1.2초는 정지 — 읽는 시간). 카드 자체의 등장·퇴장은 렌더러가 한다.
+- 모든 등장·강조는 **카드 길이 − 1.2초** 안에 끝난다(마지막 1.2초는 새 움직임 없이 읽는 시간 — 떠다니기는 이어진다). 카드 자체의
+  등장(얼굴에서 열리는 원·다음 카드로 흩어짐·사진으로 빨려 들어감)은 렌더러가 한다. 두 요소가 반투명하게 겹친 채 바뀌지 않는다.
 - 한 카드에 애니메이션 3~8개. 같은 순간에 두 개 이상 튀지 않게(0.15초 이상 간격).
 
 ### 스타일(`style`) — 채널 톤으로 옮긴 5가지 + 칠판
@@ -109,7 +118,7 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 
 ### 렌더 전 검사(check) — 이 이름으로 수정 요청이 온다
 `font_family_not_bundled` · `font_not_loaded` · `text_overflow`(글이 상자·캔버스를 넘침) · `outside_canvas` · `text_in_caption_zone`(아래 170px 안의 글자) ·
-`text_too_small`(28px 미만 — 라벨·출처도 28px 이상, 본문 34px 이상을 권한다) · `low_contrast`(글자와 배경 대비 4.5:1 미만, 40px 이상은 3:1) · `runtime_error` · `anim_unknown_kind` · `anim_ends_too_late` ·
+`too_much_text`(읽는 글자 예산 초과 — 문장을 아이콘·숫자·도형으로) · `text_too_small`(28px 미만 — 라벨·출처도 28px 이상, 본문 34px 이상을 권한다) · `low_contrast`(글자와 배경 대비 4.5:1 미만, 40px 이상은 3:1) · `runtime_error` · `anim_unknown_kind` · `anim_ends_too_late` ·
 `anim_first_frame_empty`(시작 0.5초 프레임이 완성 프레임의 35%보다 비어 있음 — 제목과 주 요소는 0~0.3초에 세우고, 말에 맞춰 오는 것은 강조·숫자·마지막 한 줄만). 수정 라운드에서도 실패하면 그 카드는 템플릿(keyword/definition)으로 대체된다.
 `scale-pop` 은 펀치 구간의 한 방에만 — 롱폼 본문 카드의 등장은 `fade-in`·`slide-in`·`kinetic-chars`·`draw-path` 로.
 
@@ -143,7 +152,8 @@ tl.set(words, {opacity: 0, yPercent: 110});
 tl.to(words, {opacity: 1, yPercent: 0, duration: 0.55, ease: 'expo.out', stagger: 0.06}, 0.1);
 tl.fromTo(q('.panel'), {y: 40, opacity: 0}, {y: 0, opacity: 1, duration: 0.6, ease: 'power3.out'}, 0.35);
 tl.fromTo(q('.row'), {x: -24, opacity: 0}, {x: 0, opacity: 1, duration: 0.45, ease: 'power2.out', stagger: 0.08}, 0.7);
-tl.fromTo(q('.chip'), {scale: 0.8, opacity: 0}, {scale: 1, opacity: 1, duration: 0.5, ease: 'back.out(1.4)'}, 1.4);
+tl.fromTo(q('.chip'), {y: 20, opacity: 0}, {y: 0, opacity: 1, duration: 0.5, ease: 'power3.out', stagger: 0.06}, 1.4);
+tl.fromTo(q('.icon path'), {drawSVG: '0% 0%'}, {drawSVG: '0% 100%', duration: 0.8, ease: 'power2.inOut', stagger: 0.05}, 1.6);
 tl.to(q('.bubble'), {y: -6, duration: 1.2, ease: 'sine.inOut', yoyo: true, repeat: 1}, 2.0);
 ```
 

@@ -125,7 +125,9 @@ const audit = async (opts) => {
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
     // 정착 = 선언(data-anim)이 끝난 때와 타임라인 전체가 끝난 때 중 늦은 쪽 — 직접 쓴 타임라인만 있는 카드를 0.3초(움직이는 중)에
     // 재서 마스크 아래 글자를 '잘림'으로 보던 것(2026-10-04)
-    opts.settle = Math.min(opts.duration - 0.05, Math.max(opts.settle, compiled.duration + 0.05));
+    // 정착 = 등장이 끝나는 시각(떠다니기는 카드 끝까지 이어지므로 compiled.settle — 떠다니기 없는 카드는 duration 과 같다)
+    const animEnd = typeof compiled.settle === 'number' ? compiled.settle : compiled.duration;
+    opts.settle = Math.min(opts.duration - 0.05, Math.max(opts.settle, animEnd + 0.05));
     compiled.seek(opts.settle);
     out.metrics.settle = Number(opts.settle.toFixed(2));
   } catch (e) {
@@ -133,7 +135,8 @@ const audit = async (opts) => {
   }
   for (const e of window.__errors || []) push('runtime_error', e);
   out.metrics.anims = compiled ? compiled.kinds : [];
-  out.metrics.timeline = compiled ? Number(compiled.duration.toFixed(2)) : 0;
+  // 직접 쓴 타임라인의 정착 시각(떠다니기·나가기 제외) — 파이프라인이 settle_s 로 읽기 시간·검수 스틸에 쓴다
+  out.metrics.timeline = compiled ? Number((typeof compiled.settle === 'number' ? compiled.settle : compiled.duration).toFixed(2)) : 0;
   // 마지막 1초는 읽히게 멈춰 있어야 한다 — 다만 머무는 동안의 느린 흐름(Jitter 템플릿의 기본: 몇 px 떠오름·아주 느린 확대)은
   // 멈춤으로 본다. 타임라인이 길면 아래(잉크 검사 뒤)에서 마지막 1초의 실제 움직임을 잰다(2026-10-04: 5.6초 장면에 5.5초 흐름)
   const lateTail = !!(compiled && compiled.duration > opts.duration - 1.0 + 0.01);
@@ -150,6 +153,14 @@ const audit = async (opts) => {
       v /= 255;
       return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     };
+  // 카드 바탕 밝기(모니터 질감이 어두운 판에는 빛 번짐을 screen 으로 — studio/pipeline.py _check_cards → card.dark)
+  try {
+    const bgEl = root.querySelector('.root') || root.firstElementChild || root;
+    let c = parse(getComputedStyle(bgEl).backgroundColor);
+    if (!c || c.a < 0.5) c = parse(getComputedStyle(root.parentElement || root).getPropertyValue('--paper')) || {r: 247, g: 248, b: 246, a: 1};
+    const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    out.metrics.bg_lum = Number((0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)).toFixed(3));
+  } catch (e) { /* 측정 못 하면 밝은 판으로 본다 */ }
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
   };
   const ratio = (a, b) => {
@@ -188,6 +199,7 @@ const audit = async (opts) => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textEls = new Set();
   let chars = 0;
+  let readChars = 0;
   while (walker.nextNode()) {
     const n = walker.currentNode;
     if (!n.nodeValue || !n.nodeValue.trim()) continue;
@@ -195,9 +207,16 @@ const audit = async (opts) => {
     if (!el || el.closest('style')) continue;
     if (!visible(el)) continue;
     chars += n.nodeValue.trim().length;
+    if (!el.closest('[aria-hidden="true"]')) readChars += n.nodeValue.replace(/\s+/g, '').length;
     textEls.add(el);
   }
   out.metrics.chars = chars;
+  // 글자 예산(2026-10-04 채널 주인: '글자 설명은 최대한 줄이고 그림·인포그래픽으로'): 읽어야 하는 글자(공백·장식 글자 제외)
+  out.metrics.read_chars = readChars;
+  const budget = opts.layout === 'split' ? 32 : opts.layout === 'overlay' ? 20 : 48;
+  if (readChars > budget) {
+    push('too_much_text', `${readChars} chars > ${budget} — replace words with icons, shapes, numbers, arrows (infographic)`);
+  }
   out.metrics.text_elements = textEls.size;
   const seenSmall = new Set();
   for (const el of textEls) {
@@ -385,7 +404,7 @@ const main = async () => {
         await page.goto({url: pathToFileURL(file).href, timeout: 20000});
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
           minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE, firstFrame: FIRST_FRAME_SHARE,
-          captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX});
+          captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX, layout: card.layout || 'fullscreen'});
         // 미리보기(shots: 카드 시작 기준 초 목록) — 스타일 프레임·시안 경쟁이 렌더 없이 같은 Chrome 으로 장면을 본다(정착 화면 + 움직임 칸)
         // 'auto' = 정착 시각을 잰 뒤 정한다: 0.5초 · 정착의 35% · 70% · 정착 · 머무는 끝(드리프트) — 시간 순서, 정착 화면은 넷째
         const settleAt = (res && res.metrics && res.metrics.settle) || card.settle || 2;

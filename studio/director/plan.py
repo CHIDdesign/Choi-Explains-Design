@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..models import Tag, TimeMap, Utterance
 from ..motion.card import card_settle_time, card_text, clean_card
@@ -414,6 +414,47 @@ def _nearest(valid: list[int], seg: Any) -> int:
     return min(valid, key=lambda v: (abs(v - seg), v))
 
 
+def fit_highlight_runs(runs: list[list[int]], kept: list[Utterance], dur_of: Callable[[list[int]], float], *,
+                       lo: float, hi: float, piece_max: float, max_gap: float = 2.5) -> tuple[list[list[int]], int]:
+    """🎬 오프닝 하이라이트 조각(이어지는 발화 id 묶음, 시간순)을 합 [lo, hi] 초에 맞춘다. dur_of(run) = 그 조각을 실제로 자른
+    길이(자를 수 없으면 음수). 상한을 넘기는 조각은 빼고, 합이 lo 보다 짧으면 가장 짧은 조각부터 바로 뒤 발화(같은 흐름 —
+    max_gap 초 안, 다른 조각이 아님, 조각의 원본 구간 piece_max 이하)를 하나씩 붙인다 — 그 생각의 근거·끝맺음까지 듣게
+    (2026-10-04 채널 주인: "10초대라 너무 압축돼 알맹이 없이 잘린다 — 20~30초"). 반환: (쓸 조각, 붙인 발화 수)."""
+    pos = {u.id: i for i, u in enumerate(kept)}
+
+    def assemble(rs: list[list[int]]) -> tuple[list[list[int]], float]:
+        used, total = [], 0.0
+        for run in rs:
+            d = dur_of(run)
+            if d <= 0 or total + d > hi:
+                continue
+            used.append(run)
+            total += d
+        return used, total
+
+    used, total = assemble(runs)
+    grown = 0
+    while total < lo:
+        taken = {sid for r in used for sid in r}
+        best = None
+        for i, run in sorted(enumerate(used), key=lambda x: dur_of(x[1])):
+            j = pos[run[-1]] + 1
+            if j >= len(kept) or kept[j].id in taken:
+                continue
+            nxt, first, last = kept[j], kept[pos[run[0]]], kept[pos[run[-1]]]
+            if nxt.start - last.end > max_gap or nxt.end - first.start > piece_max:
+                continue
+            t_used, t_total = assemble([r + [nxt.id] if k == i else r for k, r in enumerate(used)])
+            if len(t_used) == len(used) and total < t_total <= hi:
+                best = (t_used, t_total)
+                break
+        if best is None:
+            break
+        used, total = best
+        grown += 1
+    return used, grown
+
+
 def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) -> dict[str, Any]:
     kept = [u.id for u in utts if u.kept]
     if not kept:
@@ -539,10 +580,19 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             continue
         plan["rhythm"].append({"start_seg": min(a, b), "end_seg": max(a, b), "level": r["level"],
                                "reason": str(r.get("reason", "") or "")[:60]})
+    # 🎬 하이라이트 조각 = 이어지는 발화 seg~end_seg(한 생각, 많아야 4발화). 예전 계획(end_seg 없음)은 한 발화 조각
     for h in raw.get("highlights", []) or []:
         seg = h.get("seg") if isinstance(h, dict) else h
-        if seg in kept and seg not in kept[:2] and not any(x["seg"] == seg for x in plan["highlights"]):
-            plan["highlights"].append({"seg": seg, "reason": str((h.get("reason", "") if isinstance(h, dict) else "") or "")[:60]})
+        if seg not in kept or seg in kept[:2]:
+            continue
+        end = h.get("end_seg", seg) if isinstance(h, dict) else seg
+        end = end if end in kept and end >= seg else seg
+        i = kept.index(seg)
+        end = kept[min(kept.index(end), i + 3)]
+        if any(x["seg"] <= end and seg <= x["end_seg"] for x in plan["highlights"]):
+            continue
+        plan["highlights"].append({"seg": seg, "end_seg": end,
+                                   "reason": str((h.get("reason", "") if isinstance(h, dict) else "") or "")[:60]})
     plan["highlights"] = plan["highlights"][:4]
     # 대본 태그는 반드시 반영(디렉터가 빠뜨렸으면 추가)
     enforce_tags(plan, tags, kept)
