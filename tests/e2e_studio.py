@@ -579,6 +579,9 @@ def main() -> int:
     assert agents.count("style_frame") == 1 and agents.count("setpiece") == 3 and agents.count("design_judge") == 1, agents
     assert agents.index("style_frame") < agents.index("setpiece") and agents.index("style_frame") < agents.index("motion"), agents
     assert (job / "work" / "style_frame.jpg").exists() and (out / "부가자료" / "스타일프레임.jpg").exists()
+    # 🎯 장면 평가용 정지 화면(결과 화면 '장면 평가 👍/👎') — 완성 롱폼에서 그래픽마다 한 장
+    rate = json.loads((job / "work" / "rate.json").read_text(encoding="utf-8"))
+    assert rate and all(Path(r["still"]).exists() for r in rate) and not any(r["gid"].startswith("h") for r in rate), rate[:3]
     assert (out / "부가자료" / "조사노트.md").exists()
     assert ref_calls == [["the-stack-testimonial"]], ref_calls
     # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전

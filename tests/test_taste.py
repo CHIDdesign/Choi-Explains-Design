@@ -233,3 +233,23 @@ def test_checker_takes_auto_preview_shots(tmp_path):
     assert [i[0] for i in imgs] == ["스타일 프레임", "스타일 프레임#seq"]
     # 0.5초 화면과 정착 화면은 다르다(움직임이 있다)
     assert Path(r["shots"][0]["path"]).read_bytes() != Path(r["shots"][3]["path"]).read_bytes()
+
+
+def test_preview_shots_show_the_seeked_frame_not_stale_layers(tmp_path):
+    """미리보기 칸은 그 시각의 화면이어야 한다(2026-10-04: captureBeyondViewport 없이 찍어 지난 합성 레이어가 섞였다 — 1.5초 칸에
+    아직 안 나온 주석 글자·제목 유령·검은 띠. Remotion 렌더는 깨끗했다). object_callouts 의 주석은 1.8초부터 — 1.5초 칸의 그 자리는 비어 있다."""
+    from studio.motion.card import clean_card
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    ex = EX["object_callouts"]
+    card = clean_card({"html": ex["html"], "timeline": ex["timeline"]}, layout="fullscreen", card_id="ob")
+    res = check_cards([dict(card, shots=[5.6, 1.5])], node=find_node(""), out_dir=tmp_path, fps=30,   # 뒤로 돌아가며 찍는다
+                      durations={"ob": 7.0}, browser_executable=browser)
+    shot = next(s for s in res["ob"]["shots"] if s["t"] == 1.5)
+    with Image.open(shot["path"]) as im:
+        area = im.convert("L").crop((1060, 360, 1800, 720))      # 주석 자리(제목 아래)
+        dark = sum(1 for v in area.getdata() if v < 110) / (area.width * area.height)
+    assert dark < 0.002, dark

@@ -121,7 +121,7 @@ const audit = async (opts) => {
   let compiled = null;
   try {
     compiled = window.__compileCard(root, {fps: opts.fps, duration: opts.duration, timeline: window.__cardTimeline || ''});
-    window.__compiled = compiled;   // 미리보기 프레임(shots)을 찍을 때 다시 seek 한다
+    window.__compiled = compiled;   // 디버그용(미리보기 칸은 페이지를 새로 열어 찍는다)
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
     // 정착 = 선언(data-anim)이 끝난 때와 타임라인 전체가 끝난 때 중 늦은 쪽 — 직접 쓴 타임라인만 있는 카드를 0.3초(움직이는 중)에
     // 재서 마스크 아래 글자를 '잘림'으로 보던 것(2026-10-04)
@@ -395,34 +395,54 @@ const main = async () => {
             .map((t) => Number(Math.min(dur - 0.05, Math.max(0, t)).toFixed(2)))
             .filter((t, k, a) => k === 0 || t - a[k - 1] > 0.1)      // 정착이 끝 무렵이면 같은 칸이 겹친다
           : (Array.isArray(card.shots) ? card.shots : []);
+        // 미리보기 칸은 칸마다 페이지를 새로 열어(새 문서) 그 시각으로 한 번만 seek 해서 찍는다. 같은 문서에서 찍고 → 뒤로 seek →
+        // 다시 찍으면 DOM 은 맞는데 그림은 지난 래스터 타일이 섞인다(2026-10-04: 아직 안 나온 주석 글자·제목 유령·검은 띠 —
+        // Remotion 렌더는 깨끗했다). 두 애니메이션 프레임을 기다린 뒤 Remotion 과 같은 옵션(captureBeyondViewport)으로 찍는다
+        const capture = async (t, f) => {
+          await page.goto({url: pathToFileURL(file).href, timeout: 20000});
+          await page.evaluate(async (o) => {
+            const root = document.querySelector('.card');
+            const text = root ? root.textContent || '가' : '가';
+            const fams = ['Pretendard', 'Noto Serif KR', 'Anton', 'Jua', 'Black Han Sans', 'Nanum Pen Script', 'Playfair Display',
+              'Instrument Serif', 'Gowun Batang', 'Hahmlet', 'Song Myung', 'Press Serif'];
+            try {
+              await Promise.all(fams.flatMap((fm) => ['400', '700'].map((w) => document.fonts.load(`${w} 40px "${fm}"`, text))));
+              await document.fonts.ready;
+            } catch (e) { /* 글꼴 문제는 검사가 따로 적는다 */ }
+            const c = window.__compileCard(root, {fps: o.fps, duration: o.duration, timeline: window.__cardTimeline || ''});
+            c.seek(o.t);
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))));
+          }, {fps: card.fps || 30, duration: dur, t});
+          const {value} = await page._client().send('Page.captureScreenshot', {
+            format: 'jpeg', quality: 86, fromSurface: true, captureBeyondViewport: true, clip: {x: 0, y: 0, width: card.w, height: card.h, scale: 1},
+          });
+          fs.writeFileSync(f, Buffer.from(value.data, 'base64'));
+        };
         if (res && shotTimes.length) {
           res.shots = [];
-          for (let k = 0; k < Math.min(shotTimes.length, 8); k++) {
-            const t = Number(shotTimes[k]) || 0;
+          const times = Array.from(new Set(shotTimes.slice(0, 8).map((x) => Number(x) || 0))).sort((a, b) => a - b);
+          for (let k = 0; k < times.length; k++) {
+            const f = path.join(outDir, `${card.id}_s${k}.jpg`);
             try {
-              await page.evaluate((tt) => window.__compiled && window.__compiled.seek(tt), t);
-              const {value} = await page._client().send('Page.captureScreenshot', {
-                format: 'jpeg', quality: 86, fromSurface: true, clip: {x: 0, y: 0, width: card.w, height: card.h, scale: 1},
-              });
-              const f = path.join(outDir, `${card.id}_s${k}.jpg`);
-              fs.writeFileSync(f, Buffer.from(value.data, 'base64'));
-              res.shots.push({t, path: f});
+              await capture(times[k], f);
+              res.shots.push({t: times[k], path: f});
             } catch (e) {
               /* 한 장 실패는 건너뛴다 */
             }
           }
-          await page.evaluate((tt) => window.__compiled && window.__compiled.seek(tt), settleAt).catch(() => undefined);
         }
-        // 걸린 카드는 정착 시각의 화면을 찍어 둔다 — 카드 디자이너가 오류 목록만이 아니라 실제 모습을 보고 고친다(audit 끝에서 settle 로 seek 돼 있다)
+        // 걸린 카드는 정착 시각의 화면을 찍어 둔다 — 카드 디자이너가 오류 목록만이 아니라 실제 모습을 보고 고친다
         if (res && res.problems && res.problems.length) {
-          try {
-            const {value} = await page._client().send('Page.captureScreenshot', {
-              format: 'jpeg', quality: 86, fromSurface: true, clip: {x: 0, y: 0, width: card.w, height: card.h, scale: 1},
-            });
-            res.shot = path.join(outDir, `${card.id}.jpg`);
-            fs.writeFileSync(res.shot, Buffer.from(value.data, 'base64'));
-          } catch (e) {
-            res.shot = '';
+          const near = (res.shots || []).find((x) => Math.abs(x.t - settleAt) < 0.06);
+          if (near) {
+            res.shot = near.path;
+          } else {
+            try {
+              res.shot = path.join(outDir, `${card.id}.jpg`);
+              await capture(settleAt, res.shot);
+            } catch (e) {
+              res.shot = '';
+            }
           }
         }
       } catch (e) {

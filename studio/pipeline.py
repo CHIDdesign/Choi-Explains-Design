@@ -1424,7 +1424,8 @@ class Pipeline:
             data = json.loads(raw)
         except (OSError, json.JSONDecodeError):
             return None
-        cache = USER_DIR / "cache" / f"house_board_{text_hash(raw)[:12]}.jpg"
+        # 캡처 방식이 바뀌면 판을 올린다(v2: 칸마다 새 페이지 — 예전 캡처는 지난 래스터가 섞였다)
+        cache = USER_DIR / "cache" / f"house_board_v2_{text_hash(raw)[:12]}.jpg"
         if cache.exists():
             return cache.read_bytes()
         cards = []
