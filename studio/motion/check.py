@@ -2,7 +2,8 @@
 
 HyperFrames `check` 의 우리 판: 카드를 실제 캔버스 크기로 붙이고 정착 시각으로 seek 한 뒤
 runtime_error · anim_* · font_not_loaded · font_family_not_bundled · text_overflow · outside_canvas · text_too_small ·
-low_contrast 를 본다. 결과는 카드 id → {"ok", "problems": [{code, detail, selector}], "metrics"}.
+low_contrast 를 본다. 결과는 카드 id → {"ok", "problems": [{code, detail, selector}], "metrics", "shot"}
+(shot = 걸린 카드의 정착 시각 화면 jpg — 카드 디자이너에게 오류 목록과 함께 보여 준다).
 """
 from __future__ import annotations
 
@@ -59,7 +60,8 @@ def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: i
         except json.JSONDecodeError:
             return
         if ev.get("type") == "card":
-            results[ev["id"]] = {"ok": bool(ev.get("ok")), "problems": ev.get("problems", []), "metrics": ev.get("metrics", {})}
+            results[ev["id"]] = {"ok": bool(ev.get("ok")), "problems": ev.get("problems", []), "metrics": ev.get("metrics", {}),
+                                 "shot": str(ev.get("shot") or "")}
         elif ev.get("type") == "error":
             err["msg"] = str(ev.get("message", ""))[:600]
 

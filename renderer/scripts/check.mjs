@@ -10,6 +10,7 @@
 // 카드마다 실제 Chrome(렌더와 같은 것)에 붙여 settle 시각으로 seek 한 뒤 검사한다:
 //   runtime_error · anim_*(컴파일러) · font_not_loaded · font_family_not_bundled · text_overflow · outside_canvas ·
 //   text_too_small · low_contrast. 결과는 stdout 에 JSON 한 줄씩({"type":"card", ...}) 과 outDir/check.json.
+//   걸린 카드는 정착 시각의 화면을 outDir/<id>.jpg 로 찍어 `shot` 에 넘긴다(카드 디자이너가 보고 고친다).
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -326,6 +327,18 @@ const main = async () => {
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
           minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE, firstFrame: FIRST_FRAME_SHARE,
           captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX});
+        // 걸린 카드는 정착 시각의 화면을 찍어 둔다 — 카드 디자이너가 오류 목록만이 아니라 실제 모습을 보고 고친다(audit 끝에서 settle 로 seek 돼 있다)
+        if (res && res.problems && res.problems.length) {
+          try {
+            const {value} = await page._client().send('Page.captureScreenshot', {
+              format: 'jpeg', quality: 86, fromSurface: true, clip: {x: 0, y: 0, width: card.w, height: card.h, scale: 1},
+            });
+            res.shot = path.join(outDir, `${card.id}.jpg`);
+            fs.writeFileSync(res.shot, Buffer.from(value.data, 'base64'));
+          } catch (e) {
+            res.shot = '';
+          }
+        }
       } catch (e) {
         res = {problems: [{code: 'runtime_error', detail: String(e && e.message ? e.message : e), selector: ''}], metrics: {}};
       } finally {
@@ -333,7 +346,7 @@ const main = async () => {
       }
       res.ok = res.problems.length === 0;
       results[card.id] = res;
-      emit({type: 'card', id: card.id, ok: res.ok, problems: res.problems, metrics: res.metrics});
+      emit({type: 'card', id: card.id, ok: res.ok, problems: res.problems, metrics: res.metrics, shot: res.shot || ''});
     }
   } finally {
     await browser.close({silent: true}).catch(() => undefined);

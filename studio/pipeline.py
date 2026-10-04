@@ -76,7 +76,7 @@ from .render.props import (Episode, apply_edit, brand_props, caption_overlays, d
                            mark_soft_cuts, mark_stack_cues, prepend_props, shift_decisions, shift_props, short_beats,
                            short_props, strip_audio, text_graphic_spans, chapter_maps, chapter_recaps,
                            fold_keywords_into_media, bridge_split_gaps, bridge_fullscreen_gaps, stack_avoid_spans)
-from .render.remotion import RenderItem, RenderJob, find_node, run_render
+from .render.remotion import RenderError, RenderItem, RenderJob, find_node, run_render
 from .settings import Settings
 from .sound.cues import clean_music, fallback_music, plan_cues, resolve as resolve_cues
 from .sound.library import MOODS_LONG, MOODS_SHORT, SoundLibrary
@@ -124,10 +124,11 @@ EXTRAS = "부가자료"
 #  · 🎼 음악 큐 시트는 편집 검사가 컷을 확정한 뒤, 아트 디렉터 검수와 함께
 #  · 렌더 중에 음향 믹스를 미리 만들어 두고(stage_render) 마스터링 단계는 합치기만 한다
 # STAGES 에 없는 키(bundle)는 화면·남은 시간에 나오지 않는 준비 작업이다(실패해도 작업은 계속).
+# 대본 맞추기(align)는 음성 인식 바로 뒤에 — 얼굴 추적만 기다리고(_await_stage) 🔎 조사는 기다리지 않는다(조사는 AI 기획만
+# 쓴다). 예전엔 조사(약 8분)가 끝나야 대본 맞추기·컷 총괄이 시작돼, 음성 인식이 빠른 PC 에서 그만큼 놀았다.
 SCHEDULE: list[list[list[str]]] = [
     [["probe"]],
-    [["audio", "asr"], ["face"], ["research"]],
-    [["align"]],
+    [["audio", "asr", "align"], ["face"], ["research"]],
     [["director"], ["grade", "proxy"]],
     [["verify"], ["broll", "stock"], ["sound", "bundle"]],
     [["qa"], ["music"]],
@@ -397,6 +398,11 @@ class Pipeline:
         fns["proxy"] = self._encode_proxies          # 컷은 AI 기획과 편집본이 모두 끝난 뒤(_make_edit)
         fns["bundle"] = self._prebundle
         schedule = schedule_for(until)
+        in_run = {k for st in schedule for lane in st for k in lane}
+        self._stage_done = {k: threading.Event() for k in STAGE_LABEL}
+        for k, ev in self._stage_done.items():
+            if k not in in_run:
+                ev.set()            # 이번 실행에 없는 단계는 기다리지 않는다
         self._resolve_sound()
         self.eta.begin()
         srcs = self.spec.sources()
@@ -424,13 +430,28 @@ class Pipeline:
                 self.log(f"진단 자료: {z} — 문제를 알릴 때 이 파일을 보내 주세요.")
             raise
         mins = (time.time() - t0) / 60
+        self._log_time_summary(schedule, mins)
         self.log(f"완료 ({mins:.1f}분) → {self.out}")
         diag.write(self)
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}
         write_json(self.work / "result.json", res)
         return res
 
+    def _await_stage(self, key: str) -> None:
+        """같은 칸의 다른 줄에서 도는 단계(key)가 끝날 때까지 기다린다 — 실패·건너뜀도 끝으로 본다. 멈춤 신호에는 바로 나온다."""
+        ev = (getattr(self, "_stage_done", None) or {}).get(key)
+        while ev is not None and not ev.wait(0.5):
+            self.cancel.check()
+
     def _run_stage(self, key: str, fn: Callable[[], None]) -> None:
+        try:
+            self._run_stage_inner(key, fn)
+        finally:
+            ev = (getattr(self, "_stage_done", None) or {}).get(key)
+            if ev is not None:
+                ev.set()
+
+    def _run_stage_inner(self, key: str, fn: Callable[[], None]) -> None:
         if key not in STAGE_LABEL:     # 보이지 않는 준비 작업: 실패해도 나중 단계가 다시 한다
             try:
                 fn()
@@ -463,6 +484,9 @@ class Pipeline:
         self._stage(key, 1.0)
         self.eta.finish(key)
         self._log_file_only(f"   ({STAGE_LABEL[key]} {time.time() - t_stage:.1f}s)")
+        if not hasattr(self, "stage_secs"):
+            self.stage_secs = {}
+        self.stage_secs[key] = round(time.time() - t_stage, 1)
         if key == "grade":
             self._preview(self.extras / "색보정_전후.jpg", "자동 색보정 · 왼쪽 원본 / 오른쪽 보정")
 
@@ -537,6 +561,22 @@ class Pipeline:
                 raise storage.DiskSpaceError(storage.shortage_message(self.dir, storage.free_bytes(self.dir), need,
                                                                       self.dir.parent, [self.dir])) from e2
             raise
+
+    def _log_time_summary(self, schedule: list[list[list[str]]], mins: float) -> None:
+        """⏱ 어디서 시간이 들었나 — 칸마다 가장 오래 걸린 줄(그 칸의 시간)과 그 안의 단계. 다음에 줄일 곳을 찾는 데 쓴다."""
+        secs = getattr(self, "stage_secs", {}) or {}
+        if not secs:
+            return
+        parts = []
+        for st in schedule:
+            lanes = [(sum(secs.get(k, 0.0) for k in lane), lane) for lane in st]
+            t, lane = max(lanes, key=lambda x: x[0])
+            if t < 5:
+                continue
+            names = " → ".join(f"{STAGE_LABEL.get(k, k).split('(')[0].strip()} {secs[k] / 60:.1f}분" for k in lane if secs.get(k, 0) >= 5)
+            parts.append(f"{names}" + (" (동시에 돈 것 중 가장 긴 줄)" if len(st) > 1 else ""))
+        self.log(f"⏱ 총 {mins:.0f}분 — " + " · ".join(parts))
+        self.results["stage_secs"] = secs
 
     def _run_step(self, step: list[list[str]], fns: dict[str, Callable[[], None]]) -> None:
         """한 칸: 줄이 하나면 그대로, 여럿이면 줄마다 스레드 하나(FFmpeg·Whisper·AI 호출은 GIL 밖에서 돈다).
@@ -833,6 +873,7 @@ class Pipeline:
         self.log("   → 조사 노트 없이(팀이 대본과 기억으로) 계속합니다")
 
     def stage_align(self) -> None:
+        self._await_stage("face")       # 테이크 점수의 화면 품질(얼굴)이 필요하다 — 🔎 조사는 기다리지 않는다
         tr = read_json(self.work / "transcript.json", {})
         words = [Word.from_dict(w) for w in tr.get("words", [])]
         if not words:
@@ -1598,8 +1639,11 @@ class Pipeline:
                 break
             for g in failed:
                 lines = problem_lines(res[g["card"]["id"]])
+                # 걸린 카드의 정착 화면(check.mjs 가 찍음) — 오류 목록만이 아니라 실제 모습을 보고 고친다
+                shot = Path(res[g["card"]["id"]].get("shot") or "")
+                img = (f"{g['card']['id']}", shot.read_bytes(), "image/jpeg") if shot.is_file() else None
                 try:
-                    new = studio.revise_card(self.ctx, g["card"], dur_of(g), "렌더 전 검사(check) 실패", "", None,
+                    new = studio.revise_card(self.ctx, g["card"], dur_of(g), "렌더 전 검사(check) 실패", "", img,
                                              layout=g["layout"], checks=tuple(lines))
                 except DirectorError as e:
                     self.log(f"🃏 카드 수정 실패: {e}")
@@ -3073,6 +3117,7 @@ class Pipeline:
         links = self._prepare_render()
         node = find_node(self.settings.node_path)
         rs = self.settings.render
+        self._designer_self_review(studio, links, node)
         changed: Optional[list[dict]] = None
         escalated: list[dict] = []
         for rnd in range(1, rounds + 1):
@@ -3108,8 +3153,15 @@ class Pipeline:
                 for j, t in enumerate(self._caption_moments(lp, graphics)):
                     frames.append((int(t * self.fps), qa_dir / f"captions{j + 1}.jpg"))
             self.log(f"🧐 검수 {rnd}라운드: 스틸 {len(frames)}장 렌더")
-            item = RenderItem("frames", "LongForm", props_path, qa_dir / "frames", scale=0.6, frames=frames)
-            job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=links, items=[item],
+            # 정지 화면은 원본 해상도(1920 — Opus 5.5 는 줄이지 않고 본다: 28px 글자가 17px 로 뭉개지지 않게),
+            # 움직임 칸은 0.6배(시트에서 640×360 으로 줄어든다)
+            strip_set = {p for v in strips.values() for _, p in v}
+            items = [RenderItem("frames", "LongForm", props_path, qa_dir / "frames", scale=1.0,
+                                frames=[f for f in frames if f[1] not in strip_set])]
+            if strip_set:
+                items.append(RenderItem("frames", "LongForm", props_path, qa_dir / "frames_s", scale=0.6,
+                                        frames=[f for f in frames if f[1] in strip_set]))
+            job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=links, items=items,
                             browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency,
                             reuse_bundle=True)
             base = (rnd - 1) / rounds
@@ -3147,6 +3199,126 @@ class Pipeline:
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
         self._qa_escalate(escalated)
+
+    def _speech_for(self, g: dict) -> str:
+        """그 그래픽이 걸친 발화들(시작~끝)의 말 — 자기 검토가 '말을 따라가는가'를 본다."""
+        a, b = g.get("start_seg"), g.get("end_seg", g.get("start_seg"))
+        ids = [u.id for u in self.utts]
+        if a not in ids:
+            return ""
+        i, j = ids.index(a), ids.index(b) if b in ids else ids.index(a)
+        return " ".join(u.text.strip() for u in self.utts[i:max(i, j) + 1])[:400]
+
+    def _designer_self_review(self, studio: Any, links: list, node: str) -> None:
+        """🔍 디자이너 자기 검토(채널 주인 2026-10-04: "보면서 작업해야 디자인 퀄리티가 난다"): 모션 장면·자유 카드(시그니처 장면
+        포함)를 실제로 렌더해, 만든 디자이너에게 자기 결과(안착 화면 원본 해상도 + 움직임 6칸)를 보여 주고 고칠 것이 분명한 것만
+        고치게 한다 — 아트 디렉터 검수 앞에서. 예전엔 처음 짓는 디자이너가 결과를 보지 못하고 코드로만 지었다.
+        고친 모션은 타이밍 린트가 나빠지면, 고친 카드는 렌더 전 검사에 걸리면 되돌린다."""
+        from concurrent.futures import ThreadPoolExecutor
+        from .motion import lint as mlint
+        graphics, chapters = self._timed_long()
+        gl = self.plan_long["graphics"]
+        by_id = {f"g{i}": g for i, g in enumerate(gl)}
+        targets = [g for g in graphics if g.id in by_id and g.template in ("motion", "card") and g.end - g.start > 1.5]
+        if not targets:
+            return
+        lp, _ = self._final_long_props(graphics, chapters)
+        rdir = self.work / "qa" / "self"
+        shutil.rmtree(rdir, ignore_errors=True)
+        (rdir / "strip").mkdir(parents=True, exist_ok=True)
+        props_path = self.render_dir / "props_self.json"
+        write_json(props_path, lp)
+        main: list[tuple[int, Path]] = []
+        strips: dict[str, list[tuple[float, Path, int]]] = {}
+        for g in targets:
+            settle = self._settle_time(g)
+            main.append((int(settle * self.fps), rdir / f"{g.id}.jpg"))
+            for k, t in enumerate(qa_strip_times(g, settle)):
+                strips.setdefault(g.id, []).append((t - g.start, rdir / "strip" / f"{g.id}_{k}.jpg", int(t * self.fps)))
+        rs = self.settings.render
+        items = [RenderItem("frames", "LongForm", props_path, rdir / "frames", scale=1.0, frames=main),
+                 RenderItem("frames", "LongForm", props_path, rdir / "frames_s", scale=0.6,
+                            frames=[(f, p) for v in strips.values() for _, p, f in v])]
+        job = RenderJob(public_dir=self.public, bundle_dir=self.render_dir / "bundle", links=links, items=items,
+                        browser_executable=rs.browser_executable, gl=rs.gl, concurrency=rs.concurrency, reuse_bundle=True)
+        n_m = sum(1 for g in targets if g.template == "motion")
+        self.log(f"🔍 디자이너 자기 검토: 모션 장면 {n_m}개 · 카드 {len(targets) - n_m}개를 렌더해 만든 디자이너에게 보여 줍니다")
+        try:
+            run_render(job, self.render_dir / "job_self.json", node=node, log=self.log, cancel=self.cancel,
+                       on_peek=lambda ev: self._preview(ev["file"], "🔍 디자이너 자기 검토 — 렌더한 장면"))
+        except RenderError as e:
+            self.log(f"🔍 자기 검토용 렌더 실패 → 건너뜀: {str(e)[:200]}")
+            return
+        guide = load_prompt("agents/self_review.md")
+        kept = [u for u in self.utts if u.kept]
+        tm = self.timemap
+        words = [(tm.src_to_edit(w.start, snap=True), tm.src_to_edit(w.end, snap=True), w.text) for u in kept for w in u.words]
+        words = [(a, b, t) for a, b, t in words if a is not None and b is not None]
+
+        def lint_errors(g: TimedGraphic, spec: dict, layout: str) -> int:
+            ws = [(a - g.start, b - g.start, t) for a, b, t in words if g.start - 0.5 <= a <= g.end]
+            return len(mlint.errors(mlint.lint_scene(spec, g.end - g.start, ws, box=mlint.box_for(layout))))
+
+        def one(g: TimedGraphic) -> Optional[tuple[TimedGraphic, Any]]:
+            if self.cancel.cancelled:
+                return None
+            src = by_id[g.id]
+            imgs: list[tuple[str, bytes, str]] = []
+            still = rdir / f"{g.id}.jpg"
+            if still.exists():
+                imgs.append((g.id, still.read_bytes(), "image/jpeg"))
+            sheet = qa_strip_sheet([(rel, p) for rel, p, _ in strips.get(g.id, [])], rdir / f"{g.id}_seq.jpg")
+            if sheet:
+                imgs.append((f"{g.id}#seq", sheet.read_bytes(), "image/jpeg"))
+            if not imgs:
+                return None
+            instr = guide.replace("{id}", g.id).replace("{speech}", self._speech_for(src) or "(말 없음)")
+            try:
+                if g.template == "motion":
+                    new = studio.revise_scene(self.ctx, src.get("spec") or {}, g.end - g.start, "", "", imgs,
+                                              self_review=instr)
+                else:
+                    new = studio.revise_card(self.ctx, src.get("card") or {}, g.end - g.start, "", "", imgs,
+                                             layout=src.get("layout", "fullscreen"), self_review=instr)
+            except DirectorError as e:
+                self._log_file_only(f"   (자기 검토 실패 {g.id}: {e})")
+                return None
+            return (g, new) if new else None
+
+        workers = max(1, min(6, int(getattr(self.settings, "studio_workers", 4) or 4)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            done = [r for r in ex.map(one, targets) if r]
+        self.cancel.check()
+        fixed_m: list[dict] = []
+        fixed_c: list[tuple[TimedGraphic, dict, dict]] = []
+        for g, new in done:
+            src = by_id[g.id]
+            if g.template == "motion":
+                layout = src.get("layout", "fullscreen")
+                if lint_errors(g, new, layout) > lint_errors(g, src.get("spec") or {}, layout):
+                    self._log_file_only(f"   (자기 검토 {g.id}: 고친 장면이 린트에서 더 나빠 되돌림)")
+                    continue
+                src["spec"] = new
+                fixed_m.append(src)
+            else:
+                fixed_c.append((g, src, new))
+        kept_c = 0
+        if fixed_c:
+            res = check_cards([dict(new, layout=src.get("layout", "fullscreen")) for _, src, new in fixed_c], node=node,
+                              out_dir=rdir / "cards", fps=self.fps,
+                              durations={new["id"]: g.end - g.start for g, _, new in fixed_c},
+                              browser_executable=rs.browser_executable, gl=rs.gl, log=self._log_file_only,
+                              cancel=self.cancel)
+            for g, src, new in fixed_c:
+                if res.get(new["id"], {}).get("ok"):
+                    src["card"] = new
+                    kept_c += 1
+                else:
+                    self._log_file_only(f"   (자기 검토 {g.id}: 고친 카드가 렌더 전 검사에 걸려 되돌림)")
+        self._resolve_scene_images(fixed_m)
+        self.log(f"🔍 디자이너 자기 검토: {len(targets)}개 중 모션 {len(fixed_m)}개 · 카드 {kept_c}개를 고쳤습니다"
+                 f"(나머지는 그대로)")
+        self.results["self_review"] = {"scenes": len(targets), "motion_fixed": len(fixed_m), "cards_fixed": kept_c}
 
     def _qa_escalate(self, items: list[dict]) -> None:
         """🧐 아트 디렉터가 그래픽으로 풀 수 없다고 올린 편집·컷·음향·원본 문제(escalate_edit, docs/upgrade/08 7절):
@@ -3237,7 +3409,7 @@ class Pipeline:
                 dur = (tg.end - tg.start) if tg else 8.0
                 try:
                     new = studio.revise_scene(self.ctx, g.get("spec") or {}, dur, iss.get("problem", ""),
-                                              iss.get("direction", ""), stills.get(str(iss["target"])))
+                                              iss.get("direction", ""), qa_images(stills, str(iss["target"])))
                 except DirectorError as e:
                     self.log(f"🎨 수정 실패: {e}")
                     new = None
@@ -3249,7 +3421,8 @@ class Pipeline:
                 dur = (tg.end - tg.start) if tg else 8.0
                 try:
                     new = studio.revise_card(self.ctx, g.get("card") or {}, dur, iss.get("problem", ""),
-                                             iss.get("direction", ""), stills.get(str(iss["target"])), layout=g["layout"])
+                                             iss.get("direction", ""), qa_images(stills, str(iss["target"])),
+                                             layout=g["layout"])
                 except DirectorError as e:
                     self.log(f"🃏 카드 수정 실패: {e}")
                     new = None
@@ -4404,6 +4577,12 @@ def qa_actionable(issues: list[dict]) -> list[dict]:
     """아트 디렉터 지적 중 그래픽에 반영할 것: high·medium 은 모두, low 는 글자 줄이기·빼기만(편집 지적은 _qa_escalate)."""
     return [i for i in issues if i.get("action") not in (None, "", "none", "escalate_edit")
             and (i.get("severity") in ("high", "medium") or i.get("action") in QA_ALWAYS)]
+
+
+def qa_images(stills: dict[str, tuple], gid: str) -> list[tuple]:
+    """수정할 장면에 보여 줄 그림: 안착 화면(원본 해상도) + 움직임 6칸 시트(있으면) — 예전엔 스틸 한 장뿐이라
+    디자이너가 움직임(늦은 등장·빈 0.5초·퇴장 깨짐)을 보지 못하고 고쳤다."""
+    return [x for x in (stills.get(gid), stills.get(f"{gid}#seq")) if x]
 
 
 def qa_strip_times(g: TimedGraphic, settle: float) -> list[float]:

@@ -97,6 +97,7 @@ STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_
 GUARD_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
 # 오래된 Claude Code 에 없을 수 있는 선택 옵션(모르는 옵션이라고 하면 빼고 다시 실행)
 OPTIONAL_FLAGS = ("--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence")
+WEB_TOOL_NAMES = ("WebSearch", "WebFetch", "web_search", "web_fetch")
 # 켤 수 있는 도구는 웹 조사 둘뿐(🔎 주제 조사·🛠 시그니처 장면) — 파일·명령·MCP 는 언제나 끈다
 WEB_TOOLS = ("WebSearch", "WebFetch")
 
@@ -300,11 +301,19 @@ class ClaudeCodeClient:
                    max_tokens: int = 48000, cancel: Optional[CancelToken] = None, label: str = "Claude",
                    images: Optional[list[tuple[str, bytes, str]]] = None, effort: Optional[str] = None,
                    model: Optional[str] = None, tools: tuple[str, ...] = (), max_turns: int = 0,
-                   timeout: Optional[float] = None) -> dict:
-        """tools: 웹 조사 도구(WebSearch·WebFetch)만 켤 수 있다 — 파일·명령 도구는 언제나 꺼져 있다."""
+                   timeout: Optional[float] = None, ctx_in_system: bool = False) -> dict:
+        """tools: 웹 조사 도구(WebSearch·WebFetch)만 켤 수 있다 — 파일·명령 도구는 언제나 꺼져 있다.
+        ctx_in_system: 공통 자료(대본·전사·조사·브리프)를 시스템 프롬프트 끝에 붙인다 — CLI 는 시스템 프롬프트를 캐시하므로
+        같은 역할을 여러 번 부르는 호출(그림 고르기·장면 수정·자기 검토·검수)이 그 자료를 매번 새로 읽지 않고 캐시에서 읽는다
+        (캐시 읽기는 새로 읽기의 1/10). 사용자 메시지에는 그림과 지시만 남는다."""
         import base64
-        content: list[dict[str, Any]] = [{"type": "text", "text": shared_context}]
-        for lab, data, media in images or []:
+        if ctx_in_system and shared_context.strip():
+            system = system + "\n\n# 이 작업의 공통 자료(모든 호출이 같은 것을 본다)\n\n" + shared_context
+            content: list[dict[str, Any]] = []
+        else:
+            content = [{"type": "text", "text": shared_context}]
+        from .images import fit_images
+        for lab, data, media in fit_images(images, self.log) or []:
             content.append({"type": "text", "text": f"[이미지 {lab}]"})
             content.append({"type": "image", "source": {"type": "base64", "media_type": media,
                                                         "data": base64.b64encode(data).decode("ascii")}})
@@ -404,8 +413,10 @@ class ClaudeCodeClient:
                     self.rate_limit = dict(ev["rate_limit_info"], at=time.time())
                 elif ev.get("type") == "assistant":
                     served = str(((ev.get("message") or {}).get("model")) or served)
+                    # 웹 도구만 센다 — 구조화 출력(--json-schema)도 도구 호출로 오므로 그것까지 '웹 조사'로 세던 것
                     searches += sum(1 for b in (ev.get("message") or {}).get("content") or []
-                                    if isinstance(b, dict) and b.get("type") == "tool_use")
+                                    if isinstance(b, dict) and b.get("type") == "tool_use"
+                                    and str(b.get("name", "")) in WEB_TOOL_NAMES)
             if time.time() - last_log > 10:
                 last_log = time.time()
                 self.log(f"{label}: 작업 중… ({int(time.time() - t0)}초, Claude Code"
@@ -447,8 +458,8 @@ class ClaudeCodeClient:
                "model": actual or requested or self.model, "requested": requested or self.model,
                "backend": "claude_code", "api_equiv_usd": ev.get("total_cost_usd") or 0}
         self.usage.append(rec)
-        self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {rec['input']} (캐시 {rec['cache_read']}) · "
-                 f"출력 {rec['output']} 토큰 · {actual or '모델 미확인'} · Claude 구독")
+        self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {rec['input']} · 캐시 읽기 {rec['cache_read']} · "
+                 f"캐시 쓰기 {rec['cache_write']} · 출력 {rec['output']} 토큰 · {actual or '모델 미확인'} · Claude 구독")
         want = (requested or self.model).split("[")[0]
         if actual and want and not actual.startswith(want) and "opus" in want and "opus" not in actual:
             if not getattr(self, "_warned_model", False):

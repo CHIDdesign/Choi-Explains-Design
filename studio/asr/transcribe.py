@@ -208,6 +208,13 @@ def transcribe(
         log(f"(이 faster-whisper 버전이 지원하지 않는 옵션 생략: {', '.join(dropped)})")
     audio = load_audio_16k(wav16k)   # 경로 대신 배열 — PyAV 디코딩을 거치지 않는다
     batch = max(1, int(batch_size or 1))
+    gpu = gpu_memory() if device == "cuda" else None
+    if gpu is not None:
+        fitted = batch_for_gpu(batch, model_name, gpu, _tuned_cap(gpu[0]))
+        log(f"GPU: {gpu[0]} · 메모리 {gpu[1]:.1f}GB(여유 {gpu[2]:.1f}GB) → 배치 {fitted}"
+            + (f"(설정 {batch}에서 줄임 — 넘치면 시스템 메모리로 넘어가 몇 배 느려진다)" if fitted < batch else ""))
+        batch = fitted
+    t_run = time.time()
     while True:
         try:
             words, segs, info = _run(model, audio, kwargs, batch=batch, duration=duration, log=log,
@@ -225,6 +232,17 @@ def transcribe(
                 continue
             raise
     total = duration or float(getattr(info, "duration", 0.0) or 0.0)
+    took = max(0.1, time.time() - t_run)
+    rtf = total / took if total else 0.0
+    if total:
+        log(f"음성 인식 속도: 실시간의 {rtf:.1f}배({total / 60:.1f}분 음성 → {took / 60:.1f}분, {device} · 배치 {batch})")
+    if gpu is not None and total > 120:
+        slow = rtf < SLOW_RTF
+        cap = max(1, batch // 2) if slow and batch > 1 else (batch if not slow else 1)
+        if slow:
+            log(f"⚠️ GPU 인데 음성 인식이 실시간의 {rtf:.1f}배로 느립니다 — GPU 메모리가 넘친 것으로 보여 다음 실행부터 배치를 "
+                f"{cap}(으)로 줄입니다. 다른 프로그램(게임·브라우저 영상)이 GPU 를 쓰고 있었다면 닫아 주세요")
+        _save_tuning(gpu[0], batch, rtf, cap if slow else max(batch, _tuned_cap(gpu[0]) or batch))
     progress(1.0)
     return {
         "words": words,
@@ -232,6 +250,83 @@ def transcribe(
         "info": {"language": getattr(info, "language", language), "duration": total,
                  "model": model_name, "device": device, "compute_type": compute_type, "batch": batch},
     }
+
+
+# 🕒 GPU 메모리에 맞는 배치(2026-10-04 실제 작업: 19.6분 음성이 GPU float16 배치 8 로 12.2분 — 실시간보다 느렸다).
+# Windows NVIDIA 드라이버(536.40+)는 GPU 메모리가 모자라면 오류 대신 시스템 메모리로 넘겨(Sysmem Fallback) 몇 배 느려진다 —
+# 'out of memory' 를 기다려 배치를 줄이던 방식으로는 못 잡는다. 그래서 ① 여유 VRAM 으로 배치를 고르고 ② 실제 속도를 재서
+# 느렸으면 그 GPU 의 다음 실행부터 배치를 반으로(user/asr_tuning.json).
+VRAM_BATCH = ((10.0, 8), (7.0, 4), (5.5, 2))     # 여유 GB → 배치(large-v3 · float16 · beam 5 기준), 그 아래는 순차
+SLOW_RTF = 2.0                                   # 실시간의 2배보다 느리면 GPU 에서 비정상(정상은 10배 이상)
+
+
+def gpu_memory() -> Optional[tuple[str, float, float]]:
+    """(GPU 이름, 전체 GB, 여유 GB) — nvidia-smi 로(없거나 실패하면 None)."""
+    import shutil
+    exe = shutil.which("nvidia-smi")
+    if not exe and sys.platform == "win32":
+        cand = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "nvidia-smi.exe"
+        exe = str(cand) if cand.exists() else None
+    if not exe:
+        return None
+    try:
+        from ..util import run_process
+        code, out = run_process([exe, "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader,nounits"])
+    except Exception:  # noqa: BLE001
+        return None
+    if code != 0:
+        return None
+    for line in out.strip().splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) >= 3:
+            try:
+                total, used = float(parts[1]) / 1024, float(parts[2]) / 1024
+            except ValueError:
+                continue
+            return parts[0], round(total, 1), round(max(0.0, total - used), 1)
+    return None
+
+
+def _tuning_file() -> Path:
+    from ..paths import USER_DIR
+    return USER_DIR / "asr_tuning.json"
+
+
+def _tuned_cap(gpu: str) -> Optional[int]:
+    import json
+    try:
+        data = json.loads(_tuning_file().read_text(encoding="utf-8"))
+        cap = (data.get(gpu) or {}).get("batch_cap")
+        return int(cap) if cap else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _save_tuning(gpu: str, batch: int, rtf: float, cap: int) -> None:
+    import json
+    f = _tuning_file()
+    try:
+        data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except (OSError, ValueError):
+        data = {}
+    data[gpu] = {"batch": batch, "rtf": round(rtf, 2), "batch_cap": cap, "at": time.strftime("%Y-%m-%d %H:%M")}
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def batch_for_gpu(want: int, model_name: str, info: Optional[tuple[str, float, float]],
+                  cap: Optional[int] = None) -> int:
+    """원하는 배치를 이 GPU 의 여유 VRAM·지난 실측(cap)에 맞춘다. large 가 아닌 모델은 메모리를 적게 써 그대로."""
+    b = max(1, int(want or 1))
+    if info is not None and "large" in model_name:
+        free = info[2]
+        b = min(b, next((n for gb, n in VRAM_BATCH if free >= gb), 1))
+    if cap:
+        b = min(b, max(1, cap))
+    return b
 
 
 def _run(model, audio: np.ndarray, kwargs: dict, *, batch: int, duration: float, log: LogFn, progress: ProgressFn,

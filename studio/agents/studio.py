@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -84,6 +86,29 @@ def studio_system_prompt() -> str:
     return "\n".join(p for p in parts if p.strip())
 
 
+# 🪶 토큰 절약 — 디자인 규칙 전부(플레이북·카탈로그·모션/카드 DSL·예제·스킬, 약 5~6만 토큰)가 필요 없는 역할은
+# 채널 헌장 + 스타일 가이드(+ 그 일의 플레이북 한 장)만 받는다. 이 역할들의 지시(prompts/agents/*.md)는 그것만으로 완결이다.
+LEAN_AGENTS: dict[str, tuple[str, ...]] = {
+    "cut_editor": (), "colorist": (), "portrait_pick": (),
+    "stock_pick": ("playbook/04_visual_evidence.md",),
+    "music": ("playbook/07_sound.md", "skills/music_direction.md"),
+}
+# 같은 역할을 한 작업에서 여러 번 부르는 것 — 공통 자료를 시스템 프롬프트 끝에 붙여 캐시에서 읽게 한다(ctx_in_system)
+REPEATED_AGENTS = frozenset({"stock_pick", "portrait_pick", "motion_revise", "card_revise", "art_director"})
+# 같은 역할의 호출이 한꺼번에 뜨면 서로의 캐시를 못 읽는다(쓰는 중) — 첫 호출이 앞부분을 처리할 시간을 주고 나머지를 띄운다
+PRIME_S = 15.0
+
+
+def lean_system_prompt(extra: tuple[str, ...] = ()) -> str:
+    parts = [load_prompt("system_studio.md"), "\n\n# 채널 스타일 가이드\n\n" + load_prompt("style_guide.md")]
+    for rel in extra:
+        try:
+            parts.append("\n\n" + load_prompt(rel))
+        except OSError:
+            continue
+    return "\n".join(p for p in parts if p.strip())
+
+
 # 에이전트별 스킬 노트(prompts/skills/agents/*.md — 전문가·제작자 자료에서 정리, 그 에이전트의 지시 끝에만 붙는다)
 AGENT_SKILLS: dict[str, tuple[str, ...]] = {
     "research": ("research",), "director": ("director", "sound_design"), "editor": ("editor",),
@@ -92,6 +117,15 @@ AGENT_SKILLS: dict[str, tuple[str, ...]] = {
     "music": ("music",), "captions": ("captions",), "copy": ("copy",), "shorts": ("shorts",),
     "stock": ("stock",), "stock_pick": ("stock",), "portrait_pick": ("stock",),
 }
+
+
+def _images(x: Any) -> Optional[list[tuple[str, bytes, str]]]:
+    """그림 하나(라벨, 바이트, 형식) 또는 그 목록 → 목록(빈 것은 None)."""
+    if not x:
+        return None
+    items = [x] if isinstance(x, tuple) else list(x)
+    items = [i for i in items if i]
+    return items or None
 
 
 def agent_skill_block(key: str) -> str:
@@ -469,6 +503,10 @@ class Studio:
         self.use_stock = use_stock
         self.use_motion = use_motion
         self.system = studio_system_prompt()
+        self._lean: dict[str, str] = {}
+        self._prime_lock = threading.Lock()
+        self._prime: dict[str, float] = {}      # 역할마다 이번 묶음의 첫 호출 시각
+        self._running: dict[str, int] = {}
         self.results: dict[str, Any] = {}
         self.errors: dict[str, str] = {}
         self.web = True                                                   # 🔎·🛠 에이전트에 웹 도구를 준다
@@ -501,9 +539,38 @@ class Studio:
             if a.timeout:
                 kw["timeout"] = a.timeout
         instruction = instruction + agent_skill_block(key)
-        return self.claude.structured(system=system or self.system, shared_context=ctx, instruction=instruction,
-                                      schema=a.schema, max_tokens=a.max_tokens, cancel=self.cancel,
-                                      label=label or a.label, images=images, effort=eff, model=model, **kw)
+        if system is None and key in LEAN_AGENTS:
+            system = self._lean.get(key) or self._lean.setdefault(key, lean_system_prompt(LEAN_AGENTS[key]))
+        if key in REPEATED_AGENTS:
+            kw["ctx_in_system"] = True
+        try:
+            self._stagger(key)
+            return self.claude.structured(system=system or self.system, shared_context=ctx, instruction=instruction,
+                                          schema=a.schema, max_tokens=a.max_tokens, cancel=self.cancel,
+                                          label=label or a.label, images=images, effort=eff, model=model, **kw)
+        finally:
+            with self._prime_lock:
+                self._running[key] = max(0, self._running.get(key, 1) - 1)
+
+    def _stagger(self, key: str) -> None:
+        """같은 역할의 호출이 동시에 여러 개 뜰 때 — 첫 호출이 공통 앞부분(시스템·자료)을 캐시에 쓸 시간(PRIME_S)을 준 뒤 나머지를
+        보낸다. 동시에 보내면 모두 새로 읽고(캐시 쓰기 1.25배) 아무도 캐시를 읽지 못한다. 첫 호출이 이미 끝났거나
+        PRIME_S 가 지났으면 기다리지 않는다."""
+        with self._prime_lock:
+            now = time.time()
+            busy = self._running.get(key, 0)
+            first = self._prime.get(key)
+            if first is None or busy == 0:
+                self._prime[key] = now
+                wait = 0.0
+            else:
+                wait = max(0.0, first + PRIME_S - now)
+            self._running[key] = busy + 1
+        end = time.time() + wait
+        while time.time() < end:
+            if self.cancel:
+                self.cancel.check()
+            time.sleep(min(0.5, max(0.0, end - time.time())))
 
     def research(self, *, title: str, topic: str, script: str) -> dict[str, Any]:
         """🔎 주제 조사 — 대본·주제 설명만 보고(영상·전사 없이) 웹에서 조사한 노트. 실패하면 DirectorError."""
@@ -775,32 +842,45 @@ class Studio:
         return self.call("art_director", ctx, instr, images=stills)
 
     def revise_card(self, ctx: str, card: dict[str, Any], dur: float, problem: str, direction: str,
-                    still: Optional[tuple[str, bytes, str]], *, layout: str = "fullscreen",
-                    checks: tuple[str, ...] = ()) -> Optional[dict[str, Any]]:
-        """🃏 카드 수정: 아트 디렉터 지적 또는 렌더 전 검사(check) 결과를 주고 고친 카드 조각을 받는다."""
+                    still: Any, *, layout: str = "fullscreen", checks: tuple[str, ...] = (),
+                    self_review: str = "") -> Optional[dict[str, Any]]:
+        """🃏 카드 수정: 아트 디렉터 지적 또는 렌더 전 검사(check) 결과를 주고 고친 카드 조각을 받는다.
+        still: 그림 하나 또는 여럿(정지 화면 + 움직임 시트 · 검사 화면). self_review: 자기 검토 지시(그대로면 html 을 비움)."""
         instr = (load_prompt("agents/card_revise.md").replace("{{dur}}", f"{dur:.1f}")
                  .replace("{{canvas}}", f"{card.get('w', 1920)}×{card.get('h', 1080)}")
                  .replace("{{card}}", fragment(card))
                  .replace("{{problem}}", problem or "(없음)").replace("{{direction}}", direction or "(없음)")
                  .replace("{{checks}}", "\n".join(f"- {c}" for c in checks) or "- (없음)"))
-        res = self.call("card_revise", ctx, instr, images=[still] if still else None)
+        if self_review:
+            instr += "\n\n" + self_review
+        res = self.call("card_revise", ctx, instr, images=_images(still))
+        if self_review and not str(res.get("html") or "").strip():
+            self.log(f"🔍 카드 {card.get('id', '')}: 그대로 — {res.get('changes', '')}")
+            return None
         new = clean_card(res.get("html", ""), layout=layout, card_id=str(card.get("id") or ""))
         if new:
             if not new.get("style"):
                 new["style"] = card.get("style", "")
-            self.log(f"🃏 카드 수정: {res.get('changes', '')}")
+            self.log(f"{'🔍' if self_review else '🃏'} 카드 수정: {res.get('changes', '')}")
         return new
 
     def revise_scene(self, ctx: str, spec: dict[str, Any], dur: float, problem: str, direction: str,
-                     still: Optional[tuple[str, bytes, str]]) -> Optional[dict[str, Any]]:
+                     still: Any, *, self_review: str = "") -> Optional[dict[str, Any]]:
+        """🎨 모션 장면 수정. still: 그림 하나 또는 여럿(정지 화면 + 움직임 6칸 시트).
+        self_review: 자기 검토 지시 — 고칠 것이 없다고 보면 spec_json 을 비워 None 을 돌려준다."""
         instr = (load_prompt("agents/motion_revise.md").replace("{{dur}}", f"{dur:.1f}")
                  .replace("{{spec}}", json.dumps(spec, ensure_ascii=False))
                  .replace("{{problem}}", problem or "").replace("{{direction}}", direction or ""))
         if self.world_text():
             instr += "\n\n" + self.world_text() + "그림 부품('pixabay:…' 검색어)도 이 세계 안의 구체 명사 2~4낱말로 쓴다."
-        res = self.call("motion_revise", ctx, instr, images=[still] if still else None)
+        if self_review:
+            instr += "\n\n" + self_review
+        res = self.call("motion_revise", ctx, instr, images=_images(still))
+        if self_review and not str(res.get("spec_json") or "").strip():
+            self.log(f"🔍 장면: 그대로 — {res.get('changes', '')}")
+            return None
         new = parse_spec(res.get("spec_json", ""))
         cleaned = clean_spec(new, dur) if new else None
         if cleaned:
-            self.log(f"🎨 수정: {res.get('changes', '')}")
+            self.log(f"{'🔍' if self_review else '🎨'} 수정: {res.get('changes', '')}")
         return cleaned
