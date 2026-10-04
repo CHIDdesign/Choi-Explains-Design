@@ -2721,13 +2721,17 @@ class Pipeline:
             return {"outcomes": [], "brief": "", "sheet": None, "backfill": ""}
         if self.research:
             # 🔎 리서처가 확인한 커먼즈 파일을 대상 이름으로 이어 준다(자료 리서처가 옮겨 적지 않았어도)
-            from .agents.research import files_for
+            from .agents.research import files_for, pages_for
             for it in items:
                 subj = it.get("subject") if isinstance(it.get("subject"), dict) else {}
                 if not it.get("commons_files"):
                     fs = files_for(self.research, subj.get("name_ko"), subj.get("name_en"))
                     if fs:
                         it["commons_files"] = fs
+                if not it.get("web_pages"):          # 공식 페이지 → 인용 칸의 대표 이미지(og:image)
+                    ps = pages_for(self.research, subj.get("name_ko"), subj.get("name_en"))
+                    if ps:
+                        it["web_pages"] = ps
         self.log(f"🎞 자료 조달 {rnd}회차: 증거 {len(items)}건 — 화자 자료 → 고유명사·출처 → 화면 → 스톡 순서로")
         ladder = Ladder(self._evidence_deps(), public=self.public, work=self.work, log=self.log)
         outcomes = ladder.run(items)
@@ -2764,7 +2768,17 @@ class Pipeline:
             rs = self.settings.render
             capture = lambda shots: shot(shots, node=find_node(self.settings.node_path), work=self.work,  # noqa: E731
                                          browser_executable=rs.browser_executable, gl=rs.gl, log=self.log)
+        museums = web = page_image = None
+        if online and getattr(self.settings, "museum_search", True):
+            from .assets.museums import Museums
+            museums = Museums(cache_dir=cache, log=self.log)
+        if online and getattr(self.settings, "serpapi_key", ""):
+            from .stock.google import GoogleImages
+            web = GoogleImages(self.settings.serpapi_key, log=self.log, cache_dir=self.work / "stock_cache")
+        if online and allow_quote:
+            from .stock.google import page_image
         return Deps(resolver=resolver, media=EntityMedia(wp, log=self.log, allow_quote=allow_quote) if wp else None,
+                    museums=museums, web=web, page_image=page_image,
                     scholar=Scholar(cache_dir=cache, log=self.log) if online else None,
                     local=tuple(getattr(self, "_materials", None) or ()),
                     library=AssetLibrary(USER_DIR / "asset_library") if online else None,

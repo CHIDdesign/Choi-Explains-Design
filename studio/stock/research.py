@@ -103,22 +103,30 @@ def junk(c: StockCandidate) -> bool:
 
 
 def rule_choice(st: dict[str, Any], cands: list[StockCandidate]) -> int:
-    """비전 선택을 쓸 수 없을 때(AI 없음·선택 실패): 제공처 태그에 검색어의 핵심 낱말이 가장 많이 든 후보. 핵심 낱말이 둘 이상이면
-    둘 이상, 하나면 하나가 맞아야 한다. 없으면 −1 — 첫 후보를 그냥 쓰지 않는다(틀린 그림보다 없는 게 낫고, 빈 자리는 모션이 짓는다)."""
-    queries = [str(st.get("query_en") or "")] + [str(q) for q in st.get("alt_queries") or [] if q]
+    """비전 선택을 쓸 수 없을 때(AI 없음·선택 실패): 제공처 태그에 검색어의 핵심 낱말이 모두 든 후보(tag_hits). 없으면 −1 —
+    첫 후보를 그냥 쓰지 않는다(틀린 그림보다 없는 게 낫고, 빈 자리는 모션이 짓는다)."""
     best, bi = 0, -1
     for i, c in enumerate(cands):
-        if junk(c):
-            continue
-        tags = {_stem(w) for w in re.split(r"[^A-Za-z0-9]+", c.alt or "") if len(w) >= 3}
-        for q in queries:
-            terms = query_terms(q)
-            if not terms:
-                continue
-            hit = sum(1 for t in terms if t in tags)
-            if hit >= min(2, len(terms)) and hit > best:
-                best, bi = hit, i
+        hit = tag_hits(st, c)
+        if hit > best:
+            best, bi = hit, i
     return bi
+
+
+def tag_hits(st: dict[str, Any], c: StockCandidate) -> int:
+    """후보의 제공처 설명(태그)에 검색어(첫 검색어·다른 각도) 핵심 낱말이 몇 개 맞는가 — 검색어의 핵심 낱말이 **모두**(넷 이상이면
+    하나 빼고) 맞아야 센다. 둘만 맞으면 동음이의어가 지나간다('foam model sanding' 의 foam·sand → 바닷가 거품 사진).
+    AI·애니·만화 태그는 0."""
+    if junk(c):
+        return 0
+    tags = {_stem(w) for w in re.split(r"[^A-Za-z0-9]+", c.alt or "") if len(w) >= 3}
+    best = 0
+    for q in [str(st.get("query_en") or "")] + [str(q) for q in st.get("alt_queries") or [] if q]:
+        terms = query_terms(q)
+        hit = sum(1 for t in terms if t in tags) if terms else 0
+        if terms and hit >= (len(terms) if len(terms) <= 3 else len(terms) - 1):
+            best = max(best, hit)
+    return best
 
 
 def request_line(n: int, st: dict[str, Any], cands: list[StockCandidate], *, retried: bool = False) -> str:
@@ -325,9 +333,10 @@ class StockResearcher:
             if idx < 0:
                 self.cache[k] = {"none": True, "why": "rejected"}        # 에이전트가 뺀 것만 확정
                 continue
-            # 고른 후보가 안 받아지면 다음 후보로
+            # 고른 후보가 안 받아지면 다음 후보로 — 단 고르지 않은 후보는 태그로 확인되는 것만(눈으로 보지 않은 그림을 그냥 쓰지 않는다)
             got = None
-            for c in [cands[k][idx]] + [x for j, x in enumerate(cands[k]) if j != idx][:2]:
+            spare = [x for j, x in enumerate(cands[k]) if j != idx and tag_hits(reqs[k], x) > 0][:2]
+            for c in [cands[k][idx]] + spare:
                 try:
                     got = self._fetch(c)
                     break

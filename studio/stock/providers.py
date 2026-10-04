@@ -1,6 +1,7 @@
 """여러 무료 스톡 제공처를 한 번에 검색하는 허브.
 
 기본 순서: Pixabay(영상·사진, 한국어 검색) → Pexels(키가 있으면) → Coverr(영상) → Unsplash(사진)
+→ Google 이미지(SerpApi 키가 있으면 — 재사용 가능 라이선스만, 원문에서 확인. 한 요청에 첫 검색어로 한 번: `once`)
 → Openverse(사진, 키 없이 항상 동작).
 요청마다 제공처별 후보를 번갈아 섞어 최대 N개를 만들고, 🎞 자료 리서처가 썸네일 시트를 보고 고른다.
 검색 중 오류: 키 오류(StockError.fatal)만 그 제공처를 이번 작업에서 끄고, 연결 실패·일시 차단·한도는 잠시 쉬었다가
@@ -88,12 +89,14 @@ class StockHub:
     @classmethod
     def from_settings(cls, settings: Any, *, log: LogFn = noop_log, cache_dir: Optional[Path] = None) -> "StockHub":
         from .coverr import Coverr
+        from .google import GoogleImages
         from .openverse import Openverse
         from .pexels import Pexels
         from .pixabay import Pixabay
         from .unsplash import Unsplash
         spec = [(Pixabay, getattr(settings, "pixabay_api_key", "")), (Pexels, getattr(settings, "pexels_api_key", "")),
-                (Coverr, getattr(settings, "coverr_api_key", "")), (Unsplash, getattr(settings, "unsplash_access_key", ""))]
+                (Coverr, getattr(settings, "coverr_api_key", "")), (Unsplash, getattr(settings, "unsplash_access_key", "")),
+                (GoogleImages, getattr(settings, "serpapi_key", ""))]
         provs = [cls_(key, log=log, cache_dir=cache_dir) for cls_, key in spec if key]
         if getattr(settings, "keyless_stock", True):
             provs.append(Openverse(log=log, cache_dir=cache_dir))
@@ -104,6 +107,12 @@ class StockHub:
         out = []
         for p in self.providers:
             if p.name == "Openverse":
+                continue
+            if hasattr(p, "status"):          # 횟수를 쓰지 않는 계정 확인(SerpApi 월 250회 무료)
+                msg = p.status()
+                if msg.startswith("⚠") and ("Invalid" in msg or "run out" in msg):
+                    self.disabled[p.name] = msg
+                out.append(msg)
                 continue
             try:
                 hits = p.search_photos("office", per_page=3)
@@ -152,11 +161,13 @@ class StockHub:
             method = "search_videos" if kind == "video" else "search_photos"
             provs = [p for p in self.providers if (p.videos if kind == "video" else p.photos)]
             per_q: list[list[StockCandidate]] = []
-            for q0 in [qe] + alts:
+            for qi, q0 in enumerate([qe] + alts):
                 got: list[StockCandidate] = []
-                for q in query_variants(q0, min_words=2):
-                    groups = [self._call(p, method, q, per_page=n) for p in provs]
-                    trace.append(f"{kind} '{q}': " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(provs, groups)))
+                for vi, q in enumerate(query_variants(q0, min_words=2)):
+                    # 횟수가 귀한 제공처(once — Google/SerpApi)는 첫 검색어 그대로 한 번만
+                    use = [p for p in provs if not (getattr(p, "once", False) and (qi or vi))]
+                    groups = [self._call(p, method, q, per_page=n) for p in use]
+                    trace.append(f"{kind} '{q}': " + ", ".join(f"{p.name} {len(g)}" for p, g in zip(use, groups)))
                     got = interleave([got] + groups, n)
                     if len(got) >= MIN_HITS:
                         break

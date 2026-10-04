@@ -57,6 +57,10 @@ class Settings:
     coverr_api_key: str = ""         # https://coverr.co/developers (영상 전용, 데모 시간당 50회)
     pexels_api_key: str = ""         # https://www.pexels.com/ko-kr/api/ (이미 키가 있으면)
     keyless_stock: bool = True       # 키 없이 되는 Openverse(CC 사진) 검색도 함께
+    # Google 이미지(SerpApi — serpapi.com 가입하면 대시보드에 키, 무료 월 250회·카드 없음). 재사용 가능 라이선스만 쓰고 원문 페이지에서
+    # 라이선스를 다시 확인한다. 인용(아래 allow_quote)이 켜져 있으면 그 대상 자체를 설명하는 문장에서 인용 이미지도(출처·사유 표기)
+    serpapi_key: str = ""
+    museum_search: bool = True       # 미술관 오픈 액세스(시카고·메트·클리블랜드, CC0) — 이름 있는 작품·제품·사물(키 없음)
     # C 등급(인용) 자료 — 웹·앱 화면 캡처, 논문 첫 화면, 비자유 대표 이미지. 그 대상을 설명하는 문장에서만 6초 이내·종이 위.
     # 기본 끔(작업지시서 WP7) — 켜면 자료 대장·검토 시트에 인용 목록이 남는다(docs/upgrade/저작권_위험등급_정책.md)
     allow_quote: bool = False

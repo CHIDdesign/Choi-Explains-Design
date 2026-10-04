@@ -203,17 +203,23 @@ class SettingsDialog(QDialog):
         self.pixabay = key_edit(s.pixabay_api_key, "pixabay.com/api/docs 에 로그인하면 문서 안에 키가 보입니다")
         self.unsplash = key_edit(s.unsplash_access_key, "unsplash.com/developers → New Application → Access Key")
         self.coverr = key_edit(s.coverr_api_key, "coverr.co/developers (영상 전용)")
-        self.pexels = key_edit(s.pexels_api_key, "이미 발급받은 키가 있을 때만")
+        self.pexels = key_edit(s.pexels_api_key, "이미 발급받은 키가 있을 때만(새 키 발급은 멈춤)")
+        self.serpapi = key_edit(getattr(s, "serpapi_key", ""), "serpapi.com 가입 → 대시보드의 API Key (무료 월 250회, 카드 없음)")
         fs.addRow("Pixabay (추천)", self.pixabay)
+        fs.addRow("Google 이미지 (SerpApi)", self.serpapi)
         fs.addRow("Unsplash", self.unsplash)
         fs.addRow("Coverr", self.coverr)
         fs.addRow("Pexels", self.pexels)
-        self.quote = QCheckBox("인용 자료 쓰기(웹·앱 화면 캡처 · 논문 첫 화면) — C 등급")
+        self.museums = QCheckBox("미술관 소장품 사진(시카고·메트·클리블랜드, CC0 — 키 없음)")
+        self.museums.setChecked(bool(getattr(s, "museum_search", True)))
+        fs.addRow("", self.museums)
+        self.quote = QCheckBox("인용 자료 쓰기(웹·앱 화면 캡처 · 논문 첫 화면 · 그 대상 자체의 웹 이미지) — C 등급")
         self.quote.setChecked(bool(getattr(s, "allow_quote", False)))
         fs.addRow("", self.quote)
         fs.addRow("", hint("키를 넣은 곳을 모두 검색해 후보를 섞고, 🎞 자료 리서처가 썸네일을 보고 고릅니다. "
-                           "Pixabay 하나면 충분합니다(사진+영상+모션 그래픽용 벡터·일러스트, 한국어 검색). 키가 없어도 Openverse(CC 사진)는 "
-                           "검색합니다. 출처는 화면 ▣ 와 설명란에 자동 표기."))
+                           "Pixabay(사진+영상+벡터, 한국어 검색)가 기본, Google 이미지는 재사용 가능 라이선스만 찾고 원문 페이지에서 "
+                           "라이선스를 다시 확인한 것만 씁니다. 키가 없어도 Openverse(CC 사진)·위키미디어·미술관은 검색합니다. "
+                           "출처는 화면 ▣ 와 설명란·자료 대장에 자동 표기."))
         tabs.addTab(st, "스톡")
 
         # --- 소리
@@ -362,6 +368,8 @@ class SettingsDialog(QDialog):
         s.unsplash_access_key = self.unsplash.text().strip()
         s.coverr_api_key = self.coverr.text().strip()
         s.pexels_api_key = self.pexels.text().strip()
+        s.serpapi_key = self.serpapi.text().strip()
+        s.museum_search = self.museums.isChecked()
         s.whisper_model = self.whisper.currentText().strip()
         s.whisper_device = self.device.currentText()
         s.brand.name = self.b_name.text().strip()
