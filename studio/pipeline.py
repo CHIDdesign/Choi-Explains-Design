@@ -574,7 +574,8 @@ class Pipeline:
             if t < 5:
                 continue
             names = " → ".join(f"{STAGE_LABEL.get(k, k).split('(')[0].strip()} {secs[k] / 60:.1f}분" for k in lane if secs.get(k, 0) >= 5)
-            parts.append(f"{names}" + (" (동시에 돈 것 중 가장 긴 줄)" if len(st) > 1 else ""))
+            if names:
+                parts.append(names + (" (동시에 돈 것 중 가장 긴 줄)" if len(st) > 1 else ""))
         self.log(f"⏱ 총 {mins:.0f}분 — " + " · ".join(parts))
         self.results["stage_secs"] = secs
 

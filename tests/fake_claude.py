@@ -28,9 +28,15 @@ def main(argv: list[str]) -> int:
             return 2
     opts = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i].startswith("--")}
     schema = json.loads(opts["--json-schema"])
-    assert Path(opts["--system-prompt-file"]).read_text(encoding="utf-8").strip(), "빈 시스템 프롬프트"
+    system = Path(opts["--system-prompt-file"]).read_text(encoding="utf-8")
+    assert system.strip(), "빈 시스템 프롬프트"
     msg = json.loads(sys.stdin.readline())
     content = msg["message"]["content"]
+    # 같은 역할을 여러 번 부르는 호출은 공통 자료(대본·전사)를 시스템 프롬프트 끝에 둔다(ctx_in_system — 캐시) —
+    # 진짜 모델처럼 그 자료도 본다
+    mark = "# 이 작업의 공통 자료"
+    if mark in system:
+        content = [{"type": "text", "text": system.split(mark, 1)[1]}] + list(content)
     import e2e_studio as E  # noqa: E402 - 같은 가짜 답변 로직
     agent = E.agent_of(schema)
     # 웹 도구는 🔎 리서치 디렉터·🛠 시그니처 장면만(미리 허락) — 나머지는 도구 없이 판단만
