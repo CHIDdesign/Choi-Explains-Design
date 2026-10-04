@@ -610,10 +610,15 @@ class MainWindow(QMainWindow):
                                          "그 자료를 먼저 씁니다(예: 디터 람스.jpg). 없어도 됩니다.")
             self.materials_clear.setEnabled(False)
             return
+        from ..assets.local import other_files
         imgs = list_local_images(self.materials_dir)
+        others = other_files(self.materials_dir)
         names = ", ".join(p.stem for p in imgs[:4]) + (" …" if len(imgs) > 4 else "")
         self.materials_label.setText(f"{Path(self.materials_dir).name} — 이미지 {len(imgs)}장"
-                                     + (f" ({names})" if names else " (이미지가 없습니다)"))
+                                     + (f" ({names})" if names else " (이미지가 없습니다)")
+                                     + (f" · 못 읽는 파일 {len(others)}개({', '.join(p.suffix for p in others[:3])} — "
+                                        f"PNG·JPG 로 저장해 넣어 주세요)" if others else "")
+                                     + " — 넣은 자료는 전부 화면에 배치합니다")
         self.materials_clear.setEnabled(True)
 
     def _paste(self) -> None:

@@ -456,6 +456,14 @@ def test_false_start_fragment_before_restart_is_cut():
     frag = next(u for u in utts if u.asr_text.strip() == "오늘은")
     full = next(u for u in utts if u.asr_text.startswith("오늘은 더블"))
     assert frag.status == "retake" and "끊긴 앞부분" in frag.note and full.kept
+    # 2026-10-04 채널 주인: '안녕하세요 쵀' 뒤에 '안녕하세요 최은준입니다' — 끊긴 마지막 글자가 다르게 들려 85% 에 못 미쳤다.
+    # 마지막 한 글자를 뺀 머리가 거의 같으면 끊긴 앞부분이다
+    words = _words([("안녕하세요 쵀", 0.7), ("안녕하세요 최은준입니다.", 0.9), ("오늘은 더블 다이아몬드 이야기를 해볼게요.", 0.9)])
+    utts, _, _ = ScriptAligner(parse_script("안녕하세요 최은준입니다. 오늘은 더블 다이아몬드 이야기를 해볼게요.")).run(
+        build_utterances(words))
+    frag = next(u for u in utts if u.asr_text.strip() == "안녕하세요 쵀")
+    assert frag.status == "retake" and "끊긴 앞부분" in frag.note
+    assert next(u for u in utts if u.asr_text.startswith("안녕하세요 최은준")).kept
     # 같은 말로 시작하는 다른 완결 문장은 둘 다 남는다(8자 넘고 맺은 문장 → 리테이크 판정에 맡김)
     words = _words([("좋은 디자인은 단순합니다.", 0.6), ("좋은 디자인은 정직합니다.", 0.8)])
     utts, _, _ = ScriptAligner(parse_script("좋은 디자인은 단순합니다. 좋은 디자인은 정직합니다.")).run(build_utterances(words))

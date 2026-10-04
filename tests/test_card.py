@@ -350,3 +350,50 @@ def test_card_metrics_do_not_change_qa_cache_key():
     assert g["card"]["dark"] is False
     g["card"]["html"] = "<div>바뀜</div>"
     assert qa_view(g) != before                      # 내용이 바뀌면 다시 검수
+
+
+def test_camera_world_attrs_are_validated_and_counted_in_settle():
+    """한 세계 + 카메라(Promptible cinematic-camera 문법 → data-world·data-camera): 키는 범위 안으로 정리돼 남고, 마지막 이동 시각이 정착이다."""
+    from studio.motion.card import clean_camera
+    assert clean_camera('[{"t":0,"x":1,"y":2,"z":9},{"t":3,"x":5,"y":2,"z":0.1}]') == '[{"t":0.0,"x":1.0,"y":2.0,"z":4.0},{"t":3.0,"x":5.0,"y":2.0,"z":0.25}]'
+    probs: list[str] = []
+    assert clean_camera("nope", probs) == "" and clean_camera('[{"t":1}]', probs) == "" and len(probs) == 2
+    html = ('<div class="card" data-card-id="w"><style>.card[data-card-id="w"] .root{width:100%;height:100%}'
+            '.card[data-card-id="w"] .world{position:absolute;left:0;top:0;width:4000px;height:1080px}</style>'
+            '<div class="root"><div class="world" data-world data-camera=\'[{"t":0,"x":900,"y":540,"z":1.4},{"t":2.5,"x":900,"y":540,"z":1.4},'
+            '{"t":3.5,"x":2000,"y":540,"z":0.5}]\' data-camera-ease="power2.inOut"><h2 style="font-size:150px">하나</h2></div></div></div>')
+    c = clean_card(html, card_id="w")
+    assert c and "data-world" in c["html"] and "data-camera-ease" in c["html"] and '&quot;t&quot;:3.5' in c["html"]
+    assert card_settle_time(c) == 3.5
+
+
+def test_checker_measures_camera_zoom_and_empty_holds(tmp_path):
+    """렌더 전 검사: 세계 안 요소는 캔버스 밖이어도 잘림이 아니고(카메라가 보여 주는 만큼), 글자는 홀드 배율을 곱한 크기로 재며,
+    빈 곳에 머무는 카메라는 camera_hold_empty."""
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    ex = EXAMPLES["camera_world"]
+    good = clean_card({"html": ex["html"], "timeline": ex["timeline"]}, layout="fullscreen", card_id="cw")
+    css = ('.card[data-card-id="ce"] .root{width:100%;height:100%;background:var(--paper)}'
+           '.card[data-card-id="ce"] .world{position:absolute;left:0;top:0;width:4000px;height:1080px}'
+           '.card[data-card-id="ce"] .t{position:absolute;left:300px;top:400px;font:800 150px/1 var(--font-head);color:var(--ink)}')
+    # ce: 두 번째 홀드(x 3200, z 0.6)에는 아무것도 없다 → camera_hold_empty(글자는 캔버스 밖이지만 잘림이 아니다)
+    empty_html = (f'<div class="card" data-card-id="ce"><style>{css}</style><div class="root"><div class="world" data-world '
+                  'data-camera=\'[{"t":0,"x":700,"y":480,"z":0.6},{"t":1.5,"x":700,"y":480,"z":0.6},{"t":2.5,"x":3200,"y":480,"z":0.6},'
+                  '{"t":4,"x":3200,"y":480,"z":0.6}]\'><div class="t">제목</div></div></div></div>')
+    # cz: 멀리 물러난 홀드(z 0.3)에서 글자 80px → 화면 24px → text_too_small (camera zoom)  — z 는 0.25 아래로 잘린다
+    zoom_html = (f'<div class="card" data-card-id="cz"><style>{css.replace("ce", "cz").replace("150px", "80px")}</style><div class="root">'
+                 '<div class="world" data-world data-camera=\'[{"t":0,"x":700,"y":480,"z":0.3},{"t":3,"x":700,"y":480,"z":0.3}]\'>'
+                 '<div class="t">제목</div></div></div></div>')
+    empty = clean_card(empty_html, layout="fullscreen", card_id="ce")
+    zoom = clean_card(zoom_html, layout="fullscreen", card_id="cz")
+    res = check_cards([dict(good, layout="fullscreen"), dict(empty, layout="fullscreen"), dict(zoom, layout="fullscreen")],
+                      node=find_node(""), out_dir=tmp_path, fps=30, durations={"cw": 8.0, "ce": 5.0, "cz": 4.0}, browser_executable=browser)
+    assert res["cw"]["ok"], res["cw"]["problems"]
+    assert "camera" in res["cw"]["metrics"]["anims"] and res["cw"]["metrics"]["camera_keys"] == 6
+    codes = {p["code"] for p in res["ce"]["problems"]}
+    assert "camera_hold_empty" in codes, res["ce"]["problems"]
+    assert "outside_canvas" not in codes and "text_overflow" not in codes, res["ce"]["problems"]
+    small = [p for p in res["cz"]["problems"] if p["code"] == "text_too_small"]
+    assert small and "camera zoom" in small[0]["detail"], res["cz"]["problems"]

@@ -171,7 +171,7 @@ GRADE = _obj({
 CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
 # 구도 원형(prompts/layouts.md — 2026-10-04 'PPT 같다': 빈 좌표에서 시작하지 않는다). free = 원형 밖(이유를 reason 에)
 ARCHETYPES = ["statement", "object_callouts", "data_bars", "bento", "before_after", "process_path", "ui_screen", "timeline",
-              "fan_stack", "stat_ring", "term_split", "lower_third", "free"]
+              "fan_stack", "stat_ring", "term_split", "lower_third", "camera_world", "free"]
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
@@ -440,6 +440,17 @@ DESIGN_JUDGE = _obj({
     "fix": STR,                   # 이긴 시안에서 고칠 것 한두 가지(없으면 "")
 })
 
+# 🧑‍⚖️ 장면 심사(독립 critic — Promptible remotion-motion-graphics-skill 의 visual-critic 을 우리 기준으로): 카드·모션 장면마다
+# 렌더 그림을 보고 하드 실패·점수 → pass/reject. reject 면 고쳐서 다시 심사, 그래도 reject 면 단순 카드로 바꾼다(fail-closed)
+CRITIC_SCORES = ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")
+CARD_CRITIC = _obj({
+    "verdict": {"type": "string", "enum": ["pass", "reject"]},
+    "hard_failures": STR_LIST,
+    "scores": _obj({k: INT for k in CRITIC_SCORES}),
+    "fix": STR,
+    "notes": STR,
+})
+
 # 🎨 모션 디자이너(수정 라운드)
 MOTION_REVISE = _obj({"spec_json": STR, "changes": STR})
 # 🃏 카드 디자이너(수정 라운드) — html 은 고친 카드 조각 전체
@@ -447,7 +458,7 @@ CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "DESIGN_JUDGE", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "DESIGN_JUDGE", "CARD_CRITIC", "CRITIC_SCORES", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

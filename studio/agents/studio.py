@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+from ..text.topic import strip_label
 from ..director.catalog import catalog_markdown
 from ..director.claude import ClaudeClient, DirectorError, extract_json
 from ..director.context import JobBrief, load_prompt, shorts_instruction
@@ -70,6 +71,8 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
     Agent("style_frame", "🎨 스타일 프레임", "style_frame", S.STYLE_FRAME, "high", 32000),
     # 🧑‍⚖️ 시안 심사 — 시그니처 장면의 시안 여럿을 렌더해 나란히 보고 하나를 고른다(설정 design_variants)
     Agent("design_judge", "🧑‍⚖️ 시안 심사", "design_judge", S.DESIGN_JUDGE, "high", 8000),
+    # 🧑‍⚖️ 장면 심사 — 카드·모션 장면마다 독립 critic(만든 역할이 아닌 눈): 하드 실패·점수 → pass/reject(설정 design_critic)
+    Agent("card_critic", "🧑‍⚖️ 장면 심사", "card_critic", S.CARD_CRITIC, "high", 6000),
 ]}
 
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
@@ -94,7 +97,8 @@ def studio_system_prompt(*, design: bool = True) -> str:
 
 
 # 디자인을 짓거나 고치거나 심사하는 역할 — 구도 원형·검증된 카드 예시를 시스템에 받는다(그 밖은 studio_system_prompt(design=False))
-DESIGN_AGENTS = frozenset({"motion", "motion_revise", "card_revise", "setpiece", "art_director", "style_frame", "design_judge"})
+DESIGN_AGENTS = frozenset({"motion", "motion_revise", "card_revise", "setpiece", "art_director", "style_frame", "design_judge",
+                           "card_critic"})
 
 
 # 🪶 토큰 절약 — 디자인 규칙 전부(플레이북·카탈로그·모션/카드 DSL·예제·스킬, 약 5~6만 토큰)가 필요 없는 역할은
@@ -105,7 +109,7 @@ LEAN_AGENTS: dict[str, tuple[str, ...]] = {
     "music": ("playbook/07_sound.md", "skills/music_direction.md"),
 }
 # 같은 역할을 한 작업에서 여러 번 부르는 것 — 공통 자료를 시스템 프롬프트 끝에 붙여 캐시에서 읽게 한다(ctx_in_system)
-REPEATED_AGENTS = frozenset({"stock_pick", "portrait_pick", "motion_revise", "card_revise", "art_director"})
+REPEATED_AGENTS = frozenset({"stock_pick", "portrait_pick", "motion_revise", "card_revise", "art_director", "card_critic"})
 # 같은 역할의 호출이 한꺼번에 뜨면 서로의 캐시를 못 읽는다(쓰는 중) — 첫 호출이 앞부분을 처리할 시간을 주고 나머지를 띄운다
 PRIME_S = 15.0
 
@@ -129,11 +133,12 @@ AGENT_SKILLS: dict[str, tuple[str, ...]] = {
     "music": ("music",), "captions": ("captions",), "copy": ("copy",), "shorts": ("shorts",),
     "stock": ("stock",), "stock_pick": ("stock",), "portrait_pick": ("stock",),
     "style_frame": ("setpiece", "motion", "jitter"), "design_judge": ("art_director", "jitter"),
+    "card_critic": ("art_director", "jitter"),
 }
 
 # 🎨 스타일 프레임·🎯 취향 보드를 그림으로 받는 역할 — 짓는 역할·심사는 둘 다(정지 화면 + 움직임 칸 + 보드),
 # 고치는 역할은 스타일 프레임 정지 화면 한 장만(여러 번 불려 그림 토큰이 쌓인다)
-REF_FULL = frozenset({"motion", "setpiece", "design_judge", "art_director"})
+REF_FULL = frozenset({"motion", "setpiece", "design_judge", "art_director", "card_critic"})
 REF_STILL = frozenset({"motion_revise", "card_revise"})
 # 시안 경쟁(Best-of-N)의 방향 — 같은 장면을 서로 다른 구도로 지어 심사가 고른다. 첫 안만 웹 도구를 쓴다(사양 확인은 한 번이면 된다)
 VARIANT_HINTS = (
@@ -217,6 +222,36 @@ def card_examples_block() -> str:
                      f"```html\n{ex.get('html', '').strip()}\n```\n"
                      + (f"timeline:\n```js\n{ex['timeline'].strip()}\n```\n" if (ex.get("timeline") or "").strip() else ""))
     return "".join(parts)
+
+
+CRITIC_MIN_SCORE = 6
+CRITIC_MIN_AVG = 7.0
+
+
+def critic_verdict(res: dict[str, Any], *, min_score: int = CRITIC_MIN_SCORE, min_avg: float = CRITIC_MIN_AVG) -> tuple[bool, list[str]]:
+    """🧑‍⚖️ 심사 결과 → (통과?, 이유들). fail-closed: 하드 실패 하나, 점수 하나라도 min_score 미만, 평균 min_avg 미만, 심사가 reject 라
+    했으면 탈락. 점수 칸이 비었으면(응답 모양이 틀림) 통과로 보지 않는다."""
+    why: list[str] = []
+    hard = [str(x).strip() for x in (res.get("hard_failures") or []) if str(x).strip()]
+    why += [f"하드 실패: {h}" for h in hard]
+    scores = res.get("scores") if isinstance(res.get("scores"), dict) else {}
+    vals: list[int] = []
+    for k in S.CRITIC_SCORES:
+        try:
+            v = int(scores.get(k))
+        except (TypeError, ValueError):
+            why.append(f"점수 없음: {k}")
+            continue
+        vals.append(v)
+        if v < min_score:
+            why.append(f"{k} {v} < {min_score}")
+    if vals and len(vals) == len(S.CRITIC_SCORES):
+        avg = sum(vals) / len(vals)
+        if avg < min_avg:
+            why.append(f"평균 {avg:.1f} < {min_avg}")
+    if str(res.get("verdict") or "") != "pass" and not why:
+        why.append("심사 reject")
+    return (not why), why
 
 
 def direction_block(text: str) -> str:
@@ -503,7 +538,8 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         "graphics": graphics,
         "emphasis": emphasis,
         "drop": editor.get("drop", []) or [],
-        "youtube": {k: copy.get(k, [] if k not in ("description", "pinned_comment") else "")
+        "youtube": {k: ([strip_label(str(x)) for x in (copy.get(k) or []) if str(x).strip()] if k in ("titles", "thumbnail_texts")
+                        else copy.get(k, [] if k not in ("description", "pinned_comment") else ""))
                     for k in ("titles", "description", "hashtags", "tags", "thumbnail_texts", "pinned_comment")},
         "music": brief.get("music") or {},
         "captions": {},   # 자막 모양은 채널 템플릿(흰 종이 상자 + 두 층 강조)로 고정 — 디자이너는 강조어만 정한다
@@ -1128,6 +1164,14 @@ class Studio:
             instr += ("\n\n" + self.world_text() + "사진·스톡·그림 부품이 이 세계 밖이면(나이·장소·시대·직업 도구) R19 로 "
                       "적고 revise_scene 으로 그 그림을 이 세계의 손·도구·과정으로 바꾸게 한다.")
         return self.call("art_director", ctx, instr, images=stills)
+
+    def critique(self, ctx: str, gid: str, kind: str, speech: str, images: list[Image3]) -> dict[str, Any]:
+        """🧑‍⚖️ 장면 심사(독립 critic): 렌더 그림(정착 화면 + 움직임 시트)만 보고 하드 실패·점수·고칠 것을 낸다."""
+        instr = (load_prompt("agents/card_critic.md").replace("{id}", gid).replace("{speech}", speech or "(말 없음)")
+                 .replace("{kind}", kind))
+        if self.world_text():
+            instr += "\n\n" + self.world_text() + "그림·사물이 이 세계 밖이면(나이·장소·시대·직업 도구) specificity 를 낮게 보고 fix 에 적는다."
+        return self.call("card_critic", ctx, instr, images=images, label=f"🧑‍⚖️ 장면 심사 {gid}")
 
     def revise_card(self, ctx: str, card: dict[str, Any], dur: float, problem: str, direction: str,
                     still: Any, *, layout: str = "fullscreen", checks: tuple[str, ...] = (),

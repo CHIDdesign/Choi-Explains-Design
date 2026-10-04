@@ -364,6 +364,31 @@ function compileCard(gsap, root, opts) {
     void i;
   });
 
+  // 한 세계 + 카메라(Promptible remotion-motion-graphics-skill 'cinematic-camera' 의 문법 — MIT; 코드는 우리 것):
+  // 패널이 허공에 하나씩 뜨는 대신 캔버스보다 큰 장면 하나([data-world])를 짓고 카메라가 그 위를 움직인다.
+  // data-camera='[{"t":0,"x":960,"y":540,"z":1.6}, {"t":1.8,"x":960,"y":540,"z":1.6}, {"t":3,"x":2300,"y":540,"z":0.7}, …]'
+  // (t 초 · x,y = 초점의 세계 좌표 px · z = 배율). 같은 자리의 키가 이어지면 홀드, 바뀌면 그 사이 이동(power2.inOut).
+  // 세계 요소의 변환: translate(W/2 − x·z, H/2 − y·z) scale(z), 원점 0 0 → 초점이 캔버스 가운데에 온다.
+  const world = root.querySelector('[data-world]');
+  if (world) {
+    const keys = parseCamera(world.dataset.camera, problems);
+    if (keys.length) {
+      const W = root.offsetWidth || 1920;
+      const H = root.offsetHeight || 1080;
+      const ease = gentleEase(world.dataset.cameraEase && EASES.has(world.dataset.cameraEase) ? world.dataset.cameraEase : 'power2.inOut');
+      const at = (k) => ({x: W / 2 - k.x * k.z, y: H / 2 - k.y * k.z, scale: k.z});
+      tl.set(world, {...base, transformOrigin: '0 0', ...at(keys[0])}, 0);
+      for (let k = 1; k < keys.length; k++) {
+        const a = keys[k - 1];
+        const b = keys[k];
+        const d = Math.max(1 / fps, q(b.t) - q(a.t));
+        if (a.x === b.x && a.y === b.y && a.z === b.z) continue;     // 홀드
+        tl.to(world, {...base, ...at(b), duration: d, ease}, q(a.t));
+      }
+      kinds.push('camera');
+    }
+  }
+
   // 떠다니는 움직임(data-float="px", 선택 data-float-at · data-float-period): 등장이 끝난 뒤 카드 끝까지 느린 사인으로 오르내림·
   // 아주 작은 기울기. 요소마다 위상·주기를 달리해 함께 숨 쉬듯(같은 박자로 출렁이지 않게). 진폭 상한 14px(마지막 1초 검사 16px 아래)
   // 떠다니기·흩어짐은 자기 하위 타임라인에 — '정착'(등장이 끝나는 시각)을 잴 때 빼려고(카드 끝까지 이어지므로)
@@ -417,6 +442,32 @@ function compileCard(gsap, root, opts) {
     for (const c of counters) c.el.textContent = fmtNumber(c.o.v, c.fmt, c.prefix, c.suffix);
   };
   return {timeline: tl, duration: dur, settle: Math.min(settle, dur), seek, kinds, problems};
+}
+
+/** data-camera 키 목록 → [{t, x, y, z}] (시간순, 범위 안으로 — 잘못된 JSON·모양이면 problems 에 적고 빈 배열). studio/motion/card.py
+ *  clean_camera 와 같은 범위. 16개까지. */
+function parseCamera(raw, problems) {
+  if (!raw) return [];
+  let arr;
+  try {
+    arr = JSON.parse(raw);
+  } catch (_e) {
+    problems.push('anim_camera_invalid:json');
+    return [];
+  }
+  if (!Array.isArray(arr)) {
+    problems.push('anim_camera_invalid:not_list');
+    return [];
+  }
+  const keys = [];
+  for (const k of arr.slice(0, 16)) {
+    if (!k || typeof k !== 'object') continue;
+    keys.push({t: clamp(num(k.t, 0), 0, 60), x: clamp(num(k.x, 0), -20000, 20000), y: clamp(num(k.y, 0), -20000, 20000),
+      z: clamp(num(k.z, 1), 0.25, 4)});
+  }
+  keys.sort((a, b) => a.t - b.t);
+  if (keys.length < 2) problems.push('anim_camera_invalid:needs_two_keys');
+  return keys.length >= 2 ? keys : [];
 }
 
 /** 흩어지며 나가기: 보이는 단위(자기 글자·그림·채운 면이 있는 가장 바깥 요소)를 모아 화면 가운데에서 바깥 방향으로 날린다.
@@ -537,4 +588,4 @@ function runTimeline(gsapLib, tl, root, code, ctx, problems, libs) {
   tl.pause(0, true);
 }
 
-export {compileCard, KINDS as CARD_ANIM_KINDS};
+export {compileCard, parseCamera, KINDS as CARD_ANIM_KINDS};

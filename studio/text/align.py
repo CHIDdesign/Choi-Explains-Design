@@ -315,7 +315,10 @@ class ScriptAligner:
                 continue
             if len(un) > 8 and un[-1] in "다요죠까":
                 continue
-            if fuzz.ratio(un, vn[:len(un)]) >= 85:
+            # 마지막 글자는 절다 끊긴 토막이라 다르게 들릴 수 있다('안녕하세요 쵀' / '안녕하세요 최은준입니다' — 2026-10-04
+            # 채널 주인: 앞 토막이 안 잘리고 둘 다 나갔다) — 마지막 한 글자를 뺀 머리가 거의 같아도 끊긴 앞부분이다
+            head = un[:-1] if len(un) >= 4 else un
+            if fuzz.ratio(un, vn[:len(un)]) >= 85 or (len(un) >= 4 and fuzz.ratio(head, vn[:len(head)]) >= 90):
                 u.status = "retake"
                 u.note = f"끊긴 앞부분 — 바로 뒤 #{v.id} 가 처음부터 다시 말함"
 

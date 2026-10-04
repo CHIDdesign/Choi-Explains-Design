@@ -230,25 +230,33 @@ const audit = async (opts) => {
       const w = cs.fontWeight === 'bold' ? '700' : cs.fontWeight;
       if (!document.fonts.check(`${w} ${Math.round(fs)}px "${fam}"`)) push('font_not_loaded', `${fam} ${w}`, sel);
     }
-    if (fs < opts.minFont && !seenSmall.has(sel)) {
-      seenSmall.add(sel);
-      push('text_too_small', `${fs.toFixed(0)}px < ${opts.minFont}px`, sel);
-    }
-    // 넘침: 글자 상자가 캔버스 밖이거나, 상자가 고정 크기이고 내용이 더 클 때
     const rects = Array.from(el.getClientRects());
-    const outside = rects.some((r) => r.width > 0 && (r.left < R.left - 2 || r.right > R.right + 2 || r.top < R.top - 2 || r.bottom > R.bottom + 2));
+    const inWorld = !!el.closest('[data-world]');
+    // 세계([data-world]) 안의 글자는 카메라 배율만큼 작아진다 — 정착 시각의 실제 화면 크기로 잰다(상자 높이 ÷ 레이아웃 높이)
+    const zoom = inWorld && el.offsetHeight > 0 && rects.length ? el.getBoundingClientRect().height / el.offsetHeight : 1;
+    const fsEff = fs * (Number.isFinite(zoom) && zoom > 0 ? zoom : 1);
+    const onCanvas = (r) => r.width > 0 && r.right > R.left && r.left < R.right && r.bottom > R.top && r.top < R.bottom;
+    if (fsEff < opts.minFont && !seenSmall.has(sel) && (!inWorld || rects.some(onCanvas))) {
+      seenSmall.add(sel);
+      push('text_too_small', `${fsEff.toFixed(0)}px < ${opts.minFont}px` + (inWorld ? ` (camera zoom ${zoom.toFixed(2)})` : ''), sel);
+    }
+    // 넘침: 글자 상자가 캔버스 밖이거나, 상자가 고정 크기이고 내용이 더 클 때. 세계 안의 요소는 카메라가 보여 주는 만큼만
+    // 화면에 있는 것이 정상이라 캔버스 밖을 잘림으로 보지 않는다(홀드마다 화면이 비지 않는지는 camera_hold_empty 가 본다)
+    const outside = !inWorld && rects.some((r) => r.width > 0 && (r.left < R.left - 2 || r.right > R.right + 2 || r.top < R.top - 2 || r.bottom > R.bottom + 2));
     if (outside) push('outside_canvas', 'text box leaves the canvas', sel);
-    // 자막 자리(전체 화면·오버레이 카드의 아래 170px)에는 글자를 두지 않는다 — 자막이 위에 얹힌다
-    if (opts.captionZone > 0 && rects.some((r) => r.width > 0 && r.bottom > R.bottom - opts.captionZone)) {
+    // 자막 자리(전체 화면·오버레이 카드의 아래 170px)에는 글자를 두지 않는다 — 자막이 위에 얹힌다(화면에 보이는 상자만)
+    if (opts.captionZone > 0 && rects.some((r) => onCanvas(r) && r.bottom > R.bottom - opts.captionZone)) {
       push('text_in_caption_zone', `text within bottom ${opts.captionZone}px (caption area)`, sel);
     }
     if (cs.overflow !== 'visible' && (el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2)) {
       push('text_overflow', `content ${el.scrollWidth}×${el.scrollHeight} > box ${el.clientWidth}×${el.clientHeight}`, sel);
     }
     // 잘림: overflow:hidden 인 조상 상자 밖으로 글자 상자가 나가면(글이 상자보다 길다)
+    const worldEl = inWorld ? el.closest('[data-world]') : null;
     for (let a = el.parentElement; a && a !== root; a = a.parentElement) {
       const ao = getComputedStyle(a).overflow;
       if (ao === 'visible' || a.dataset.splitMask) continue;   // SplitText 마스크는 일부러 자르는 상자(정착하면 안에 다 들어온다)
+      if (worldEl && a.contains(worldEl)) continue;             // 세계를 담은 상자(.root)의 가장자리는 카메라 프레임이지 잘림이 아니다
       const A = a.getBoundingClientRect();
       const clipped = rects.some((r) => r.width > 0 && (r.right > A.right + 2 || r.bottom > A.bottom + 2 || r.left < A.left - 2 || r.top < A.top - 2));
       if (clipped) push('text_overflow', `text clipped by ${desc(a)} (${Math.round(A.width)}×${Math.round(A.height)})`, sel);
@@ -267,7 +275,7 @@ const audit = async (opts) => {
   }
   // 요소가 캔버스를 크게 벗어나는지(장식은 살짝 나갈 수 있다 → 절반 이상 밖이면)
   for (const el of root.querySelectorAll('*')) {
-    if (el.closest('style') || !visible(el)) continue;
+    if (el.closest('style') || !visible(el) || el.closest('[data-world]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4) continue;
     const ix = Math.max(0, Math.min(r.right, R.right) - Math.max(r.left, R.left));
@@ -317,6 +325,32 @@ const audit = async (opts) => {
       }
     } catch (e) {
       push('runtime_error', 'first-frame check: ' + (e && e.message ? e.message : e));
+    }
+  }
+  // 카메라 세계: 홀드(같은 자리의 키가 이어지는 구간)마다 화면이 비지 않아야 한다 — 빈 곳으로 이동만 하는 카메라(Promptible
+  // 거절 목록 'empty travel')를 막는다. 홀드의 잉크가 가장 큰 홀드의 25% 미만이면 camera_hold_empty
+  const world = root.querySelector('[data-world]');
+  if (world && compiled) {
+    let keys = [];
+    try { keys = typeof parseCamera === 'function' ? parseCamera(world.dataset.camera, []) : []; } catch (_e) { keys = []; }
+    const holds = [];
+    for (let k = 0; k < keys.length; k++) {
+      const a = keys[k];
+      const b = keys[k + 1];
+      if (!b || (a.x === b.x && a.y === b.y && a.z === b.z)) holds.push({t: b ? (a.t + b.t) / 2 : Math.min(opts.duration - 0.05, a.t + 0.4), k});
+    }
+    out.metrics.camera_keys = keys.length;
+    if (holds.length >= 2) {
+      try {
+        const inks = holds.map((h) => { compiled.seek(h.t); return {k: h.k, t: h.t, ink: inkNow()}; });
+        compiled.seek(opts.settle);
+        const top = Math.max(...inks.map((i) => i.ink));
+        for (const i of inks) {
+          if (top > 0 && i.ink < 0.25 * top) push('camera_hold_empty', `hold at ${i.t.toFixed(1)}s shows ${(100 * i.ink / top).toFixed(0)}% of the fullest hold — move the camera to the action`);
+        }
+      } catch (e) {
+        push('runtime_error', 'camera check: ' + (e && e.message ? e.message : e));
+      }
     }
   }
   if (compiled && lateTail) {

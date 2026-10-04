@@ -9,4 +9,5 @@ export type CompiledCard = {
 export type CardLibs = {SplitText?: unknown; CustomEase?: unknown; drawSVG?: boolean; morphSVG?: boolean; motionPath?: boolean};
 export function compileCard(gsap: unknown, root: Element,
   opts?: {fps?: number; duration?: number; timeline?: string; libs?: CardLibs; exit?: {at: number; dur: number}}): CompiledCard;
+export function parseCamera(raw: string | undefined, problems: string[]): {t: number; x: number; y: number; z: number}[];
 export const CARD_ANIM_KINDS: string[];

@@ -1,0 +1,61 @@
+"""🧑‍⚖️ 장면 심사(독립 critic, Promptible remotion-motion-graphics-skill 의 visual-critic 을 우리 구조로) — 진짜 Claude 없이:
+fail-closed 판정 · 심사 호출이 렌더 그림·말·종류를 받는다 · 설정 design_critic."""
+from __future__ import annotations
+
+import sys
+import threading
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from studio.agents import schemas as S  # noqa: E402
+from studio.agents import studio as ST  # noqa: E402
+
+
+def _scores(v: int) -> dict:
+    return {k: v for k in S.CRITIC_SCORES}
+
+
+def test_verdict_is_fail_closed():
+    ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": _scores(8)})
+    assert ok and why == []
+    assert not ST.critic_verdict({"verdict": "pass", "hard_failures": ["네온 글로우"], "scores": _scores(9)})[0]
+    assert not ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": {**_scores(9), "motion": 5}})[0]
+    ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": _scores(6)})
+    assert not ok and any("평균" in w for w in why)                      # 모두 6 → 평균 6.0 < 7
+    assert not ST.critic_verdict({"verdict": "reject", "hard_failures": [], "scores": _scores(8)})[0]
+    ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": {}})
+    assert not ok and len(why) == len(S.CRITIC_SCORES)                  # 점수 칸이 비면 통과가 아니다
+
+
+class FakeClaude:
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.lock = threading.Lock()
+
+    def structured(self, *, system, shared_context, instruction, schema, images=None, label="", **kw):
+        key = next(k for k, a in ST.AGENTS.items() if a.schema is schema)
+        with self.lock:
+            self.calls.append({"key": key, "instruction": instruction, "images": [i[0] for i in images or []], "label": label,
+                               "ctx_in_system": kw.get("ctx_in_system")})
+        return {"verdict": "reject", "hard_failures": ["가운데 정렬 3단 스택"], "scores": _scores(6), "fix": "제목을 왼쪽 축으로", "notes": "n"}
+
+
+def test_critique_sends_render_images_speech_and_kind():
+    fc = FakeClaude()
+    st = ST.Studio(fc, workers=2, use_stock=False)
+    st.house_board = lambda: None
+    res = st.critique("ctx", "g3", "자유 카드", "좋은 질문이 먼저입니다", [("g3", b"still", "image/jpeg"), ("g3#seq", b"seq", "image/jpeg")])
+    assert res["verdict"] == "reject"
+    c = fc.calls[-1]
+    assert c["key"] == "card_critic" and c["images"] == ["g3", "g3#seq"] and c["ctx_in_system"]
+    assert "- `g3`: 정착 시각의 화면" in c["instruction"] and "좋은 질문이 먼저입니다" in c["instruction"] and "자유 카드" in c["instruction"]
+    assert "## 하드 실패" in c["instruction"] and "card_critic" in ST.DESIGN_AGENTS and "card_critic" in ST.REF_FULL
+    ok, why = ST.critic_verdict(res)
+    assert not ok and why[0].startswith("하드 실패")
+
+
+def test_design_critic_setting_default_on():
+    from studio.settings import Settings
+    assert Settings().design_critic is True

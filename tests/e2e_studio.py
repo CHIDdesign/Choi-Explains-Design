@@ -131,6 +131,19 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         return {"ranking": [{"variant": 1, "score": 7.2, "strengths": "정확", "flaws": "평범"},
                             {"variant": 2, "score": 8.4, "strengths": "주인공이 크다", "flaws": "라벨이 작다"}],
                 "winner": 2, "reason": "0.5초에 무엇을 볼지 분명", "fix": "라벨을 40px 로"}
+    if agent == "card_critic":  # 🧑‍⚖️ 장면 심사 — 정착 화면 + 움직임 시트(+ 스타일 프레임·보드), 첫 카드는 한 번 탈락시켜 수정 고리를 돈다
+        assert "## 하드 실패" in instruction and n_images >= 2, (n_images, instruction[-300:])
+        m = re.search(r"- `(g\d+)`: 정착 시각의 화면", instruction)
+        gid = m.group(1) if m else ""
+        first = not any(c["agent"] == "card_critic" and c.get("gid") == gid and c.get("verdict") == "reject" for c in load_calls())
+        if "자유 카드" in instruction and first and gid and not any(c["agent"] == "card_critic" and c.get("verdict") == "reject"
+                                                                     for c in load_calls()):
+            return {"verdict": "reject", "hard_failures": ["가운데 정렬 3단 스택(PPT)"],
+                    "scores": {k: 6 for k in ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")},
+                    "fix": "제목을 왼쪽 축 150px 로 옮기고 180px 로", "notes": "템플릿 같다"}
+        return {"verdict": "pass", "hard_failures": [],
+                "scores": {k: 8 for k in ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")},
+                "fix": "", "notes": "이 말에서만 나올 화면"}
     if agent == "setpiece":    # 🛠 시그니처 장면 — 시안 방향(A·B·C안)마다 다른 예제 카드(검사 통과한 것)
         assert "## 이번 장면" in instruction and "🔎 주제 조사 노트" in json.dumps(body, ensure_ascii=False)
         # 레퍼런스 프레임 시트 + 스타일 프레임(정지·움직임) + 보드
@@ -329,7 +342,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
 def agent_of(schema: dict) -> str:
     props = set(schema.get("properties", {}))
     # 🎼 음악 감독(MUSIC)도 'shorts' 필드를 가지니 숏폼 PD 보다 먼저 가른다
-    for key, marker in (("research", "recreations"), ("style_frame", "rules"), ("design_judge", "winner"),
+    for key, marker in (("research", "recreations"), ("style_frame", "rules"), ("design_judge", "winner"), ("card_critic", "hard_failures"),
                         ("setpiece", "start_word"), ("music", "suite"),
                         ("cut_editor", "removals"), ("director", "logline"), ("editor", "moments"), ("motion", "scenes"),
                         ("stock", "requests"), ("stock", "items"),
@@ -353,6 +366,8 @@ class ClaudeHandler(BaseHTTPRequestHandler):
         ans = fake_answer(agent, body, n_images, instruction)
         if True:
             record_call({"agent": agent, "images": n_images, "effort": body.get("output_config", {}).get("effort"),
+                         **({"verdict": ans.get("verdict"), "gid": (re.search(r"- `(g\d+)`: 정착 시각의 화면", instruction) or [None, ""])[1]}
+                            if agent == "card_critic" else {}),
                          "world": "이 영상의 세계" in instruction,
                           "cache": [b.get("cache_control") is not None for b in blocks[:1]]})
         self.send_response(200)
@@ -603,6 +618,10 @@ def main() -> int:
     assert next(c for c in CALLS if c["agent"] == "art_director")["images"] >= 2
     assert next(c for c in CALLS if c["agent"] == "copy")["effort"] == "low"
     assert agents.count("art_director") == 2, agents  # 수정 후 재검수에서 통과
+    # 🧑‍⚖️ 장면 심사: 카드·모션 장면마다 독립 심사 — 첫 카드가 한 번 탈락 → 카드 수정 → 재심사 통과(fail-closed 고리)
+    critic = [c for c in CALLS if c["agent"] == "card_critic"]
+    assert critic and any(c.get("verdict") == "reject" for c in critic) and sum(1 for c in critic if c.get("verdict") == "pass") >= 1, critic
+    assert agents.index("card_critic") > agents.index("motion") and agents.index("card_critic") < agents.index("art_director"), agents
 
     lp = json.loads((job / "render" / "props_long.json").read_text(encoding="utf-8"))
     assert lp["captionPreset"] == "paper", lp["captionPreset"]        # 채널 템플릿 자막(흰 종이 상자)

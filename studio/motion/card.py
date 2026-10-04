@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import html as html_mod
+import json
 import re
 from html import escape
 from html.parser import HTMLParser
@@ -208,6 +210,21 @@ class _Sanitizer(HTMLParser):
             if kl.startswith("data-anim"):
                 anim[kl] = v.strip()
                 continue
+            if kl == "data-world":
+                out.append(("data-world", "1"))        # 한 세계(캔버스보다 큰 장면) — 카메라가 위를 움직인다(card-anim.mjs)
+                continue
+            if kl == "data-carry":
+                out.append(("data-carry", "1"))
+                continue
+            if kl == "data-camera":
+                keys = clean_camera(v, self.problems)
+                if keys:
+                    out.append(("data-camera", keys))
+                continue
+            if kl == "data-camera-ease":
+                if v in ANIM_EASES:
+                    out.append((kl, v))
+                continue
             if kl in ("data-float", "data-float-at", "data-float-period"):
                 # 떠다니는 움직임(card-anim.mjs) — 숫자만
                 try:
@@ -248,6 +265,39 @@ class _Sanitizer(HTMLParser):
                 out.extend(sorted(cleaned.items()))
                 self.anims.append(cleaned)
         return out
+
+
+CAMERA_MAX_KEYS = 16
+
+
+def clean_camera(raw: str, problems: Optional[list[str]] = None) -> str:
+    """data-camera(JSON 키 목록 [{t, x, y, z}]) → 검증·범위 안으로 잘라 다시 JSON 문자열로(틀리면 ''). card-anim.mjs parseCamera 와
+    같은 범위: t 0~60초 · x,y −20000~20000(세계 좌표 px) · z 0.25~4 · 16개까지, 둘 이상."""
+    problems = problems if problems is not None else []
+    try:
+        arr = json.loads(raw or "")
+    except (TypeError, ValueError):
+        problems.append("anim_camera_invalid:json")
+        return ""
+    if not isinstance(arr, list):
+        problems.append("anim_camera_invalid:not_list")
+        return ""
+    keys = []
+    for k in arr[:CAMERA_MAX_KEYS]:
+        if not isinstance(k, dict):
+            continue
+        t = _num(k.get("t", 0), 0.0, 60.0)
+        x = _num(k.get("x", 0), -20000.0, 20000.0)
+        y = _num(k.get("y", 0), -20000.0, 20000.0)
+        z = _num(k.get("z", 1), 0.25, 4.0)
+        if None in (t, x, y, z):
+            continue
+        keys.append({"t": round(t, 3), "x": round(x, 1), "y": round(y, 1), "z": round(z, 3)})
+    keys.sort(key=lambda k: k["t"])
+    if len(keys) < 2:
+        problems.append("anim_camera_invalid:needs_two_keys")
+        return ""
+    return json.dumps(keys, separators=(",", ":"))
 
 
 def clean_anim(attrs: dict[str, str], problems: Optional[list[str]] = None) -> dict[str, str]:
@@ -533,5 +583,12 @@ def card_settle_time(card: dict[str, Any]) -> float:
         if m.group(1) in ("kinetic-chars", "typewriter", "stagger-in"):
             d += s * 12   # 글자 12개쯤
         t = max(t, a + d)
+    # 카메라(data-camera)의 마지막 이동이 끝나는 시각도 정착이다
+    for m in re.finditer(r'data-camera="([^"]+)"', card.get("html") or ""):
+        try:
+            keys = json.loads(html_mod.unescape(m.group(1)))
+            t = max(t, max(float(k.get("t", 0)) for k in keys if isinstance(k, dict)))
+        except (TypeError, ValueError):
+            continue
     return t
 
