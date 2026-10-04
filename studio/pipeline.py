@@ -143,8 +143,14 @@ SOFT_STAGES = {"audio", "face", "research", "grade", "verify", "broll", "stock",
 MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 
 
+DESIGN_STOP = ("render", "master", "export")   # until='design': 검수(자기 검토·장면 심사·장면 시트)까지, 50분 렌더 없이
+
+
 def schedule_for(until: str = "all") -> list[list[list[str]]]:
-    """until='plan' 이면 기획까지만(편집본·렌더 없이)."""
+    """until='plan' 이면 기획까지만(편집본·렌더 없이), 'design' 이면 검수까지(🧪 디자인 벤치 — 새 대본에서 디자이너가 실제로
+    무엇을 짓는지 10분쯤에 `부가자료/장면시트_렌더전.jpg` 로 본다. 2026-10-04 채널 주인: "예시는 좋은데 새 대본이면 퀄리티가 떨어진다")."""
+    if until == "design":
+        return [[list(lane) for lane in st] for st in SCHEDULE if not any(k in DESIGN_STOP for lane in st for k in lane)]
     if until != "plan":
         return [[list(lane) for lane in st] for st in SCHEDULE]
     out = []
@@ -464,6 +470,9 @@ class Pipeline:
             raise
         mins = (time.time() - t0) / 60
         self._log_time_summary(schedule, mins)
+        if until == "design":
+            self.log(f"🧪 디자인 벤치 끝({mins:.1f}분): 장면 시트 {self.extras / '장면시트_렌더전.jpg'} · 계획 {self.work / 'plan.json'} · "
+                     f"스틸 {self.work / 'qa'} — 진단자료.zip 과 함께 보내면 디자이너의 실제 출력으로 프롬프트를 고칠 수 있다")
         self.log(f"완료 ({mins:.1f}분) → {self.out}")
         diag.write(self)
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}

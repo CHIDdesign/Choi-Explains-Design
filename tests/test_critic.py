@@ -75,3 +75,11 @@ def test_scene_sheet_collects_qa_stills(tmp_path):
     with Image.open(out) as im:
         assert im.width >= 640 * 2 and im.height >= 360 * 2
     assert scene_sheet([], tmp_path / "x.jpg") is None
+
+
+def test_design_bench_schedule_stops_before_render():
+    """🧪 디자인 벤치(until='design'): 검수(자기 검토·장면 심사·장면 시트)까지만 — 렌더·마스터·마무리 칸은 없다."""
+    from studio.pipeline import schedule_for
+    keys = {k for st in schedule_for("design") for lane in st for k in lane}
+    assert {"director", "qa", "music", "stock"} <= keys and not ({"render", "master", "export"} & keys)
+    assert {k for st in schedule_for("all") for lane in st for k in lane} >= {"render", "master", "export"}

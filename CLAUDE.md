@@ -129,5 +129,6 @@ Python(PySide6 창 + 파이프라인) → Remotion(React) 무음 렌더 → FFmp
 - `python tests/e2e_synthetic.py --browser <chrome> --multi retake` (같은 대본을 두 번 찍은 원본 2개 → 길이가 두 배가 되지 않고, 같은 대본 문장이 한 번만)
 - `python tests/e2e_realistic.py --face 얼굴클립.mp4` (gTTS 한국어 음성 + 실제 faster-whisper 로 되풀이·추임새·무음 정리와 편집 오류 검사 확인)
 - `python tests/e2e_studio.py --browser <chrome-headless-shell>` (가짜 Claude Code CLI·Pixabay·Unsplash 로 스튜디오·스톡·검수 전체, `--backend api` 는 가짜 API 서버)
+- 🧪 **디자인 벤치**(실제 Claude 가 있는 PC 에서): `python -m studio rerender <작업폴더> --until design --replan` — 기획을 새로 짓고 자기 검토·장면 심사·`부가자료/장면시트_렌더전.jpg` 까지만(렌더 없이 10분쯤). E2E 는 가짜 Claude 가 예시 카드를 돌려주므로 **새 대본에서 디자이너가 짓는 품질은 이것으로만 본다** — 장면 시트 + `진단자료.zip` 을 보고 프롬프트를 고친다.
 - E2E·테스트에서 **진짜 claude CLI 를 부르지 않도록** 반드시 `settings.claude_code_path` 를 가짜 CLI 로 지정하거나 `ai_backend="api"` 로.
 - 결과 훑어보기: `부가자료/검토시트_*.jpg`. 템플릿 시각 확인: `cd renderer && npx remotion render src/index.ts LongForm out/f --sequence --frames=160,330 --image-format=jpeg`
