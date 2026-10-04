@@ -73,7 +73,7 @@ const fontFaces = () => {
   return {css: faces.join('\n'), links: links.join('\n')};
 };
 
-const harness = (card, animSrc, gsapSrc) => {
+const harness = (card, animSrc, gsapSrc, pluginSrc) => {
   const {css, links} = fontFaces();
   const varCss = Object.entries(vars).map(([k, v]) => `${k}:${v};`).join('');
   const bg = card.layout === 'overlay' ? '#6b6b6b' : '#EFEAE0';
@@ -90,8 +90,11 @@ ${card.css}
 <script>window.__errors=[];window.addEventListener('error',(e)=>{window.__errors.push(String(e.message||e));});
 window.__cardTimeline=${JSON.stringify(card.timeline || '')};</script>
 <script>${gsapSrc}</script>
+<script>${pluginSrc}
+gsap.registerPlugin(SplitText, CustomEase, DrawSVGPlugin, MorphSVGPlugin, MotionPathPlugin);
+window.__libs = {SplitText, CustomEase, drawSVG: true, morphSVG: true, motionPath: true};</script>
 <script>${animSrc}
-window.__compileCard = (root, opts) => compileCard(window.gsap, root, opts);</script>
+window.__compileCard = (root, opts) => compileCard(window.gsap, root, Object.assign({libs: window.__libs}, opts));</script>
 </body></html>`;
 };
 
@@ -311,13 +314,16 @@ const main = async () => {
   const animSrc = fs.readFileSync(path.join(root, 'vendor', 'hyperframes', 'card-anim.mjs'), 'utf-8')
     .replace(/^export\s+\{[^}]*\};?\s*$/m, '');
   const gsapSrc = fs.readFileSync(path.join(root, 'node_modules', 'gsap', 'dist', 'gsap.min.js'), 'utf-8');
+  // 렌더(HtmlCard.tsx)와 같은 플러그인 — 검사와 렌더가 다르면 검사가 통과시킨 카드가 렌더에서 깨진다
+  const pluginSrc = ['SplitText', 'CustomEase', 'DrawSVGPlugin', 'MorphSVGPlugin', 'MotionPathPlugin']
+    .map((n) => fs.readFileSync(path.join(root, 'node_modules', 'gsap', 'dist', `${n}.min.js`), 'utf-8')).join('\n');
   const chromiumOptions = {gl: job.gl || (process.platform === 'win32' ? 'angle' : 'swangle')};
   const browser = await openBrowser('chrome', {browserExecutable: job.browserExecutable || null, chromiumOptions});
   const results = {};
   try {
     for (const card of job.cards || []) {
       const file = path.join(outDir, `${card.id}.html`);
-      fs.writeFileSync(file, harness(card, animSrc, gsapSrc));
+      fs.writeFileSync(file, harness(card, animSrc, gsapSrc, pluginSrc));
       const page = await browser.newPage({context: () => null, logLevel: 'error', indent: false, pageIndex: 0,
         onBrowserLog: null, onLog: () => undefined});
       let res;

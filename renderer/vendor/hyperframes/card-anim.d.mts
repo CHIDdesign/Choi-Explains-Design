@@ -5,5 +5,7 @@ export type CompiledCard = {
   kinds: string[];
   problems: string[];
 };
-export function compileCard(gsap: unknown, root: Element, opts?: {fps?: number; duration?: number; timeline?: string}): CompiledCard;
+export type CardLibs = {SplitText?: unknown; CustomEase?: unknown; drawSVG?: boolean; morphSVG?: boolean; motionPath?: boolean};
+export function compileCard(gsap: unknown, root: Element,
+  opts?: {fps?: number; duration?: number; timeline?: string; libs?: CardLibs}): CompiledCard;
 export const CARD_ANIM_KINDS: string[];

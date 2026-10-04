@@ -10,7 +10,13 @@
  */
 
 const KINDS = ['fade-in', 'fade-out', 'slide-in', 'kinetic-chars', 'typewriter', 'count-up', 'draw-path', 'grow-x', 'grow-y',
-  'scale-pop', 'blur-in', 'mask-reveal', 'morph-to', 'highlight', 'stagger-in', 'pulse'];
+  'scale-pop', 'blur-in', 'mask-reveal', 'morph-to', 'highlight', 'stagger-in', 'pulse',
+  // GSAP 3.13+ 무료 플러그인(2026-10-04 채널 주인: "PPT 같다" — Jitter 수준의 움직임): 마스크 안에서 올라오는 어절·줄·글자
+  // (SplitText), 선이 그려지는 도식(DrawSVG), 모양이 다른 모양으로 바뀜(MorphSVG), 경로를 따라 이동(MotionPath)
+  'split-words', 'split-lines', 'split-chars', 'draw-svg', 'morph-svg', 'follow-path'];
+const SEL_RE = /^[#.][A-Za-z][A-Za-z0-9_-]{0,40}$/;
+let CE_N = 0; // CustomEase 이름은 전역이라 카드마다 겹치지 않게
+const SPLIT_KEYS = ['type', 'mask', 'wordsClass', 'charsClass', 'linesClass', 'smartWrap', 'reduceWhiteSpace'];
 
 const EASES = new Set(['power1.out', 'power2.out', 'power3.out', 'power4.out', 'power2.in', 'power2.inOut', 'power3.inOut',
   'expo.out', 'back.out(1.6)', 'back.out(1.2)', 'sine.inOut', 'none']);
@@ -66,6 +72,8 @@ const splitChars = (el) => {
  * @returns {{timeline, duration, seek(t), kinds: string[], problems: string[]}}
  */
 function compileCard(gsap, root, opts) {
+  // libs = {SplitText, CustomEase, drawSVG, morphSVG, motionPath} — 호스트(HtmlCard·check.mjs)가 등록한 플러그인. 없으면 예전 방식으로 대체
+  const libs = (opts && opts.libs) || {};
   const fps = (opts && opts.fps) || 30;
   const total = (opts && opts.duration) || 0;
   const q = (t) => Math.round(t * fps) / fps;
@@ -198,6 +206,82 @@ function compileCard(gsap, root, opts) {
           ease: easeOf(el, 'power2.inOut')}, at);
         break;
       }
+      case 'split-words':
+      case 'split-lines':
+      case 'split-chars': {
+        // 마스크(넘침 감춤) 안에서 아래로부터 올라온다 — 잘린 자리가 보이지 않아 '찍힌' 글자처럼 선다
+        const unit = kind === 'split-words' ? 'words' : kind === 'split-lines' ? 'lines' : 'chars';
+        let parts = [];
+        if (libs.SplitText) {
+          const sp = new libs.SplitText(el, {type: unit === 'lines' ? 'lines' : unit === 'words' ? 'words' : 'words,chars',
+            mask: unit, aria: 'none'});
+          parts = sp[unit] || [];
+        } else {
+          splitChars(el);
+          parts = Array.from(el.querySelectorAll('.char'));
+        }
+        if (!parts.length) break;
+        const st = clamp(num(el.dataset.animStagger, unit === 'chars' ? 0.025 : unit === 'words' ? 0.06 : 0.1), 0.005, 0.5);
+        tl.fromTo(parts, {yPercent: 110, opacity: unit === 'chars' ? 0 : 1},
+          {...base, yPercent: 0, opacity: 1, duration: D, ease: easeOf(el, 'expo.out'), stagger: st}, at);
+        break;
+      }
+      case 'draw-svg': {
+        const shapes = /^(path|line|polyline|polygon|circle|ellipse|rect)$/i.test(el.tagName) ? [el]
+          : Array.from(el.querySelectorAll('path, line, polyline, polygon, circle, ellipse, rect'));
+        if (!shapes.length) break;
+        const origin = el.dataset.animOrigin || 'start';
+        const from = origin === 'center' ? '50% 50%' : origin === 'end' ? '100% 100%' : '0% 0%';
+        const st = clamp(num(el.dataset.animStagger, 0.08), 0, 0.5);
+        if (libs.drawSVG) {
+          tl.fromTo(shapes, {drawSVG: from}, {...base, drawSVG: '0% 100%', duration: D, ease: easeOf(el, 'power2.inOut'),
+            stagger: st}, at);
+        } else {
+          shapes.forEach((p, k) => {
+            let L = 1000;
+            try {
+              L = p.getTotalLength() || 1000;
+            } catch (_e) {
+              /* 레이아웃 전 */
+            }
+            tl.fromTo(p, {strokeDasharray: L, strokeDashoffset: L},
+              {...base, strokeDashoffset: 0, duration: D, ease: easeOf(el, 'power2.inOut')}, at + k * st);
+          });
+        }
+        break;
+      }
+      case 'morph-svg': {
+        const sel = el.dataset.animTarget || '';
+        const target = SEL_RE.test(sel) ? root.querySelector(sel) : null;
+        if (!target) {
+          problems.push('anim_morph_target_missing:' + sel);
+          break;
+        }
+        if (libs.morphSVG) {
+          tl.to(el, {...base, morphSVG: target, duration: D, ease: easeOf(el, 'power2.inOut')}, at);
+        } else {
+          tl.to(el, {...base, opacity: 0, duration: D / 2}, at).fromTo(target, {opacity: 0}, {...base, opacity: 1, duration: D / 2},
+            at + D / 2);
+        }
+        break;
+      }
+      case 'follow-path': {
+        const sel = el.dataset.animPath || '';
+        const path = SEL_RE.test(sel) ? root.querySelector(sel) : null;
+        if (!path) {
+          problems.push('anim_path_missing:' + sel);
+          break;
+        }
+        if (libs.motionPath) {
+          tl.fromTo(el, {opacity: 0}, {...base, opacity: 1, duration: 0.2}, at);
+          tl.fromTo(el, {motionPath: {path, align: path, alignOrigin: [0.5, 0.5], start: 0, end: 0}},
+            {...base, motionPath: {path, align: path, alignOrigin: [0.5, 0.5], start: 0, end: 1},
+              duration: D, ease: easeOf(el, 'power2.inOut')}, at);
+        } else {
+          tl.fromTo(el, {opacity: 0}, {...base, opacity: 1, duration: D, ease: easeOf(el, 'power2.out')}, at);
+        }
+        break;
+      }
       case 'stagger-in': {
         const kids = Array.from(el.children);
         if (!kids.length) break;
@@ -219,7 +303,7 @@ function compileCard(gsap, root, opts) {
   // 같은 일시정지 타임라인 tl 위에만 트윈을 얹는다(seek 가 전부 제어 → 결정론). 전역·네트워크·시계·난수는 이름을 가려 undefined 로.
   if (opts && typeof opts.timeline === 'string' && opts.timeline.trim()) {
     runTimeline(gsap, tl, root, opts.timeline, {duration: opts.duration || 8, fps: opts.fps || 30,
-      w: root.getBoundingClientRect().width, h: root.getBoundingClientRect().height}, problems);
+      w: root.getBoundingClientRect().width, h: root.getBoundingClientRect().height}, problems, libs);
   }
   const dur = tl.duration();
   const seek = (t) => {
@@ -232,8 +316,10 @@ function compileCard(gsap, root, opts) {
 }
 
 /** 자유 타임라인 실행: fn(tl, q, gsap, ctx). q(sel) = 카드 안 요소 배열, gsap = 안전한 부분집합(utils·parseEase·nested timeline). */
-function runTimeline(gsapLib, tl, root, code, ctx, problems) {
+function runTimeline(gsapLib, tl, root, code, ctx, problems, libs) {
+  libs = libs || {};
   const q = (sel) => Array.from(root.querySelectorAll(sel));
+  const targets = (t) => (typeof t === 'string' ? q(t) : Array.isArray(t) ? t : t ? [t] : []);
   const utils = {};
   for (const k of ['interpolate', 'mapRange', 'clamp', 'wrap', 'wrapYoyo', 'snap', 'normalize', 'pipe', 'unitize', 'toArray',
     'distribute', 'splitColor', 'getUnit', 'selector']) {
@@ -253,8 +339,29 @@ function runTimeline(gsapLib, tl, root, code, ctx, problems) {
       return sub;
     },
     to: (...a) => tl.to(...a), from: (...a) => tl.from(...a), fromTo: (...a) => tl.fromTo(...a), set: (...a) => tl.set(...a),
+    // SplitText: gsap.splitText('.headline', {type: 'words', mask: 'words'}) → {chars, words, lines}(카드 안 요소만, 콜백 옵션 없음)
+    splitText: (t, vars) => {
+      const els = targets(t);
+      const v = {aria: 'none'};
+      for (const k of SPLIT_KEYS) if (vars && vars[k] !== undefined) v[k] = vars[k];
+      if (!libs.SplitText || !els.length) {
+        problems.push('timeline_split_unavailable');
+        return {chars: [], words: els, lines: els};
+      }
+      const sp = new libs.SplitText(els, v);
+      return {chars: sp.chars || [], words: sp.words || [], lines: sp.lines || []};
+    },
+    // CustomEase: gsap.customEase('M0,0 C0.2,0 0.1,1 1,1') → ease 이름(트윈의 ease 에 그대로)
+    customEase: (data) => {
+      if (!libs.CustomEase || typeof data !== 'string' || data.length > 400) return 'power2.out';
+      const id = 'choiEase' + (CE_N++);
+      libs.CustomEase.create(id, data);
+      return id;
+    },
+    // drawSVG · morphSVG · motionPath 는 트윈 값으로 쓴다(tl.fromTo(q('path'), {drawSVG: '0%'}, {drawSVG: '100%'}))
+    plugins: {drawSVG: Boolean(libs.drawSVG), morphSVG: Boolean(libs.morphSVG), motionPath: Boolean(libs.motionPath)},
   };
-  const before = tl.duration();
+  const before = tl.getChildren(true, true, true).length;   // 길이가 아니라 트윈 수로 — 기존 길이 안에 얹은 트윈도 '추가'다
   try {
     // strict 모드에서는 'eval'·'arguments' 를 매개변수 이름으로 못 쓴다 — eval 은 정화 단계(card.py TIMELINE_FORBIDDEN)가 막는다
     const fn = new Function('tl', 'q', 'gsap', 'ctx', 'window', 'document', 'globalThis', 'self', 'fetch', 'XMLHttpRequest',
@@ -275,7 +382,7 @@ function runTimeline(gsapLib, tl, root, code, ctx, problems) {
       }
     }
   }
-  if (tl.duration() === before) problems.push('timeline_added_nothing');
+  if (tl.getChildren(true, true, true).length === before) problems.push('timeline_added_nothing');
   tl.pause(0, true);
 }
 

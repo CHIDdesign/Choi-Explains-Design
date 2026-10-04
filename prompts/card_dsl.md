@@ -77,6 +77,12 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 | `highlight` | 형광펜 채우기(핵심어) | — (강조색 반투명이 왼쪽에서 채워진다) |
 | `stagger-in` | 자식 순서대로 등장(목록) | `stagger`(기본 0.09) |
 | `pulse` | 한 번 두근 | `scale`(기본 1.05) |
+| `split-words` | **어절이 마스크 안에서 아래로부터 올라옴**(쇼릴 제목의 기본 — Jitter 'sliding text reveal') | `stagger`(기본 0.06), `duration` 0.6~0.8, ease 기본 `expo.out` |
+| `split-lines` | 줄 단위로 마스크 안에서 올라옴(본문·인용 두세 줄) | `stagger`(기본 0.1) |
+| `split-chars` | 글자 단위로 올라옴(짧은 한 방 낱말·숫자) | `stagger`(기본 0.025) |
+| `draw-svg` | SVG 선·도형이 그려짐(DrawSVG — path·line·polyline·circle·rect 모두) | `origin=start\|center\|end`(가운데서 양쪽으로 = center), `stagger`(여러 선) |
+| `morph-svg` | 한 `<path>` 가 다른 path 모양으로 바뀜(MorphSVG — 원 → 사각, 스케치 → 완성) | `target="#id"`(카드 안 다른 path, `fill="none" stroke="none"` 로 숨겨 둔다) |
+| `follow-path` | 요소가 SVG 경로를 따라 이동(MotionPath — 과정·여정·흐름) | `path="#id"`(카드 안 path) |
 
 `ease`: `power2.out`(기본) · `power2.inOut` · `power3.out` · `expo.out` · `back.out(1.6)` · `sine.inOut` · `none`.
 
@@ -110,10 +116,24 @@ HyperFrames 의 talking-head 카드 규약을 따르며(스크립트 없음, 애
 - `tl` — 이 카드의 **일시정지된** 타임라인. 모든 트윈은 `tl.to / tl.from / tl.fromTo / tl.set / tl.add` 로 여기에만 얹는다(위치 인자 `0`, `0.4`, `"<"`, `"+=0.2"` 로 겹침·순서).
 - `q(selector)` — 카드 안 요소 배열(`q('.word')`, `q('.row')[2]`). `gsap.utils`(interpolate·mapRange·clamp·snap·distribute…)·`gsap.parseEase`·`gsap.timeline(vars)`(부모 `tl` 에 자동으로 붙는 하위 타임라인)만 있다.
 - `ctx` — `{duration, fps, w, h}`(카드 길이·캔버스).
+- **플러그인**(GSAP 3.13+ 무료 — 렌더와 검사에 등록돼 있다):
+  - `gsap.splitText(target, {type: 'words'|'lines'|'chars'|'words,chars', mask: 'words'|'lines'|'chars'})` → `{words, lines, chars}`
+    (target 은 선택자 문자열이나 `q()` 결과). 마스크를 주면 각 조각이 넘침 감춤 상자에 들어가 `yPercent: 110 → 0` 으로 '올라온다'.
+  - `gsap.customEase('M0,0 C0.12,0.9 0.2,1 1,1')` → ease 이름(트윈의 `ease` 에). 이 채널 기본 곡선은 위 값(빠르게 출발해 길게 안착).
+  - 트윈 값: `drawSVG: '0% 100%'`(선 그리기, `'50% 50%'` 에서 시작하면 가운데서 양쪽으로) · `morphSVG: q('#target')[0]` ·
+    `motionPath: {path: q('#route')[0], align: q('#route')[0], alignOrigin: [0.5, 0.5], start: 0, end: 1}`.
 - 결정론: 값은 `seek(t)` 로만 정해진다. **금지**: 콜백(onUpdate·onComplete…), `Date`·난수·타이머·`window`·`document`·네트워크·`eval`·`import`·`while`. 6000자 이하. 쓰면 카드가 거절된다.
 - 길이: 마지막 트윈 끝 ≤ 카드 길이 − 1.0초(`anim_ends_too_late`). 0.3초 안에 판·제목이 서 있어야 한다(`anim_first_frame_empty`).
 - `data-anim` 과 같이 써도 된다(선언이 먼저 붙고, 코드가 그 뒤에 얹힌다). 숫자 카운트업은 `data-anim="count-up"` 으로.
-예:
+예(플러그인):
+```js
+const head = gsap.splitText('.headline', {type: 'words', mask: 'words'});
+const glide = gsap.customEase('M0,0 C0.12,0.9 0.2,1 1,1');
+tl.from(head.words, {yPercent: 110, duration: 0.75, ease: glide, stagger: 0.06}, 0.1);
+tl.fromTo(q('.diagram path'), {drawSVG: '50% 50%'}, {drawSVG: '0% 100%', duration: 1.1, ease: 'power2.inOut', stagger: 0.12}, 0.5);
+tl.to(q('#sketch')[0], {morphSVG: q('#final')[0], duration: 0.8, ease: 'power2.inOut'}, 2.0);
+```
+예(기본):
 ```js
 const words = q('.headline .w');
 tl.set(words, {opacity: 0, yPercent: 110});

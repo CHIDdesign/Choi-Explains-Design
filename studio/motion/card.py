@@ -33,14 +33,17 @@ TIMELINE_FORBIDDEN = re.compile(
 MAX_ELEMENTS = 260
 
 ANIM_KINDS = {"fade-in", "fade-out", "slide-in", "kinetic-chars", "typewriter", "count-up", "draw-path", "grow-x", "grow-y",
-              "scale-pop", "blur-in", "mask-reveal", "morph-to", "highlight", "stagger-in", "pulse"}
+              "scale-pop", "blur-in", "mask-reveal", "morph-to", "highlight", "stagger-in", "pulse",
+              # GSAP 무료 플러그인(SplitText·DrawSVG·MorphSVG·MotionPath) — card-anim.mjs 와 같은 목록
+              "split-words", "split-lines", "split-chars", "draw-svg", "morph-svg", "follow-path"}
+SEL_RE = re.compile(r"^[#.][A-Za-z][A-Za-z0-9_-]{0,40}$")   # morph-svg 의 target · follow-path 의 path(카드 안 선택자)
 ANIM_EASES = {"power1.out", "power2.out", "power3.out", "power4.out", "power2.in", "power2.inOut", "power3.inOut",
               "expo.out", "back.out(1.6)", "back.out(1.2)", "sine.inOut", "none"}
 # data-anim-* 값의 범위(초·px). 밖이면 잘라 넣는다.
 ANIM_RANGES = {"at": (0.0, 60.0), "duration": (0.05, 4.0), "stagger": (0.005, 0.6), "distance": (0.0, 600.0),
                "target-w": (0.0, 4000.0), "target-h": (0.0, 4000.0), "from": None, "to": None, "scale": (1.0, 1.3)}
 ANIM_ENUMS = {"from": {"left", "right", "top", "bottom"}, "direction": {"left", "right", "top", "bottom"},
-              "pattern": {"pop", "fade"}, "format": {".0f", ".1f", ".2f", ",d"}}
+              "pattern": {"pop", "fade"}, "format": {".0f", ".1f", ".2f", ",d"}, "origin": {"start", "center", "end"}}
 
 VOID_TAGS = {"br", "hr", "img", "path", "circle", "rect", "line", "polyline", "polygon", "ellipse", "use", "stop"}
 ALLOWED_TAGS = {"a", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "ul", "ol", "li", "em", "strong", "b", "i", "u", "s", "small",
@@ -260,6 +263,12 @@ def clean_anim(attrs: dict[str, str], problems: Optional[list[str]] = None) -> d
             continue
         if p in ("prefix", "suffix"):
             out[k] = v[:8]
+            continue
+        if p in ("target", "path"):
+            if SEL_RE.match(v):
+                out[k] = v
+            else:
+                problems.append(f"anim_bad_selector:{p}")
             continue
         if p in ANIM_RANGES:
             rng = ANIM_RANGES[p]

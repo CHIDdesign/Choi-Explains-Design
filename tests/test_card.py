@@ -165,3 +165,46 @@ def test_card_timeline_is_kept_and_forbidden_tokens_reject_it():
     assert c3 and "timeline" not in c3 and "timeline_no_tweens" in c3.get("problems", [])
     c4 = clean_card({"html": html, "timeline": good, "settle_s": 2.4}, card_id="t")
     assert c4 and c4["settle_s"] == 2.4 and card_settle_time(c4) >= 2.4
+
+
+
+def test_gsap_plugin_kinds_are_validated_and_render_in_the_checker(tmp_path):
+    """2026-10-04 '기본 PPT 같다': GSAP 무료 플러그인(SplitText·DrawSVG·MorphSVG·MotionPath·CustomEase)을 카드에서 쓴다 —
+    정화가 새 종류·선택자를 받아들이고, 렌더와 같은 Chrome 검사가 실제로 트윈을 짓는다(렌더러도 같은 것을 등록)."""
+    import shutil
+
+    import pytest
+
+    from studio.motion.card import clean_anim
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    probs: list[str] = []
+    assert clean_anim({"data-anim": "morph-svg", "data-anim-target": "#sq", "data-anim-at": "1"}, probs)["data-anim-target"] == "#sq"
+    assert "data-anim-path" not in clean_anim({"data-anim": "follow-path", "data-anim-path": "url(x)"}, probs)
+    assert any(p.startswith("anim_bad_selector") for p in probs)
+    assert clean_anim({"data-anim": "draw-svg", "data-anim-origin": "center"})["data-anim-origin"] == "center"
+    tsx = (ROOT / "renderer" / "src" / "components" / "card" / "HtmlCard.tsx").read_text(encoding="utf-8")
+    chk = (ROOT / "renderer" / "scripts" / "check.mjs").read_text(encoding="utf-8")
+    for name in ("SplitText", "CustomEase", "DrawSVGPlugin", "MorphSVGPlugin", "MotionPathPlugin"):
+        assert name in tsx and name in chk
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    html = ('<div class="card" data-card-id="p1"><style>.card[data-card-id="p1"] .root{width:100%;height:100%;'
+            'position:relative;background:var(--paper)}.card[data-card-id="p1"] .h{position:absolute;left:140px;top:150px;'
+            'font-family:var(--font-head);font-size:120px;margin:0;color:var(--ink)}.card[data-card-id="p1"] svg{position:absolute;'
+            'left:900px;top:420px;width:820px;height:420px}.card[data-card-id="p1"] .dot{position:absolute;left:0;top:0;'
+            'width:36px;height:36px;border-radius:50%;background:var(--accent)}</style><div class="root">'
+            '<h1 class="h" data-anim="split-words" data-anim-at="0.1" data-anim-duration="0.7">처음 본 것에 붙잡힌다</h1>'
+            '<svg viewBox="0 0 820 420"><path id="route" d="M20 380 C 220 380, 260 60, 420 60 S 640 360, 800 40" fill="none" '
+            'stroke="var(--ink)" stroke-width="6" data-anim="draw-svg" data-anim-at="0.2" data-anim-duration="1.2"/>'
+            '<path id="blob" d="M60 200 a80 80 0 1 0 160 0 a80 80 0 1 0 -160 0" fill="var(--accent)" data-anim="morph-svg" '
+            'data-anim-target="#sq" data-anim-at="1.8" data-anim-duration="0.8"/><path id="sq" d="M560 120 h180 v180 h-180 z" '
+            'fill="none" stroke="none"/></svg><div class="dot" data-anim="follow-path" data-anim-path="#route" '
+            'data-anim-at="1.0" data-anim-duration="1.6"></div></div></div>')
+    tl = ("const p = gsap.splitText('.h', {type: 'chars'});\nconst e = gsap.customEase('M0,0 C0.12,0.9 0.2,1 1,1');\n"
+          "tl.fromTo(p.chars, {opacity: 0.4}, {opacity: 1, duration: 0.3, stagger: 0.02, ease: e}, 1.0);")
+    card = clean_card({"id": "p1", "html": html, "timeline": tl, "style": "editorial"}, layout="fullscreen", card_id="p1")
+    res = check_cards([card], node=find_node(""), out_dir=tmp_path, fps=30, durations={"p1": 6.0}, browser_executable=browser)
+    assert res["p1"]["ok"], res["p1"]["problems"]
+    assert {"split-words", "draw-svg", "morph-svg", "follow-path"} <= set(res["p1"]["metrics"]["anims"])
