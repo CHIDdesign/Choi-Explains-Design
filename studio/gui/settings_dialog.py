@@ -162,6 +162,9 @@ class SettingsDialog(QDialog):
         self.variants.setToolTip("시그니처 장면마다 서로 다른 방향의 시안을 이만큼 지어 렌더한 뒤 심사가 하나를 고릅니다. "
                                  "1 이면 경쟁 없이 한 안(토큰이 가장 적음).")
         m.addRow("시안 수", self.variants)
+        self.screen_look = QCheckBox("모니터 질감 — 그래픽 위에 아주 약간의 흐림·빛 번짐·화면 격자·입자(레트로하면서 디지털한 화면)")
+        self.screen_look.setChecked(float(getattr(s, "screen_look", 1.0) or 0) > 0)
+        m.addRow("화면 질감", self.screen_look)
         m.addRow("", hint("레퍼런스 보드: user/taste 폴더에 좋아하는 모션 디자인의 정지 화면을 넣으면 모든 디자이너·심사가 매번 그림으로 봅니다. "
                           "결과 화면의 '장면 평가'(👍/👎)도 여기에 쌓여 다음 작업부터 반영됩니다."))
         v.addLayout(m)
@@ -377,6 +380,7 @@ class SettingsDialog(QDialog):
         s.research_web = self.research_web.isChecked()
         s.style_frame = self.style_frame.isChecked()
         s.design_variants = self.variants.value()
+        s.screen_look = 1.0 if self.screen_look.isChecked() else 0.0
         s.pixabay_api_key = self.pixabay.text().strip()
         s.unsplash_access_key = self.unsplash.text().strip()
         s.coverr_api_key = self.coverr.text().strip()

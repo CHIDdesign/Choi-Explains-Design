@@ -54,6 +54,20 @@ def test_clean_card_rescopes_css_and_strips_wrapper():
     assert fragment(c).startswith('<div class="card" data-card-id="g7">')
 
 
+def test_clean_card_keeps_camelcase_svg_attrs_and_tags():
+    """HTMLParser 는 속성·태그 이름을 소문자로 준다 — viewBox·linearGradient·clipPath 가 지워져 아이콘이 24px 원래
+    크기로 작게 그려졌다(2026-10-04). 원래 이름으로 남고, 다시 정리해도 같다."""
+    html = ('<div class="root"><svg class="i" viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet">'
+            '<defs><linearGradient id="lg" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="red"/></linearGradient>'
+            '<clipPath id="cp"><rect width="5" height="5"/></clipPath></defs><path d="M2 2h20" pathLength="1"/></svg></div>')
+    c = clean_card({"html": html}, card_id="sv")
+    for part in ('viewBox="0 0 24 24"', 'preserveAspectRatio=', "<linearGradient", "gradientUnits=", "<clipPath",
+                 "</clipPath>", 'pathLength="1"'):
+        assert part in c["html"], part
+    assert not c.get("problems")
+    assert clean_card(c, layout="fullscreen")["html"] == c["html"]
+
+
 def test_clean_card_removes_scripts_urls_events_and_bad_css():
     hostile = ('<div class="root" onclick="x()"><script>alert(1)</script><iframe src="https://e"></iframe>'
                '<img src="https://evil/x.png" onerror="alert(1)"><img src="images/ok.png">'
@@ -264,3 +278,60 @@ def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
     codes = [p["code"] for p in res["late"]["problems"]]
     assert "anim_ends_too_late" in codes and "not settled" in next(p["detail"] for p in res["late"]["problems"]
                                                                     if p["code"] == "anim_ends_too_late")
+
+
+def test_bouncy_eases_are_rendered_gently_and_float_is_allowed(tmp_path):
+    """2026-10-04 채널 주인: '바운시한 느낌은 싫다 — 떠다니듯 젠틀하게'. 디자이너가 back.out(4)·되튀는 사용자 곡선을 써도
+    렌더 엔진이 부드러운 감속으로 바꾼다(검사·렌더 같은 엔진). data-float 는 정화에서 숫자로 남는다."""
+    import shutil
+
+    import pytest
+    from PIL import Image
+
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    c0 = clean_card({"html": '<div class="card"><div class="root"><div class="b" data-float="30" data-float-at="x"></div>'
+                             '</div></div>', "css": ".root{position:absolute;inset:0}"}, layout="fullscreen", card_id="fl")
+    assert 'data-float="30"' in c0["html"] and "data-float-at" not in c0["html"]
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    html = ('<div class="card"><div class="root"><div class="b"></div><div class="c"></div></div></div>')
+    css = (".root{position:absolute;inset:0;background:#F7F8F6}"
+           ".b{position:absolute;left:800px;top:200px;width:200px;height:200px;background:#FC5400}"
+           ".c{position:absolute;left:800px;top:600px;width:200px;height:200px;background:#121315}")
+    tl = ("tl.from(q('.b'), {x: -600, duration: 1, ease: 'back.out(4)'}, 0);\n"
+          "tl.from(q('.c'), {x: -600, duration: 1, ease: gsap.customEase('M0,0 C0.2,1.8 0.4,1.4 1,1')}, 0);")
+    card = clean_card({"html": html, "css": css, "timeline": tl}, layout="fullscreen", card_id="bo")
+    res = check_cards([dict(card, shots=[0.55, 2.5])], node=find_node(""), out_dir=tmp_path, fps=30, durations={"bo": 4.0},
+                      browser_executable=browser)
+
+    def right_edge(path, y, rgb):
+        with Image.open(path) as im:
+            px = im.convert("RGB").load()
+            xs = [x for x in range(0, 1920, 2) if all(abs(px[x, y][k] - rgb[k]) < 40 for k in range(3))]
+        return max(xs) if xs else -1
+    shots = {s["t"]: s["path"] for s in res["bo"]["shots"]}
+    for y, rgb in ((300, (252, 84, 0)), (700, (18, 19, 21))):
+        mid, end = right_edge(shots[0.55], y, rgb), right_edge(shots[2.5], y, rgb)
+        assert 990 <= end <= 1010 and mid <= end + 2, (y, mid, end)      # 되튀었다면 중간에 끝 위치를 넘어간다
+
+
+def test_checker_measures_card_background_brightness(tmp_path):
+    """🖥 모니터 질감: 어두운 판은 빛 번짐을 screen 으로 — 렌더 전 검사가 카드 바탕 밝기(bg_lum)를 잰다."""
+    import json as _json
+    import shutil
+
+    import pytest
+
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
+    cards = [clean_card({"html": ex[k]["html"], "timeline": ex[k]["timeline"]}, layout="fullscreen", card_id=k[:6])
+             for k in ("fan_stack", "statement")]
+    res = check_cards([dict(c, layout="fullscreen") for c in cards], node=find_node(""), out_dir=tmp_path, fps=30,
+                      durations={c["id"]: 7.0 for c in cards}, browser_executable=browser)
+    assert res["fan_st"]["metrics"]["bg_lum"] < 0.3 < res["statem"]["metrics"]["bg_lum"], res

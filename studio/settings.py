@@ -80,6 +80,9 @@ class Settings:
     # 🎨 디자인 취향(채널 주인 2026-10-04: "PPT 같다 — 디자인 taste 를 대폭 업그레이드")
     style_frame: bool = True          # 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 먼저 확정해 모든 디자이너에게
     design_variants: int = 3          # 🛠 시그니처 장면마다 시안 수(렌더해 🧑‍⚖️ 심사가 고름) — 1 이면 경쟁 없이 한 안
+    # 🖥 모니터 질감(2026-10-04 채널 주인 레퍼런스 릴스): 전면 그래픽·숏폼 위 카드에 아주 약간의 흐림·개체마다 번지는 빛·
+    # 서브픽셀 격자·주사선·입자·비네트. 0 = 끔, 1 = 기본(화자·사진·스톡·자막에는 얹지 않는다)
+    screen_look: float = 1.0
     # (예전) 에이전트별 덮어쓰기 — 설정 창에서 뺐다(모델·사고 강도는 전역 하나). 파일에 남아 있으면 그 에이전트에만 적용된다
     agent_effort: dict[str, str] = field(default_factory=dict)
     agent_models: dict[str, str] = field(default_factory=dict)

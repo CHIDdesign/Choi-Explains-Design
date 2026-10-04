@@ -446,7 +446,7 @@ def shift_props(props: dict[str, Any], dt: float) -> None:
     for x in props.get("camera") or []:
         sh(x, "start", "end")
     for x in props.get("punches") or []:
-        sh(x, "t", "end")
+        sh(x, "t", "end", *(("from",) if "from" in x else ()))
     for x in props.get("graphics") or []:
         sh(x, "start", "end")
     for x in props.get("transitions") or []:

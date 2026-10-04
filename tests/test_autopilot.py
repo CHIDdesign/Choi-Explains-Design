@@ -60,15 +60,12 @@ def test_camera_alternates_and_never_flickers():
     assert all(c["zoomEnd"] / c["zoom"] - 1 <= PARAMS["push_max"] + 1e-6 for c in ed.camera)
 
 
-def test_transitions_are_restrained():
+def test_no_ppt_stage_transitions():
+    """2026-10-04 채널 주인: 'PPT 장면 전환(디졸브·푸시·와이프·빛샘) 금지'. 전면 그래픽의 들고 나기는 렌더러의 장면 안무
+    (원형 열기·흩어지기·다이브)가 맡고, 편집 문법은 화면 전환 효과를 보내지 않는다."""
     _, _, ed = _long_case()
-    types = [t["type"] for t in ed.transitions]
-    assert "wipe" in types and "leak" in types          # 챕터·타이틀은 항상
-    minor = [t for t in ed.transitions if t["type"] not in ("wipe", "leak")]
-    for a, b in zip(minor, minor[1:]):
-        assert b["t"] - a["t"] >= PARAMS["tx_min_gap"]  # 하드컷 ≥ 90%
-    assert all(0.2 <= t["dur"] <= 1.0 for t in ed.transitions)
-    assert not {"whip", "flash", "zoom"} & set(types)      # 튀는 전환은 쓰지 않는다
+    assert ed.transitions == []
+    assert all(p["style"] == "glide" for p in ed.punches)
 
 
 def test_punch_callout_and_sfx_rules():
@@ -151,7 +148,7 @@ def test_short_edit_is_fast_but_sparse():
     ed = build_short_edit(timemap=tm, total=total, graphics=[{"start": 8.0, "end": 12.0, "template": "keyword"},
                                                              {"start": 15.0, "end": 18.0, "template": "photo"}],
                           cues=cues, moments=[Moment(t=20.0, end=22.0, intensity=3)])
-    assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "blur"       # 되감기 이음새 하나
+    assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "zoom"       # 되감기 이음새 하나(디졸브 대신 줌스루)
     assert {c["zoom"] for c in ed.camera} <= {1.0, 1.06}
     assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
     assert all(p["style"] == "glide" for p in ed.punches)

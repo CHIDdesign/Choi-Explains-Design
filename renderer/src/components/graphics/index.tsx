@@ -110,8 +110,9 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   }
   // 챕터 카드(길잡이 부품 — 한 가지 모양): 이탤릭 세리프 번호 + 송명 제목 + 목차
   if (g.template === 'chapter') {
+    const choreoCh = Boolean((g.data as {__choreo?: boolean}).__choreo);   // 장면 안무가 들고 나기를 맡으면 페이드 없음
     return (
-      <AbsoluteFill style={{opacity: Math.min(enter(frame, 0, 8, EASE_OUT), exit(frame, dur, 10, EASE_IN_OUT))}}>
+      <AbsoluteFill style={{opacity: choreoCh ? undefined : Math.min(enter(frame, 0, 8, EASE_OUT), exit(frame, dur, 10, EASE_IN_OUT))}}>
         <ModernChapter data={g.data} frame={frame} dur={dur} theme={theme} W={W} H={H} />
       </AbsoluteFill>
     );
@@ -185,9 +186,12 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
   const modern = s.name === 'modern' || s.name === 'dark';
   // 전면 영상·사진·카드는 6프레임 디졸브로 들어온다(위에서 내려오는 쓸기는 들어오는 동안 뒤의 화자를 드러낸다)
   const fade = collage || modern || noHeader;
+  // 장면 안무(LongForm 의 원형 열기·흩어지기·다이브)가 들고 나기를 맡으면 이 층의 페이드·쓸기는 끈다 — 두 장면이 반투명으로
+  // 겹치는 순간이 없게(2026-10-04 채널 주인: '페이드되는 요소끼리 겹치는 것이 가장 싫다')
+  const choreo = Boolean((g.data as {__choreo?: boolean}).__choreo);
   return (
-    <AbsoluteFill style={{clipPath: fade ? undefined : clip, background: collage || modern ? undefined : s.bg,
-      opacity: fade ? Math.min(enter(frame, 0, collage || modern ? 8 : 6, EASE_OUT), pOut) : undefined}}>
+    <AbsoluteFill style={{clipPath: fade || choreo ? undefined : clip, background: collage || modern ? undefined : s.bg,
+      opacity: fade && !choreo ? Math.min(enter(frame, 0, collage || modern ? 8 : 6, EASE_OUT), pOut) : undefined}}>
       {collage ? <PaperStage theme={theme} frame={frame} /> : null}
       {modern && !noHeader ? <ModernStage theme={theme} frame={frame} dark={s.name === 'dark'} /> : null}
       {modern && !noHeader ? <CornerLabels frame={frame} W={W} H={H} c={modernColors(theme, s.name === 'dark')} tl={chapterTag}

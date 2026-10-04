@@ -87,7 +87,7 @@ def studio_system_prompt(*, design: bool = True) -> str:
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),
         "\n\n" + load_prompt("motion_dsl.md") + (motion_examples_block() if design else ""),
         "\n\n" + load_prompt("card_dsl.md"),
-        ("\n\n" + load_prompt("layouts.md") + card_examples_block()) if design else "",
+        ("\n\n" + load_prompt("layouts.md") + "\n\n" + load_prompt("icons.md") + card_examples_block()) if design else "",
         "\n\n# 디자인 스킬 노트(오픈소스 스킬·편집 이론에서 정리)\n\n" + skills_block(),
     ]
     return "\n".join(p for p in parts if p.strip())

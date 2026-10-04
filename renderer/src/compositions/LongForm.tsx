@@ -1,9 +1,10 @@
 import React, {useMemo} from 'react';
 import {ModernStage, SpeakerFrame} from '../components/modern/Modern';
 import {ModernEndCard} from '../components/modern/Titles';
-import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Audio, interpolate, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {GraphicLayer} from '../components/graphics';
 import {CaptionScrim, LongCaptions} from '../components/captions/LongCaptions';
+import {ScreenLook} from '../components/fx/ScreenLook';
 import {CalloutLayer} from '../components/captions/Callout';
 import {Grain, Vignette} from '../components/fx/Grain';
 import {LivePeek} from '../components/fx/LivePeek';
@@ -15,7 +16,7 @@ import {TransitionStage, transitionState} from '../components/fx/Transitions';
 import {lerpBox, lerpRect, TalkingHead, videoBoxFor} from '../components/TalkingHead';
 import type {Rect} from '../components/TalkingHead';
 import {ensureFonts, useFontForText, useFontGuard} from '../design/fonts';
-import {CAMERA, EASE} from '../design/motion';
+import {EASE} from '../design/motion';
 import {makeTheme, MODERN} from '../design/tokens';
 import {enter, exit} from '../lib/anim';
 import {lastIndexAtOrBefore, sampleFace, sampleKeyframes, toFrame} from '../lib/time';
@@ -72,26 +73,26 @@ export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: numb
 export const cameraZoom = (shots: CameraShot[], t: number): number => cameraAt(shots, t).zoom;
 
 /**
- * 강조 줌: 강조 순간 카메라를 살짝 당긴다.
- *  glide — 0.7초에 걸쳐 천천히 당기고 0.9초에 걸쳐 풀림. 편집 문법 엔진(롱폼·숏폼)이 쓰는 스타일
- *  ease  — 5프레임 동안 빠르게 당기고 끝에서 8프레임에 걸쳐 풀림(렌더러에만 남음)
- *  cut   — 한 프레임에 확, 문장 끝에서 하드컷으로 복귀(렌더러에만 남음)
+ * 강조 밀기: 핵심어(t)에 맞춰 카메라를 아주 천천히 당겼다가 아주 천천히 푼다(2026-10-04 채널 주인: '확대·이완이 너무 빨라
+ * 가벼워 보인다 — 교양 있고 차분하고 딥하게'). from 부터 in 초에 걸쳐 당기고, end 에서 out 초 앞부터 푼다(사인 가감속).
+ * 창이 짧으면 두 시간을 비율대로 줄인다. 예전 cut(한 프레임 펀치인)·ease(5프레임)도 같은 느린 밀기로 그린다.
  */
+const sineInOut = (x: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, x)));
 export const punchFactor = (punches: Punch[], t: number, fps = 30): number => {
+  void fps;
   let f = 1;
   for (const p of punches) {
-    if (t < p.t || t >= p.end) continue;
-    let k = 1;
-    if (p.style === 'glide') {
-      // 교육 영상용: 0.7초에 걸쳐 천천히 당기고 0.9초에 걸쳐 풀린다(튀지 않게)
-      const inP = Math.min(1, (t - p.t) / 0.7);
-      const outP = Math.min(1, (p.end - t) / 0.9);
-      k = Math.min(EASE.inOutCubic(inP), EASE.inOutCubic(outP));
-    } else if (p.style === 'ease') {
-      const inP = Math.min(1, ((t - p.t) * fps) / CAMERA.punchIn);
-      const outP = Math.min(1, ((p.end - t) * fps) / CAMERA.punchOut);
-      k = Math.min(EASE.outCubic(inP), EASE.inOutCubic(outP));
+    const a = p.from ?? p.t;
+    if (t < a || t >= p.end) continue;
+    const len = Math.max(0.1, p.end - a);
+    let inD = p.in ?? 2.6;
+    let outD = p.out ?? 3.0;
+    if (inD + outD > len) {
+      const r = len / (inD + outD);
+      inD *= r;
+      outD *= r;
     }
+    const k = Math.min(sineInOut((t - a) / inD), sineInOut((p.end - t) / outD));
     f = Math.max(f, 1 + p.amount * k);
   }
   return f;
@@ -102,6 +103,8 @@ const COVER_PAD = 1.0; // 전체화면 그래픽 앞뒤로 화자 영상을 계�
 // 전면 그래픽끼리 이 간격(초) 이하로 이어지면 한 덮개로 본다: 사이에 화자를 그리지 않고, 앞 그래픽은 퇴장 없이 컷으로 넘기며,
 // 접합부 아래에는 무대판을 깐다 — 2026-10-03: 전면→전면 전환의 디졸브 몇 프레임 동안 화자 얼굴이 비쳤다
 const ABUT = 0.5;
+// 모니터 질감을 얹지 않는 전면 그래픽: 실물 자료(사진·스톡·증거 — 자료의 색과 결을 지킨다)·타이틀(화자 액자가 들어 있다)
+const LOOK_SKIP = new Set(['photo', 'broll', 'evidence', 'title', 'lower_third']);
 
 const GraphicSeq: React.FC<{
   g: Graphic;
@@ -123,6 +126,45 @@ const GraphicSeq: React.FC<{
   );
 };
 
+// 장면 안무(2026-10-04 채널 주인: 'PPT 장면 전환·페이드 금지 — 요소가 흩어지거나 재사용되거나, 확대·축소 등 모션그래픽 방식으로.
+// 가장 싫은 것은 페이드되는 요소끼리 겹치는 것'). 모션 디자인의 장면 전환은 나가는 요소 · 남는(공유) 요소 · 들어오는 요소의
+// 안무다(Material motion choreography). 두 장면이 반투명으로 겹치는 프레임은 없다 — 컷은 움직임의 한가운데에 둔다.
+//  · 얼굴 → 그래픽: 원형 열기(화자 얼굴 자리에서 원이 자라며 그래픽이 열린다)
+//  · 그래픽 → 그래픽: 카드는 요소가 각자 방향으로 흩어져 나가고(data-carry 요소는 남아 다음 장면이 이어 받는다) 컷 → 다음 장면이
+//    모여든다 / 그 밖의 그래픽은 다이브(확대하며 빨려 들어감 + 움직임 흐림) → 컷 → 다음 장면이 확대된 채 내려앉는다
+//  · 그래픽 → 얼굴: 요소가 흩어지며 그래픽이 원으로 닫혀 화자에게 돌아간다
+const IRIS_IN = 18;
+const IRIS_OUT = 14;
+const DIVE = 12;
+const SETTLE = 14;
+const SCATTER = 18;
+type ChoreoPlan = {inKind: 'iris' | 'settle' | 'none'; outKind: 'iris' | 'dive' | 'none'; inX: number; outX: number; faceY: number};
+const Choreo: React.FC<{plan: ChoreoPlan; dur: number; W: number; H: number; children: React.ReactNode}> = ({plan, dur, W, H, children}) => {
+  const f = useCurrentFrame();
+  const style: React.CSSProperties = {};
+  const cl = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
+  // 원형 열기·닫기의 중심 = 그때 화자 얼굴 자리(그래픽이 화자에게서 나오고 화자에게 돌아간다)
+  const closing = plan.outKind === 'iris' && f >= dur - IRIS_OUT;
+  const cx = closing ? plan.outX : plan.inX;
+  const cy = plan.faceY;
+  const reach = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) + 4;
+  let r = -1;
+  if (plan.inKind === 'iris' && f < IRIS_IN) r = reach * interpolate(f, [0, IRIS_IN], [0, 1], {...cl, easing: EASE.enterLarge});
+  if (closing) r = reach * (1 - interpolate(f, [dur - IRIS_OUT, dur - 1], [0, 1], {...cl, easing: EASE.exit}));
+  if (r >= 0) style.clipPath = `circle(${Math.max(0, r).toFixed(1)}px at ${cx.toFixed(0)}px ${cy.toFixed(0)}px)`;
+  if (plan.inKind === 'settle' && f < SETTLE) {
+    const q = interpolate(f, [0, SETTLE], [0, 1], {...cl, easing: EASE.enterLarge});
+    style.transform = `scale(${(1.18 - 0.18 * q).toFixed(4)})`;
+    if (q < 0.97) style.filter = `blur(${((1 - q) * 9).toFixed(2)}px)`;
+  }
+  if (plan.outKind === 'dive' && f >= dur - DIVE) {
+    const q = interpolate(f, [dur - DIVE, dur - 1], [0, 1], {...cl, easing: EASE.exit});
+    style.transform = `scale(${(1 + 0.38 * q).toFixed(4)})`;
+    if (q > 0.03) style.filter = `blur(${(q * 11).toFixed(2)}px)`;
+  }
+  return <AbsoluteFill style={{...style, transformOrigin: '50% 50%'}}>{children}</AbsoluteFill>;
+};
+
 export const LongForm: React.FC<LongFormProps> = (props) => {
   useFontGuard();
   // 두 층 강조 자막의 앞말(명조)에 쓰일 글자를 렌더 전에 받아 둔다
@@ -139,7 +181,8 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   const spans = useMemo(() => buildRegionSpans(props.graphics, true, fallback), [props.graphics, fallback]);
   const isUnder = (g: Graphic) => lookOf(g) !== 'paper' && g.template === 'title';
   const under = useMemo(() => props.graphics.filter(isUnder), [props.graphics, fallback]);
-  const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)), [props.graphics, fallback]);
+  // 시작 순서로 그린다(나중 그래픽이 위) — 이어 받기에서 뒤 그래픽이 앞 그래픽 위로 떠오른다
+  const over = useMemo(() => props.graphics.filter((g) => !isUnder(g)).sort((a, b) => a.start - b.start), [props.graphics, fallback]);
 
   // ---- 카메라 ----
   const face = sampleFace(props.face, t);
@@ -249,14 +292,43 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   // 바로 뒤에 다른 전면 그래픽이 ABUT 초 안에 이어지면 퇴장을 생략한다(앞 그래픽이 끝 프레임까지 그대로 있다가 컷)
   const abutNext = (g: Graphic) => isCover(g) && props.graphics.some((o) => o !== g && isCover(o)
     && o.start >= g.end - 1e-3 && o.start - g.end <= ABUT);
+  // 바로 앞에서 ABUT 초 안에 끝나는 전면 그래픽(장면 안무의 앞 장면)
+  const prevCover = (g: Graphic) => (isCover(g) ? props.graphics.filter((o) => o !== g && isCover(o)
+    && o.start < g.start - 1e-3 && o.end <= g.start + 1e-3 && g.start - o.end <= ABUT).sort((a, b) => b.end - a.end)[0] : undefined);
   const seq = (g: Graphic) => {
     const from = toFrame(g.start, fps);
     const dur = Math.max(1, toFrame(g.end, fps) - from);
-    const shown = abutNext(g) ? dur + Math.round(fps) : Math.max(Math.min(dur, 8), dur - exitLead(g));
+    const next = abutNext(g);
+    if (!isCover(g)) {
+      const shown = Math.max(Math.min(dur, 8), dur - exitLead(g));
+      return (
+        <Sequence key={g.id} from={from} durationInFrames={dur} name={`${g.template} ${g.id}`}>
+          <GraphicSeq g={g} dur={shown} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
+            faceX={sampleFace(props.face, g.start + 0.3).x} />
+        </Sequence>
+      );
+    }
+    // 전면 그래픽: 장면 안무가 들고 나기를 맡는다(이 층의 페이드·쓸기 끔). 카드는 나갈 때 요소가 흩어진다
+    const prev = prevCover(g);
+    const isCard = g.template === 'card';
+    const fIn = sampleFace(props.face, g.start + 0.1);
+    const fOut = sampleFace(props.face, g.end - 0.1);
+    const plan: ChoreoPlan = {
+      inKind: prev ? (prev.template === 'card' ? 'none' : 'settle') : 'iris',
+      outKind: next ? (isCard ? 'none' : 'dive') : 'iris',
+      inX: fIn.x * W, outX: fOut.x * W, faceY: 0.42 * H,
+    };
+    const scatter = isCard && dur > SCATTER + 12;
+    const skip = g.seq && g.seq.index > 0 ? SEQ_SKIP : 0;     // GraphicSeq 가 시퀀스 둘째 샷부터 프레임을 앞당긴다
+    const data = {...g.data, __choreo: true,
+      ...(scatter ? {__exit: {at: Math.max(0, (dur - SCATTER + skip) / fps), dur: SCATTER / fps}} : {})};
+    const gg = {...g, data} as Graphic;
     return (
       <Sequence key={g.id} from={from} durationInFrames={dur} name={`${g.template} ${g.id}`}>
-        <GraphicSeq g={g} dur={shown} props={props} theme={theme} pageLabel={pageFor(g)} chapterTag={tagFor(g)}
-          faceX={sampleFace(props.face, g.start + 0.3).x} />
+        <Choreo plan={plan} dur={dur} W={W} H={H}>
+          <GraphicSeq g={gg} dur={next ? dur + Math.round(fps) : dur} props={props} theme={theme} pageLabel={pageFor(g)}
+            chapterTag={tagFor(g)} faceX={sampleFace(props.face, g.start + 0.3).x} />
+        </Choreo>
       </Sequence>
     );
   };
@@ -277,6 +349,29 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
   }, [props.graphics, fallback]);
   const faceCovered = coverSpans.some((s) => s.end - s.start > 2 * COVER_PAD + 0.2
     && t >= s.start + COVER_PAD && t < s.end - COVER_PAD);
+  // 모니터 질감(ScreenLook)은 디자인한 전면 그래픽(카드·모션·챕터·개념 판) 동안만 — 화자·사진·스톡·자막에는 얹지 않는다.
+  // 이어지는 전면 그래픽은 한 덮개로, 들어오고 나갈 때 0.35초에 걸쳐 켜고 끈다
+  const lookSpans = useMemo(() => {
+    const out: {start: number; end: number}[] = [];
+    if (!props.screenLook) return out;
+    for (const g of props.graphics.filter((x) => isCover(x) && !LOOK_SKIP.has(x.template)).sort((a, b) => a.start - b.start)) {
+      const last = out[out.length - 1];
+      if (last && g.start - last.end <= ABUT) last.end = Math.max(last.end, g.end);
+      else out.push({start: g.start, end: g.end});
+    }
+    return out;
+  }, [props.graphics, props.screenLook, fallback]);
+  const lookOpacity = lookSpans.reduce((m, sp) => (t < sp.start || t >= sp.end ? m
+    : Math.max(m, Math.min(1, (t - sp.start) / 0.35, (sp.end - t) / 0.35))), 0);
+  // 지금 보이는 전면 그래픽의 바탕이 어두운가(카드: 렌더 전 검사가 잰 바탕 밝기 · 모션: spec.bg)
+  const lookDark = (() => {
+    const g = props.graphics.filter((x) => isCover(x) && !LOOK_SKIP.has(x.template) && t >= x.start && t < x.end)
+      .sort((a, b) => b.start - a.start)[0];
+    if (!g) return false;
+    if (g.template === 'card') return !!g.data.card?.dark;
+    if (g.template === 'motion') return ['ink', 'dark', 'black', 'charcoal'].includes(String(g.data.spec?.bg ?? ''));
+    return false;
+  })();
   const endStart = props.endcard ? toFrame(props.endcard.start, fps) : Infinity;
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
@@ -309,6 +404,7 @@ export const LongForm: React.FC<LongFormProps> = (props) => {
             opacity={stripOpacity(frame, toFrame(chapter.start + 3.2, fps))} />
         ) : null}
         {over.map(seq)}
+        {props.screenLook ? <ScreenLook frame={frame} strength={props.screenLook} opacity={lookOpacity} dark={lookDark} /> : null}
         <CalloutLayer items={props.callouts ?? []} t={t} fps={fps} W={W} H={H} theme={theme} look={chapterLook}
           face={screenFace} zoom={1} />
       </TransitionStage>

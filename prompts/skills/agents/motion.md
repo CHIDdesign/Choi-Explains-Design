@@ -53,7 +53,7 @@
 ## 4. 이징과 간격(spacing) — 곡선 모양을 안다
 
 28. 곡선은 역할 이름으로 고른다: `enter`(작은 요소) · `enterText`(글자, expo-out) · `enterLarge`(큰 면, M3 emphasized-decelerate) ·
-    `move`(화면 안 이동, M3 standard) · `exit`(M3 emphasized-accelerate) · `settle`(+1.2%) · `settlePaper`(+4%).
+    `move`(화면 안 이동, M3 standard) · `exit`(M3 emphasized-accelerate) · `settle`·`settlePaper`(넘치지 않고 길게 감속 — 되튐 없음).
     카드는 `power3.out`·`expo.out` 이 진입, `power2.inOut`·`sine.inOut` 이 이동이다. `back.out` 은 쓰지 않는다.
 29. **눈에 보이는 도착은 길이의 3분의 1 지점이다.** enter 곡선은 시간 25% 에 거리의 76%, 시간 50% 에 96% 를 간다.
     12f 진입이면 4f 만에 '도착했다'고 보인다. 그래서 낱말에 맞출 때는 `at + dur/3` 이 그 낱말 시각보다 앞서게 둔다.

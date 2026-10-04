@@ -39,9 +39,14 @@ def test_long_edit_punch_only_inside_spans():
                          cues=_cues(120), sentence_starts=[0.0, 30.0, 60.0, 90.0], punch_spans=[(25.0, 50.0)])
     by_t = {p["t"]: p for p in ed.punches}
     assert by_t[10.0]["style"] == "glide" and by_t[10.0]["amount"] == PARAMS["punch"][2]
-    assert by_t[30.0]["style"] == "cut" and by_t[30.0]["amount"] == PUNCH["punch"][3]
-    assert by_t[30.0]["end"] - 30.0 <= PUNCH["punch_max"] + 1e-6                 # 당긴 채 오래 두지 않는다
-    assert 33.0 not in by_t and by_t[37.0]["style"] == "cut" and by_t[37.0]["amount"] == PUNCH["punch"][1]
+    # 2026-10-04 채널 주인: 확대·이완은 어디서나 아주 느리게 — 펀치 구간도 한 프레임 펀치인이 아니라 느린 밀기
+    assert by_t[30.0]["style"] == PUNCH["punch_style"] == "glide" and by_t[30.0]["amount"] == PUNCH["punch"][3]
+    assert by_t[30.0]["end"] - 30.0 <= PUNCH["punch_max"] + 1e-6
+    assert 33.0 not in by_t and by_t[37.0]["amount"] == PUNCH["punch"][1]
+    # 핵심어보다 먼저 밀기 시작해(from) 아주 천천히 당기고 풀린다
+    g = by_t[10.0]
+    assert g["from"] <= 10.0 - 2.0 and g["in"] >= 2.5 and g["out"] >= 3.0 and g["end"] - 10.0 >= 3.0, g
+    assert by_t[30.0]["in"] >= 2.0 and by_t[30.0]["from"] < 30.0
     assert by_t[80.0]["style"] == "glide"
     assert ed.stats["punch_spans"] == 1 and ed.stats["hot_punches"] == 2
     # 효과음(문구 팔레트 04c 6절): 펀치 구간 안은 도장(강도 3)·종이 놓기(강도 1), 밖의 강조 글라이드는 소리 없음.
@@ -49,9 +54,8 @@ def test_long_edit_punch_only_inside_spans():
     def near(t):
         return next((s["category"] for s in ed.sfx if abs(s["t"] - t) <= 0.16), None)
     assert near(30.0) == "stamp" and near(37.0) == "paper_place" and near(10.0) is None
-    # 전환: 펀치 구간 안의 사진 진입은 휩
-    tx = {t["t"]: t for t in ed.transitions}
-    assert tx[44.0]["type"] == "whip" and tx[44.0]["dir"] in ("left", "right")
+    # 화면 전환 효과(휩 포함)는 보내지 않는다 — 전면 그래픽의 들고 나기는 렌더러의 장면 안무(2026-10-04)
+    assert ed.transitions == []
 
 
 def test_no_punch_over_split_panel_even_when_hot():
@@ -60,7 +64,8 @@ def test_no_punch_over_split_panel_even_when_hot():
     graphics = [{"id": "g0", "template": "definition", "layout": "split", "start": 18.0, "end": 24.0}]
     ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=graphics, chapters=[], moments=moments,
                          cues=_cues(60), sentence_starts=[0.0, 30.0], punch_spans=[(15.0, 45.0)])
-    assert [p["t"] for p in ed.punches] == [40.0] and ed.punches[0]["style"] == "cut"
+    assert [p["t"] for p in ed.punches] == [40.0] and ed.punches[0]["style"] == "glide"
+    assert ed.punches[0]["from"] >= 24.0 + 0.2                                           # 분할 판이 끝난 뒤에야 밀기 시작
 
 
 def test_long_edit_without_spans_is_unchanged():
@@ -76,7 +81,8 @@ def test_short_edit_hook_is_hot():
     moments = [Moment(t=1.5, end=2.2, kind="punchline", intensity=3), Moment(t=12.0, end=13.0, kind="number", intensity=2)]
     ed = build_short_edit(timemap=tm, total=30.0, graphics=[], cues=_cues(30), moments=moments)
     by_t = {p["t"]: p for p in ed.punches}
-    assert by_t[1.5]["style"] == "cut" and by_t[1.5]["amount"] == PUNCH["punch"][3]     # 훅(첫 3초)
+    assert by_t[1.5]["style"] == "glide" and by_t[1.5]["amount"] == PUNCH["punch"][3]   # 훅(첫 3초)도 느린 밀기
+    assert by_t[1.5]["in"] >= 1.5 and by_t[1.5]["out"] >= 2.0
     assert by_t[12.0]["style"] == "glide"
     assert not any(s["t"] < 3.0 for s in ed.sfx)                                         # 훅 문장 위에는 효과음 없음
     ed2 = build_short_edit(timemap=tm, total=30.0, graphics=[], cues=_cues(30), moments=moments, hook=0.0)

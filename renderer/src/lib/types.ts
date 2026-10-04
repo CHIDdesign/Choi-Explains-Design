@@ -197,7 +197,8 @@ export type MotionSpec = {
 // 자유 HTML 카드(studio/motion/card.py clean_card 가 정리한 것만 들어온다):
 // html = .card 안쪽 조각, css = `.card[data-card-id="id"]` 로 스코프된 규칙, w×h = 작성 캔버스(렌더러가 상자에 맞춰 축소)
 // timeline: 모션 디자이너가 직접 쓴 GSAP 타임라인 코드(card_dsl.md 7절) — fn(tl, q, gsap, ctx) 본문, 결정적(seek 로만)
-export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string; timeline?: string};
+export type CardSpec = {id: string; html: string; css: string; w: number; h: number; style?: string; timeline?: string;
+  dark?: boolean};   // dark: 렌더 전 검사가 잰 바탕이 어두운가(모니터 질감의 빛 번짐 방식)
 
 // 얼굴 옆 액자·개념 텍스트의 자리(studio/render/props.py face_safe_layouts): 얼굴 트랙으로 고른 빈 쪽 + 여유에 맞춘 크기.
 // side 'top' = 짧은 키워드를 화면 위 소제목 바(종이 띠 + '!' 배지)로 — 머리 위가 비어 있을 때만
@@ -245,7 +246,8 @@ export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: num
   framed?: boolean};
 // 강조 줌: 강조 순간 카메라를 당김. style glide = 0.7초에 걸쳐 당기고 0.9초에 걸쳐 풀림(편집 문법 엔진이 쓰는 것),
 // ease = 5프레임 푸시, cut = 하드컷(한 프레임) — ease·cut 은 렌더러에만 남아 있다
-export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'};
+// 강조 밀기: t = 핵심어, from = 밀기 시작(없으면 t), in/out = 당기기·풀기 시간(초). 2026-10-04 부터 모든 스타일을 느린 밀기로 그린다
+export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'; from?: number; in?: number; out?: number};
 
 // 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착.
 // 편집 문법 엔진은 blur·push·wipe·leak 만 만든다(whip·zoom·flash·dip 은 렌더러에만 남아 있다)
@@ -308,6 +310,7 @@ export type LongFormProps = {
   endcard: {start: number; dur: number} | null;
   grain: number; // 0 = 끔, 0.04~0.08 권장
   grainFrames: string[];
+  screenLook?: number; // 모니터 질감(전면 그래픽 위 흐림·빛 번짐·서브픽셀 격자·입자) — 0 = 끔, 1 = 기본
   showChapterLabel: boolean;
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
   skin?: Skin;
@@ -343,6 +346,7 @@ export type ShortProps = {
   layout: 'full' | 'framed' | 'window' | 'reel';
   progressBar: boolean;
   grain: number;
+  screenLook?: number; // 모니터 질감(위 카드에만) — 0 = 끔
   grainFrames: string[];
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
   skin?: Skin;

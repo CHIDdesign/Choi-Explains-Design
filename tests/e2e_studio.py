@@ -207,7 +207,7 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                        {"start_seg": s_pencil, "end_seg": last, "level": "slow", "reason": "결론"}],
             "peak_seg": s_pencil,
             # 🎬 오프닝 하이라이트: 숫자 문장 + 결론 문장(첫 두 발화는 앱이 제외한다)
-            "highlights": [{"seg": ids[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": s_q, "reason": "숫자"},
+            "highlights": [{"seg": ids[0], "reason": "첫 발화(제외돼야 함)"}, {"seg": s_q, "end_seg": s_q, "reason": "숫자"},
                            {"seg": last, "reason": "결론"}],
             "pacing_notes": "차분하게"}
     if agent == "motion":
@@ -630,9 +630,9 @@ def main() -> int:
     assert lp["camera"] and all(1.0 <= c["zoom"] <= 1.12 and c["zoomEnd"] <= 1.17 for c in lp["camera"]), lp["camera"]
     # 강조 글라이드: 있으면 glide 뿐이고, 그래픽(전면·분할) 위에는 놓이지 않는다. 몇 개인지는 기획의 그래픽 배치에 따라
     # 0 도 될 수 있다(그래픽 위 · 콜아웃 40초 안의 강조 순간은 건너뛴다)
-    # ⚡ 펀치 구간(s_pencil) 안의 강조는 하드 펀치인(cut, +10% 이상), 그 밖은 글라이드뿐
-    assert all(p.get("style") in ("glide", "cut") for p in lp["punches"]), lp["punches"]
-    hl_dur = next(t["t"] for t in lp["transitions"] if t["type"] == "leak" and t["t"] > 2.0)   # 🎬 하이라이트 → 본편
+    # 인물 확대는 아주 느린 글라이드뿐(2026-10-04 채널 주인: "확대·이완이 너무 빠르다 — 교양 있고 차분하고 딥하게") — 펀치 구간도
+    assert all(p.get("style") == "glide" and p.get("in", 0) >= 1.5 for p in lp["punches"]), lp["punches"]
+    hl_dur = next(t["t"] for t in lp["transitions"] if t["type"] == "zoom" and t["t"] > 2.0)   # 🎬 하이라이트 → 본편
     # 📋 챕터 정리 보드(있으면)는 펀치 구간·강조 순간을 덮지 않는다 — 이 대본은 2챕터 끝이 펀치 구간이라 건너뛸 수 있다
     for g in lp["graphics"]:
         if g["template"] == "recap":
@@ -663,12 +663,14 @@ def main() -> int:
     assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
     assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
-    assert any(t["type"] in ("wipe", "leak") for t in lp["transitions"]), lp["transitions"]
+    # 슬라이드식 장면 전환(와이프·빛샘)은 없다 — 전면 그래픽 사이는 렌더러의 안무(아이리스·흩어짐·다이브)가 잇는다
+    assert all(t["type"] == "zoom" for t in lp["transitions"]), lp["transitions"]
     assert lp["voice"] is None and lp["sfx"] == []          # 음향은 FFmpeg 에서 따로 믹스
-    # 🎬 오프닝 하이라이트: 편집 감독이 고른 문장 2개(첫 발화는 제외)가 본편 앞에 붙고, 본편(타이틀·챕터)은 그만큼 뒤로
+    # 🎬 오프닝 하이라이트: 편집 감독이 고른 조각 2개(첫 발화는 제외, 조각 = seg~end_seg)가 본편 앞에 붙고, 본편(타이틀·챕터)은
+    # 그만큼 뒤로. 길이는 20~30초가 목표 — 이 합성 본편은 짧아 본편의 12% 상한(최소 12초)이 걸린다
     hl = plan["long"]["highlights"]
-    assert [h["reason"] for h in hl] == ["숫자", "결론"], hl
-    assert 3.0 <= hl_dur <= 20.0, hl_dur
+    assert [h["reason"] for h in hl] == ["숫자", "결론"] and all("end_seg" in h for h in hl), hl
+    assert 3.0 <= hl_dur <= 30.0, hl_dur
     assert lp["chapters"][0]["start"] == 0.0 or lp["chapters"][0]["start"] >= hl_dur - 0.01, lp["chapters"][:2]
     title_g = next(g for g in lp["graphics"] if g["template"] == "title")   # 타이틀은 본편 훅 뒤 발화에(하이라이트 뒤로 밀림)
     assert hl_dur <= title_g["start"] <= hl_dur + 4.0, (title_g["start"], hl_dur)
@@ -676,7 +678,6 @@ def main() -> int:
     main_first = next(c for c in lp["clips"] if c["start"] >= hl_dur - 0.01)["srcStart"]
     assert first_src > main_first, (first_src, main_first)                  # 하이라이트는 뒤쪽 문장에서 가져온다
     assert lp["captions"][0]["start"] < hl_dur and lp["captions"][0]["lines"][0][0]["text"], lp["captions"][:1]
-    assert any(p["style"] == "cut" and p["t"] < hl_dur for p in lp["punches"]), lp["punches"]   # 조각마다 펀치인
     report_hl = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
     assert "오프닝 하이라이트" in report_hl
     # 🎬 챕터 카드 부제 = 총괄 감독의 챕터 주장(claim) — 시청자가 '지금 무슨 이야기인지' 안다
