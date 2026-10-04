@@ -3336,6 +3336,7 @@ class Pipeline:
         self._critic_pass(studio, node)
         changed: Optional[list[dict]] = None
         escalated: list[dict] = []
+        last_stills: list[tuple[str, Path]] = []
         for rnd in range(1, rounds + 1):
             self.cancel.check()
             graphics, chapters = self._timed_long()
@@ -3386,6 +3387,7 @@ class Pipeline:
                        on_peek=lambda ev, r=rnd: self._preview(
                            ev["file"], f"🧐 아트 디렉터 검수 {r}라운드 · 장면 {ev.get('k', '')}/{ev.get('n', '')}"))
             main = [p for _, p in frames[:n_main]] + [p for _, p in frames if p.stem.startswith("captions")]
+            last_stills = [(f"{g.id} {g.template}", p) for g, (_, p) in zip(targets, frames[:n_main]) if p.exists()]
             stills = [(p.stem, p.read_bytes(), "image/jpeg") for p in main if p.exists()]
             for gid, items in strips.items():
                 sheet = qa_strip_sheet(items, qa_dir / f"{gid}_seq.jpg")
@@ -3412,6 +3414,12 @@ class Pipeline:
             self._stage("qa", rnd / rounds)
             if res.get("verdict") == "pass" or not changed:
                 break
+        # 🖼 렌더 전 장면 시트(2026-10-04 채널 주인: 50분 렌더가 끝나야 장면을 본다 → 검수 스틸을 모아 부가자료에 먼저 둔다 —
+        # 창의 미리보기에도 띄워 결과를 기다리지 않고 장면을 볼 수 있다)
+        sheet = scene_sheet(last_stills, self.extras / "장면시트_렌더전.jpg")
+        if sheet:
+            self.log(f"🖼 렌더 전 장면 시트: {sheet.name}(부가자료 — 렌더를 기다리지 않고 장면 {len(last_stills)}개를 미리 볼 수 있습니다)")
+            self._preview(sheet, "🖼 렌더 전 장면 시트 — 검수 스틸")
         self._measure_cards()
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
@@ -5005,6 +5013,21 @@ def qa_images(stills: dict[str, tuple], gid: str) -> list[tuple]:
     """수정할 장면에 보여 줄 그림: 안착 화면(원본 해상도) + 움직임 6칸 시트(있으면) — 예전엔 스틸 한 장뿐이라
     디자이너가 움직임(늦은 등장·빈 0.5초·퇴장 깨짐)을 보지 못하고 고쳤다."""
     return [x for x in (stills.get(gid), stills.get(f"{gid}#seq")) if x]
+
+
+def scene_sheet(stills: list[tuple[str, Path]], dst: Path) -> Optional[Path]:
+    """검수 스틸 [(라벨, jpg)] → 3열 격자 한 장(640×360 칸, 자르지 않음). 없으면 None. 실패해도 결과물에는 영향 없다."""
+    items = [(lab, p) for lab, p in stills if p.exists()]
+    if not items:
+        return None
+    try:
+        from .stock.research import contact_sheet
+        data = contact_sheet([(lab, p.read_bytes()) for lab, p in items[:30]], cell=(640, 360), contain=True)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+        return dst
+    except Exception:  # noqa: BLE001 - 시트는 덤
+        return None
 
 
 def qa_strip_times(g: TimedGraphic, settle: float) -> list[float]:

@@ -59,3 +59,19 @@ def test_critique_sends_render_images_speech_and_kind():
 def test_design_critic_setting_default_on():
     from studio.settings import Settings
     assert Settings().design_critic is True
+
+
+def test_scene_sheet_collects_qa_stills(tmp_path):
+    """🖼 렌더 전 장면 시트: 검수 스틸을 한 장으로 모아 부가자료에 — 렌더(50분)를 기다리지 않고 장면을 본다."""
+    from PIL import Image
+    from studio.pipeline import scene_sheet
+    stills = []
+    for i in range(4):
+        p = tmp_path / f"g{i}.jpg"
+        Image.new("RGB", (1920, 1080), (40 * i, 120, 200)).save(p, quality=70)
+        stills.append((f"g{i} card", p))
+    out = scene_sheet(stills + [("g9 missing", tmp_path / "nope.jpg")], tmp_path / "out" / "장면시트_렌더전.jpg")
+    assert out and out.exists()
+    with Image.open(out) as im:
+        assert im.width >= 640 * 2 and im.height >= 360 * 2
+    assert scene_sheet([], tmp_path / "x.jpg") is None
