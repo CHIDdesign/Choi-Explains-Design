@@ -249,6 +249,28 @@ def new_job_dir(settings: Settings, title: str) -> Path:
     return d
 
 
+CARD_MEASURED = ("dark", "settle_s")      # 렌더 전 검사가 카드 내용에서 재는 값 — 디자인 결정이 아니다
+
+
+def apply_card_metrics(card: dict, met: dict) -> None:
+    """렌더 전 검사(check.mjs)의 측정값을 카드에 적는다: 어두운 판(🖥 화면 질감이 빛 번짐을 screen 으로) ·
+    직접 쓴 타임라인의 정착 시각(떠다니기·나가기 제외 — 검수 스틸·읽기 시간)."""
+    if isinstance(met.get("bg_lum"), (int, float)):
+        card["dark"] = met["bg_lum"] < 0.3
+    tl_s = met.get("timeline")
+    if card.get("timeline") and isinstance(tl_s, (int, float)) and tl_s > 0:
+        card["settle_s"] = round(float(tl_s), 2)
+
+
+def qa_view(g: dict) -> dict:
+    """검수 캐시 키에 들어가는 그래픽 모양 — 이유 글과 카드 측정값(CARD_MEASURED)은 뺀다. 측정값은 재실행 때 다시 재므로
+    키에 넣으면 검수가 고친 카드(측정 전)의 키가 재실행마다 달라져 디자이너·아트 디렉터를 다시 불렀다(2026-10-04 E2E)."""
+    out = {k: v for k, v in g.items() if k != "reason"}
+    if isinstance(out.get("card"), dict):
+        out["card"] = {k: v for k, v in out["card"].items() if k not in CARD_MEASURED}
+    return out
+
+
 class Pipeline:
     def __init__(self, spec: JobSpec, settings: Settings, job_dir: Path, *, log: LogFn = noop_log,
                  progress: Optional[StageProgress] = None, cancel: Optional[CancelToken] = None,
@@ -1716,12 +1738,7 @@ class Pipeline:
                 return
             results.update(res)
             for g in todo:
-                met = res.get(g["card"]["id"], {}).get("metrics") or {}
-                if isinstance(met.get("bg_lum"), (int, float)):
-                    g["card"]["dark"] = met["bg_lum"] < 0.3      # 🖥 모니터 질감: 어두운 판은 빛 번짐을 screen 으로
-                tl_s = met.get("timeline")
-                if g["card"].get("timeline") and isinstance(tl_s, (int, float)) and tl_s > 0:
-                    g["card"]["settle_s"] = round(float(tl_s), 2)      # 직접 쓴 타임라인의 정착 시각(검수 스틸·읽기 시간)
+                apply_card_metrics(g["card"], res.get(g["card"]["id"], {}).get("metrics") or {})
             failed = [g for g in todo if not res.get(g["card"]["id"], {}).get("ok")]
             # 글꼴 파일을 못 읽은 것(font load NetworkError · font_not_loaded 만)은 카드가 아니라 설치·환경 문제 — 디자이너에게
             # 고치라고 보내지도, 키워드 카드로 바꾸지도 않는다(2026-10-02 실제 실행: 5개 카드가 전부 이 이유로 두 번 실패할 뻔)
@@ -3264,8 +3281,7 @@ class Pipeline:
             self.log("🧐 아트 디렉터 검수 건너뜀(Claude Code 또는 API 키 필요)")
             return
         self._ensure_space("render")
-        gkey = lambda: text_hash([{k: v for k, v in g.items() if k != "reason"} for g in self.plan_long["graphics"]],
-                                 "qa-v2")
+        gkey = lambda: text_hash([qa_view(g) for g in self.plan_long["graphics"]], "qa-v3")
         if self.plan_long.get("qa", {}).get("key") == gkey():
             self.log("🧐 검수: 이전 검수 결과 사용(그래픽 변경 없음)")
             return
@@ -3351,9 +3367,28 @@ class Pipeline:
             self._stage("qa", rnd / rounds)
             if res.get("verdict") == "pass" or not changed:
                 break
+        self._measure_cards()
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
         self._qa_escalate(escalated)
+
+    def _measure_cards(self) -> None:
+        """검수가 고친 카드(측정값이 없는 것)를 렌더 전 검사로 잰다 — 어두운 판(화면 질감의 빛 번짐)·정착 시각(읽기 시간).
+        고치지는 않는다(검사 실패는 다음 실행의 _check_cards 몫). 재실행 때 _check_cards 가 같은 값을 다시 쓴다."""
+        todo = [g for g in self.plan_long.get("graphics", []) if g.get("template") == "card" and isinstance(g.get("card"), dict)
+                and "dark" not in g["card"]]
+        if not todo:
+            return
+        rs = self.settings.render
+        try:
+            res = check_cards([dict(g["card"], layout=g["layout"]) for g in todo], node=find_node(self.settings.node_path),
+                              out_dir=self.work / "cards", fps=self.fps, durations={g["card"]["id"]: 8.0 for g in todo},
+                              browser_executable=rs.browser_executable, gl=rs.gl, log=self._log_file_only, cancel=self.cancel)
+        except CheckError as e:
+            self._log_file_only(f"🃏 고친 카드 측정 실패: {str(e)[:200]}")
+            return
+        for g in todo:
+            apply_card_metrics(g["card"], res.get(g["card"]["id"], {}).get("metrics") or {})
 
     def _speech_for(self, g: dict) -> str:
         """그 그래픽이 걸친 발화들(시작~끝)의 말 — 자기 검토가 '말을 따라가는가'를 본다."""
@@ -3466,6 +3501,7 @@ class Pipeline:
                               cancel=self.cancel)
             for g, src, new in fixed_c:
                 if res.get(new["id"], {}).get("ok"):
+                    apply_card_metrics(new, res[new["id"]].get("metrics") or {})
                     src["card"] = new
                     kept_c += 1
                 else:

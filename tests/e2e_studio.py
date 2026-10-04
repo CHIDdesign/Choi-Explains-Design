@@ -455,13 +455,19 @@ def main() -> int:
                     help="claude_code = 가짜 Claude Code CLI(tests/fake_claude.py), api = 가짜 API 서버")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--work", default=str(ROOT / "projects" / "_e2e_studio"))
+    ap.add_argument("--check-only", action="store_true",
+                    help="파이프라인·렌더 없이 같은 --work 의 마지막 실행 결과만 다시 검사(검사 문장을 고친 뒤 — 렌더가 50분 넘게 걸린다)")
     args = ap.parse_args()
     work = Path(args.work)
-    if work.exists() and not args.keep:
+    if args.check_only and not (work / "job" / "output").exists():
+        print("--check-only: 검사할 실행 결과가 없다 —", work / "job" / "output")
+        return 2
+    if work.exists() and not (args.keep or args.check_only):
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
     CALL_LOG = work / "fake_calls.jsonl"
-    CALL_LOG.unlink(missing_ok=True)
+    if not args.check_only:
+        CALL_LOG.unlink(missing_ok=True)
     os.environ["FAKE_CLAUDE_LOG"] = str(CALL_LOG)
 
     words, duration = make_words()
@@ -548,16 +554,19 @@ def main() -> int:
                       script=SCRIPT, fetch_broll=False, thumbnails=False, short_max_sec=40, verify_edit=False, qa_rounds=2,
                       direction="모션 장면은 크게", images_dir=str(mats), bgm=str(bgm))
     job = work / "job"
-    (job / "work" / "music.json").unlink(missing_ok=True)     # 큐 시트는 매번 음악 감독(가짜)에게서 — 캐시가 옛 답을 숨기지 않게
-    previews: list[str] = []
-    res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
-                      preview=lambda _p, cap: previews.append(cap)).run()
-    out = Path(res["output"])
-    # 진행 화면 미리보기: 색보정 전후 → 검수 장면(라운드별) → 렌더 중 프레임
-    print("미리보기:", previews[:2], "…", previews[-2:], f"(총 {len(previews)})")
-    assert previews[0].startswith("자동 색보정")
-    assert any("검수 1라운드 · 장면 1/" in c for c in previews) and any("검수 2라운드" in c for c in previews)
-    assert any(c.startswith("롱폼 렌더링") for c in previews) and any(c.startswith("숏폼 2 렌더링") for c in previews)
+    if args.check_only:
+        out = job / "output"
+    else:
+        (job / "work" / "music.json").unlink(missing_ok=True)     # 큐 시트는 매번 음악 감독(가짜)에게서 — 캐시가 옛 답을 숨기지 않게
+        previews: list[str] = []
+        res = pl.Pipeline(spec, settings, job, log=lambda m: print(m, flush=True), eta=pl.Eta(None),
+                          preview=lambda _p, cap: previews.append(cap)).run()
+        out = Path(res["output"])
+        # 진행 화면 미리보기: 색보정 전후 → 검수 장면(라운드별) → 렌더 중 프레임
+        print("미리보기:", previews[:2], "…", previews[-2:], f"(총 {len(previews)})")
+        assert previews[0].startswith("자동 색보정")
+        assert any("검수 1라운드 · 장면 1/" in c for c in previews) and any("검수 2라운드" in c for c in previews)
+        assert any(c.startswith("롱폼 렌더링") for c in previews) and any(c.startswith("숏폼 2 렌더링") for c in previews)
     files = sorted(p.name for p in out.iterdir())
     print("\n출력:", json.dumps(files, ensure_ascii=False, indent=1))
     CALLS = load_calls()
@@ -583,7 +592,7 @@ def main() -> int:
     rate = json.loads((job / "work" / "rate.json").read_text(encoding="utf-8"))
     assert rate and all(Path(r["still"]).exists() for r in rate) and not any(r["gid"].startswith("h") for r in rate), rate[:3]
     assert (out / "부가자료" / "조사노트.md").exists()
-    assert ref_calls == [["the-stack-testimonial"]], ref_calls
+    assert args.check_only or ref_calls == [["the-stack-testimonial"]], ref_calls       # 실행 중에만 기록된다
     # 색보정(컬러리스트)은 AI 기획과 동시에 돈다(pipeline.SCHEDULE) — 순서 대신: 총괄 감독이 전문가보다 먼저, 색은 검수 전
     assert agents.index("director") < min(agents.index(a) for a in ("editor", "motion", "stock", "captions", "shorts",
                                                                      "copy")), agents
@@ -638,8 +647,9 @@ def main() -> int:
         if g["template"] == "recap":
             assert g["layout"] == "split" and 2 <= len(g["data"]["items"]) <= 4, g
             assert not any(p["style"] == "cut" and g["start"] < p["end"] and g["end"] > p["t"] for p in lp["punches"]), g
-    hot = [p for p in lp["punches"] if p["style"] == "cut" and p["t"] >= hl_dur]
-    assert len(hot) == 1 and hot[0]["amount"] >= 0.1 and hot[0]["end"] - hot[0]["t"] <= 2.3, lp["punches"]
+    # ⚡ 펀치 구간(핵심 한 방)도 하드 펀치인이 아니라 아주 느린 밀기 — +3~7%, 들어가는 데 1.5초 이상(2026-10-04 '확대가 너무 빠르다').
+    # 그 자리가 이미 프레이밍이 바뀌는 곳이면 밀기는 빠진다(예전엔 하드 펀치인만 남았다)
+    assert all(p["style"] == "glide" and 0.03 <= p["amount"] <= 0.07 and p["in"] >= 1.5 for p in lp["punches"]), lp["punches"]
     assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")
     # 시퀀스·리듬·홀드가 계획에 남고(재정규화에도), 품질 게이트가 홀드 보호를 확인했다
     assert plan["long"]["holds"] and plan["long"]["sequences"][0]["id"] == "q1" and plan["long"]["rhythm"], plan["long"].get("holds")
@@ -698,7 +708,7 @@ def main() -> int:
         assert all(u.get("backend") == "claude_code" for u in plan["usage"]), plan["usage"][:2]
     upload = (out / "업로드정보.txt").read_text(encoding="utf-8")
     assert "Pixabay" in upload and "Unsplash" in upload, upload[-500:]
-    assert StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계
+    assert args.check_only or StockHandler.tracked == ["/unsplash/photos/us0/download"], StockHandler.tracked  # 다운로드 집계(실행 중에만)
     report = (out / "부가자료" / "편집리포트.md").read_text(encoding="utf-8")
     assert "AI 스튜디오 브리프" in report and "아트 디렉터 검수" in report and "자동 후반 작업" in report
     # 🎞 자료 조달 v2(WP7): 자료 리서처 → 사다리(화자 자료 · 출처 카드 · 스톡 · 재현) → 확보 목록 → 모션 디자이너
@@ -736,12 +746,16 @@ def main() -> int:
 
     # 재실행: 계획·스톡·검수 캐시 사용(새 Claude 호출 없음) — 렌더 직전 단계까지
     before = len(load_calls())
+    first_run = CALL_LOG.read_text(encoding="utf-8") if CALL_LOG.exists() else ""
     logs: list[str] = []
     p2 = pl.Pipeline(spec, settings, job, log=logs.append)
-    for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_face, p2.stage_research, p2.stage_align,
-               p2.stage_grade, p2.stage_director, p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
-        fn()
-    assert len(load_calls()) == before, load_calls()[before:]
+    try:
+        for fn in (p2.stage_probe, p2.stage_audio, p2.stage_asr, p2.stage_face, p2.stage_research, p2.stage_align,
+                   p2.stage_grade, p2.stage_director, p2.stage_proxy, p2.stage_broll, p2.stage_stock, p2.stage_qa):
+            fn()
+        assert len(load_calls()) == before, load_calls()[before:]
+    finally:
+        CALL_LOG.write_text(first_run, encoding="utf-8")     # --check-only 를 다시 돌려도 첫 실행의 호출 기록으로 검사한다
     assert any("이전 검수 결과 사용" in m for m in logs), logs[-10:]
     assert any(g["template"] == "broll" and g.get("src") for g in p2.plan_long["graphics"])
     print("E2E STUDIO OK")

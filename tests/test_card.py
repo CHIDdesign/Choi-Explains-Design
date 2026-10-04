@@ -335,3 +335,18 @@ def test_checker_measures_card_background_brightness(tmp_path):
     res = check_cards([dict(c, layout="fullscreen") for c in cards], node=find_node(""), out_dir=tmp_path, fps=30,
                       durations={c["id"]: 7.0 for c in cards}, browser_executable=browser)
     assert res["fan_st"]["metrics"]["bg_lum"] < 0.3 < res["statem"]["metrics"]["bg_lum"], res
+
+
+def test_card_metrics_do_not_change_qa_cache_key():
+    """렌더 전 검사의 측정값(어두운 판 dark · 정착 시각 settle_s)은 카드 내용에서 다시 재는 값이다. 검수 캐시 키에 넣으면
+    검수가 고친 카드(측정 전)의 키가 재실행 때 달라져 디자이너·아트 디렉터를 다시 불렀다(2026-10-04 E2E)."""
+    from studio.pipeline import apply_card_metrics, qa_view
+    g = {"template": "card", "reason": "왜", "card": {"id": "c1", "html": "<div></div>", "timeline": "tl.to(q('.a'), {x: 1}, 0);"}}
+    before = qa_view(g)
+    apply_card_metrics(g["card"], {"bg_lum": 0.08, "timeline": 2.345})
+    assert g["card"]["dark"] is True and g["card"]["settle_s"] == 2.35
+    assert qa_view(g) == before and "reason" not in before
+    apply_card_metrics(g["card"], {"bg_lum": 0.9})
+    assert g["card"]["dark"] is False
+    g["card"]["html"] = "<div>바뀜</div>"
+    assert qa_view(g) != before                      # 내용이 바뀌면 다시 검수
