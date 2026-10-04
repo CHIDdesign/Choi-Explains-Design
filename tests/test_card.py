@@ -27,11 +27,18 @@ GOOD = '''<div class="card" data-card-id="c-x">
 
 
 def test_examples_are_clean_and_render_ready():
+    """예시 카드(구도 원형 12, prompts/layouts.md)는 정화에 걸리는 것이 없고, 안무(data-anim 또는 GSAP timeline)가 있다.
+    렌더 전 검사·실제 렌더는 예시를 바꿀 때 직접 돌려 확인한다(2026-10-04 12개 모두 check 통과·Remotion 렌더 확인)."""
+    import re
+    layouts = (ROOT / "prompts" / "layouts.md").read_text(encoding="utf-8")
+    assert len(EXAMPLES) >= 10
     for name, ex in EXAMPLES.items():
-        c = clean_card(ex["html"], layout=ex.get("layout", "fullscreen"))
+        c = clean_card({"html": ex["html"], "timeline": ex.get("timeline", "")}, layout=ex.get("layout", "fullscreen"))
         assert c and not c.get("problems"), (name, c and c.get("problems"))
-        assert c["w"], c["h"] == CANVAS[ex.get("layout", "fullscreen")]
-        assert card_settle_time(c) > 0 and card_text(c)
+        assert (c["w"], c["h"]) == CANVAS[ex.get("layout", "fullscreen")]
+        assert (card_settle_time(c) > 0 or c.get("timeline")) and card_text(c)
+        assert f"`{ex['archetype']}`" in layouts, name                    # 예시마다 원형 설명이 있다
+        assert not re.search(r"font-size:\s*(1\d|2[0-7])px", ex["html"]), name   # 28px 미만 글자 없음
 
 
 def test_clean_card_rescopes_css_and_strips_wrapper():
@@ -208,3 +215,25 @@ def test_gsap_plugin_kinds_are_validated_and_render_in_the_checker(tmp_path):
     res = check_cards([card], node=find_node(""), out_dir=tmp_path, fps=30, durations={"p1": 6.0}, browser_executable=browser)
     assert res["p1"]["ok"], res["p1"]["problems"]
     assert {"split-words", "draw-svg", "morph-svg", "follow-path"} <= set(res["p1"]["metrics"]["anims"])
+
+
+def test_merge_plan_keeps_card_and_setpiece_timelines():
+    """2026-10-04 발견: merge_plan 이 카드 HTML 만 정리해 넘겨 모션 디자이너·시그니처 빌더가 쓴 GSAP timeline 이 모두 버려졌다
+    (실제 10/04 계획의 카드 6개 모두 timeline 없음). 카드·시그니처·수정 카드 모두 timeline 과 구도 원형을 지킨다."""
+    from studio.agents.studio import merge_plan
+    from studio.director.plan import _clean_graphic
+    html = ('<div class="card" data-card-id="x"><style>.card[data-card-id="x"] .root{background:var(--paper)}</style>'
+            '<div class="root"><h1 class="h">처음 본 것이 답을 잡는다</h1></div></div>')
+    tl = "tl.from(q('.h'), {yPercent: 110, duration: 0.7}, 0.1);"
+    results = {"director": {"beats": []},
+               "motion": {"graphics": [], "scenes": [], "cards": [{"start_seg": 1, "end_seg": 2, "start_word": "", "layout": "fullscreen",
+                                                                   "style": "editorial", "title": "t", "html": html,
+                                                                   "timeline": tl, "archetype": "statement", "reason": ""}]},
+               "setpieces": [{"scene": {"start_seg": 3, "end_seg": 4, "title": "s", "kind": "diagram"}, "layout": "fullscreen",
+                              "style": "editorial", "archetype": "process_path", "html": html, "timeline": tl, "notes": ""}]}
+    long_plan, _ = merge_plan(results)
+    cards = [g for g in long_plan["graphics"] if g["template"] == "card"]
+    assert len(cards) == 2 and all(g["card"].get("timeline") == tl for g in cards)
+    assert [g["card"].get("archetype") for g in cards] == ["statement", "process_path"]
+    again = _clean_graphic(cards[0], [1, 2, 3, 4])           # 저장된 계획을 다시 정규화해도 남는다
+    assert again["card"]["timeline"] == tl and again["card"]["archetype"] == "statement"

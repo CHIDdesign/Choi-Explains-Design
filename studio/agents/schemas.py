@@ -168,6 +168,9 @@ GRADE = _obj({
 
 # 🃏 자유 HTML 카드의 스타일(prompts/card_dsl.md · studio/motion/card.py STYLES 와 같게)
 CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
+# 구도 원형(prompts/layouts.md — 2026-10-04 'PPT 같다': 빈 좌표에서 시작하지 않는다). free = 원형 밖(이유를 reason 에)
+ARCHETYPES = ["statement", "object_callouts", "data_bars", "bento", "before_after", "process_path", "ui_screen", "timeline",
+              "fan_stack", "stat_ring", "term_split", "lower_third", "free"]
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
@@ -181,6 +184,7 @@ MOTION = _obj({
         "hero": INT,                 # 크게 움직이는 주 요소의 번호(elements 인덱스, 없으면 −1)
         "motion_reason": STR,        # 왜 그렇게 움직이는지 한 문장(motion_craft 1번)
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "archetype": {"type": "string", "enum": ARCHETYPES},
         "motif": STR,                # 되풀이하는 도식·사물의 이름(같은 장치는 같은 이름, 영상당 2회까지, 없으면 "")
         "reason": STR,               # 첫머리에 챕터 키 "[키: 모눈 · 붙이기]"
     })},
@@ -193,6 +197,7 @@ MOTION = _obj({
         "timeline": STR,          # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 없으면 ""
         "sequence_id": STR,
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
+        "archetype": {"type": "string", "enum": ARCHETYPES},
         "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
         "motif": STR,                                              # 되풀이하는 도식·사물의 이름(영상당 2회까지, 없으면 "")
         "reason": STR,
@@ -401,6 +406,7 @@ RESEARCH = _obj({
 # 🛠 시그니처 장면 빌더 — 트리트먼트의 시그니처 장면 하나를 자유 HTML 카드로(카드 DSL, check.mjs 로 검사)
 SETPIECE = _obj({
     "layout": {"type": "string", "enum": ["fullscreen", "split", "overlay"]},
+    "archetype": {"type": "string", "enum": ARCHETYPES},
     "style": {"type": "string", "enum": CARD_STYLES},
     "title": STR,
     "html": STR,

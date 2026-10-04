@@ -71,19 +71,26 @@ AGENTS: dict[str, Agent] = {a.key: a for a in [
 SPECIALISTS = ("editor", "motion", "stock", "captions", "shorts", "copy")
 
 
-def studio_system_prompt() -> str:
-    """모든 에이전트가 공유하는 시스템 프롬프트(한 번 캐시되면 모든 호출이 재사용)."""
+def studio_system_prompt(*, design: bool = True) -> str:
+    """에이전트 시스템 프롬프트. design=True(디자인을 짓거나 고치거나 심사하는 역할)는 구도 원형·렌더 검증 카드 예시까지,
+    그 밖의 역할(기획·편집·자막·카피·숏폼 …)은 문법만 — 예시 약 1.4만 토큰은 디자인 역할만 읽는다(🪶). CLI 의 구조화 출력은
+    역할마다 앞부분을 달리 붙여 역할 사이 시스템 캐시가 어차피 나뉘므로 따로 두어도 캐시 손해가 없다."""
     parts = [
         load_prompt("system_studio.md"),
         "\n\n# 채널 스타일 가이드\n\n" + load_prompt("style_guide.md"),
         "\n\n# 숏폼 후킹 가이드\n\n" + load_prompt("hooks.md"),
         "\n\n" + playbook_block(),
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),
-        "\n\n" + load_prompt("motion_dsl.md") + motion_examples_block(),
-        "\n\n" + load_prompt("card_dsl.md") + card_examples_block(),
+        "\n\n" + load_prompt("motion_dsl.md") + (motion_examples_block() if design else ""),
+        "\n\n" + load_prompt("card_dsl.md"),
+        ("\n\n" + load_prompt("layouts.md") + card_examples_block()) if design else "",
         "\n\n# 디자인 스킬 노트(오픈소스 스킬·편집 이론에서 정리)\n\n" + skills_block(),
     ]
     return "\n".join(p for p in parts if p.strip())
+
+
+# 디자인을 짓거나 고치거나 심사하는 역할 — 구도 원형·검증된 카드 예시를 시스템에 받는다(그 밖은 studio_system_prompt(design=False))
+DESIGN_AGENTS = frozenset({"motion", "motion_revise", "card_revise", "setpiece", "art_director", "style_frame", "design_judge"})
 
 
 # 🪶 토큰 절약 — 디자인 규칙 전부(플레이북·카탈로그·모션/카드 DSL·예제·스킬, 약 5~6만 토큰)가 필요 없는 역할은
@@ -182,10 +189,14 @@ def card_examples_block() -> str:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
-    parts = ["\n\n## 카드 예시(실제 렌더 검증됨 — 구조·크기·타이밍을 따르고 내용만 바꾼다)\n"]
+    parts = ["\n\n## 카드 예시 — 구도 원형 12(prompts/layouts.md)를 실제로 렌더해 확인한 것\n"
+             "구도·글자 크기 단계·안무(timeline)·재질을 이 수준으로 맞춘다. **내용과 배치는 장면마다 새로** — 같은 영상에서 예시의 "
+             "좌표를 그대로 베끼지 않는다(같은 원형도 방향·비율·주인공을 바꾼다).\n"]
     for name, ex in data.items():
-        parts.append(f"\n### {name} — {ex.get('title', '')} ({ex.get('style', '')}, {ex.get('layout', 'fullscreen')})\n"
-                     f"```html\n{ex.get('html', '').strip()}\n```\n")
+        parts.append(f"\n### {name} — 원형 `{ex.get('archetype', name)}` · {ex.get('title', '')} "
+                     f"({ex.get('style', '')}, {ex.get('layout', 'fullscreen')}, {ex.get('duration', 6)}초)\n"
+                     f"```html\n{ex.get('html', '').strip()}\n```\n"
+                     + (f"timeline:\n```js\n{ex['timeline'].strip()}\n```\n" if (ex.get("timeline") or "").strip() else ""))
     return "".join(parts)
 
 
@@ -366,12 +377,17 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
         if not isinstance(cd, dict):
             continue
         layout = cd.get("layout") if cd.get("layout") in ("fullscreen", "split", "overlay") else "fullscreen"
-        card = clean_card(cd.get("html", ""), layout=layout, card_id=f"card{n_card + 1}")
+        # html 만 넘기면 직접 쓴 GSAP timeline 이 버려진다(2026-10-04 발견: 실제 10/04 계획의 카드 6개 모두 timeline 없이 렌더 —
+        # 디자이너가 쓴 안무가 하나도 화면에 나오지 않았다)
+        card = clean_card({"html": cd.get("html", ""), "timeline": cd.get("timeline", "")}, layout=layout,
+                          card_id=f"card{n_card + 1}")
         if not card:
             log(f"🃏 카드 '{cd.get('title', '')}' 의 HTML 이 올바르지 않아 제외")
             continue
         if not card.get("style") and cd.get("style") in STYLES:
             card["style"] = cd["style"]
+        if cd.get("archetype") in S.ARCHETYPES:
+            card["archetype"] = cd["archetype"]
         if card.get("problems"):
             log(f"🃏 카드 '{cd.get('title', '')}' 정리: {', '.join(card['problems'][:4])}")
         graphics.append(_g("card", layout, cd.get("start_seg", -1), cd.get("end_seg", cd.get("start_seg", -1)),
@@ -384,12 +400,15 @@ def merge_plan(results: dict[str, Any], *, log: LogFn = noop_log) -> tuple[dict[
     for sp in results.get("setpieces") or []:
         sc = sp.get("scene") or {}
         layout = sp.get("layout") if sp.get("layout") in ("fullscreen", "split", "overlay") else "fullscreen"
-        card = clean_card(sp.get("html", ""), layout=layout, card_id=f"card{n_card + 1}")
+        card = clean_card({"html": sp.get("html", ""), "timeline": sp.get("timeline", "")}, layout=layout,
+                          card_id=f"card{n_card + 1}")
         if not card:
             log(f"🛠 시그니처 장면 「{sc.get('title', '')}」 의 HTML 이 올바르지 않아 제외")
             continue
         if sp.get("style") in STYLES:
             card["style"] = sp["style"]
+        if sp.get("archetype") in S.ARCHETYPES:
+            card["archetype"] = sp["archetype"]
         graphics.append(_g("card", layout, sc.get("start_seg", -1), sc.get("end_seg", sc.get("start_seg", -1)),
                            str(sp.get("start_word") or sc.get("start_word") or ""), title=str(sc.get("title", "")),
                            reason=f"🛠 시그니처 장면({sc.get('kind', '')}): {str(sp.get('notes', ''))[:80]}", card=card,
@@ -503,6 +522,7 @@ class Studio:
         self.use_stock = use_stock
         self.use_motion = use_motion
         self.system = studio_system_prompt()
+        self._plain_system: Optional[str] = None      # 디자인 역할이 아닌 역할의 시스템(예시 없이) — 처음 쓸 때 만든다
         self._lean: dict[str, str] = {}
         self._prime_lock = threading.Lock()
         self._prime: dict[str, float] = {}      # 역할마다 이번 묶음의 첫 호출 시각
@@ -541,6 +561,10 @@ class Studio:
         instruction = instruction + agent_skill_block(key)
         if system is None and key in LEAN_AGENTS:
             system = self._lean.get(key) or self._lean.setdefault(key, lean_system_prompt(LEAN_AGENTS[key]))
+        elif system is None and key not in DESIGN_AGENTS:
+            if self._plain_system is None:
+                self._plain_system = studio_system_prompt(design=False)
+            system = self._plain_system
         if key in REPEATED_AGENTS:
             kw["ctx_in_system"] = True
         try:
@@ -848,7 +872,8 @@ class Studio:
         still: 그림 하나 또는 여럿(정지 화면 + 움직임 시트 · 검사 화면). self_review: 자기 검토 지시(그대로면 html 을 비움)."""
         instr = (load_prompt("agents/card_revise.md").replace("{{dur}}", f"{dur:.1f}")
                  .replace("{{canvas}}", f"{card.get('w', 1920)}×{card.get('h', 1080)}")
-                 .replace("{{card}}", fragment(card))
+                 .replace("{{card}}", fragment(card) + (f"\n\n지금 timeline(직접 쓴 GSAP):\n```js\n{card['timeline']}\n```"
+                                                         if card.get("timeline") else ""))
                  .replace("{{problem}}", problem or "(없음)").replace("{{direction}}", direction or "(없음)")
                  .replace("{{checks}}", "\n".join(f"- {c}" for c in checks) or "- (없음)"))
         if self_review:
@@ -857,7 +882,10 @@ class Studio:
         if self_review and not str(res.get("html") or "").strip():
             self.log(f"🔍 카드 {card.get('id', '')}: 그대로 — {res.get('changes', '')}")
             return None
-        new = clean_card(res.get("html", ""), layout=layout, card_id=str(card.get("id") or ""))
+        # 고친 timeline 이 비어 있으면 원래 것을 그대로(안무를 잃지 않게 — 선택자가 사라졌으면 렌더 전 검사가 잡는다)
+        new = clean_card({"html": res.get("html", ""),
+                          "timeline": str(res.get("timeline") or "").strip() or card.get("timeline", "")},
+                         layout=layout, card_id=str(card.get("id") or ""))
         if new:
             if not new.get("style"):
                 new["style"] = card.get("style", "")

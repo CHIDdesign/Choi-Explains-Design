@@ -25,18 +25,18 @@ const CAPTION_ZONE_PX = 170; // 전체 화면·오버레이 카드 아래 자막
 const CONTRAST_BODY = 4.5;
 const CONTRAST_LARGE = 3.0;
 
+// HtmlCard.tsx cardVars(디자인 v4)와 같은 값 — 검사와 렌더의 글꼴·색이 다르면 넘침·대비 판정이 틀린다
+// (2026-10-04: 여기만 v3(제목 고운바탕·크림 흰색·옛 주황)로 남아 있었다). 테마는 ember(#FC5400) 기준
+const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+const ITALIC = '"Instrument Serif", "Playfair Display", serif';
 const vars = {
-  '--bg': '#F5F2EA', '--paper': '#F5F2EA', '--paper-line': '#D9D6CF', '--ink': '#26211E', '--ink-soft': '#1C1C1C',
-  '--muted': 'rgba(28, 28, 28, 0.7)', '--accent': '#E8682C', '--accent-deep': '#9E4720', '--accent-light': '#EC7F52',
-  '--accent-soft': 'rgba(232, 104, 44, 0.32)', '--board': '#1A1C1B', '--board-edge': '#2A2D2B', '--chalk': '#F1ECDD',
-  '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#F5F2EA',   // HtmlCard.tsx cardVars 와 같게(크림 종이·따뜻한 잉크)
-  '--font-head': '"Gowun Batang", "Noto Serif KR", "Pretendard", serif', '--font-body': '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-  '--font-serif': '"Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", serif', '--font-latin': '"Anton", "Pretendard", sans-serif',
-  '--font-editorial': '"Song Myung", "Gowun Batang", "Noto Serif KR", serif', '--font-poster': '"Song Myung", "Gowun Batang", serif',
-  '--font-italic': '"Instrument Serif", "Playfair Display", serif',
-  '--font-heavy': '"Black Han Sans", "Pretendard", sans-serif', '--font-round': '"Jua", "Pretendard", sans-serif',
-  '--font-hand': '"Nanum Pen Script", "Pretendard", cursive', '--font-numeral': '"Playfair Display", "Gowun Batang", serif',
-  '--font-mono': '"Pretendard", monospace',
+  '--bg': '#F7F8F6', '--paper': '#F7F8F6', '--paper-line': 'rgba(18,19,21,0.10)', '--ink': '#121315', '--ink-soft': '#1C1C1C',
+  '--muted': 'rgba(28, 28, 28, 0.7)', '--accent': '#FC5400', '--accent-deep': '#D94600', '--accent-light': '#FD732E',
+  '--accent-soft': 'rgba(252, 84, 0, 0.32)', '--board': '#1A1C1B', '--board-edge': '#2A2D2B', '--chalk': '#F1ECDD',
+  '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#FFFFFF',
+  '--font-head': SANS, '--font-body': SANS, '--font-serif': SANS, '--font-latin': SANS, '--font-editorial': SANS,
+  '--font-poster': SANS, '--font-italic': ITALIC, '--font-heavy': SANS, '--font-round': SANS, '--font-hand': ITALIC,
+  '--font-numeral': ITALIC, '--font-mono': SANS,
 };
 
 const fontFaces = () => {
@@ -82,7 +82,7 @@ const harness = (card, animSrc, gsapSrc, pluginSrc) => {
 html,body{margin:0;padding:0;background:${bg};}
 #stage{position:relative;width:${card.w}px;height:${card.h}px;overflow:hidden;}
 .card-host{${varCss}position:absolute;left:0;top:0;width:${card.w}px;height:${card.h}px;color:var(--ink);font-family:var(--font-body);line-height:1.25;}
-.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden}
+.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}
 .card[data-card-id="${card.id}"] *{box-sizing:border-box}
 ${card.css}
 </style></head><body>
@@ -122,6 +122,9 @@ const audit = async (opts) => {
   try {
     compiled = window.__compileCard(root, {fps: opts.fps, duration: opts.duration, timeline: window.__cardTimeline || ''});
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
+    // 정착 = 선언(data-anim)이 끝난 때와 타임라인 전체가 끝난 때 중 늦은 쪽 — 직접 쓴 타임라인만 있는 카드를 0.3초(움직이는 중)에
+    // 재서 마스크 아래 글자를 '잘림'으로 보던 것(2026-10-04)
+    opts.settle = Math.min(opts.duration - 0.05, Math.max(opts.settle, compiled.duration + 0.05));
     compiled.seek(opts.settle);
   } catch (e) {
     push('runtime_error', 'compile: ' + (e && e.message ? e.message : e));
@@ -224,16 +227,16 @@ const audit = async (opts) => {
     // 잘림: overflow:hidden 인 조상 상자 밖으로 글자 상자가 나가면(글이 상자보다 길다)
     for (let a = el.parentElement; a && a !== root; a = a.parentElement) {
       const ao = getComputedStyle(a).overflow;
-      if (ao === 'visible') continue;
+      if (ao === 'visible' || a.dataset.splitMask) continue;   // SplitText 마스크는 일부러 자르는 상자(정착하면 안에 다 들어온다)
       const A = a.getBoundingClientRect();
       const clipped = rects.some((r) => r.width > 0 && (r.right > A.right + 2 || r.bottom > A.bottom + 2 || r.left < A.left - 2 || r.top < A.top - 2));
       if (clipped) push('text_overflow', `text clipped by ${desc(a)} (${Math.round(A.width)}×${Math.round(A.height)})`, sel);
       break;
     }
-    // 대비
+    // 대비 — aria-hidden="true" 안의 글자는 장식(뒤에 깔린 큰 연도·워터마크)이라 대비를 재지 않는다(읽으라고 둔 글이 아니다)
     const fg = parse(cs.color);
     const bg = effectiveBg(el);
-    if (fg && bg) {
+    if (fg && bg && !el.closest('[aria-hidden="true"]')) {
       const fgb = fg.a < 0.99 ? blend(fg, bg) : fg;
       const rt = ratio(fgb, bg);
       const large = fs >= 40 || (fs >= 32 && parseInt(cs.fontWeight, 10) >= 700);

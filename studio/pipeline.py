@@ -1412,8 +1412,10 @@ class Pipeline:
         mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
                         self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
-                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v6")
+                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v7")
         # plan-v6(2026-10-04): 🌍 TREATMENT.world · EDITOR.pauses · EVIDENCE.stock.angle/alt_queries — 예전 계획엔 없어 다시 짠다
+        # plan-v7(2026-10-04): 카드·시그니처 장면의 GSAP timeline 이 merge_plan 에서 버려지던 것 + 구도 원형(archetype) — 예전 계획의
+        #   카드에는 안무가 없다
         saved = read_json(self.work / "plan.json", {})
         use_api = self._use_api()
         studio = self._ensure_studio()

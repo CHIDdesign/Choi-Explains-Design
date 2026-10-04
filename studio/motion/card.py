@@ -464,6 +464,8 @@ def clean_card(card: Any, *, layout: str = "fullscreen", card_id: str = "", stri
     tl = clean_timeline(card.get("timeline"), problems)
     if tl:
         out["timeline"] = tl
+    if isinstance(card.get("archetype"), str) and re.fullmatch(r"[a-z_]{3,24}", card["archetype"]):
+        out["archetype"] = card["archetype"]          # 구도 원형(prompts/layouts.md) — 재정규화에도 남는다
     if card.get("settle_s") is not None:
         try:
             out["settle_s"] = float(card["settle_s"])

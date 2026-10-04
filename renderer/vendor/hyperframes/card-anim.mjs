@@ -16,6 +16,26 @@ const KINDS = ['fade-in', 'fade-out', 'slide-in', 'kinetic-chars', 'typewriter',
   'split-words', 'split-lines', 'split-chars', 'draw-svg', 'morph-svg', 'follow-path'];
 const SEL_RE = /^[#.][A-Za-z][A-Za-z0-9_-]{0,40}$/;
 let CE_N = 0; // CustomEase 이름은 전역이라 카드마다 겹치지 않게
+/** SplitText 마스크 상자에 숨 쉴 자리를 준다 — 큰 제목의 글자 윗부분·아랫부분(받침·영문 디센더)이 상자에 잘리지 않게
+ * 위아래 0.16em·좌우 0.06/0.12em 넓히고 같은 만큼 음수 여백으로 자리를 되돌린다(배치 불변). 검사(check.mjs)는 이 표시가 있는 상자를 잘림으로 보지 않는다. */
+const markMasks = (parts) => {
+  for (const p of parts || []) {
+    const m = p && p.parentElement;
+    if (!m || m.dataset.splitMask) continue;
+    const cs = getComputedStyle(m);
+    if (cs.overflow === 'visible' && cs.clipPath === 'none') continue;
+    m.dataset.splitMask = '1';
+    m.style.paddingTop = '0.16em';
+    m.style.paddingBottom = '0.16em';
+    m.style.marginTop = '-0.16em';
+    m.style.marginBottom = '-0.16em';
+    // 이탤릭(기울어진 글자)은 오른쪽으로 삐져나온다 — 좌우도 조금(2026-10-04 렌더: '30년'의 '년'이 잘림)
+    m.style.paddingLeft = '0.06em';
+    m.style.paddingRight = '0.12em';
+    m.style.marginLeft = '-0.06em';
+    m.style.marginRight = '-0.12em';
+  }
+};
 const SPLIT_KEYS = ['type', 'mask', 'wordsClass', 'charsClass', 'linesClass', 'smartWrap', 'reduceWhiteSpace'];
 
 const EASES = new Set(['power1.out', 'power2.out', 'power3.out', 'power4.out', 'power2.in', 'power2.inOut', 'power3.inOut',
@@ -216,6 +236,7 @@ function compileCard(gsap, root, opts) {
           const sp = new libs.SplitText(el, {type: unit === 'lines' ? 'lines' : unit === 'words' ? 'words' : 'words,chars',
             mask: unit, aria: 'none'});
           parts = sp[unit] || [];
+          markMasks(parts);
         } else {
           splitChars(el);
           parts = Array.from(el.querySelectorAll('.char'));
@@ -349,6 +370,7 @@ function runTimeline(gsapLib, tl, root, code, ctx, problems, libs) {
         return {chars: [], words: els, lines: els};
       }
       const sp = new libs.SplitText(els, v);
+      if (v.mask) markMasks(sp[v.mask] || []);
       return {chars: sp.chars || [], words: sp.words || [], lines: sp.lines || []};
     },
     // CustomEase: gsap.customEase('M0,0 C0.2,0 0.1,1 1,1') → ease 이름(트윈의 ease 에 그대로)

@@ -61,8 +61,9 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
 });
 
 /** 카드 조각(내부 HTML + 스코프 CSS) → 마운트할 문자열. .card 는 호스트(작성 캔버스)를 꽉 채운다 — 안 그러면 .root 의 height:100% 가 내용 높이가 된다 */
+// 한국어 줄바꿈은 어절 단위(keep-all) — 기본값은 음절마다 끊어 '그 특 / 징'처럼 낱말 가운데서 줄이 바뀐다(2026-10-04 렌더 확인)
 export const wrapCard = (card: CardSpec): string =>
-  `<div class="card" data-card-id="${card.id}"><style>.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden}` +
+  `<div class="card" data-card-id="${card.id}"><style>.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}` +
   `.card[data-card-id="${card.id}"] *{box-sizing:border-box}${card.css}</style>${card.html}</div>`;
 
 const FAMILIES: [RegExp, string][] = [
