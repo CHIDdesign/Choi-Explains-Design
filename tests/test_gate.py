@@ -553,3 +553,18 @@ def test_gap_keyword_rejects_adverbs_and_verbs_and_prefers_concept_phrases(tmp_p
     assert p._gap_keyword(by[41], strict=False)[0] != ""                    # A7 block 을 막을 때만 예전 낱말
     assert pl.card_worthy("결국") is False and pl.card_worthy("이론") is False and pl.card_worthy("디자인") is False
     assert pl.card_worthy("프로세스 장표") and pl.card_worthy("어포던스") and not pl.card_worthy("이렇게 합니다")
+
+
+def test_gap_cards_do_not_print_internal_markers():
+    """2026-10-04 검토: 보충 카드 출처 칸에 내부 표시 'gate' 가 '( gate )'로, 키워드 위에 역할 배지 '키워드'가 나갔다."""
+    from studio.director.plan import _clean_graphic
+    g = _clean_graphic({"template": "keyword", "layout": "overlay", "title": "남의 예시", "source": "gate",
+                        "start_seg": 3}, [1, 2, 3])
+    assert g is not None and g["source"] == ""
+    q = _clean_graphic({"template": "quote", "body": "Less but better", "source": "Dieter Rams", "start_seg": 3}, [3])
+    assert q["source"] == "Dieter Rams"
+    src = (Path(__file__).resolve().parents[1] / "studio" / "pipeline.py").read_text(encoding="utf-8")
+    assert '"source": "gate"' not in src
+    tsx = (Path(__file__).resolve().parents[1] / "renderer" / "src" / "components" / "longform" / "Plates.tsx").read_text(
+        encoding="utf-8")
+    assert "keyword: '키워드'" not in tsx

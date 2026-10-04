@@ -277,6 +277,8 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
     out["end_seg"] = _nearest(valid, out.get("end_seg", out["start_seg"]))
     if out["end_seg"] < out["start_seg"]:
         out["end_seg"] = out["start_seg"]
+    if str(out.get("source") or "").strip().lower() in ("gate", "auto", "director", "tag"):
+        out["source"] = ""          # 출처 칸(화면에 '( … )'로 나감)에 들어간 내부 표시 — 2026-10-04 보충 카드에 '( gate )'
     out["items"] = [str(x).strip() for x in out.get("items") or [] if str(x).strip()][:8]
     out["items_b"] = [str(x).strip() for x in out.get("items_b") or [] if str(x).strip()][:8]
     try:

@@ -2078,7 +2078,7 @@ class Pipeline:
                     g = blank_graphic("keyword", i)
                     g.update({"layout": "overlay", "title": title, "start_word": word if word in by_id[i].text else "",
                               "reason": "품질 게이트: 그래픽이 없던 구간을 그 문장의 핵심어로 채움"
-                                        + ("" if strict else " (약한 낱말 — 40초 넘는 맨얼굴을 막기 위해)"), "source": "gate"})
+                                        + ("" if strict else " (약한 낱말 — 40초 넘는 맨얼굴을 막기 위해)")})
                     self.plan_long.setdefault("graphics", []).append(g)
                     used.add(i)
                     added += 1

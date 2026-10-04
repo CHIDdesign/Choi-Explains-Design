@@ -23,7 +23,7 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
 export const CONCEPT_TEMPLATES: ReadonlySet<string> = new Set(['keyword', 'definition', 'quote', 'stat']);
 
-const ROLE: Record<string, string> = {keyword: '키워드', definition: '정의', quote: '인용', stat: '숫자'};
+const ROLE: Record<string, string> = {definition: '정의', quote: '인용', stat: '숫자'};
 const REVERSE_MAX = 14; // 이보다 짧은 키워드는 반전 상자 한 줄로
 
 /** "85%" → {n: 85, prefix: '', suffix: '%', decimals: 0} — 카운트업할 수 있는 숫자면 값을 돌려준다 */
@@ -59,7 +59,7 @@ type ContentProps = {
 };
 
 /** 역할 라벨(디자인 v3 — 레퍼런스 3번 이름표의 작은 판): 옅은 강조색 상자 + 짙은 강조색 글자. 검은 알약 배지는 쓰지 않는다 */
-export const Kicker: React.FC<{text: string; size: number; theme: Theme}> = ({text, size, theme}) => (
+export const Kicker: React.FC<{text: string; size: number; theme: Theme}> = ({text, size, theme}) => !text ? null : (
   <span style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: 700, fontSize: size, lineHeight: 1.2,
     letterSpacing: '-0.005em', whiteSpace: 'nowrap', color: theme.accentDeep, background: theme.accentTint,
     padding: `${size * 0.18}px ${size * 0.5}px ${size * 0.24}px`}}>{text}</span>
@@ -73,7 +73,8 @@ export const ConceptContent: React.FC<ContentProps> = ({template, data, frame, d
   const rule = NOTE.rule;
   const accent = theme.accent;
   // 배지 = 이 조각의 역할 라벨(모션 디자이너가 body 에 쓴 "이유·예시·결론…"), 없으면 템플릿 역할. 키워드의 subtitle 은 보조문 줄
-  const chip = label || (template === 'keyword' ? data.body || ROLE.keyword : ROLE[template]);
+  // 키워드에는 역할 배지를 붙이지 않는다 — '키워드'라는 말은 내용이 아니라 내부 이름이다(2026-10-04 검토: 모든 보충 카드 위에 '키워드')
+  const chip = label || (template === 'keyword' ? data.body || '' : ROLE[template]);
   const chipSize = Math.round((mode === 'board' ? 22 : 20) * s);
   const headMax = (mode === 'board' ? 92 : 60) * s;
   const headMin = 30 * s;
