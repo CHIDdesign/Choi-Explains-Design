@@ -3622,6 +3622,7 @@ class Pipeline:
             if imgs:
                 pending[g.id] = imgs
         tg = {g.id: g for g in targets}
+        final_reject: dict[str, list[str]] = {}
         for rnd in (1, 2):
             if not pending:
                 break
@@ -3641,6 +3642,7 @@ class Pipeline:
                     stats["rejected"] += 1
                 self.log(f"🧑‍⚖️ {gid} 탈락({rnd}차): " + " · ".join(why[:3]) + (f" → 고침: {str(res.get('fix') or '')[:90]}" if rnd == 1 else ""))
                 if rnd == 2:
+                    final_reject[gid] = why
                     continue
                 fix = str(res.get("fix") or "")
                 problem = "🧑‍⚖️ 장면 심사 탈락 — " + "; ".join(why[:4])
@@ -3670,22 +3672,17 @@ class Pipeline:
                 next_pending[gid] = pending[gid]       # 못 고쳤으면 그대로 2차 심사(통과하면 남긴다)
             pending = next_pending
         # 2차에서도 탈락한 카드는 내보내지 않는다 — 키워드 카드로(단순하지만 슬롭은 아니다)
-        if pending:
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                results = dict(zip(list(pending), ex.map(lambda gid: judge(tg[gid], pending[gid]), list(pending))))
-            for gid, r in results.items():
-                if r is None or r[0]:
-                    continue
-                g, src = tg[gid], by_id[gid]
-                if g.template != "card":
-                    continue
-                title = (src.get("title") or card_text(src["card"])[:12]).strip()
-                self.log(f"🧑‍⚖️ 카드 '{title}' 는 심사에 두 번 탈락해 키워드 카드로 대체: " + " · ".join(r[1][:2]))
-                src["template"], src["layout"] = "keyword", "split"
-                src["title"] = title[:12] or "핵심"
-                src["subtitle"] = card_text(src["card"])[:40]
-                src.pop("card", None)
-                stats["replaced"] += 1
+        for gid, why in final_reject.items():
+            g, src = tg[gid], by_id[gid]
+            if g.template != "card" or not isinstance(src.get("card"), dict):
+                continue
+            title = (src.get("title") or card_text(src["card"])[:12]).strip()
+            self.log(f"🧑‍⚖️ 카드 '{title}' 는 심사에 두 번 탈락해 키워드 카드로 대체: " + " · ".join(why[:2]))
+            src["template"], src["layout"] = "keyword", "split"
+            src["title"] = title[:12] or "핵심"
+            src["subtitle"] = card_text(src["card"])[:40]
+            src.pop("card", None)
+            stats["replaced"] += 1
         self.log(f"🧑‍⚖️ 장면 심사: {stats['scenes']}개 중 탈락 {stats['rejected']} · 고침 {stats['fixed']} · 대체 {stats['replaced']}")
         self.results["critic"] = stats
 

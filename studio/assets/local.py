@@ -75,7 +75,7 @@ def used_files(items: list[LocalItem], outcomes: list[dict[str, Any]]) -> set[st
     used: set[str] = set()
     for o in outcomes or []:
         for a in (o.get("assets") or []) if isinstance(o, dict) else []:
-            stem = Path(str((a or {}).get("path") or "")).stem
+            stem = Path(str((a or {}).get("src") or (a or {}).get("path") or "")).stem      # 조달 결과의 그림 경로는 src
             stem = re.sub(r"\.full\.h\d+$", "", stem)
             if stem in stems:
                 used.add(stems[stem])

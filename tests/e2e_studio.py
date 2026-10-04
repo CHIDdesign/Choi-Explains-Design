@@ -133,11 +133,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "winner": 2, "reason": "0.5초에 무엇을 볼지 분명", "fix": "라벨을 40px 로"}
     if agent == "card_critic":  # 🧑‍⚖️ 장면 심사 — 정착 화면 + 움직임 시트(+ 스타일 프레임·보드), 첫 카드는 한 번 탈락시켜 수정 고리를 돈다
         assert "## 하드 실패" in instruction and n_images >= 2, (n_images, instruction[-300:])
-        m = re.search(r"- `(g\d+)`: 정착 시각의 화면", instruction)
-        gid = m.group(1) if m else ""
-        first = not any(c["agent"] == "card_critic" and c.get("gid") == gid and c.get("verdict") == "reject" for c in load_calls())
-        if "자유 카드" in instruction and first and gid and not any(c["agent"] == "card_critic" and c.get("verdict") == "reject"
-                                                                     for c in load_calls()):
+        first = not any(c["agent"] == "card_critic" for c in load_calls())      # 첫 호출만 탈락 → 수정 → 재심사 통과
+        if "자유 카드" in instruction and first:
             return {"verdict": "reject", "hard_failures": ["가운데 정렬 3단 스택(PPT)"],
                     "scores": {k: 6 for k in ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")},
                     "fix": "제목을 왼쪽 축 150px 로 옮기고 180px 로", "notes": "템플릿 같다"}

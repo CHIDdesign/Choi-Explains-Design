@@ -25,7 +25,7 @@ def test_index_lists_unreadable_files_and_counts_used_ones(tmp_path):
     text = local.listing(items, others)
     assert "M1 `IMG_2034.jpg` (40×30)" in text and "`참고 논문.pdf`" in text and "PNG·JPG" in text
     # 조달 사다리가 복사한 이름(own_<이름>)으로 사용 여부를 센다 — 하우스 톤 처리 꼬리(.full.h1)가 붙어도
-    outcomes = [{"assets": [{"path": "/x/public/images/own_더블_다이아몬드_도식.png"}]},
+    outcomes = [{"assets": [{"src": "images/own_더블_다이아몬드_도식.png", "kind": "photo"}]},
                 {"assets": [{"path": "/x/public/images/own_other.full.h1.jpg"}]}, {"assets": []}]
     assert local.used_files(items, outcomes) == {"더블 다이아몬드 도식.png"}
 
