@@ -133,7 +133,9 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "winner": 2, "reason": "0.5초에 무엇을 볼지 분명", "fix": "라벨을 40px 로"}
     if agent == "card_critic":  # 🧑‍⚖️ 장면 심사 — 정착 화면 + 움직임 시트(+ 스타일 프레임·보드), 첫 카드는 한 번 탈락시켜 수정 고리를 돈다
         assert "## 하드 실패" in instruction and n_images >= 2, (n_images, instruction[-300:])
-        first = not any(c["agent"] == "card_critic" for c in load_calls())      # 첫 호출만 탈락 → 수정 → 재심사 통과
+        # 자유 카드의 첫 심사만 탈락 → 수정 → 재심사 통과. 장면 여럿은 동시에 심사되므로 '앞 호출이 있었나' 가 아니라
+        # '이미 탈락시킨 적이 있나' 로 본다(2026-10-05 run7: 모션 장면 g0 의 pass 기록이 먼저 남아 카드 g1 이 탈락 없이 통과)
+        first = not any(c["agent"] == "card_critic" and c.get("verdict") == "reject" for c in load_calls())
         if "자유 카드" in instruction and first:
             return {"verdict": "reject", "hard_failures": ["가운데 정렬 3단 스택(PPT)"],
                     "scores": {k: 6 for k in ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")},
