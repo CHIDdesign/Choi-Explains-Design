@@ -3,6 +3,8 @@
     python -m studio run --video 원본.mp4 --topic 주제.txt --script 대본.txt   → 롱폼 1 + 숏폼 2 (창 없이)
     python -m studio rerender <작업폴더>                          → 끝난 단계는 건너뛰고 이어서/다시
     python -m studio rerender <작업폴더> --until design --replan  → 🧪 디자인 벤치: 기획을 새로 짓고 검수(장면 심사·장면 시트)까지만(렌더 없이)
+    python -m studio reference                                   → 🎯 레퍼런스 분석 창(사진·영상 끌어다 놓기 — run_reference.bat 과 같음)
+    python -m studio reference 사진.png 릴스.mp4 [--note 메모]    → 창 없이 분석해 user/taste/refs 에 저장
 """
 from __future__ import annotations
 
@@ -66,6 +68,10 @@ def cli(argv: list[str]) -> int:
     rr.add_argument("--until", default="all", choices=["all", "plan", "design"])
     rr.add_argument("--replan", action="store_true", help="저장된 기획을 쓰지 않고 새로 짓는다(🧪 디자인 벤치)")
     rr.add_argument("--force-render", action="store_true", help=force_help)
+    ref = sub.add_parser("reference", help="🎯 레퍼런스 분석(사진·영상 → 디자인 규칙). 파일이 없으면 창을 연다")
+    ref.add_argument("files", nargs="*", help="사진·영상·폴더")
+    ref.add_argument("--note", default="", help="(선택) 무엇이 좋은지 한 줄")
+    ref.add_argument("--no-ai", action="store_true", help="측정값만(Claude 를 부르지 않음)")
     args = ap.parse_args(argv)
 
     settings = Settings.load()
@@ -98,6 +104,28 @@ def cli(argv: list[str]) -> int:
             spec.reuse_plan = False
         return _run(Pipeline(spec, settings, job_dir, log=log, progress=progress, force_render=args.force_render),
                     args.until)
+    if args.cmd == "reference":
+        from .agents import reference
+        if not args.files:
+            from .gui.reference_dialog import run_reference_tool
+            return run_reference_tool()
+        paths = reference.expand_paths(args.files)
+        if not paths:
+            print("사진·영상 파일이 없습니다.")
+            return 1
+        client, why = (None, "--no-ai") if args.no_ai else reference.make_client(settings, log=log)
+        log(f"AI 연결: {why}" if client is not None else f"AI 없음({why}) — 측정값만 저장")
+        bad = 0
+        for p in paths:
+            try:
+                reference.analyze_file(p, client=client, note=args.note, log=log)
+            except Exception as e:  # noqa: BLE001
+                bad += 1
+                log(f"⚠ {Path(p).name}: {e}")
+        for row in reference.summary_rows()[: len(paths)]:
+            log(f"- {row['name']}: {row['summary'] or row['measured']}")
+        log(f"저장: {reference.ref_dir()}")
+        return 1 if bad else 0
     ap.print_help()
     return 1
 

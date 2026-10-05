@@ -691,12 +691,17 @@ class Studio:
         return self._board
 
     def taste_notes(self) -> str:
-        from . import taste
-        try:
-            text = taste.notes_block()
-        except Exception:  # noqa: BLE001
-            return ""
-        return ("\n\n" + text) if text else ""
+        """🎯 운영자 취향 메모(장면 평가) + 레퍼런스 분석 규칙(reference.rules_block) — 디자인 역할의 지시 끝."""
+        from . import reference, taste
+        parts = []
+        for fn in (taste.notes_block, reference.rules_block):
+            try:
+                text = fn()
+            except Exception:  # noqa: BLE001
+                continue
+            if text:
+                parts.append(text)
+        return ("\n\n" + "\n".join(parts)) if parts else ""
 
     def design_refs(self, key: str) -> list[Image3]:
         """디자인 역할에게 앞에 붙일 기준 그림 — 스타일 프레임(정지 화면 · 움직임 칸)과 레퍼런스 보드."""

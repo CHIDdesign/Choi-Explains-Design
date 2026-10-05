@@ -391,6 +391,11 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         self.recent_btn.setMenu(self.recent_menu)
         h.addWidget(self.recent_btn)
+        ref_btn = QPushButton("🎯 레퍼런스")
+        ref_btn.setObjectName("chip")
+        ref_btn.setToolTip("레퍼런스 분석 — 좋다고 느낀 사진·영상을 끌어다 놓으면 재고 Claude 가 디자인 규칙으로 옮겨 모든 디자이너·심사가 매번 봅니다")
+        ref_btn.clicked.connect(self._open_reference)
+        h.addWidget(ref_btn)
         self.ai_chip = QPushButton("AI 연결 확인 중…")
         self.ai_chip.setObjectName("chip")
         self.ai_chip.clicked.connect(self._on_chip)
@@ -720,9 +725,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # 실행
     # ------------------------------------------------------------------
-    def _start(self, job_dir: Optional[Path] = None, spec: Optional[JobSpec] = None) -> None:
+    def _start(self, job_dir: Optional[Path] = None, spec: Optional[JobSpec] = None, until: str = "all") -> None:
         if self.thread is not None:
             return
+        self._until = until
         self._reset_cancel_button()       # 실패 뒤 '입력 화면으로' 로 바뀐 버튼을 다시 '취소' 로(최근 작업 이어서 만들기)
         spec = spec or self._spec()
         if not spec.video or not Path(spec.video).exists():
@@ -743,8 +749,12 @@ class MainWindow(QMainWindow):
         self.logview.clear()
         self.peek_box.hide()
         self._peek_pix = None
-        self.p_title.setText(f"「{spec.working_title()}」 만드는 중…")
-        self.p_sub.setText("AI 팀이 기획하고, 편집하고, 렌더링까지 합니다.")
+        if until == "design":
+            self.p_title.setText(f"🧪 「{spec.working_title()}」 디자인 벤치…")
+            self.p_sub.setText("기획을 새로 짓고 장면 심사·장면 시트까지만 — 렌더는 하지 않습니다. 끝나면 장면 시트를 엽니다.")
+        else:
+            self.p_title.setText(f"「{spec.working_title()}」 만드는 중…")
+            self.p_sub.setText("AI 팀이 기획하고, 편집하고, 렌더링까지 합니다.")
         self.bar.setValue(0)
         self.p_pct.setText("0%")
         self.pages.setCurrentIndex(1)
@@ -753,7 +763,7 @@ class MainWindow(QMainWindow):
         self.tick.start(1000)
         self._current = ""
         self.thread = QThread(self)
-        self.worker = Worker(spec, self.settings, self.job_dir, self.cancel)
+        self.worker = Worker(spec, self.settings, self.job_dir, self.cancel, until=until)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.log.connect(self._log)
@@ -835,7 +845,25 @@ class MainWindow(QMainWindow):
     def _on_done(self, res: dict) -> None:
         for k, label, _ in STAGES:
             self.stage_rows[k].setText(f"✓  {label}")
+        if getattr(self, "_until", "all") == "design":
+            self._show_bench(res)
+            return
         self._show_results(res, elapsed=time.time() - self.t_start)
+
+    def _show_bench(self, res: dict) -> None:
+        """🧪 디자인 벤치 결과: 장면 시트(렌더 전 스틸 한 장)를 열고 어디에 무엇이 있는지 알린다."""
+        extras = Path(res.get("extras") or Path(res.get("output", "")) / EXTRAS)
+        sheet = extras / "장면시트_렌더전.jpg"
+        if sheet.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(sheet)))
+        crit = res.get("critic") or {}
+        msg = (f"장면 시트: {sheet}\n기획: {Path(res.get('job_dir', '')) / 'work' / 'plan.json'}\n"
+               + (f"장면 심사: {crit.get('scenes', 0)}개 중 탈락 {crit.get('rejected', 0)} · 고침 {crit.get('fixed', 0)} · "
+                  f"대체 {crit.get('replaced', 0)}\n" if crit else "")
+               + "\n마음에 안 드는 장면은 '🎯 레퍼런스'에 좋은 예를 넣거나, 진단자료.zip 과 함께 알려 주세요. 렌더까지 하려면 "
+                 "'최근 작업'에서 이어서 만들기를 누르세요(기획은 이번 것을 씁니다).")
+        QMessageBox.information(self, "🧪 디자인 벤치 끝", msg)
+        self.pages.setCurrentIndex(0)
 
     def _on_fail(self, msg: str) -> None:
         self.tick.stop()
@@ -952,7 +980,25 @@ class MainWindow(QMainWindow):
             else:
                 self.recent_menu.addAction(f"…  {d.name}  (이어서 만들기)", lambda j=d: self._resume(j))
         self.recent_menu.addSeparator()
+        bench = self.recent_menu.addMenu("🧪 디자인 벤치(기획을 새로 짓고 장면 시트까지 — 렌더 없이)")
+        for d in jobs[:8]:
+            bench.addAction(d.name, lambda j=d: self._bench(j))
         self.recent_menu.addAction("작업 폴더 열기", lambda: self._open(str(base)))
+
+    def _bench(self, job: Path) -> None:
+        """🧪 디자인 벤치: 그 작업의 음성 인식·컷·자료는 그대로 두고 기획(디자인)만 새로 지어 검수·장면 시트까지(렌더 없이 — 장면을 50분
+        기다리지 않고 본다). 끝나면 장면 시트를 연다."""
+        data = read_json(job / "job.json", {})
+        if not data.get("video") or not Path(str(data.get("video"))).exists():
+            QMessageBox.information(self, "디자인 벤치", "이 작업의 원본 영상을 찾지 못했습니다.")
+            return
+        spec = JobSpec.from_dict(data)
+        spec.reuse_plan = False
+        self._start(job, spec, until="design")
+
+    def _open_reference(self) -> None:
+        from .reference_dialog import ReferenceDialog
+        ReferenceDialog(self).exec()
 
     def _resume(self, job: Path) -> None:
         data = read_json(job / "job.json", {})
