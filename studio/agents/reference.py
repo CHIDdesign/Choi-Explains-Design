@@ -411,8 +411,9 @@ def _clip(s: Any, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def rules_block(limit: int = 6, max_chars: int = 5200) -> str:
-    """레퍼런스 분석 → 디자인 역할의 지시 끝 블록. 분석이 없으면 ''(측정만 있는 것은 측정 줄만)."""
+def rules_block(limit: int = 6, max_chars: int = 9000) -> str:
+    """레퍼런스 분석 → 디자인 역할의 지시 끝 블록. 분석이 없으면 ''(측정만 있는 것은 측정 줄만). 실제 Opus 분석(2026-10-05)은
+    움직임 규칙 한 칸이 1000자 넘는 안무 레시피였다 — 자르는 폭은 넉넉히(채널 주인: 비용보다 퀄리티)."""
     refs = load_refs()[:limit]
     if not refs:
         return ""
@@ -427,27 +428,27 @@ def rules_block(limit: int = 6, max_chars: int = 5200) -> str:
             lines.append("- (AI 분석 없음 — 측정값만. 같은 박자·색 배분을 참고한다)")
             continue
         if a.get("summary"):
-            lines.append(f"- 요약: {_clip(a['summary'], 220)}")
+            lines.append(f"- 요약: {_clip(a['summary'], 360)}")
         rl = a.get("rules") or {}
         for k, lab in (("type", "글자"), ("color", "색"), ("shape", "도형·재질"), ("motif", "모티프"), ("motion", "움직임"), ("grid", "그리드")):
             if str(rl.get(k) or "").strip():
-                lines.append(f"- {lab}: {_clip(rl[k], 240)}")
+                lines.append(f"- {lab}: {_clip(rl[k], 520 if k == 'motion' else 360)}")
         if a.get("rhythm"):
-            lines.append(f"- 박자: {_clip(a['rhythm'], 200)}")
+            lines.append(f"- 박자: {_clip(a['rhythm'], 300)}")
         for t in (a.get("techniques") or [])[:4]:
             if not isinstance(t, dict):
                 continue
-            how = _clip(t.get("how"), 140)
-            rt = _clip(t.get("our_runtime"), 140)
+            how = _clip(t.get("how"), 200)
+            rt = _clip(t.get("our_runtime"), 220)
             lines.append(f"- 기법 「{_clip(t.get('name'), 30)}」: {how}" + (f" → {rt}" if rt else ""))
         if rl.get("do"):
-            lines.append("- 한다: " + " · ".join(_clip(x, 80) for x in rl["do"][:5]))
+            lines.append("- 한다: " + " · ".join(_clip(x, 110) for x in rl["do"][:5]))
         if rl.get("dont"):
-            lines.append("- 하지 않는다: " + " · ".join(_clip(x, 80) for x in rl["dont"][:5]))
+            lines.append("- 하지 않는다: " + " · ".join(_clip(x, 110) for x in rl["dont"][:5]))
         if a.get("transfer"):
-            lines.append(f"- 우리 채널로 옮길 때: {_clip(a['transfer'], 260)}")
+            lines.append(f"- 우리 채널로 옮길 때: {_clip(a['transfer'], 400)}")
         if a.get("keep_out"):
-            lines.append("- 가져오지 않는다: " + " · ".join(_clip(x, 60) for x in a["keep_out"][:5]))
+            lines.append("- 가져오지 않는다: " + " · ".join(_clip(x, 90) for x in a["keep_out"][:5]))
     text = "\n".join(lines)
     if len(text) > max_chars:
         text = text[: max_chars - 1] + "…"
