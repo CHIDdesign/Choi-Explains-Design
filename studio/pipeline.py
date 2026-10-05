@@ -3910,6 +3910,7 @@ class Pipeline:
         holds = self._hold_spans(self._tag_spans)
         if not holds:
             return graphics
+        seg_t = seg_edit_times([u for u in self.utts if u.kept], self.timemap)
         out: list[TimedGraphic] = []
         dropped = 0
         shifted: list[tuple[TimedGraphic, float]] = []
@@ -3923,9 +3924,14 @@ class Pipeline:
                 continue
             a, b = hit
             min_d = TEMPLATES[g.template].min_dur if g.template in TEMPLATES else 1.5
-            # 홀드 앞에서 끝내기: 홀드로 넘어간 부분은 대개 퇴장 꼬리(+1.0초)·읽기 여유라 잘라도 그래픽은 멀쩡하다 — 남는 길이가
-            # 2초와 원래 길이의 60% 이상이면 남긴다(예전 min_dur·0.8 은 카드·모션 최소 5초로 올린 뒤 4초 넘는 모션 장면도 통째로 뺐다)
-            if g.start < a and a - 0.2 - g.start >= max(2.0, min(0.6 * (g.end - g.start), min_d * 0.8)):
+            # 홀드 앞에서 끝내기. 그래픽의 말(end_seg 발화)이 홀드 전에 끝났으면 홀드로 넘어간 것은 퇴장 꼬리(+1.0초)·읽기·정착 여유뿐이라
+            # 2초만 남으면 끊어서 남긴다(2026-10-05 E2E: 발화 8~9 모션 장면 6.6초가 홀드로 3초 넘어가 '남는 3.7초 < 60%' 로 통째로
+            # 빠졌다 — 말은 전부 홀드 앞에 있었다). 말이 홀드 안까지 이어지는 그래픽은 남는 길이가 2초와 원래의 60%(min_dur·0.8 상한) 이상일 때만
+            end_seg = g.data.get("end_seg") if isinstance(g.data, dict) else None
+            speech_end = seg_t[int(end_seg)][1] if isinstance(end_seg, int) and int(end_seg) in seg_t else None
+            keep_len = a - 0.2 - g.start
+            soft_only = speech_end is not None and speech_end <= a + 0.05
+            if g.start < a and keep_len >= 2.0 and (soft_only or keep_len >= min(0.6 * (g.end - g.start), min_d * 0.8)):
                 g.end = a - 0.2
                 out.append(g)
             elif g.template in EVIDENCE_TEMPLATES and g.end - (b + 0.05) >= min_d * 0.8:

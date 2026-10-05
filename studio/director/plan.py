@@ -956,6 +956,8 @@ def time_graphics(
         if end - start < t.min_dur * 0.7:
             continue
         data = {k: g.get(k) for k in DATA_KEYS}
+        # 말이 어디까지인지(마지막 발화) — 홀드 앞에서 끊을 때 '넘어간 것이 꼬리뿐인가' 를 판단한다(Pipeline._respect_holds)
+        data["end_seg"] = int(g.get("end_seg", g.get("start_seg", 0)) or 0)
         for k in EXTRA_DATA_KEYS:
             if g.get(k):
                 data[k] = g[k]
