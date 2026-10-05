@@ -63,6 +63,25 @@ def same_word(a: str, b: str) -> bool:
     return bool(PARTICLE_RE.match(a[n:])) and bool(PARTICLE_RE.match(b[n:]))
 
 
+def _cho(ch: str) -> int:
+    """한글 음절의 초성 번호(한글이 아니면 -1)."""
+    o = ord(ch)
+    return (o - 0xAC00) // 588 if 0xAC00 <= o <= 0xD7A3 else -1
+
+
+def fragment_of(frag: str, nxt: str) -> bool:
+    """`frag` 가 `nxt` 를 말하려다 끊긴 토막인가 — '쵀'/'최은준입니다', '디자'/'디자인은'. 1~3글자, 앞글자가 같거나
+    (받침·모음이 잘못 들린 한 글자는) 초성이 같으면 토막으로 본다."""
+    frag, nxt = ntok(frag), ntok(nxt)
+    if not frag or not nxt or len(frag) > 3 or frag == nxt:
+        return False
+    if nxt.startswith(frag):
+        return True
+    if len(frag) == 1:
+        return _cho(frag) == _cho(nxt[0]) and _cho(frag) >= 0
+    return frag[0] == nxt[0] and (frag[1] == nxt[1] or _cho(frag[1]) == _cho(nxt[1]) >= 0)
+
+
 def is_final(w: Word) -> bool:
     t = w.text.strip()
     return bool(re.search(r"[.?!。？！]$", t)) or bool(FINAL_RE.search(ntok(t)))
@@ -142,14 +161,23 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             k_eff, chars_eff = k, chars
             if k and toks[live[kj]] in DISCOURSE:
                 k_eff, chars_eff = k - 1, chars - len(toks[live[kj]])
-            if k_eff < 2 or chars_eff < 4:
+            tail = [live[x] for x in range(ki + k, kj) if not drop[live[x]]]
+            # 절어서 다시 시작(2026-10-04 채널 주인: '안녕하세요 쵀 / 안녕하세요 최은준입니다' 가 둘 다 나갔다):
+            # 같은 말 한 어절(3글자 이상)이라도 그 뒤에 끊긴 토막(1~2어절·4글자 이하, 맺지 않은 말)만 남기고 쉼 뒤에 처음부터
+            # 다시 말했으면 — 토막이 다음 시도의 그 자리 낱말의 앞부분이면 — 앞 시도를 지운다
+            # 토막은 다시 말한 그 낱말들('디자인은 디자 / 디자인은 …')이나 바로 이어지는 낱말('쵀' / '최은준입니다')의 앞부분이어야
+            # 한다 — '배울 때 / 디자인을 …'처럼 쉼표 뒤 이어 가는 말을 지우지 않게
+            upcoming = [toks[live[x]] for x in range(kj, min(len(live), kj + k + 3))]
+            stutter = (k_eff >= 1 and chars_eff >= 3 and (j_start or chars_eff >= 4) and 1 <= len(tail) <= 2
+                       and sum(len(toks[x]) for x in tail) <= 4 and not any(is_final(words[x]) for x in tail)
+                       and any(fragment_of(toks[tail[-1]], w) for w in upcoming))
+            if not stutter and (k_eff < 2 or chars_eff < 4):
                 continue
             strong = k_eff >= 3 and chars_eff >= 8
             i_start = attempt_start(i) or any(attempt_start(live[x]) for x in range(max(0, ki - 2), ki))
             # 새 시도는 보통 쉼·문장 끝 뒤에서 시작 — 쉼 없이 곧바로 고쳐 말한 경우는 같은 말이 길 때만(3어절·8글자)
-            if not ((j_start and (i_start or strong)) or (strong and i_start)):
+            if not (stutter or (j_start and (i_start or strong)) or (strong and i_start)):
                 continue
-            tail = [live[x] for x in range(ki + k, kj) if not drop[live[x]]]
             # 꼬리 안에서 문장이 끝났는데(다시 나오지 않는 끝말) NG 말도 없으면 버려진 시도가 아니라 완성된 다른 문장이다
             # 예) '좋은 질문에는 … 있습니다. 결국 좋은 디자인은 / 좋은 질문에서' — 짧은 꼬리여도 지우지 않는다
             ng_tail = any(k_ in "".join(toks[x] for x in tail) for k_ in NG_WORDS)
@@ -160,7 +188,7 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
                 open_final = True
             if (open_final and not ng_tail) or len(tail) > MAX_TAIL_OPEN:
                 continue
-            if strict and not (strong or ng_tail):
+            if strict and not (strong or ng_tail or stutter):
                 continue
             cand = (k, chars, -ki)
             if best is None or cand > best[0]:

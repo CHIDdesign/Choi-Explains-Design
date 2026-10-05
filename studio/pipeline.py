@@ -143,8 +143,14 @@ SOFT_STAGES = {"audio", "face", "research", "grade", "verify", "broll", "stock",
 MUSIC_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 
 
+DESIGN_STOP = ("render", "master", "export")   # until='design': 검수(자기 검토·장면 심사·장면 시트)까지, 50분 렌더 없이
+
+
 def schedule_for(until: str = "all") -> list[list[list[str]]]:
-    """until='plan' 이면 기획까지만(편집본·렌더 없이)."""
+    """until='plan' 이면 기획까지만(편집본·렌더 없이), 'design' 이면 검수까지(🧪 디자인 벤치 — 새 대본에서 디자이너가 실제로
+    무엇을 짓는지 10분쯤에 `부가자료/장면시트_렌더전.jpg` 로 본다. 2026-10-04 채널 주인: "예시는 좋은데 새 대본이면 퀄리티가 떨어진다")."""
+    if until == "design":
+        return [[list(lane) for lane in st] for st in SCHEDULE if not any(k in DESIGN_STOP for lane in st for k in lane)]
     if until != "plan":
         return [[list(lane) for lane in st] for st in SCHEDULE]
     out = []
@@ -232,10 +238,19 @@ class JobSpec:
     def topic_text(self) -> str:
         return "\n\n".join(x.strip() for x in (self.topic, self.notes) if x and x.strip())
 
+    def owner_fields(self) -> dict[str, Any]:
+        """주제 설명에 라벨로 적은 것(제목·부제·키워드·대상·썸네일 문구 …) — studio/text/topic.py."""
+        from .text.topic import parse_topic
+        return parse_topic(self.topic_text).as_dict()
+
     def working_title(self) -> str:
+        from .text.topic import parse_topic, strip_label
         if self.title.strip():
-            return self.title.strip()
-        first = next((ln.strip(" #-*") for ln in self.topic_text.splitlines() if ln.strip()), "")
+            return strip_label(self.title)[:40] or self.title.strip()[:40]
+        tf = parse_topic(self.topic_text)
+        if tf.title:                      # '제목: 000의 0000' → '000의 0000'(2026-10-04 채널 주인: 라벨까지 제목으로 찍혔다)
+            return tf.title[:40]
+        first = next((strip_label(ln.strip(" #-*")) for ln in (tf.body or self.topic_text).splitlines() if ln.strip()), "")
         if first:
             return first[:40]
         return Path(self.video).stem[:40] or "새 영상"
@@ -455,6 +470,9 @@ class Pipeline:
             raise
         mins = (time.time() - t0) / 60
         self._log_time_summary(schedule, mins)
+        if until == "design":
+            self.log(f"🧪 디자인 벤치 끝({mins:.1f}분): 장면 시트 {self.extras / '장면시트_렌더전.jpg'} · 계획 {self.work / 'plan.json'} · "
+                     f"스틸 {self.work / 'qa'} — 진단자료.zip 과 함께 보내면 디자이너의 실제 출력으로 프롬프트를 고칠 수 있다")
         self.log(f"완료 ({mins:.1f}분) → {self.out}")
         diag.write(self)
         res = {"output": str(self.out), "job_dir": str(self.dir), "title": self.title, **self.results}
@@ -1333,10 +1351,11 @@ class Pipeline:
     # ------------------------------------------------------------------
     def _brief(self) -> JobBrief:
         local = [p.name for p in list_local_images(self.spec.images_dir)]
+        owner = self.spec.owner_fields()
         return JobBrief(title=self.title, notes=self.spec.topic_text, episode=self.spec.episode,
-                        subtitle=self.spec.subtitle, local_images=local, shorts_count=self.spec.shorts_count,
-                        short_max_sec=self.spec.short_max_sec, presenter=self.settings.brand.presenter,
-                        brand=self.settings.brand.name)
+                        subtitle=self.spec.subtitle or str(owner.get("subtitle") or ""), local_images=local,
+                        shorts_count=self.spec.shorts_count, short_max_sec=self.spec.short_max_sec,
+                        presenter=self.settings.brand.presenter, brand=self.settings.brand.name, owner=owner)
 
     def _pace(self):
         return PACES.get(self.spec.pace, PACES["calm"])
@@ -1523,10 +1542,11 @@ class Pipeline:
         mode = "studio" if (self.spec.studio_mode and self._use_api()) else "single"
         key = text_hash(shared_context(brief, self.utts, self.tags, None, 0.0), self.spec.shorts_count,
                         self.spec.short_max_sec, self.settings.claude_model, mode, self.spec.direction,
-                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v8")
+                        self._stock_enabled(), self.spec.motion_scenes, text_hash(rblock), "plan-v9")
         # plan-v6(2026-10-04): 🌍 TREATMENT.world · EDITOR.pauses · EVIDENCE.stock.angle/alt_queries — 예전 계획엔 없어 다시 짠다
         # plan-v7(2026-10-04): 카드·시그니처 장면의 GSAP timeline 이 merge_plan 에서 버려지던 것 + 구도 원형(archetype) — 예전 계획의
         #   카드에는 안무가 없다
+        # plan-v9(2026-10-04): 한 세계 + 카메라(data-world·data-camera, camera_world 원형)·슬롭 금지·장면 심사 ·
         # plan-v8(2026-10-04): 글자 예산·아이콘 인포그래픽·되튐 없음·떠다니기·이어 가기(data-carry) 디자인 규칙 +
         #   하이라이트 조각 seg~end_seg(합쳐 20~30초) — 예전 계획의 카드는 글이 많고 하이라이트는 한 문장 조각
         saved = read_json(self.work / "plan.json", {})
@@ -1546,11 +1566,17 @@ class Pipeline:
                 from .assets import local as local_assets
                 mats = local_assets.index(self.spec.images_dir)
                 self._materials = mats
+                self._materials_used: set[str] = set()
+                others = local_assets.other_files(self.spec.images_dir)
+                if mats or others:
+                    self.log(f"🗂 ④ 자료 폴더: 이미지 {len(mats)}장" + (f" · 못 읽는 파일 {len(others)}개("
+                             + ", ".join(p.name for p in others[:4]) + " — PNG·JPG 로 넣어 주세요)" if others else "")
+                             + " — 채널 주인이 넣은 자료는 전부 화면에 배치한다")
                 raw_long, raw_shorts = studio.plan(brief, ctx, shorts_count=self.spec.shorts_count,
                                                    progress=lambda f: self._stage("director", 0.95 * f),
                                                    procure=self._procure_evidence
                                                    if (self.spec.fetch_broll or self._stock_enabled()) else None,
-                                                   materials=(local_assets.listing(mats), local_assets.sheet(mats)),
+                                                   materials=(local_assets.listing(mats, others), local_assets.sheet(mats)),
                                                    refs=self._motion_refs if self.spec.motion_scenes else None)
                 # 숏폼 PD 가 한 편도 못 냈을 때만 규칙으로 채운다 — 둘째 편을 억지로 채우지 않는다(제대로 된 한 편이 우선)
                 if self.spec.shorts_count > 0 and not ((raw_shorts or {}).get("shorts") or []):
@@ -1612,7 +1638,11 @@ class Pipeline:
             self.log(f"📱 숏폼 {i} 「{sh.get('title', '')}」: 발화 {len(sh['segments'])}개 · 점수 {sh.get('score')} · "
                      f"이해 가능성 {sh.get('coherence', 1):.1f}"
                      + (f" · 시청자가 얻는 것: {sh['viewer_takeaway']}" if sh.get("viewer_takeaway") else ""))
-        if not self.spec.title.strip() and self.plan_long.get("title"):
+        owner_title = str(self.spec.owner_fields().get("title") or "").strip()
+        if owner_title or self.spec.title.strip():
+            # 채널 주인이 정한 제목이 이긴다 — 감독이 다르게 지었어도 타이틀 카드·파일 이름은 주인의 것
+            self.plan_long["title"] = self.title
+        elif self.plan_long.get("title"):
             self.title = self.plan_long["title"]
             self.slug = slugify(self.title, 30)
         self._plan_key = key
@@ -2901,8 +2931,31 @@ class Pipeline:
         write_json(self.work / "evidence.json", {"rounds": rounds})
         self.evidence_stats = st
         back = self._backfill_block(items, outcomes) if rnd == 1 else ""
+        back = self._materials_check(outcomes, back, rnd)
         return {"outcomes": outcomes, "brief": ev_graphics.brief_for_motion(items, outcomes, drawn),
                 "sheet": self._evidence_sheet(outcomes), "backfill": back}
+
+    def _materials_check(self, outcomes: list[dict[str, Any]], back: str, rnd: int) -> str:
+        """🗂 ④ 자료 폴더의 파일이 실제로 배치됐는지 센다(2026-10-04 채널 주인: "참고자료를 줘도 제대로 쓰지 않는다").
+        1회차에 안 쓴 파일이 있으면 자료 리서처 보충 호출 블록에 '반드시 배치'로 붙이고, 결과는 리포트 '🗂 ④ 자료 폴더' 절."""
+        from .assets import local as local_assets
+        mats = list(getattr(self, "_materials", None) or [])
+        if not mats:
+            return back
+        used = set(getattr(self, "_materials_used", set())) | local_assets.used_files(mats, outcomes)
+        self._materials_used = used
+        unused = [it for it in mats if it.name not in used]
+        self.results["materials"] = {"total": len(mats), "used": len(mats) - len(unused), "unused": [it.name for it in unused]}
+        self.log(f"🗂 ④ 자료 폴더: {len(mats)}개 중 {len(mats) - len(unused)}개 화면에 배치"
+                 + (f" · 아직 안 쓴 파일: {', '.join(it.name for it in unused[:6])}" + (" …" if len(unused) > 6 else "")
+                    if unused else ""))
+        if unused and rnd == 1:
+            block = ("## ④ 자료 폴더에서 아직 쓰지 않은 파일 — 채널 주인이 이 영상에 쓰라고 넣은 참고자료다. **반드시 배치한다**\n"
+                     + "\n".join(f"- {it.key} `{it.name}`" for it in unused[:24])
+                     + "\n파일마다 가장 맞는 문장(start_seg)을 찾아 `need: own_material` + `local_file`(파일 이름 그대로)로 낸다. "
+                       "화자 자신의 것이 아니어도(도표·캡처·참고 이미지) 같다. 정말 맞는 문장이 없는 파일만 notes 에 이름과 이유를 적는다.")
+            back = (back + "\n\n" if back else "") + block
+        return back
 
     def _evidence_deps(self) -> "Deps":
         from .assets.commons import EntityMedia
@@ -3289,8 +3342,10 @@ class Pipeline:
         node = find_node(self.settings.node_path)
         rs = self.settings.render
         self._designer_self_review(studio, links, node)
+        self._critic_pass(studio, node)
         changed: Optional[list[dict]] = None
         escalated: list[dict] = []
+        last_stills: list[tuple[str, Path]] = []
         for rnd in range(1, rounds + 1):
             self.cancel.check()
             graphics, chapters = self._timed_long()
@@ -3341,6 +3396,7 @@ class Pipeline:
                        on_peek=lambda ev, r=rnd: self._preview(
                            ev["file"], f"🧐 아트 디렉터 검수 {r}라운드 · 장면 {ev.get('k', '')}/{ev.get('n', '')}"))
             main = [p for _, p in frames[:n_main]] + [p for _, p in frames if p.stem.startswith("captions")]
+            last_stills = [(f"{g.id} {g.template}", p) for g, (_, p) in zip(targets, frames[:n_main]) if p.exists()]
             stills = [(p.stem, p.read_bytes(), "image/jpeg") for p in main if p.exists()]
             for gid, items in strips.items():
                 sheet = qa_strip_sheet(items, qa_dir / f"{gid}_seq.jpg")
@@ -3367,6 +3423,12 @@ class Pipeline:
             self._stage("qa", rnd / rounds)
             if res.get("verdict") == "pass" or not changed:
                 break
+        # 🖼 렌더 전 장면 시트(2026-10-04 채널 주인: 50분 렌더가 끝나야 장면을 본다 → 검수 스틸을 모아 부가자료에 먼저 둔다 —
+        # 창의 미리보기에도 띄워 결과를 기다리지 않고 장면을 볼 수 있다)
+        sheet = scene_sheet(last_stills, self.extras / "장면시트_렌더전.jpg")
+        if sheet:
+            self.log(f"🖼 렌더 전 장면 시트: {sheet.name}(부가자료 — 렌더를 기다리지 않고 장면 {len(last_stills)}개를 미리 볼 수 있습니다)")
+            self._preview(sheet, "🖼 렌더 전 장면 시트 — 검수 스틸")
         self._measure_cards()
         self.plan_long["qa"] = {"key": gkey(), "rounds": self.qa_log}
         self._save_plan()
@@ -3510,6 +3572,136 @@ class Pipeline:
         self.log(f"🔍 디자이너 자기 검토: {len(targets)}개 중 모션 {len(fixed_m)}개 · 카드 {kept_c}개를 고쳤습니다"
                  f"(나머지는 그대로)")
         self.results["self_review"] = {"scenes": len(targets), "motion_fixed": len(fixed_m), "cards_fixed": kept_c}
+
+    def _critic_pass(self, studio: Any, node: str) -> None:
+        """🧑‍⚖️ 장면 심사(설정 design_critic — Promptible remotion-motion-graphics-skill 의 '만든 사람은 자기 것을 채점하지 않는다'를
+        우리 구조로): 자유 카드(시그니처 포함)는 렌더 전 검사와 같은 Chrome 으로 찍은 정착 화면 + 움직임 시트를, 모션 장면은 자기
+        검토 때 렌더한 스틸을 독립 심사에게 보여 하드 실패·점수로 거른다. 탈락 → 심사의 fix 로 고쳐서(카드는 검사 통과할 때만)
+        다시 심사 → 그래도 탈락이면 **단순 카드(키워드)로 바꾼다**(fail-closed — 2026-10-04 채널 주인: "AI 슬롭 · 불안정").
+        모션 장면은 한 번 고친 것을 린트가 나빠지지 않으면 받는다(다시 렌더하지 않는다)."""
+        from concurrent.futures import ThreadPoolExecutor
+        from .agents.studio import critic_verdict
+        from .motion import lint as mlint
+        if not getattr(self.settings, "design_critic", True):
+            return
+        graphics, _chapters = self._timed_long()
+        gl = self.plan_long["graphics"]
+        by_id = {f"g{i}": g for i, g in enumerate(gl)}
+        targets = [g for g in graphics if g.id in by_id and g.template in ("card", "motion") and g.end - g.start > 1.5]
+        if not targets:
+            return
+        self_dir = self.work / "qa" / "self"
+        rs = self.settings.render
+        kept = [u for u in self.utts if u.kept]
+        tm = self.timemap
+        words = [(tm.src_to_edit(w.start, snap=True), tm.src_to_edit(w.end, snap=True), w.text) for u in kept for w in u.words]
+        words = [(a, b, t) for a, b, t in words if a is not None and b is not None]
+
+        def lint_errors(g: TimedGraphic, spec: dict, layout: str) -> int:
+            ws = [(a - g.start, b - g.start, t) for a, b, t in words if g.start - 0.5 <= a <= g.end]
+            return len(mlint.errors(mlint.lint_scene(spec, g.end - g.start, ws, box=mlint.box_for(layout))))
+
+        def card_images(g: TimedGraphic, card: dict, layout: str) -> tuple[list, bool]:
+            pv = self._preview_cards([{"id": g.id, "card": card, "layout": layout, "dur": g.end - g.start, "label": g.id}])
+            r = pv.get(g.id) or {}
+            return list(r.get("images") or []), bool(r.get("ok", False))
+
+        def motion_images(g: TimedGraphic) -> list:
+            out = []
+            for name, lab in ((f"{g.id}.jpg", g.id), (f"{g.id}_seq.jpg", f"{g.id}#seq")):
+                f = self_dir / name
+                if f.exists():
+                    out.append((lab, f.read_bytes(), "image/jpeg"))
+            return out
+
+        def judge(g: TimedGraphic, imgs: list) -> Optional[tuple[bool, list[str], dict]]:
+            if self.cancel.cancelled or not imgs:
+                return None
+            try:
+                res = studio.critique(self.ctx, g.id, "모션 장면" if g.template == "motion" else "자유 카드",
+                                      self._speech_for(by_id[g.id]), imgs)
+            except DirectorError as e:
+                self._log_file_only(f"   (심사 실패 {g.id}: {e})")
+                return None
+            ok, why = critic_verdict(res)
+            return ok, why, res
+
+        self.log(f"🧑‍⚖️ 장면 심사: 카드·모션 장면 {len(targets)}개를 만든 역할이 아닌 심사가 봅니다")
+        workers = max(1, min(6, int(getattr(self.settings, "studio_workers", 4) or 4)))
+        stats = {"scenes": len(targets), "rejected": 0, "fixed": 0, "replaced": 0}
+        pending: dict[str, list] = {}
+        for g in targets:
+            src = by_id[g.id]
+            if g.template == "card" and isinstance(src.get("card"), dict):
+                imgs, _ok = card_images(g, src["card"], src.get("layout", "fullscreen"))
+            else:
+                imgs = motion_images(g)
+            if imgs:
+                pending[g.id] = imgs
+        tg = {g.id: g for g in targets}
+        final_reject: dict[str, list[str]] = {}
+        for rnd in (1, 2):
+            if not pending:
+                break
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                results = dict(zip(list(pending), ex.map(lambda gid: judge(tg[gid], pending[gid]), list(pending))))
+            self.cancel.check()
+            next_pending: dict[str, list] = {}
+            for gid, r in results.items():
+                if r is None:
+                    continue
+                ok, why, res = r
+                g, src = tg[gid], by_id[gid]
+                if ok:
+                    self._log_file_only(f"   🧑‍⚖️ {gid} 통과 — {str(res.get('notes') or '')[:80]}")
+                    continue
+                if rnd == 1:
+                    stats["rejected"] += 1
+                self.log(f"🧑‍⚖️ {gid} 탈락({rnd}차): " + " · ".join(why[:3]) + (f" → 고침: {str(res.get('fix') or '')[:90]}" if rnd == 1 else ""))
+                if rnd == 2:
+                    final_reject[gid] = why
+                    continue
+                fix = str(res.get("fix") or "")
+                problem = "🧑‍⚖️ 장면 심사 탈락 — " + "; ".join(why[:4])
+                try:
+                    if g.template == "motion":
+                        new = studio.revise_scene(self.ctx, src.get("spec") or {}, g.end - g.start, problem, fix, pending[gid])
+                        layout = src.get("layout", "fullscreen")
+                        if new and lint_errors(g, new, layout) <= lint_errors(g, src.get("spec") or {}, layout):
+                            src["spec"] = new
+                            self._resolve_scene_images([src])
+                            stats["fixed"] += 1
+                        continue        # 모션 장면은 다시 렌더하지 않는다 — 고친 것을 받는다
+                    new = studio.revise_card(self.ctx, src["card"], g.end - g.start, problem, fix, pending[gid],
+                                             layout=src.get("layout", "fullscreen"))
+                except DirectorError as e:
+                    self._log_file_only(f"   (심사 반영 실패 {gid}: {e})")
+                    new = None
+                if new:
+                    imgs, chk_ok = card_images(g, new, src.get("layout", "fullscreen"))
+                    if chk_ok and imgs:
+                        new.pop("dark", None)              # 측정값은 _measure_cards 가 다시 잰다
+                        new.pop("settle_s", None)
+                        src["card"] = new
+                        next_pending[gid] = imgs
+                        continue
+                    self._log_file_only(f"   (심사 반영 {gid}: 고친 카드가 렌더 전 검사에 걸려 되돌림)")
+                next_pending[gid] = pending[gid]       # 못 고쳤으면 그대로 2차 심사(통과하면 남긴다)
+            pending = next_pending
+        # 2차에서도 탈락한 카드는 내보내지 않는다 — 키워드 카드로(단순하지만 슬롭은 아니다)
+        for gid, why in final_reject.items():
+            g, src = tg[gid], by_id[gid]
+            if g.template != "card" or not isinstance(src.get("card"), dict):
+                continue
+            title = (src.get("title") or card_text(src["card"])[:12]).strip()
+            self.log(f"🧑‍⚖️ 카드 '{title}' 는 심사에 두 번 탈락해 키워드 카드로 대체: " + " · ".join(why[:2]))
+            src["template"], src["layout"] = "keyword", "split"
+            src["title"] = title[:12] or "핵심"
+            src["subtitle"] = card_text(src["card"])[:40]
+            src.pop("card", None)
+            stats["replaced"] += 1
+        self.log(f"🧑‍⚖️ 장면 심사: {stats['scenes']}개 중 탈락 {stats['rejected']} · 고침 {stats['fixed']} · 대체 {stats['replaced']}")
+        self.results["critic"] = stats
 
     def _qa_escalate(self, items: list[dict]) -> None:
         """🧐 아트 디렉터가 그래픽으로 풀 수 없다고 올린 편집·컷·음향·원본 문제(escalate_edit, docs/upgrade/08 7절):
@@ -3718,6 +3910,7 @@ class Pipeline:
         holds = self._hold_spans(self._tag_spans)
         if not holds:
             return graphics
+        seg_t = seg_edit_times([u for u in self.utts if u.kept], self.timemap)
         out: list[TimedGraphic] = []
         dropped = 0
         shifted: list[tuple[TimedGraphic, float]] = []
@@ -3731,7 +3924,14 @@ class Pipeline:
                 continue
             a, b = hit
             min_d = TEMPLATES[g.template].min_dur if g.template in TEMPLATES else 1.5
-            if g.start < a and a - 0.2 - g.start >= min_d * 0.8:
+            # 홀드 앞에서 끝내기. 그래픽의 말(end_seg 발화)이 홀드 전에 끝났으면 홀드로 넘어간 것은 퇴장 꼬리(+1.0초)·읽기·정착 여유뿐이라
+            # 2초만 남으면 끊어서 남긴다(2026-10-05 E2E: 발화 8~9 모션 장면 6.6초가 홀드로 3초 넘어가 '남는 3.7초 < 60%' 로 통째로
+            # 빠졌다 — 말은 전부 홀드 앞에 있었다). 말이 홀드 안까지 이어지는 그래픽은 남는 길이가 2초와 원래의 60%(min_dur·0.8 상한) 이상일 때만
+            end_seg = g.data.get("end_seg") if isinstance(g.data, dict) else None
+            speech_end = seg_t[int(end_seg)][1] if isinstance(end_seg, int) and int(end_seg) in seg_t else None
+            keep_len = a - 0.2 - g.start
+            soft_only = speech_end is not None and speech_end <= a + 0.05
+            if g.start < a and keep_len >= 2.0 and (soft_only or keep_len >= min(0.6 * (g.end - g.start), min_d * 0.8)):
                 g.end = a - 0.2
                 out.append(g)
             elif g.template in EVIDENCE_TEMPLATES and g.end - (b + 0.05) >= min_d * 0.8:
@@ -4239,6 +4439,15 @@ class Pipeline:
                     bgm = BgmPlan(path=str(track.path), lufs=track.lufs, start_offset=track.lead_silence, **common)
             if bgm is not None and sheet:
                 bgm = self._apply_music_sheet(bgm, sheet, m)
+            if ed.sfx and self.spec.sfx and not cues and not m["short"]:
+                # 2026-10-04 채널 주인: "효과음이 제대로 없다" — 큐는 있는데 실제 파일(Pixabay·Mixkit)을 하나도 받지 못하면
+                # 조용히 무음이 됐다. 이유를 로그·리포트에 남긴다(절차적 소리는 완성본에 쓰지 않는다)
+                why = (f"받지 못한 파일 {len(lib.failed)}개" if lib is not None and getattr(lib, "failed", None)
+                       else "라이브러리에 실제 효과음 파일이 없음")
+                self.log(f"⚠ 효과음 큐 {len(ed.sfx)}개가 있지만 실제 효과음 파일이 없어 하나도 넣지 못했습니다({why}) — "
+                         f"인터넷·방화벽을 확인하고 다시 실행하면 받습니다(assets/sound/)")
+            m["sfx_cues"] = len(ed.sfx)
+            m["sfx_failed"] = list(getattr(lib, "failed", []) or [])[:12] if lib is not None else []
             mix_wav = self.work / f"mix_{k}.wav"
             rep = mix(self.ff, m["voice"], mix_wav, total=m["total"], sfx=cues, bgm=bgm, log=self.log,
                       cancel=self.cancel)
@@ -4315,6 +4524,8 @@ class Pipeline:
         ]
         write_json(self.work / "sound_report.json", {
             "voice_lufs": voice_lufs, "mix": rep, "music_sheet_by": sheet.get("by", ""),
+            "sfx_cues": int(main.get("sfx_cues", 0) or 0), "sfx_real": int(main.get("n_sfx", 0) or 0),
+            "sfx_failed": list(main.get("sfx_failed") or []),
             "suite": sheet.get("suite", ""), "fit_score": sheet.get("fit_score"),
             "cues": main.get("music_cues") or [], "silences": main.get("music_silences") or [],
             "shorts": [{"name": m["name"], **(m.get("mix_report") or {})} for m in self.masters if m["short"]],
@@ -4561,7 +4772,8 @@ class Pipeline:
                              broll=self.broll_log, studio=self.plan_long.get("studio") or None,
                              qa=self.qa_log or (self.plan_long.get("qa") or {}).get("rounds"),
                              gate=gate.report_section(self.gate_results),
-                             sound=read_json(self.work / "sound_report.json", {}) or None)
+                             sound=read_json(self.work / "sound_report.json", {}) or None,
+                             materials=self.results.get("materials"))
         report += self._craft_report()
         if self.soft_failures:
             report += "\n## ⚠️ 건너뛴 작업(실패했지만 영상은 끝까지 만들었습니다)\n\n" + "".join(
@@ -4818,6 +5030,21 @@ def qa_images(stills: dict[str, tuple], gid: str) -> list[tuple]:
     """수정할 장면에 보여 줄 그림: 안착 화면(원본 해상도) + 움직임 6칸 시트(있으면) — 예전엔 스틸 한 장뿐이라
     디자이너가 움직임(늦은 등장·빈 0.5초·퇴장 깨짐)을 보지 못하고 고쳤다."""
     return [x for x in (stills.get(gid), stills.get(f"{gid}#seq")) if x]
+
+
+def scene_sheet(stills: list[tuple[str, Path]], dst: Path) -> Optional[Path]:
+    """검수 스틸 [(라벨, jpg)] → 3열 격자 한 장(640×360 칸, 자르지 않음). 없으면 None. 실패해도 결과물에는 영향 없다."""
+    items = [(lab, p) for lab, p in stills if p.exists()]
+    if not items:
+        return None
+    try:
+        from .stock.research import contact_sheet
+        data = contact_sheet([(lab, p.read_bytes()) for lab, p in items[:30]], cell=(640, 360), contain=True)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+        return dst
+    except Exception:  # noqa: BLE001 - 시트는 덤
+        return None
 
 
 def qa_strip_times(g: TimedGraphic, settle: float) -> list[float]:

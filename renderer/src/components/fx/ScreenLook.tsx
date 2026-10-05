@@ -11,6 +11,8 @@ import {grainOffset, useNoiseTile} from '../../lib/noise';
  *  4. 움직이는 입자(노이즈 타일을 프레임마다 옮김) · 5. 비네트 · 6. 아주 작은 깜빡임
  * 모두 합성기 층(CSS)이라 매 프레임 바뀌는 SVG 필터·화면 전체 feTurbulence 를 쓰지 않는다(렌더 속도 규칙).
  * strength 0 = 없음, 1 = 기본. opacity 는 전면 그래픽의 등장·퇴장에 맞춰 LongForm 이 준다. dark = 어두운 판(빛 번짐을 screen 으로).
+ * 층 순서: 전면 그래픽(카드·모션) **위에** 얹는다(LongForm.tsx — 모니터 화면을 통해 보는 것처럼). 2026-10-04 채널 주인: "모니터 효과가
+ * 반영도 안 된다" → 1080p 에서 보이게 세기를 올렸다(흐림 0.8px · 주사선·격자 0.5 · 입자 0.34 — 첫 판은 너무 은은했다).
  */
 export const ScreenLook: React.FC<{frame: number; strength: number; opacity: number; dark?: boolean; seed?: number}> = ({
   frame, strength, opacity, dark = false, seed = 11,
@@ -26,7 +28,7 @@ export const ScreenLook: React.FC<{frame: number; strength: number; opacity: num
   return (
     <AbsoluteFill style={{pointerEvents: 'none'}}>
       {/* 1. 아주 약간의 흐림 */}
-      <div style={{...layer, backdropFilter: `blur(${(0.6 * s).toFixed(2)}px)`, WebkitBackdropFilter: `blur(${(0.6 * s).toFixed(2)}px)`}} />
+      <div style={{...layer, backdropFilter: `blur(${(0.8 * s).toFixed(2)}px)`, WebkitBackdropFilter: `blur(${(0.8 * s).toFixed(2)}px)`}} />
       {/* 2. 개체마다 번지는 빛 — 어두운 판: 밝은 곳을 키운 흐린 사본을 screen 으로(밝은 개체 둘레에 빛) ·
              밝은 판: screen 은 어두운 글자를 회색으로 띄우므로 soft-light 로 부드럽게만 */}
       {dark ? (
@@ -34,22 +36,22 @@ export const ScreenLook: React.FC<{frame: number; strength: number; opacity: num
           backdropFilter: `blur(${Math.round(14 * s)}px) contrast(1.6) brightness(0.9) saturate(1.1) sepia(0.12)`,
           WebkitBackdropFilter: `blur(${Math.round(14 * s)}px) contrast(1.6) brightness(0.9) saturate(1.1) sepia(0.12)`}} />
       ) : (
-        <div style={{...layer, mixBlendMode: 'soft-light', opacity: 0.26 * s,
+        <div style={{...layer, mixBlendMode: 'soft-light', opacity: 0.34 * s,
           backdropFilter: `blur(${Math.round(12 * s)}px) saturate(1.15)`,
           WebkitBackdropFilter: `blur(${Math.round(12 * s)}px) saturate(1.15)`}} />
       )}
       {/* 3. 서브픽셀 격자(세로 RGB) + 주사선(가로) — soft-light 라 순백·순흑은 그대로(흰 판이 묻히지 않게), 줄 색의 평균은
              중성 회색(색이 틀어지지 않게 — 2026-10-04 채널 주인: '노이즈가 너무 푸르다', 따뜻함은 아래 한 겹으로만) */}
-      <div style={{...layer, mixBlendMode: 'soft-light', opacity: (dark ? 0.5 : 0.38) * s,
+      <div style={{...layer, mixBlendMode: 'soft-light', opacity: (dark ? 0.6 : 0.5) * s,
         backgroundImage: 'linear-gradient(90deg, rgb(198,120,120) 0 25%, rgb(120,190,120) 25% 50%, rgb(120,120,194) 50% 75%, rgb(72,72,72) 75% 100%)',
         backgroundSize: '4px 100%'}} />
-      <div style={{...layer, mixBlendMode: 'soft-light', opacity: (dark ? 0.5 : 0.35) * s,
+      <div style={{...layer, mixBlendMode: 'soft-light', opacity: (dark ? 0.62 : 0.5) * s,
         backgroundImage: 'repeating-linear-gradient(0deg, rgba(40,30,24,1) 0 1px, rgba(128,128,128,1) 1px 4px)'}} />
       {/* 따뜻한 기운(soft-light — 흰색·검은색은 그대로) */}
       <div style={{...layer, mixBlendMode: 'soft-light', opacity: 0.18 * s, background: 'rgb(176,128,92)'}} />
       {/* 4. 입자 */}
       {tile ? (
-        <div style={{...layer, mixBlendMode: 'overlay', opacity: 0.22 * s, backgroundImage: `url(${tile})`,
+        <div style={{...layer, mixBlendMode: 'overlay', opacity: 0.34 * s, backgroundImage: `url(${tile})`,
           backgroundSize: '256px 256px', backgroundPosition: grainOffset(frame)}} />
       ) : null}
       {/* 5. 비네트 · 6. 깜빡임 */}

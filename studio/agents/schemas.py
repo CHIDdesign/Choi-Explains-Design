@@ -171,7 +171,7 @@ GRADE = _obj({
 CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
 # 구도 원형(prompts/layouts.md — 2026-10-04 'PPT 같다': 빈 좌표에서 시작하지 않는다). free = 원형 밖(이유를 reason 에)
 ARCHETYPES = ["statement", "object_callouts", "data_bars", "bento", "before_after", "process_path", "ui_screen", "timeline",
-              "fan_stack", "stat_ring", "term_split", "lower_third", "free"]
+              "fan_stack", "stat_ring", "term_split", "lower_third", "camera_world", "free"]
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
@@ -432,12 +432,45 @@ STYLE_FRAME = _obj({
     }),
     "notes": STR,
 })
+# 🎯 레퍼런스 분석(studio/agents/reference.py) — 운영자가 끌어다 놓은 사진·영상(릴스 등)의 측정값 + 컷 시트를 보고 디자인 규칙으로 옮긴다.
+# rules 는 STYLE_FRAME.rules 와 같은 모양이라 스타일 프레임·디자이너·심사가 같은 어휘로 읽는다. 글·로고·사진은 가져오지 않는다(keep_out)
+REFERENCE = _obj({
+    "summary": STR,               # 한 줄: 무엇이고 무엇이 좋은가
+    "genre": STR,                 # 설명 영상 · 릴스 · UI 데모 · 키네틱 타이포 · 데이터 스토리 …
+    "rules": _obj({
+        "grid": STR, "type": STR, "color": STR, "shape": STR, "motif": STR, "motion": STR,
+        "do": STR_LIST, "dont": STR_LIST,
+    }),
+    "rhythm": STR,                # 컷·등장 박자(측정값에 근거: 샷 길이 · 묶음 간격 · 머무는 흐름)
+    "techniques": {"type": "array", "items": _obj({
+        "name": STR,              # 기법 이름(한국어)
+        "how": STR,               # 화면에서 어떻게 보이는가(수치: px·초·이징)
+        "when": STR,              # 어떤 문장·역할에 쓰는가
+        "our_runtime": STR,       # 우리 카드 런타임(GSAP tl · data-anim · data-camera · data-float)으로 옮긴 한 줄
+    })},
+    "palette": {"type": "array", "items": _obj({"hex": STR, "role": STR})},   # 측정된 색에 역할(무대·판·잉크·강조)
+    "archetypes": STR_LIST,       # 어울리는 구도 원형 이름(layouts.md)
+    "transfer": STR,              # 우리 채널(하우스 재질 · 오렌지 한 곳 · 교양 톤)로 옮길 때 지킬 것·바꿀 것
+    "keep_out": STR_LIST,         # 가져오지 않을 것(이 레퍼런스의 글·로고·사진·브랜드 색 …)
+})
+
 # 🧑‍⚖️ 시안 심사 — 같은 장면의 시안 여럿(렌더 그림)을 레퍼런스·스타일 프레임과 나란히 보고 하나를 고른다
 DESIGN_JUDGE = _obj({
     "ranking": {"type": "array", "items": _obj({"variant": INT, "score": NUM, "strengths": STR, "flaws": STR})},
     "winner": INT,
     "reason": STR,
     "fix": STR,                   # 이긴 시안에서 고칠 것 한두 가지(없으면 "")
+})
+
+# 🧑‍⚖️ 장면 심사(독립 critic — Promptible remotion-motion-graphics-skill 의 visual-critic 을 우리 기준으로): 카드·모션 장면마다
+# 렌더 그림을 보고 하드 실패·점수 → pass/reject. reject 면 고쳐서 다시 심사, 그래도 reject 면 단순 카드로 바꾼다(fail-closed)
+CRITIC_SCORES = ("first_glance", "meaning", "specificity", "texture", "motion", "restraint", "readability")
+CARD_CRITIC = _obj({
+    "verdict": {"type": "string", "enum": ["pass", "reject"]},
+    "hard_failures": STR_LIST,
+    "scores": _obj({k: INT for k in CRITIC_SCORES}),
+    "fix": STR,
+    "notes": STR,
 })
 
 # 🎨 모션 디자이너(수정 라운드)
@@ -447,7 +480,7 @@ CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "DESIGN_JUDGE", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "REFERENCE", "DESIGN_JUDGE", "CARD_CRITIC", "CRITIC_SCORES", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

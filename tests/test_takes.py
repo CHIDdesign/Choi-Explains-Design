@@ -252,3 +252,25 @@ def test_whole_sentence_said_twice_and_cut_off_attempts_still_go():
     kept, _ = clean_words(say("오늘은 좋은 디자인이 어디서 시작하는지.", 1.2,
                               "오늘은 좋은 디자인이 어디에서 시작하는지 이야기해 볼게요."))
     assert text(kept) == "오늘은 좋은 디자인이 어디에서 시작하는지 이야기해 볼게요."
+
+
+def test_stutter_restart_with_fragment_is_cut():
+    """2026-10-04 채널 주인: '안녕하세요 쵀 / 안녕하세요 최은준입니다' — 절어서 다시 시작했는데 앞 토막이 안 잘리고 둘 다 나갔다.
+    같은 말 한 어절 + 끊긴 토막(다음에 올 낱말의 앞부분) + 다시 시작이면 앞 시도를 지운다. 쉼이 없어도 같은 말이 4글자 이상이면."""
+    kept, rem = clean_words(say("안녕하세요 쵀", 0.6, "안녕하세요 최은준입니다."))
+    assert text(kept) == "안녕하세요 최은준입니다." and rem[0].reason.startswith("되풀이")
+    kept, _ = clean_words(say("안녕하세요 쵀 안녕하세요 최은준입니다."))
+    assert text(kept) == "안녕하세요 최은준입니다."
+    kept, _ = clean_words(say("오늘은 안녕하세요 쵀", 0.5, "안녕하세요 최은준입니다. 반갑습니다."))
+    assert text(kept) == "오늘은 안녕하세요 최은준입니다. 반갑습니다."
+    # 다시 말한 그 낱말의 앞부분('디자' → '디자인은')도 토막이다
+    kept, _ = clean_words(say("디자인은 디자", 0.4, "디자인은 문제를 정의하는 일입니다."))
+    assert text(kept) == "디자인은 문제를 정의하는 일입니다."
+
+
+def test_stutter_rule_does_not_eat_a_clause_before_a_comma_pause():
+    """'배울 때, 디자인을 …' — 쉼표 뒤 같은 낱말로 이어 가는 말은 토막이 아니다(앞 낱말이 다음 말의 앞부분이 아님)."""
+    kept, _ = clean_words(say("우리가 디자인을 배울 때", 0.5, "디자인을 공부하는 이유는 하나입니다."))
+    assert text(kept) == "우리가 디자인을 배울 때 디자인을 공부하는 이유는 하나입니다."
+    kept, _ = clean_words(say("네", 0.4, "네 맞습니다."))
+    assert text(kept) == "네 네 맞습니다."

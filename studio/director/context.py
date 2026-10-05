@@ -21,6 +21,7 @@ class JobBrief:
     short_max_sec: int = 60
     presenter: str = ""
     brand: str = ""
+    owner: dict = field(default_factory=dict)   # 주제 설명에 라벨로 적은 것(제목·부제·키워드 …, studio/text/topic.py)
 
 
 def load_prompt(name: str) -> str:
@@ -78,6 +79,10 @@ def shared_context(brief: JobBrief, utts: list[Utterance], tags: list[Tag], time
     if brief.presenter:
         parts.append(f"- 화자: {brief.presenter}")
     parts.append(f"- 컷 편집 후 예상 길이: {fmt_ts(duration)} ({len(kept)}개 발화 구간)")
+    if brief.owner:
+        from ..text.topic import owner_block
+        parts.append("")
+        parts.append(owner_block(brief.owner))
     if brief.local_images:
         parts.append("- 사용 가능한 로컬 이미지 파일(파일명이 곧 설명): " + ", ".join(brief.local_images[:80]))
     else:

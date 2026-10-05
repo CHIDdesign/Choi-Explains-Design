@@ -134,6 +134,23 @@ def test_pipeline_drops_graphics_inside_holds_but_keeps_script_tags():
     assert any("얼굴 홀드" in m for m in logs)
 
 
+def test_hold_trims_graphic_whose_speech_ended_before_it():
+    """홀드로 넘어간 것이 퇴장 꼬리·정착 여유뿐인 그래픽(말은 홀드 전에 끝남)은 홀드 앞에서 끊어 남긴다 — 2026-10-05 E2E: 발화 8~9 모션
+    장면 6.6초가 홀드로 3초 넘어가 '남는 3.7초 < 60%' 로 통째로 빠지고 아트 디렉터가 고칠 장면이 없었다. end_seg 를 모르면 예전 비율 규칙."""
+    import studio.pipeline as pl
+    p = object.__new__(pl.Pipeline)
+    p.utts = _utts()                       # 발화 2 는 9.0–10.8초, 홀드(발화 3~5)는 13.0초부터
+    p.timemap = TimeMap([Span(0.0, 30.0)])
+    p.plan_long = {"holds": [{"start_seg": 3, "end_seg": 5, "reason": "고백"}]}
+    p.log = (logs := []).append
+    gs = [TimedGraphic("g1", "motion", "fullscreen", 9.5, 16.5, {"end_seg": 2}, 5),     # 말은 10.8초에 끝, 꼬리·정착이 홀드로
+          TimedGraphic("g2", "motion", "fullscreen", 9.5, 16.5, {}, 5)]                 # 같은 시각이지만 말이 어디까지인지 모름
+    out = {g.id: g for g in p._respect_holds(gs)}
+    assert "g1" in out and abs(out["g1"].end - 12.8) < 1e-6 and out["g1"].start == 9.5
+    assert "g2" not in out                                                              # 남는 3.3초 < 60%·min_dur·0.8 → 예전대로 뺌
+    assert any("그래픽 1개를 뺌" in m for m in logs)
+
+
 def test_normalize_long_keeps_sequences_rhythm_and_peak():
     utts = _utts()
     raw = {"graphics": [{"template": "photo", "layout": "fullscreen", "start_seg": 1, "end_seg": 1, "image": "a",

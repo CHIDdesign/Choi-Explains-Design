@@ -121,10 +121,11 @@ def test_time_graphics_motion_spec_and_broll_rules():
     by_t = {g.template: g for g in timed}
     assert "motion" in by_t and by_t["motion"].data["spec"]["elements"]
     assert by_t["motion"].end - by_t["motion"].start >= min(spec_settle_time(EXAMPLES["sketch_first_marks"]) + 1.2, 12) - 0.01
-    # 소재 없는 B-roll 은 버리고, 있는 전면 B-roll 은 말이 먼저(voice_first — 그 낱말 −2f 에 컷, docs/upgrade/05 3장)
+    # 소재 없는 B-roll 은 버리고, 있는 전면 B-roll 은 그 말 직전(0.45초 전)에 미리 서 있다(2026-10-04 채널 주인:
+    # "말하고 나서 뜨면 늦다 — 직전에 살짝 미리") — 예전 voice_first −2f 는 대체됨
     brolls = [g for g in timed if g.template == "broll"]
     assert len(brolls) == 1 and brolls[0].data["src"] == "broll/v1.mp4" and brolls[0].data["credit"] == "A / Pexels"
-    assert utts[4].start - 0.1 <= brolls[0].start <= utts[4].start - 0.05
+    assert utts[4].start - 0.5 <= brolls[0].start <= utts[4].start - 0.4
 
 
 def test_caption_emphasis_types_and_one_per_cue():

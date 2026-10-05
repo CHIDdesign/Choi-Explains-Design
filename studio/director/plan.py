@@ -10,6 +10,7 @@ from ..models import Tag, TimeMap, Utterance
 from ..motion.card import card_settle_time, card_text, clean_card
 from ..motion.spec import clean_spec
 from ..text.align import find_word, norm
+from ..text.topic import strip_label
 from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATES
 from .schema import HOOK_TYPES
 
@@ -48,7 +49,7 @@ def blank_graphic(template: str, seg: int) -> dict[str, Any]:
 def type_card(g: dict, description: str = "") -> Optional[dict]:
     """자료를 못 구한 사진·스톡 → 타이포 자료 카드(이름 + 한 줄) — 사다리의 마지막 칸(docs/upgrade/03 P0-4). 화면 글자로 쓸
     이름(사진: 이름, 스톡: 리서처의 caption)이 없으면 None(그 자리는 비우고 로그만)."""
-    title = str(g.get("title") or "").strip()
+    title = strip_label(str(g.get("title") or ""))
     if not title:
         return None
     card = copy.deepcopy(g)
@@ -484,13 +485,13 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "peak_seg": raw.get("peak_seg", -1) if raw.get("peak_seg", -1) in kept else -1,
         "central_question": str(raw.get("central_question", "") or "")[:80],
         "payoff_seg": raw.get("payoff_seg", -1) if raw.get("payoff_seg", -1) in kept else -1,
-        "title": str(raw.get("title", "") or "").strip(),       # 🎬 화면 타이틀
+        "title": strip_label(str(raw.get("title", "") or "")),       # 🎬 화면 타이틀('제목:' 라벨은 뗀다)
         "bgm_mood": str(raw.get("bgm_mood", "") or ""),
         "shorts_bgm_mood": str(raw.get("shorts_bgm_mood", "") or ""),
     }
     for c in raw.get("chapters", []) or []:
         if isinstance(c, dict) and str(c.get("title", "")).strip():
-            item = {"seg": _nearest(kept, c.get("seg")), "title": str(c["title"]).strip()}
+            item = {"seg": _nearest(kept, c.get("seg")), "title": strip_label(str(c["title"]))}
             if str(c.get("claim", "") or "").strip():
                 item["claim"] = str(c["claim"]).strip()[:40]     # 챕터의 주장 한 문장(챕터 카드 부제)
             plan["chapters"].append(item)
@@ -922,12 +923,13 @@ def time_graphics(
         n_items = len(g.get("items") or []) + len(g.get("items_b") or [])
         if g["template"] in ("list", "process", "cycle", "timeline", "pyramid", "compare"):
             want = max(want, 1.6 + 1.4 * n_items)
-        # 읽기 시간(한국어 12자/초 + 도착 여유 1.2초) — 넷플릭스 한국어 자막 기준
-        want = max(want, 1.2 + reading_chars(g) / 12.0)
+        # 읽기 시간(한국어 10자/초 + 도착·눈이 가는 여유 1.8초) — 2026-10-04 채널 주인: "그래픽이 말이 끝나면 끝나서 너무 짧고
+        # 잘 보이지도 않는다"(글자를 줄인 뒤 읽기 시간도 같이 줄어 카드가 3초 안팎이 됐다)
+        want = max(want, 1.8 + reading_chars(g) / 10.0)
         if g["template"] == "motion" and isinstance(g.get("spec"), dict):
-            want = max(want, spec_settle_time(g["spec"]) + 1.2)
+            want = max(want, spec_settle_time(g["spec"]) + 2.0)
         if g["template"] == "card" and isinstance(g.get("card"), dict):
-            want = max(want, card_settle_time(g["card"]) + 1.2)
+            want = max(want, card_settle_time(g["card"]) + 2.0)
         if g["template"] == "evidence":
             # 트리트먼트별 유지 + 여러 장이면 장마다 1.8초(03 문서 6-2)
             n_assets = len(g.get("assets") or [])
@@ -945,14 +947,17 @@ def time_graphics(
             end = min(end, start + 6.0)          # 인용(C 등급)은 한 번에 6초 이내(저작권 정책 4절 2)
         if g.get("logo"):
             end = min(end, start + LOGO_MAX_SEC)   # 로고는 이름표로 잠깐만
-        # 진입·퇴장은 역할마다(docs/upgrade/05 3장 — 예전엔 모든 그래픽이 문장보다 0.45초 먼저): 얼굴 옆 자료는 그 낱말 −3f,
-        # 보드는 절 시작 −9f, 전면은 말이 먼저(화자가 문장을 얼굴로 시작하고 그 낱말에서 컷, −2f). 퇴장은 문장 끝 +6~8f
-        lead, tail = ENTER_EXIT.get(g.get("layout", ""), (0.3, 0.27))
+        # 진입·퇴장은 역할마다(ENTER_EXIT) — 2026-10-04 채널 주인: "그래픽은 그 말이 나오기 직전에 살짝 미리 등장해야 하는데
+        # 말하고 나서 뜨고, 말이 끝나면 바로 사라진다". 등장은 그 낱말 0.35~0.5초 전(눈이 먼저 가 있게), 퇴장은 문장 끝 뒤
+        # 0.6~1.0초 머문다(다음 그래픽이 오면 resolve_overlaps 가 그 앞에서 자른다)
+        lead, tail = ENTER_EXIT.get(g.get("layout", ""), (0.4, 0.8))
         start = max(start - lead, min_start)
         end = min(end + tail, total - 0.3)
         if end - start < t.min_dur * 0.7:
             continue
         data = {k: g.get(k) for k in DATA_KEYS}
+        # 말이 어디까지인지(마지막 발화) — 홀드 앞에서 끊을 때 '넘어간 것이 꼬리뿐인가' 를 판단한다(Pipeline._respect_holds)
+        data["end_seg"] = int(g.get("end_seg", g.get("start_seg", 0)) or 0)
         for k in EXTRA_DATA_KEYS:
             if g.get(k):
                 data[k] = g[k]
@@ -991,8 +996,8 @@ def time_graphics(
     return resolve_overlaps(timed + list(reserved or []), total=total)
 
 
-# (진입 선행, 퇴장 꼬리) 초 — 30fps 기준 pip −3f/+6f · split −9f/+8f · 전면 −2f/+8f
-ENTER_EXIT = {"pip": (0.10, 0.20), "overlay": (0.10, 0.20), "split": (0.30, 0.27), "fullscreen": (0.07, 0.27)}
+# (진입 선행, 퇴장 꼬리) 초 — 예전 pip −3f/+6f · split −9f/+8f · 전면 −2f/+8f 는 "말한 뒤에 뜨고 말 끝나면 사라진다"(2026-10-04)
+ENTER_EXIT = {"pip": (0.35, 0.6), "overlay": (0.35, 0.6), "split": (0.5, 0.9), "fullscreen": (0.45, 1.0)}
 EVIDENCE = ("photo", "broll", "evidence")      # 실물 자료(사진·스톡·증거) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
 
 

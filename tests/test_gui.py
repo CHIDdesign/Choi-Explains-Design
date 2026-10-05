@@ -177,3 +177,50 @@ def test_scene_rating_dialog_records_taste(app, tmp_path, monkeypatch):
     d._save()
     assert (tmp_path / "taste" / "liked" / "job1_g1.jpg").exists()
     assert "PPT 같다" in taste.notes_block()
+
+
+def test_reference_dialog_lists_refs_and_queues_drops(app, tmp_path, monkeypatch):
+    """🎯 레퍼런스 분석 창: 저장된 분석이 카드로, 끌어다 놓은 폴더·파일은 사진·영상만 대기열에(AI 호출 없음)."""
+    from PIL import Image
+
+    from studio.agents import reference, taste
+    from studio.gui.reference_dialog import ReferenceDialog
+    from studio.util import write_json
+    monkeypatch.setattr(taste, "TASTE_DIR", tmp_path / "taste")
+    d = reference.ref_dir()
+    Image.new("RGB", (640, 360), (30, 30, 30)).save(d / "a_sheet.jpg")
+    write_json(d / "a.json", {"slug": "a", "name": "릴스A", "kind": "video", "analyzed_at": "2026-10-05 01:00", "sheet": "a_sheet.jpg",
+                              "measure": {"duration": 30, "shots": 12, "shot_median_s": 2.1, "cuts_per_min": 22, "motion": 0.03,
+                                          "dark": True, "edge_ratio": 0.05, "palette": [{"hex": "#111111", "share": 0.5}]},
+                              "analysis": {"summary": "컷이 말에 맞는다", "rules": {"motion": "마스크 상승"}, "techniques": [{"name": "어절 마스크"}]}})
+    write_json(d / "b.json", {"slug": "b", "name": "사진B", "kind": "image", "analyzed_at": "2026-10-05 00:00", "sheet": "",
+                              "measure": {"width": 1200, "height": 675, "dark": False, "contrast": 0.4, "saturation": 0.2, "edge_ratio": 0.01,
+                                          "palette": []}, "analysis": None, "error": "limit"})
+    w = ReferenceDialog()
+    assert [r["name"] for r in w.rows] == ["릴스A", "사진B"] and w.rows[0]["analyzed"] and not w.rows[1]["analyzed"]
+    assert not w.go.isEnabled()
+    (tmp_path / "x.png").write_bytes(b"\0")
+    (tmp_path / "y.mov").write_bytes(b"\0")
+    (tmp_path / "z.txt").write_bytes(b"\0")
+    w.add_paths([str(tmp_path)])                      # 폴더를 놓으면 안의 사진·영상만
+    assert [Path(p).name for p in w.queue] == ["x.png", "y.mov"] and w.list.count() == 2 and w.go.isEnabled()
+    w.add_paths([str(tmp_path / "x.png")])            # 같은 파일은 한 번
+    assert len(w.queue) == 2
+    w._clear_queue()
+    assert not w.queue and not w.go.isEnabled()
+    from studio.gui.app import wait_bg
+    wait_bg()                                          # AI 연결 확인 스레드가 끝난 뒤 창을 지운다
+
+
+def test_main_window_has_reference_button_and_bench_mode(app, tmp_path):
+    """메인 창: '🎯 레퍼런스' 버튼 · 🧪 디자인 벤치는 until='design' 으로 Worker 를 띄우고 끝나면 장면 시트 안내."""
+    from studio.gui.app import MainWindow, Worker
+    import inspect
+    w = MainWindow()
+    assert any(b.text() == "🎯 레퍼런스" for b in w.findChildren(type(w.ai_chip)))
+    assert "until" in inspect.signature(Worker.__init__).parameters and "until" in inspect.signature(w._start).parameters
+    w._until = "design"
+    shown = []
+    w._show_bench = lambda res: shown.append(res)     # 메시지 상자 대신
+    w._on_done({"output": str(tmp_path / "out"), "job_dir": str(tmp_path), "critic": {"scenes": 3, "rejected": 1, "fixed": 1, "replaced": 0}})
+    assert shown and shown[0]["critic"]["scenes"] == 3

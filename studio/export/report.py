@@ -53,14 +53,20 @@ def sound_section(snd: dict) -> list[str]:
     else:
         out.append("- 음악 없음")
     if snd.get("voice_lufs") is not None:
-        out.append(f"- 목소리 {snd['voice_lufs']:.1f} LUFS · 효과음 {mix.get('sfx', 0)}개")
+        out.append(f"- 목소리 {snd['voice_lufs']:.1f} LUFS · 효과음 {mix.get('sfx', 0)}개"
+                   + (f"(큐 {snd['sfx_cues']}개)" if snd.get("sfx_cues") else ""))
+    if snd.get("sfx_cues") and not snd.get("sfx_real"):
+        out.append(f"- ⚠ **효과음이 하나도 들어가지 않았습니다** — 큐 {snd['sfx_cues']}개가 있지만 실제 효과음 파일을 받지 못함"
+                   + (f"(받지 못한 것: {', '.join(str(x) for x in snd['sfx_failed'][:6])} …)" if snd.get("sfx_failed") else "")
+                   + ". 인터넷·방화벽을 확인하고 다시 실행하면 받습니다(assets/sound/).")
     return out + [""]
 
 
 def edit_report(*, title: str, source_duration: float, long_duration: float, align_report: dict,
                 utts: list, graphics: list[dict], chapters: list[dict], shorts: list[dict],
                 director: str, usage: list[dict], broll: list[dict], studio: dict | None = None,
-                qa: list[dict] | None = None, gate: str = "", sound: dict | None = None) -> str:
+                qa: list[dict] | None = None, gate: str = "", sound: dict | None = None,
+                materials: dict | None = None) -> str:
     removed = [u for u in utts if not u.kept]
     lines = [f"# 편집 리포트 — {title}", "",
              f"- 편집 판단: {director}",
@@ -75,6 +81,12 @@ def edit_report(*, title: str, source_duration: float, long_duration: float, ali
         lines += [gate.rstrip("\n"), ""]
     if sound:
         lines += sound_section(sound)
+    if materials and materials.get("total"):
+        lines += ["## 🗂 ④ 자료 폴더(채널 주인이 넣은 참고자료)", "",
+                  f"- {materials['total']}개 중 {materials.get('used', 0)}개를 화면에 배치"
+                  + (" · **안 쓴 파일: " + ", ".join(str(x) for x in materials.get("unused") or []) + "** — 맞는 문장을 못 찾았거나 "
+                     "자료 리서처가 빠뜨림(대본에 그 자료를 말하는 문장을 두거나 파일 이름을 그 대상 이름으로)"
+                     if materials.get("unused") else ""), ""]
     if studio:
         lines += ["## 🎬 AI 스튜디오 브리프", "",
                   f"- 로그라인: {studio.get('logline', '')}",

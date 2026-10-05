@@ -156,6 +156,9 @@ class SettingsDialog(QDialog):
         self.style_frame = QCheckBox("스타일 프레임 — 장면을 짓기 전에 이 영상의 룩을 한 장으로 먼저 정해 모든 디자이너가 따른다(권장)")
         self.style_frame.setChecked(bool(getattr(s, "style_frame", True)))
         m.addRow("디자인", self.style_frame)
+        self.design_critic = QCheckBox("장면 심사 — 카드·모션 장면마다 만든 역할이 아닌 심사가 렌더를 보고 거른다(탈락이면 고치고, 그래도 안 되면 단순 카드로)")
+        self.design_critic.setChecked(bool(getattr(s, "design_critic", True)))
+        m.addRow("", self.design_critic)
         self.variants = QSpinBox()
         self.variants.setRange(1, 4)
         self.variants.setValue(int(getattr(s, "design_variants", 3) or 1))
@@ -379,6 +382,7 @@ class SettingsDialog(QDialog):
         s.studio_workers = self.workers.value()
         s.research_web = self.research_web.isChecked()
         s.style_frame = self.style_frame.isChecked()
+        s.design_critic = self.design_critic.isChecked()
         s.design_variants = self.variants.value()
         s.screen_look = 1.0 if self.screen_look.isChecked() else 0.0
         s.pixabay_api_key = self.pixabay.text().strip()

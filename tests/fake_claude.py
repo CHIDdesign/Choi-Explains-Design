@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -51,6 +52,8 @@ def main(argv: list[str]) -> int:
     instruction = next(b["text"] for b in reversed(content) if b.get("type") == "text")
     ans = E.fake_answer(agent, {"messages": [{"content": content}]}, n_images, instruction)
     E.record_call({"agent": agent, "images": n_images, "effort": opts.get("--effort"), "backend": "claude_code",
+                   **({"verdict": ans.get("verdict"), "gid": (re.search(r"- `(g\d+)`: 정착 시각의 화면", instruction) or [None, ""])[1]}
+                      if agent == "card_critic" else {}),
                    "model": opts.get("--model"), "api_key_env": "ANTHROPIC_API_KEY" in os.environ,
                    "tools": opts.get("--tools"), "world": "이 영상의 세계" in instruction})
     print(json.dumps({"type": "system", "subtype": "init", "model": opts.get("--model")}))
