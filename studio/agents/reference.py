@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ..paths import ROOT
 from ..util import Cancelled, CancelToken, LogFn, file_fingerprint, noop_log, read_json, slugify, write_json
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
@@ -36,11 +37,26 @@ PALETTE_K = 6
 Image3 = tuple[str, bytes, str]
 
 
+# 저장소 안 공유 폴더(커밋됨 — 채널 주인 2026-10-05: "분석 결과도 깃허브에 올려라, 로컬에서 돌린 뒤 zip 으로 넘기면 올려주면 되잖아").
+# 운영자 PC 의 분석은 user/taste/refs(저장소 밖)에 쌓이고, 내보내기(zip) → 가져오기(import_refs)로 이 폴더에 들어와 설치본마다 따라간다.
+# 공개 저장소라 기본은 JSON(측정값·규칙 글)만 — 컷 시트(남의 영상 프레임)는 with_sheets 일 때만.
+SHARED_DIR = ROOT / "assets" / "taste" / "refs"
+SHEET_SUFFIX = "_sheet.jpg"
+
+
 def ref_dir() -> Path:
+    """운영자 PC 의 로컬 분석 폴더(user/taste/refs — 저장소 밖). 새 분석은 언제나 여기에 쓴다."""
     from . import taste
     d = taste.TASTE_DIR / "refs"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def ref_dirs() -> list[Path]:
+    """읽는 폴더들: 공유(저장소) → 로컬(같은 slug 는 로컬이 이긴다 — 더 최근에 다시 분석한 것)."""
+    out = [SHARED_DIR] if SHARED_DIR.is_dir() else []
+    out.append(ref_dir())
+    return out
 
 
 def kind_of(path: str | Path) -> str:
@@ -390,20 +406,97 @@ def measured_line(rec: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # 저장된 분석 → 디자인 역할에게
 # ---------------------------------------------------------------------------
-def load_refs() -> list[dict[str, Any]]:
-    d = ref_dir()
+def _read_dir(d: Path) -> list[dict[str, Any]]:
     out = []
-    for f in d.glob("*.json"):
+    for f in sorted(d.glob("*.json")):
         rec = read_json(f, {})
-        if isinstance(rec, dict) and rec.get("slug"):
+        if isinstance(rec, dict) and rec.get("slug") and isinstance(rec.get("measure"), dict):
+            rec["_dir"] = str(d)                     # 런타임용(파일에는 없다) — 시트 경로·공유 여부
             out.append(rec)
-    return sorted(out, key=lambda r: str(r.get("analyzed_at") or ""), reverse=True)
+    return out
+
+
+def load_refs() -> list[dict[str, Any]]:
+    """공유(저장소) + 로컬(user/taste/refs) 분석을 합친다. 같은 slug 는 로컬이 이긴다. 최근 순."""
+    by_slug: dict[str, dict[str, Any]] = {}
+    for d in ref_dirs():
+        for rec in _read_dir(d):
+            by_slug[str(rec["slug"])] = rec
+    return sorted(by_slug.values(), key=lambda r: str(r.get("analyzed_at") or ""), reverse=True)
+
+
+def sheet_path(rec: dict[str, Any]) -> Optional[Path]:
+    if not rec.get("sheet"):
+        return None
+    f = Path(str(rec.get("_dir") or ref_dir())) / str(rec["sheet"])
+    return f if f.is_file() else None
 
 
 def delete_ref(slug: str) -> None:
+    """로컬·공유 어디에 있든 그 분석(json + 시트)을 지운다."""
+    for d in ref_dirs():
+        (d / f"{slug}.json").unlink(missing_ok=True)
+        (d / f"{slug}{SHEET_SUFFIX}").unlink(missing_ok=True)
+
+
+def export_zip(dst: Optional[str | Path] = None) -> Path:
+    """로컬 분석(json + 시트) 전부를 zip 하나로 — 운영자가 이 파일을 보내면 import_refs 로 저장소에 올린다.
+    기본 위치 user/taste/레퍼런스_분석_<날짜>.zip. 프레임 작업 폴더(_*_frames)는 넣지 않는다."""
+    import zipfile
     d = ref_dir()
-    (d / f"{slug}.json").unlink(missing_ok=True)
-    (d / f"{slug}_sheet.jpg").unlink(missing_ok=True)
+    out = Path(dst) if dst else d.parent / f"레퍼런스_분석_{time.strftime('%Y%m%d_%H%M')}.zip"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    n = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(d.iterdir()):
+            if f.is_file() and (f.suffix.lower() == ".json" or f.name.endswith(SHEET_SUFFIX)):
+                z.write(f, f.name)
+                n += 1
+    if n == 0:
+        out.unlink(missing_ok=True)
+        raise FileNotFoundError("내보낼 분석이 없습니다 — 먼저 레퍼런스를 분석하세요")
+    return out
+
+
+def import_refs(src: str | Path, *, dst: Optional[Path] = None, with_sheets: bool = False) -> list[str]:
+    """zip 또는 폴더의 분석(json)을 공유 폴더(기본 assets/taste/refs)로. 반환: 들어온 slug 들.
+    with_sheets=False(기본): 컷 시트는 넣지 않는다 — 공개 저장소에 남의 영상 프레임을 올리지 않기 위해. 디자인 역할은 시트가
+    없어도 규칙 블록(글)을 그대로 받고, 시트는 운영자 PC 의 로컬 분석에서 보드로 들어간다."""
+    import tempfile
+    import zipfile
+    src = Path(src)
+    target = Path(dst) if dst else SHARED_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    if src.is_file() and src.suffix.lower() == ".zip":
+        tmp = Path(tempfile.mkdtemp(prefix="refs_"))
+        with zipfile.ZipFile(src) as z:
+            for info in z.infolist():
+                name = Path(info.filename).name
+                if info.is_dir() or not name or name.startswith(".") or "/" in info.filename.strip("/").replace(name, "", 1).strip("/"):
+                    continue          # 폴더 안쪽·숨은 파일은 건너뜀(zip 안의 경로 탐색 금지)
+                if name.endswith(".json") or name.endswith(SHEET_SUFFIX):
+                    (tmp / name).write_bytes(z.read(info))
+        folder = tmp
+    elif src.is_dir():
+        folder = src
+    else:
+        raise FileNotFoundError(f"zip 파일이나 폴더가 아닙니다: {src}")
+    slugs: list[str] = []
+    for f in sorted(folder.glob("*.json")):
+        rec = read_json(f, {})
+        if not (isinstance(rec, dict) and rec.get("slug") and isinstance(rec.get("measure"), dict)):
+            continue
+        rec.pop("_dir", None)
+        slug = slugify(str(rec["slug"]), 64)
+        sheet = folder / f"{slug}{SHEET_SUFFIX}"
+        if with_sheets and sheet.is_file():
+            shutil.copyfile(sheet, target / sheet.name)
+            rec["sheet"] = sheet.name
+        elif not (target / f"{slug}{SHEET_SUFFIX}").is_file():
+            rec["sheet"] = ""                 # 시트 없이 — 공유본은 글(규칙·측정)만
+        write_json(target / f"{slug}.json", rec)
+        slugs.append(slug)
+    return slugs
 
 
 def _clip(s: Any, n: int) -> str:
@@ -458,12 +551,11 @@ def rules_block(limit: int = 6, max_chars: int = 9000) -> str:
 def ref_sheets(limit: int = 2) -> list[Image3]:
     """최근 레퍼런스의 컷 시트(사진은 그 사진) — 보드 그림으로."""
     out: list[Image3] = []
-    d = ref_dir()
     for r in load_refs():
         if len(out) >= limit:
             break
-        f = d / str(r.get("sheet") or "")
-        if r.get("sheet") and f.is_file():
+        f = sheet_path(r)
+        if f is not None:
             try:
                 out.append((f"운영자 레퍼런스 분석 시트: {_clip(r.get('name'), 40)}" + (" (영상 — 샷마다 한 칸)" if r.get("kind") == "video" else ""),
                             f.read_bytes(), "image/jpeg"))
@@ -474,13 +566,14 @@ def ref_sheets(limit: int = 2) -> list[Image3]:
 
 def summary_rows(refs: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
     """GUI·CLI 목록용 요약."""
-    d = ref_dir()
     rows = []
     for r in (refs if refs is not None else load_refs()):
         a = r.get("analysis") or {}
         rl = a.get("rules") or {}
+        sp = sheet_path(r)
         rows.append({"slug": r.get("slug"), "name": r.get("name"), "kind": r.get("kind"), "at": r.get("analyzed_at"),
-                     "sheet": str(d / r["sheet"]) if r.get("sheet") else "", "measured": measured_line(r),
+                     "sheet": str(sp) if sp else "", "shared": str(r.get("_dir") or "") == str(SHARED_DIR),
+                     "measured": measured_line(r),
                      "summary": str(a.get("summary") or ""), "motion": str(rl.get("motion") or ""),
                      "type": str(rl.get("type") or ""), "color": str(rl.get("color") or ""),
                      "techniques": [str(t.get("name") or "") for t in (a.get("techniques") or []) if isinstance(t, dict)],

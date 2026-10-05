@@ -5,6 +5,8 @@
     python -m studio rerender <작업폴더> --until design --replan  → 🧪 디자인 벤치: 기획을 새로 짓고 검수(장면 심사·장면 시트)까지만(렌더 없이)
     python -m studio reference                                   → 🎯 레퍼런스 분석 창(사진·영상 끌어다 놓기 — run_reference.bat 과 같음)
     python -m studio reference 사진.png 릴스.mp4 [--note 메모]    → 창 없이 분석해 user/taste/refs 에 저장
+    python -m studio reference --export                          → 로컬 분석을 zip 으로(운영자가 넘길 파일)
+    python -m studio reference --import 분석.zip [--with-sheets]  → zip 을 저장소 공유 폴더 assets/taste/refs 로(커밋용)
 """
 from __future__ import annotations
 
@@ -72,6 +74,11 @@ def cli(argv: list[str]) -> int:
     ref.add_argument("files", nargs="*", help="사진·영상·폴더")
     ref.add_argument("--note", default="", help="(선택) 무엇이 좋은지 한 줄")
     ref.add_argument("--no-ai", action="store_true", help="측정값만(Claude 를 부르지 않음)")
+    ref.add_argument("--export", nargs="?", const="", default=None, metavar="ZIP",
+                     help="로컬 분석(user/taste/refs)을 zip 으로 내보낸다(경로 생략 = user/taste/레퍼런스_분석_<날짜>.zip)")
+    ref.add_argument("--import", dest="import_src", default="", metavar="ZIP|폴더",
+                     help="zip·폴더의 분석을 저장소 공유 폴더(assets/taste/refs)로 가져온다 — 커밋해 모든 설치본이 쓰게")
+    ref.add_argument("--with-sheets", action="store_true", help="가져올 때 컷 시트(jpg)도 — 공개 저장소에는 기본으로 넣지 않는다")
     args = ap.parse_args(argv)
 
     settings = Settings.load()
@@ -106,6 +113,20 @@ def cli(argv: list[str]) -> int:
                     args.until)
     if args.cmd == "reference":
         from .agents import reference
+        if args.export is not None:
+            try:
+                out = reference.export_zip(args.export or None)
+            except FileNotFoundError as e:
+                log(str(e))
+                return 1
+            log(f"내보냈습니다: {out} — 이 파일을 넘기면 저장소에 올립니다(python -m studio reference --import <zip>)")
+            return 0
+        if args.import_src:
+            slugs = reference.import_refs(args.import_src, with_sheets=args.with_sheets)
+            log(f"가져왔습니다: {len(slugs)}개 → {reference.SHARED_DIR}" + (" (시트 포함)" if args.with_sheets else " (JSON 만)"))
+            for sl in slugs:
+                log(f"- {sl}")
+            return 0 if slugs else 1
         if not args.files:
             from .gui.reference_dialog import run_reference_tool
             return run_reference_tool()
