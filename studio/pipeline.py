@@ -3923,7 +3923,9 @@ class Pipeline:
                 continue
             a, b = hit
             min_d = TEMPLATES[g.template].min_dur if g.template in TEMPLATES else 1.5
-            if g.start < a and a - 0.2 - g.start >= min_d * 0.8:
+            # 홀드 앞에서 끝내기: 홀드로 넘어간 부분은 대개 퇴장 꼬리(+1.0초)·읽기 여유라 잘라도 그래픽은 멀쩡하다 — 남는 길이가
+            # 2초와 원래 길이의 60% 이상이면 남긴다(예전 min_dur·0.8 은 카드·모션 최소 5초로 올린 뒤 4초 넘는 모션 장면도 통째로 뺐다)
+            if g.start < a and a - 0.2 - g.start >= max(2.0, min(0.6 * (g.end - g.start), min_d * 0.8)):
                 g.end = a - 0.2
                 out.append(g)
             elif g.template in EVIDENCE_TEMPLATES and g.end - (b + 0.05) >= min_d * 0.8:
