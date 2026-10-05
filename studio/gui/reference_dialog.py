@@ -110,7 +110,7 @@ class _RefCard(QFrame):
         h.addWidget(pic)
         v = QVBoxLayout()
         kind = "영상" if row.get("kind") == "video" else "사진"
-        title = QLabel(f"<b>{row.get('name') or ''}</b> · {kind} · {row.get('at') or ''}")
+        title = QLabel(f"<b>{row.get('name') or ''}</b> · {kind} · {row.get('at') or ''}" + (" · 📦 저장소 공유" if row.get("shared") else ""))
         title.setTextFormat(Qt.RichText)
         v.addWidget(title)
         meas = QLabel(row.get("measured") or "")
@@ -187,6 +187,11 @@ class ReferenceDialog(QDialog):
         self.open_btn.setObjectName("ghost")
         self.open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(reference.ref_dir()))))
         bar.addWidget(self.open_btn)
+        self.export_btn = QPushButton("zip 으로 내보내기")
+        self.export_btn.setObjectName("ghost")
+        self.export_btn.setToolTip("이 PC 의 분석 전부를 zip 하나로 — 이 파일을 넘기면 저장소(깃허브)에 올려 모든 설치본이 같은 규칙을 씁니다")
+        self.export_btn.clicked.connect(self._export)
+        bar.addWidget(self.export_btn)
         self.go = QPushButton("분석 시작  ▶")
         self.go.setObjectName("hero")
         self.go.clicked.connect(self._start)
@@ -255,6 +260,15 @@ class ReferenceDialog(QDialog):
             card = _RefCard(r)
             card.deleted.connect(self._delete)
             self.cards.insertWidget(i, card)
+
+    def _export(self) -> None:
+        try:
+            out = reference.export_zip()
+        except (FileNotFoundError, OSError) as e:
+            QMessageBox.information(self, "내보내기", str(e))
+            return
+        QMessageBox.information(self, "내보냈습니다", f"{out}\n\n이 zip 을 넘기면 저장소에 올립니다(모든 설치본의 디자이너가 같은 규칙을 봅니다).")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(out.parent)))
 
     def _delete(self, slug: str) -> None:
         if not slug:

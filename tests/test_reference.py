@@ -167,3 +167,42 @@ def test_studio_taste_notes_include_reference_rules(tmp_path, taste_dir, monkeyp
     st = Studio.__new__(Studio)
     text = Studio.taste_notes(st)
     assert "레퍼런스 분석" in text and "컷이 말에 맞는다" in text and "마스크 상승" in text
+
+
+def test_shared_repo_refs_merge_with_local_and_roundtrip_zip(tmp_path, taste_dir, monkeypatch):
+    """저장소 공유 폴더(assets/taste/refs) + 로컬(user/taste/refs)을 합쳐 읽고(같은 slug 는 로컬), 로컬 → zip 내보내기 → 공유 폴더 가져오기.
+    공개 저장소라 기본은 JSON 만(시트 없음), --with-sheets 면 시트도."""
+    shared = tmp_path / "repo_refs"
+    monkeypatch.setattr(R, "SHARED_DIR", shared)
+    shared.mkdir()
+    from PIL import Image
+    from studio.util import write_json
+    base = {"version": 1, "kind": "video", "analyzed_at": "2026-10-04 10:00", "note": "", "sheet": "", "error": "",
+            "measure": {"duration": 30, "shots": 10, "shot_median_s": 2.5, "cuts_per_min": 18, "motion": 0.03, "dark": False,
+                        "edge_ratio": 0.04, "palette": []},
+            "analysis": {"summary": "공유본 요약", "rules": {"motion": "공유 움직임", "do": [], "dont": []}, "techniques": [], "keep_out": []}}
+    write_json(shared / "shared_a.json", {**base, "slug": "shared_a", "name": "공유A"})
+    write_json(shared / "dup.json", {**base, "slug": "dup", "name": "겹침(공유)"})
+    local = R.ref_dir()
+    write_json(local / "dup.json", {**base, "slug": "dup", "name": "겹침(로컬)", "analyzed_at": "2026-10-05 09:00",
+                                    "sheet": "dup_sheet.jpg"})
+    Image.new("RGB", (640, 360), (40, 40, 40)).save(local / "dup_sheet.jpg")
+    refs = R.load_refs()
+    assert [r["name"] for r in refs] == ["겹침(로컬)", "공유A"]              # 같은 slug 는 로컬, 최근 순
+    rows = {r["slug"]: r for r in R.summary_rows()}
+    assert rows["shared_a"]["shared"] and not rows["dup"]["shared"] and rows["dup"]["sheet"].endswith("dup_sheet.jpg")
+    assert "공유본 요약" in R.rules_block() and len(R.ref_sheets()) == 1  # 시트는 로컬 것만
+    # 내보내기 → 가져오기(새 공유 폴더로)
+    z = R.export_zip(tmp_path / "out.zip")
+    import zipfile
+    assert sorted(zipfile.ZipFile(z).namelist()) == ["dup.json", "dup_sheet.jpg"]
+    target = tmp_path / "repo2"
+    assert R.import_refs(z, dst=target) == ["dup"]
+    rec = json.loads((target / "dup.json").read_text(encoding="utf-8"))
+    assert rec["sheet"] == "" and "_dir" not in rec and not (target / "dup_sheet.jpg").exists()   # 기본: JSON 만
+    assert R.import_refs(z, dst=tmp_path / "repo3", with_sheets=True) == ["dup"]
+    assert (tmp_path / "repo3" / "dup_sheet.jpg").exists()
+    # 폴더에서도, 그리고 delete 는 양쪽 다
+    assert R.import_refs(local, dst=tmp_path / "repo4") == ["dup"]
+    R.delete_ref("dup")
+    assert not (local / "dup.json").exists() and not (shared / "dup.json").exists() and [r["slug"] for r in R.load_refs()] == ["shared_a"]
