@@ -1,10 +1,10 @@
 import React from 'react';
 import {interpolate} from 'remotion';
 import {EASE, tween, tweenOut} from '../../design/motion';
-import {FONT, paperShadow} from '../../design/tokens';
+import {FONT} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
 import {lastIndexAtOrBefore} from '../../lib/time';
-import {PaperCaption} from './LongCaptions';
+import {BoxedCaption} from './LongCaptions';
 import type {CaptionCue, CaptionWord, ShortCaptionPreset} from '../../lib/types';
 import {emOf, EmWord} from './Emphasis';
 
@@ -45,11 +45,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
     letterSpacing: '-0.025em', whiteSpace: 'nowrap'};
 
   if (preset === 'paper') {
-    const prev = i > 0 ? cues[i - 1] : null;
-    const next = i + 1 < cues.length ? cues[i + 1] : null;
-    return <PaperCaption cue={cue} local={(t - cue.start) * fps} remain={remain}
-      joinPrev={!!prev && cue.start - prev.end < 0.08} joinNext={!!next && next.start - cue.end < 0.08}
-      left={0} width={width} bottom={1920 - y} size={text.length > 14 ? 50 : 56} />;
+    return <BoxedCaption cue={cue} width={width} bottom={1920 - y} size={text.length > 14 ? 46 : 52} />;
   }
 
   if (preset === 'bar') {
@@ -96,8 +92,7 @@ export const ShortCaptions: React.FC<Props> = ({cues, t, fps, theme, preset, y, 
       <div style={{position: 'absolute', left, width: w, top: y, display: 'flex', justifyContent: 'center',
         opacity: Math.min(pIn, out)}}>
         <div style={{display: 'flex', gap: `0 ${Math.round(size * 0.12)}px`, padding: '14px 26px 18px', borderRadius: 18,
-          background: 'rgba(14,14,14,0.88)', scale: `${interpolate(pIn, [0, 1], [0.96, 1])}`,
-          boxShadow: paperShadow(2)}}>
+          background: 'rgba(14,14,14,0.88)', scale: `${interpolate(pIn, [0, 1], [0.96, 1])}`}}>
           {words.map((wd, k) => {
             const active = k === activeIdx;
             const em = emOf(wd);

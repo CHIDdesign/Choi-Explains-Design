@@ -1,5 +1,5 @@
 import React, {useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {continueRender, delayRender} from 'remotion';
+import {continueRender, delayRender, staticFile} from 'remotion';
 import gsap from 'gsap';
 import {CustomEase} from 'gsap/CustomEase';
 import {DrawSVGPlugin} from 'gsap/DrawSVGPlugin';
@@ -8,9 +8,9 @@ import {MotionPathPlugin} from 'gsap/MotionPathPlugin';
 import {SplitText} from 'gsap/SplitText';
 import {compileCard} from '../../../vendor/hyperframes/card-anim.mjs';
 import type {CompiledCard} from '../../../vendor/hyperframes/card-anim.mjs';
-import {FONT, rgba, MODERN} from '../../design/tokens';
-import {ambientPush, floatOffset} from '../../design/motion';
+import {FONT, rgba, MODERN, lift, liftDrop} from '../../design/tokens';
 import type {Theme} from '../../design/tokens';
+import {useMaterials} from '../material/Texture';
 import type {Surface} from '../../design/surfaces';
 import type {CardSpec} from '../../lib/types';
 import type {TemplateProps} from '../graphics/common';
@@ -28,10 +28,8 @@ gsap.registerPlugin(SplitText, CustomEase, DrawSVGPlugin, MorphSVGPlugin, Motion
 export const CARD_LIBS = {SplitText, CustomEase, drawSVG: true, morphSVG: true, motionPath: true};
 
 /** 카드 CSS 가 쓰는 채널 토큰(변수) — prompts/card_dsl.md 의 표와 같아야 한다 */
-// 한 재질(docs/upgrade/06 3-1, F-10): 카드의 '흰 바탕'·'잉크 바탕'은 순백(#FFF)·순흑(#111)이 아니라 메모·로고 카드와 같은
-// 크림 종이(NOTE.paper)·따뜻한 잉크(NOTE.ink) — 한 영상에 전면 배경색이 셋을 넘지 않게(게이트 B9)
 export const cardVars = (theme: Theme, surface: Surface): Record<string, string> => ({
-  // 디자인 v4: 카드의 바탕·잉크·흰색은 모던 무대 값(순백 카드 허용 — 흰 둥근 UI 카드가 룩이다)
+  // 디자인 v5: 카드의 바탕·잉크는 평면 면 값
   '--bg': surface.bg === 'transparent' ? 'transparent' : MODERN.bg,
   '--paper': MODERN.bg,
   '--paper-line': MODERN.line,
@@ -47,6 +45,7 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--chalk': theme.chalk,
   '--chalk-dim': theme.chalkDim,
   '--white': MODERN.card,
+  '--band': theme.band,
   '--font-head': FONT.display,
   '--font-body': FONT.sans,
   '--font-serif': FONT.serif,
@@ -59,32 +58,40 @@ export const cardVars = (theme: Theme, surface: Surface): Record<string, string>
   '--font-poster': FONT.poster,
   '--font-italic': FONT.italic,
   '--font-mono': FONT.mono,
+  '--font-pen': FONT.pen,
+  '--font-quote': FONT.quote,
+  '--lift-1': lift(1, 1, 'board'),
+  '--lift-2': lift(2, 1, 'board'),
+  '--lift-3': lift(3, 1, 'board'),
+  '--lift-drop-2': liftDrop(2, 1, 'board'),
 });
+
+const surfaceUrl = (name: string) => staticFile(`fx/tex/${name}.jpg`);
 
 /** 카드 조각(내부 HTML + 스코프 CSS) → 마운트할 문자열. .card 는 호스트(작성 캔버스)를 꽉 채운다 — 안 그러면 .root 의 height:100% 가 내용 높이가 된다 */
 // 한국어 줄바꿈은 어절 단위(keep-all) — 기본값은 음절마다 끊어 '그 특 / 징'처럼 낱말 가운데서 줄이 바뀐다(2026-10-04 렌더 확인)
 export const wrapCard = (card: CardSpec): string =>
   `<div class="card" data-card-id="${card.id}"><style>.card[data-card-id="${card.id}"]{position:absolute;left:0;top:0;width:100%;height:100%;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}` +
-  `.card[data-card-id="${card.id}"] *{box-sizing:border-box}${card.css}</style>${card.html}</div>`;
+  `.card[data-card-id="${card.id}"] *{box-sizing:border-box}${card.css}</style>` +
+  // 카드의 images/… 는 작업 public 폴더 기준 — 렌더 페이지 주소로 풀면 404 다(staticFile 만이 번들 경로를 안다)
+  card.html.replace(/(<img\b[^>]*?\bsrc=")([^"]+)"/g, (_m, a, src) => `${a}${staticFile(src)}"`) + '</div>';
 
 const FAMILIES: [RegExp, string][] = [
   [/pretendard|--font-body|--font-mono/i, 'Pretendard'],
   [/black han sans|--font-heavy/i, 'Black Han Sans'],
   [/jua|--font-round/i, 'Jua'],
-  [/nanum pen script|--font-hand/i, 'Nanum Pen Script'],
+  [/nanum pen script|--font-hand|--font-pen/i, 'Nanum Pen Script'],
   [/playfair display|--font-numeral/i, 'Playfair Display'],
   [/instrument serif|--font-italic/i, 'Instrument Serif'],
   [/hahmlet/i, 'Hahmlet'],
   [/song myung|--font-poster|--font-editorial/i, 'Song Myung'],
-  [/gowun batang|--font-serif|--font-head/i, 'Gowun Batang'],
+  [/gowun batang|--font-serif|--font-head|--font-quote/i, 'Gowun Batang'],
   [/noto serif kr|serif/i, 'Noto Serif KR'],
   [/anton|--font-latin/i, 'Anton'],
 ];
 
-const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, fps, dur, box, theme, surface, data}) => {
-  // 나가기 안무(LongForm 이 이어지는 장면에 맞춰 넣는다): {at, dur} 초 — 요소가 흩어져 나간다
-  const exitPlan = (data as {__exit?: {at: number; dur: number}}).__exit;
-  const exitKey = exitPlan ? `${exitPlan.at}:${exitPlan.dur}` : '';
+const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, fps, dur, box, theme, surface}) => {
+  useMaterials();
   const hostRef = useRef<HTMLDivElement>(null);
   const compiled = useRef<CompiledCard | null>(null);
   const [handle] = useState(() => delayRender(`card ${id}`));
@@ -107,8 +114,7 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
     let alive = true;
     const build = () => {
       if (!alive || compiled.current) return;
-      compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || '', libs: CARD_LIBS,
-        ...(exitPlan ? {exit: exitPlan} : {})});
+      compiled.current = compileCard(gsap, el, {fps, duration: dur / fps, timeline: card.timeline || '', libs: CARD_LIBS, surfaceUrl});
       compiled.current.seek(frameRef.current / fps);
     };
     const release = () => {
@@ -118,7 +124,8 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
         continueRender(handle);
       }
     };
-    Promise.all(fams.flatMap((f) => ['400', '700'].map((wgt) => document.fonts.load(`${wgt} 40px "${f}"`, text))))
+    const imgs = Array.from(el.querySelectorAll('img')).map((i) => i.decode().catch(() => undefined));
+    Promise.all([...imgs, ...fams.flatMap((f) => ['400', '700'].map((wgt) => document.fonts.load(`${wgt} 40px "${f}"`, text)))])
       .then(() => document.fonts.ready)
       .then(release, release);
     const t = setTimeout(release, 8000);
@@ -130,29 +137,22 @@ const CardBody: React.FC<TemplateProps & {card: CardSpec}> = ({id, card, frame, 
     };
     // frame 은 아래 effect 가 맡는다
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, fps, dur, exitKey]);
+  }, [html, fps, dur]);
 
   useLayoutEffect(() => {
     compiled.current?.seek(frame / fps);
   }, [frame, fps]);
 
   const vars = cardVars(theme, surface) as React.CSSProperties;
-  // 앰비언트 카메라 + 떠다니는 흐름(2026-10-04 채널 주인: '모션이 많아야 한다 — 떠다니듯 젠틀하게'): 카드 전체가 장면 내내
-  // 아주 느리게 다가가며(1.012 → 1.04) 몇 px 떠다닌다. 가장자리가 드러나지 않게 늘 1보다 크게. 결정적(프레임만으로 정해진다)
-  const fl = floatOffset(frame, fps, id.length + w, 4, 7.5);
-  const cam = 1.012 + (ambientPush(frame, dur, 0.028) - 1);
   return (
     <div style={{position: 'absolute', left: 0, top: 0, width: box.w, height: box.h, overflow: 'hidden'}}>
-      <div style={{position: 'absolute', inset: 0, transformOrigin: '50% 50%',
-        transform: `translate(${fl.x.toFixed(2)}px, ${fl.y.toFixed(2)}px) scale(${cam.toFixed(4)})`}}>
-        <div
-          ref={hostRef}
-          className="card-host"
-          style={{...vars, position: 'absolute', left: (box.w - w * scale) / 2, top: (box.h - h * scale) / 2, width: w, height: h,
-            transform: `scale(${scale})`, transformOrigin: 'top left', color: theme.ink, fontFamily: FONT.sans,
-            lineHeight: 1.25}}
-        />
-      </div>
+      <div
+        ref={hostRef}
+        className="card-host"
+        style={{...vars, position: 'absolute', left: (box.w - w * scale) / 2, top: (box.h - h * scale) / 2, width: w, height: h,
+          transform: `scale(${scale})`, transformOrigin: 'top left', color: theme.ink, fontFamily: FONT.sans,
+          lineHeight: 1.25}}
+      />
     </div>
   );
 };

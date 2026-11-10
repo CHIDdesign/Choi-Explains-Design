@@ -1,6 +1,5 @@
 import React from 'react';
 import {Freeze, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame} from 'remotion';
-import {paperShadow} from '../design/tokens';
 import {lerp} from '../lib/anim';
 import {toFrame} from '../lib/time';
 import type {Clip, FaceSample} from '../lib/types';
@@ -76,11 +75,7 @@ export const TalkingHead: React.FC<{
   fps: number;
   region: Rect;
   box: VideoBox;
-  radius?: number;
-  border?: string;
-  shadow?: boolean;
-  filter?: string;
-}> = ({clips, fps, region, box, radius = 0, border, shadow, filter}) => {
+}> = ({clips, fps, region, box}) => {
   return (
     <div
       style={{
@@ -90,14 +85,10 @@ export const TalkingHead: React.FC<{
         width: region.w,
         height: region.h,
         overflow: 'hidden',
-        borderRadius: radius,
-        outline: border,
-        boxShadow: shadow ? paperShadow(2) : undefined,
         background: '#000',
       }}
     >
-      <div style={{position: 'absolute', left: box.tx - region.x, top: box.ty - region.y, width: box.w, height: box.h,
-        filter}}>
+      <div style={{position: 'absolute', left: box.tx - region.x, top: box.ty - region.y, width: box.w, height: box.h}}>
         {clips.map((c, i) => {
           const from = toFrame(c.start, fps);
           const to = toFrame(c.start + c.dur, fps);

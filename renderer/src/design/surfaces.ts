@@ -1,7 +1,8 @@
 import type {Layout, TemplateName} from '../lib/types';
+import {MODERN, mix} from './tokens';
 import type {Theme} from './tokens';
 
-export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo' | 'crumple' | 'collage' | 'modern' | 'dark';
+export type SurfaceName = 'board' | 'paper' | 'ink' | 'signal' | 'overlay' | 'photo' | 'crumple' | 'modern' | 'dark';
 
 export type Surface = {
   name: SurfaceName;
@@ -26,18 +27,13 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
       // 반전 면(챕터당 1회): 순흑 대신 따뜻한 책상색
       return {name, bg: '#1D1916', fg: '#F2EFE6', dim: 'rgba(242,239,230,0.62)', faint: 'rgba(242,239,230,0.14)',
         accent: theme.accentTint, rule: 'rgba(242,239,230,0.22)', chalk: false};
-    case 'collage':
-      // 디자인 v3 종이 콜라주(운영자 레퍼런스): 크림 종이 · 웜 잉크 · 짙은 디자인 색. 바탕 그림은 PaperStage 가 그린다
-      return {name, bg: '#ECEAE1', fg: '#24211E', dim: 'rgba(36,33,30,0.64)', faint: 'rgba(36,33,30,0.14)',
-        accent: theme.accentDeep, rule: 'rgba(36,33,30,0.2)', chalk: false};
     case 'modern':
-      // 디자인 v4 모던 모션: 밝은 무대(흰/옅은 디자인 색) · 검정에 가까운 잉크 · 짙은 디자인 색 강조. 바탕 그림은 ModernStage
-      return {name, bg: '#F7F8F6', fg: '#121315', dim: 'rgba(18,19,21,0.64)', faint: 'rgba(18,19,21,0.10)',
-        accent: theme.accentDeep, rule: 'rgba(18,19,21,0.14)', chalk: false};
+      // 디자인 v5 평면 면: 밝은 면 + 차콜 글자, 강조는 띠 색(오렌지는 면 채움 금지)
+      return {name, bg: MODERN.bg, fg: MODERN.ink, dim: MODERN.inkSoft, faint: 'rgba(30,33,36,0.10)',
+        accent: theme.band, rule: 'rgba(30,33,36,0.16)', chalk: false};
     case 'dark':
-      // 디자인 v4 어두운 무대(펀치·반전 장면): 검정 + 디자인 색 강조
-      return {name, bg: '#0A0A0B', fg: '#F4F4F2', dim: 'rgba(244,244,242,0.62)', faint: 'rgba(244,244,242,0.12)',
-        accent: theme.accent, rule: 'rgba(244,244,242,0.2)', chalk: false};
+      return {name, bg: MODERN.dark, fg: MODERN.darkInk, dim: MODERN.darkSoft, faint: 'rgba(244,243,238,0.12)',
+        accent: mix(theme.band, '#FFFFFF', 0.45), rule: 'rgba(244,243,238,0.2)', chalk: false};
     case 'signal':
       return {name, bg: theme.accent, fg: theme.accentDeep, dim: 'rgba(0,0,0,0.45)', faint: 'rgba(0,0,0,0.12)',
         accent: '#111111', rule: 'rgba(0,0,0,0.25)', chalk: false};
@@ -55,7 +51,7 @@ export const surface = (theme: Theme, name: SurfaceName): Surface => {
   }
 };
 
-/** 템플릿 × 레이아웃 → 표면. 디자인 v4: 모던 밝은 무대 하나(사진·스톡만 사진 면, 모션 bg ink 는 어두운 무대) */
+/** 템플릿 × 레이아웃 → 표면. 디자인 v5: 평면 두 가지(전면 핵심어·모션 bg ink 는 차콜, 나머지는 밝은 면) */
 export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName => {
   if (layout === 'split') return template === 'photo' || template === 'broll' ? 'photo' : 'board';
   if (layout === 'overlay') return 'overlay';
@@ -63,14 +59,14 @@ export const surfaceFor = (template: TemplateName, layout: Layout): SurfaceName 
     case 'photo':
     case 'broll':
       return 'photo';
-    case 'card':
-      return 'modern'; // 카드가 자기 배경을 그린다 — 뒤에는 무대색
+    case 'keyword':
+      return 'dark';
     default:
       return 'modern';
   }
 };
 
-/** 모션 장면의 bg 값 → 표면(한 재질: board·paper·signal 은 종이 콜라주, ink 는 따뜻한 반전 면) */
+/** 모션 장면의 bg 값 → 표면 */
 export const surfaceForSpecBg = (bg: string | undefined): SurfaceName | null =>
   !bg || bg === 'transparent' ? null : bg === 'ink' ? 'dark' : 'modern';
 
@@ -98,5 +94,8 @@ export const TEMPLATE_LABEL: Record<TemplateName, string> = {
   evidence: '',
   title: '',
   lower_third: '',
-  recap: '정리',
+  stamp: '',
+  cutout_stack: '',
+  collage: '',
+  keyword_montage: '',
 };

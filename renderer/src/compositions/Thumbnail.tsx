@@ -19,7 +19,7 @@ const Highlighted: React.FC<{line: string; highlight: string; color: string}> = 
   );
 };
 
-/** 썸네일 3종 — signal(리포트 표지색) / ink(어두운 사진 + 흰 글자) / photo(사진 + 글자 박스) */
+/** 썸네일 3종 — signal(띠 색 면 + 사진) / ink(어두운 사진 + 흰 글자) / photo(사진 + 글자 박스) */
 export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
   useFontGuard();
   const {width: W, height: H, brand, image, text, highlight, variant, faceX} = props;
@@ -34,21 +34,20 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
       ? {size: Math.min(...lines.map((l) => fitBlock(l, panelW - 90, H, 170, 60, 1, 1, -0.05).size)), lines}
       : fitBlock(joined, panelW - 90, H * 0.8, 170, 60, 1.0, 3, -0.05);
     return (
-      <AbsoluteFill style={{background: theme.accent}}>
+      <AbsoluteFill style={{background: theme.band}}>
         {image ? (
           <Img src={staticFile(image)} style={{position: 'absolute', right: 0, top: 0, width: W - panelW + 40, height: H,
             objectFit: 'cover', objectPosition: `${Math.round(faceX * 100)}% 40%`}} />
         ) : null}
-        <div style={{position: 'absolute', left: 0, top: 0, width: panelW, height: H, background: theme.accent,
-          clipPath: 'polygon(0 0, 100% 0, 92% 100%, 0 100%)'}} />
+        <div style={{position: 'absolute', left: 0, top: 0, width: panelW, height: H, background: theme.band}} />
         <div style={{position: 'absolute', left: 48, top: 30, fontFamily: FONT.sans, fontSize: 20, fontWeight: 600,
-          color: theme.accentDeep}}>{brand.name}</div>
+          color: 'rgba(255,255,255,0.86)'}}>{brand.name}</div>
         <div style={{position: 'absolute', left: 44, top: 0, bottom: 0, width: panelW - 70, display: 'flex',
           flexDirection: 'column', justifyContent: 'center'}}>
           {fit.lines.map((l, i) => (
-            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.02,
-              letterSpacing: '-0.01em', color: '#111', whiteSpace: 'nowrap'}}>
-              <Highlighted line={l} highlight={highlight} color="#fff" />
+            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 900, fontSize: fit.size, lineHeight: 1.02,
+              letterSpacing: '-0.03em', color: '#fff', whiteSpace: 'nowrap'}}>
+              <Highlighted line={l} highlight={highlight} color={theme.accentLight} />
             </div>
           ))}
         </div>
@@ -74,7 +73,7 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
           alignItems: faceX > 0.5 ? 'flex-start' : 'flex-end'}}>
           <div style={{width: 64, height: 10, background: theme.accent, marginBottom: 22}} />
           {fit.lines.map((l, i) => (
-            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.04,
+            <div key={i} style={{fontFamily: FONT.heavy, fontWeight: 900, fontSize: fit.size, lineHeight: 1.04,
               letterSpacing: '-0.01em', color: '#fff', whiteSpace: 'nowrap',
               textAlign: faceX > 0.5 ? 'left' : 'right'}}>
               <Highlighted line={l} highlight={highlight} color={theme.accentLight} />
@@ -96,8 +95,8 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
       <div style={{position: 'absolute', left: 40, bottom: 40, display: 'flex', flexDirection: 'column',
         alignItems: 'flex-start', gap: 8}}>
         {fit.lines.map((l, i) => (
-          <div key={i} style={{background: i === fit.lines.length - 1 ? theme.accent : '#111', padding: '4px 18px 10px',
-            fontFamily: FONT.heavy, fontWeight: 400, fontSize: fit.size, lineHeight: 1.08, letterSpacing: '-0.01em',
+          <div key={i} style={{background: i === fit.lines.length - 1 ? theme.band : '#111', padding: '4px 18px 10px',
+            fontFamily: FONT.heavy, fontWeight: 900, fontSize: fit.size, lineHeight: 1.08, letterSpacing: '-0.01em',
             color: '#fff', whiteSpace: 'nowrap'}}>{l}</div>
         ))}
       </div>

@@ -27,5 +27,4 @@
 `card-anim.mjs` 의 한 세계 + 카메라(`[data-world]` · `data-camera`)는 Promptible 의 **remotion-motion-graphics-skill**
 (https://github.com/Liamrjohnston/remotion-motion-graphics-skill, MIT License, Copyright (c) 2026 Promptible) `cinematic-camera`
 스킬의 안무 문법(캔버스보다 큰 세계 하나 · 초점과 배율의 키프레임 · 열기 → 홀드 → 드러내기 → 이동 → 정지)을 옮겨 적은 것이다.
-코드는 우리 것(GSAP 트윈으로 다시 씀)이고, 그 저장소의 코드·영상·로고는 넣지 않았다. 슬롭 거절 목록(`prompts/agents/motion.md` 0-4 ·
-`card_critic.md`)도 같은 스킬의 `rejected-patterns.md`·`visual-critic.md` 를 이 채널 기준으로 다시 쓴 것이다.
+코드는 우리 것(GSAP 트윈으로 다시 씀)이고, 그 저장소의 코드·영상·로고는 넣지 않았다. 슬롭 거절 목록(`prompts/agents/card_critic.md`)도 같은 스킬의 `rejected-patterns.md`·`visual-critic.md` 를 이 채널 기준으로 다시 쓴 것이다.

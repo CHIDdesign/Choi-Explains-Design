@@ -19,11 +19,14 @@ export type TemplateName =
   | 'motion' // 모션 디자이너 에이전트가 설계한 장면(MotionSpec)
   | 'card' // 자유 HTML 카드(HyperFrames 카드 규약 호환, components/card/HtmlCard.tsx)
   | 'broll' // 스톡 영상/사진(Pixabay·Unsplash·Coverr·Pexels)
+  | 'stamp' // 자료 위 대각선 도장(components/modern/Modern.tsx StampCard)
+  | 'cutout_stack' // 오른쪽 위에서 아래로 쌓이는 오림 그림(components/material/Cutout.tsx)
+  | 'collage' // 흑백 망점으로 오린 사람·건물 덩어리 + 평면색 원 + 찢긴 이름표(components/material/Collage.tsx)
+  | 'keyword_montage' // 가운데 고정된 큰 흰 낱말 뒤로 사진 3~5장이 하드 컷(graphics/Cards.tsx)
   | 'evidence' // 증거 자료(자료 리서처 → 조달 사다리, components/longform/Evidence.tsx — 03b)
   // 자동 템플릿(디렉터가 직접 고르지 않음)
   | 'title'
-  | 'lower_third'
-  | 'recap'; // 챕터 끝 정리 보드(studio/render/props.py chapter_recaps — 그 챕터의 핵심 개념 2~4개)
+  | 'lower_third';
 
 export type Layout = 'fullscreen' | 'split' | 'overlay' | 'pip';
 
@@ -51,14 +54,25 @@ export type Archive = {
   ref?: string;
 };
 
+/** 이미지 위 그래픽(components/material/Overlays.tsx): 좌표는 비전 선택이 준 이미지 정규화 좌표, at = 그래픽 시작 기준 초 */
+export type OverlayKind = 'outline' | 'circle' | 'arrow' | 'label' | 'memo' | 'cutout' | 'impact' | 'stamp' | 'focus' | 'highlight' | 'dimension' | 'expand';
+export type Overlay = {kind: OverlayKind; at?: number; box?: NBox; point?: [number, number]; poly?: [number, number][]; text?: string;
+  image?: string; cut?: boolean; w?: number; h?: number; sub?: string}; // image·cut·w·h = cutout 의 그림 · sub = 도장 아랫줄
+
+/** 오림 스택 한 장: at = 그래픽 시작 기준 초(없으면 고르게), cut = 알파가 있는 오린 PNG */
+export type Cutout = {image: string; label?: string; at?: number; cut?: boolean; focus?: string; w?: number; h?: number;
+  kind?: 'person' | 'place'; orig?: string; credit?: string}; // collage: 사람·건물(자리가 다르다) · orig = 망점 파일이 없을 때의 원본 · keyword_montage 는 사진 목록으로 쓴다
+
 export type GraphicData = {
   title?: string;
+  motif?: string; // 같은 장치·물건의 표식(게이트 B11) — 맞붙은 두 장면이면 바탕 종이만 바꾸는 하드 컷
   subtitle?: string;
   body?: string;
   items?: string[];
   title_b?: string;
   items_b?: string[];
   highlight?: number;
+  wordMarks?: {land: number; spoken: number}[]; // 게이트 A18 전용(렌더러는 안 씀): 낱말에 맞춘 표시의 착지(그래픽 기준 초)와 그 낱말의 편집 시각
   stepAt?: {t: number; index: number}[]; // 단계 그래픽: 그래픽 시작 기준 초 — 그 낱말에서 강조 단계가 바뀐다
   author?: string;
   source?: string;
@@ -83,10 +97,12 @@ export type GraphicData = {
   keyword_sub?: string;
   keyword_at?: number;
   // 사진 위 구도(studio/vision/compose.py): 글자·칩을 놓을 빈 쪽, 어두운 사진, 얼굴 상자, cover 초점(objectPosition), 통째 보기
-  safe?: {side: 'left' | 'right' | 'center'; dark: boolean};
+  safe?: {side: 'left' | 'right' | 'center'; dark: boolean; light?: boolean; dim?: boolean; soft?: boolean; lum?: number[][]}; // light = 우하단이 밝다(출처 띠) · dim = 전체 평균 밝기 15% 미만(넓은 그림자 없음) · soft = 윤곽이 번진 그림(전면 금지) · lum = 그림 전체의 휘도 격자(표시를 놓을 자리 판단)
   face?: NBox | null;
   focus?: [number, number] | null; // objectPosition(0~1) — 얼굴이 잘리지 않게
   fit?: 'cover' | 'contain';
+  overlays?: Overlay[]; // 전면 사진·영상·문서 위 표시(최대 3)
+  tone?: 'desaturate' | 'darken' | 'blur'; // 바탕 처리
   // evidence
   assets?: EvidenceAsset[];
   treatment?: Treatment;
@@ -96,7 +112,12 @@ export type GraphicData = {
   display?: string; // 콜라주의 큰 인쇄 글자(2~6자, 레퍼런스 '설계안 채택')
   quote?: string; // 영상·사진 위 명조 인용(줄바꿈 \n, 40자 이내)
   tier?: string;
-  lines?: NBox[]; // doc_highlight: 밑줄 칠 줄
+  cutouts?: Cutout[]; // cutout_stack·collage·keyword_montage: public 기준 경로 + 표찰
+  name?: string; // collage: 찢긴 이름표의 큰 글자
+  name_sub?: string; // collage: 이름표 아랫줄(영문·연도)
+  disc?: string; // collage: 뒤 원의 색 'mint' | 'orange' | '#hex'
+  scraps?: {image: string; w?: number; h?: number; cut?: boolean}[]; // 전면 챕터 카드·도식 보드 핵심 카드에 놓일 그 영상의 실제 자료 조각
+  slot?: string; // lower_third: 'badge' = 좌상단 챕터 배지, 'super' = 대본에 나온 인물·기관 슈퍼
 };
 
 // 화면 스킨(기본 classic):
@@ -173,17 +194,8 @@ export type MotionImage = MotionElBase & {type: 'image'; src: string; w: number;
 export type MotionMark = MotionElBase & {type: 'mark'; kind: 'circle' | 'underline' | 'arrow' | 'bracket' | 'strike';
   w: number; h: number; strokeWidth?: number};
 
-// 디자인 v4 모던 부품(components/modern/Modern.tsx) — 자기 등장 애니메이션을 가진다(enter 는 none)
-export type MotionPanel = MotionElBase & {type: 'panel'; title?: string; rows: string[]; w: number; size?: number; tilt?: boolean; on?: number};
-export type MotionChip = MotionElBase & {type: 'chip'; text: string; size?: number; icon?: 'check' | 'dot' | 'gear' | 'none';
-  fill?: 'card' | 'tint' | 'accent'};
-export type MotionBubble = MotionElBase & {type: 'bubble'; text: string; sub?: string; size?: number; tail?: 'bottom' | 'left' | 'none';
-  icon?: 'check' | 'dot' | 'gear' | 'none'};
-export type MotionDevice = MotionElBase & {type: 'device'; kind: 'monitor' | 'laptop' | 'phone'; w: number; src?: string; rows?: string[];
-  title?: string};
-export type MotionIso = MotionElBase & {type: 'iso'; cols: number; rows: number; seed: number; road: boolean};
 export type MotionEl = MotionText | MotionRect | MotionCircle | MotionLine | MotionPath | MotionDots | MotionCounter |
-  MotionBar | MotionImage | MotionMark | MotionPanel | MotionChip | MotionBubble | MotionDevice | MotionIso;
+  MotionBar | MotionImage | MotionMark;
 
 export type MotionSpec = {
   bg?: 'board' | 'paper' | 'ink' | 'signal' | 'transparent';
@@ -220,7 +232,7 @@ export type Graphic = {
 // 강조 종류: keyword(핵심어 밑줄 스윕) · term(전문용어 형광 마커) · number(숫자 Anton) · contrast(대비어)
 export type EmType = 'keyword' | 'term' | 'number' | 'contrast';
 export type CaptionWord = {text: string; start: number; end: number; em?: boolean | EmType};
-export type LongCaptionPreset = 'paper' | 'editorial' | 'documentary' | 'glass' | 'boxed';
+export type LongCaptionPreset = 'boxed';
 export type ShortCaptionPreset = 'paper' | 'kinetic' | 'clean' | 'boxed' | 'bar';
 // style: 'impact' = 강조 순간(강조 줌·효과음과 함께) 자막을 크게 가운데로 — 레퍼런스 채널·지식 채널식 강조 자막
 //        (paper 자막 프리셋은 크기를 바꾸지 않는다)
@@ -242,11 +254,10 @@ export type FaceSample = {t: number; x: number; y: number; s: number};
 // x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
 // glide: 이 샷이 시작할 때 앞 샷의 프레이밍에서 이 초만큼 천천히 옮겨 온다(없으면 컷)
 // framed: 종이 스킨에서 화자를 찢어진 액자에 담아 종이 위에(레퍼런스 2)
+// cut: 크롭을 바꾼 하드 컷(100 ↔ 112%) — 그 샷 안에서는 움직이지 않는다
 export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number; glide?: number;
-  framed?: boolean};
-// 강조 줌: 강조 순간 카메라를 당김. style glide = 0.7초에 걸쳐 당기고 0.9초에 걸쳐 풀림(편집 문법 엔진이 쓰는 것),
-// ease = 5프레임 푸시, cut = 하드컷(한 프레임) — ease·cut 은 렌더러에만 남아 있다
-// 강조 밀기: t = 핵심어, from = 밀기 시작(없으면 t), in/out = 당기기·풀기 시간(초). 2026-10-04 부터 모든 스타일을 느린 밀기로 그린다
+  framed?: boolean; cut?: boolean};
+// 강조 줌: t ~ end 동안 카메라를 당김. style glide 일 때만 from·in·out(초)으로 천천히, 그 밖에는 한 프레임에 점프(크롭 하드 컷)
 export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'; from?: number; in?: number; out?: number};
 
 // 장면 전환(컷 지점 t 를 가운데 두고 앞뒤로 dur/2 씩): 나가는 장면이 가속하며 빠지고 들어오는 장면이 감속하며 안착.
@@ -276,6 +287,7 @@ export type Brand = {
   ink: string;
   paper: string;
   year: string;
+  band?: string; // 디자인 v5 띠 색(없으면 #1F4D3E)
   deep?: string; // 디자인 팔레트의 짙은 색(큰 글자·연도) — 없으면 accent 에서
   tint?: string; // 디자인 팔레트의 옅은 색(형광펜·바닥 타원·이름표) — 없으면 accent 에서
 };
@@ -308,10 +320,6 @@ export type LongFormProps = {
   chapters: Chapter[];
   panelSide: 'left' | 'right';
   endcard: {start: number; dur: number} | null;
-  grain: number; // 0 = 끔, 0.04~0.08 권장
-  grainFrames: string[];
-  screenLook?: number; // 모니터 질감(전면 그래픽 위 흐림·빛 번짐·서브픽셀 격자·입자) — 0 = 끔, 1 = 기본
-  showChapterLabel: boolean;
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
   skin?: Skin;
   paperTexture?: string; // public 기준 구겨진 종이 텍스처(없으면 단색)
@@ -345,9 +353,6 @@ export type ShortProps = {
   // reel = 참고 릴스식(위 큰 카드 · 아래 얼굴 · 이음새 굵은 자막) — 기본
   layout: 'full' | 'framed' | 'window' | 'reel';
   progressBar: boolean;
-  grain: number;
-  screenLook?: number; // 모니터 질감(위 카드에만) — 0 = 끔
-  grainFrames: string[];
   peekEvery: number; // 렌더 중 진행 화면 미리보기 간격(프레임), 0 = 끔
   skin?: Skin;
   paperTexture?: string;

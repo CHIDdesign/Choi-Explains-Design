@@ -38,7 +38,7 @@ export const SAMPLE_LONG: LongFormProps = {
     {start: 0.5, end: 3.5, lines: [[{text: '디자인은', start: 0.5, end: 1}, {text: '먼저', start: 1, end: 1.4},
       {text: '넓게', start: 1.4, end: 1.8, em: true}, {text: '펼쳐야', start: 1.8, end: 2.4}, {text: '합니다.', start: 2.4, end: 3}]]},
   ],
-  captionPreset: 'editorial',
+  captionPreset: 'boxed',
   face: [{t: 0, x: 0.42, y: 0.4, s: 0.3}],
   camera: [{start: 0, end: 64, zoom: 1, zoomEnd: 1.03}],
   punches: [],
@@ -55,18 +55,13 @@ export const SAMPLE_LONG: LongFormProps = {
     g('df', 'definition', 'fullscreen', 44.5, 50, {title: '어포던스', subtitle: 'Affordance', body: '사물의 형태가 사용 방법을 스스로 알려주는 성질'}),
     g('m', 'matrix', 'fullscreen', 50.5, 56, {title: '기능과 감성', items: ['감성 높음·기능 낮음', '둘 다 높음', '둘 다 낮음', '기능 높음·감성 낮음'], items_b: ['기능 낮음', '기능 높음', '감성 낮음', '감성 높음'], highlight: 1}),
     g('s', 'stat', 'overlay', 56.5, 60, {title: '85%', body: '다섯 명의 사용자가 찾아내는 사용성 문제', subtitle: 'Nielsen, 2000'}),
-    g('r', 'recap', 'split', 60.2, 64, {title: '좋은 답은 질문을 바꿀 때 나온다', subtitle: '이번 챕터 정리', number: '02',
-      items: ['발산 먼저, 수렴은 나중', '어포던스: 형태가 사용법을 알려준다', '좋은 질문의 조건 3가지', '85% — 다섯 명이면 충분']}),
   ],
   transitions: [{t: 6, type: 'whip', dur: 0.4, dir: 'left'}],
   callouts: [{start: 2, end: 5, text: '좋은 질문이\n좋은 디자인을', highlight: '좋은 디자인', label: '핵심', side: 'right'}],
   chapters: [{start: 0, title: '들어가며', number: '01'}, {start: 4, title: '문제를 다시 정의하기', number: '02'}],
   panelSide: 'right',
   endcard: null,
-  grain: 0,
-  grainFrames: [],
   peekEvery: 0,
-  showChapterLabel: true,
 };
 
 export const SAMPLE_SHORT: ShortProps = {
@@ -94,10 +89,8 @@ export const SAMPLE_SHORT: ShortProps = {
   hookTitle: '디자인과 학생들이\n몰래 건너뛰는 단계',
   hookHighlight: '건너뛰는',
   seriesLabel: '디자인 이론 #01',
-  layout: 'full',
+  layout: 'reel',
   progressBar: false,
-  grain: 0,
-  grainFrames: [],
   peekEvery: 0,
 };
 

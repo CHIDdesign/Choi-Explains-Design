@@ -141,6 +141,60 @@ export const transitionState = (list: Transition[], t: number, W: number, H: num
   }
 };
 
+export const PUSH_SEC = 0.4;
+
+/** 전면 자료 사이 세로 밀기(영상당 몇 번) — 앞 장은 멈춘 채 위로 나가고 다음 장이 아래에서 붙어 올라온다. 앞 장을 그만큼 더 그릴 뿐 타임라인 길이는 그대로. */
+export const PushSlide: React.FC<{frame: number; fps: number; H: number; leaving: boolean; children: React.ReactNode}> = ({frame, fps, H, leaving, children}) => {
+  const p = interpolate(frame, [0, Math.round(PUSH_SEC * fps)], [0, 1], {...clamp, easing: EASE.inOutCubic});
+  return <AbsoluteFill style={{transform: `translateY(${(leaving ? -p : 1 - p) * H}px)`}}>{children}</AbsoluteFill>;
+};
+
+const RIP_FRAMES = 12;
+
+const ripEdge = (H: number, seed: number) => {
+  const c = Array.from({length: 40}, (_, i) => Math.abs(Math.sin((i + 1) * (seed + 3.7) * 12.9898) * 43758.5453) % 1);
+  const at = (u: number) => {
+    const a = Math.floor(u);
+    const t = u - a;
+    return c[a % 40] + (c[(a + 1) % 40] - c[a % 40]) * t * t * (3 - 2 * t);
+  };
+  return Array.from({length: Math.ceil(H / 4) + 1}, (_, i) => {
+    const y = i * 4;
+    return {y, o: at(y / 90 + 1) * 46 + at(y / 18 + 9) * 16 + at(y / 5 + 17) * 6, w: 5 + at(y / 26 + 23) * 15 + at(y / 6 + 31) * 4};
+  });
+};
+
+/**
+ * 종이 찢기 전환 — 아이덴트에 들고날 때만(영상당 1~2회). children 이 찢긴 선을 따라 드러났다가 찢겨 나간다. 그래픽 자기 길이 안에서 일어나 타임라인 길이는 그대로다.
+ * 선 주변 그림자는 선 근처만 덮는 띠 하나를 흐린 것 — 전면 블러 필터를 프레임마다 돌리지 않는다. 띠를 겹치면 등고선처럼 계단이 보인다.
+ */
+export const PaperRip: React.FC<{frame: number; dur: number; W: number; H: number; seed?: number; children: React.ReactNode}> = ({frame, dur, W, H, seed = 2, children}) => {
+  const entering = frame < RIP_FRAMES;
+  const leaving = frame >= dur - RIP_FRAMES;
+  if (!entering && !leaving) return <>{children}</>;
+  const p = entering ? EASE.inOutCubic(Math.max(0, frame) / RIP_FRAMES) : EASE.inOutCubic(Math.min(1, (frame - (dur - RIP_FRAMES)) / RIP_FRAMES));
+  const slant = W * 0.09;
+  const X = -slant - 90 + (W + 2 * slant + 180) * p;
+  const edge = ripEdge(H, entering ? seed : seed + 5).map((e) => ({...e, x: X + slant * (e.y / H - 0.5) * 2 + e.o}));
+  const line = edge.map((e) => `${e.x.toFixed(1)} ${e.y}`).join(' L ');
+  const clip = entering ? `path('M -2 -2 L ${line} L -2 ${H + 2} Z')` : `path('M ${W + 2} -2 L ${line} L ${W + 2} ${H + 2} Z')`;
+  const dir = entering ? -1 : 1;
+  const rim = edge.map((e) => `${(e.x + dir * e.w).toFixed(1)} ${e.y}`).reverse().join(' L ');
+  const pad = slant + 100;
+  const local = edge.map((e) => `${(e.x - X + pad).toFixed(1)} ${e.y}`).join(' L ');
+  return (
+    <AbsoluteFill>
+      <AbsoluteFill style={{clipPath: clip}}>{children}</AbsoluteFill>
+      <svg width={2 * pad + 70} height={H} style={{position: 'absolute', left: X - pad, top: 0, pointerEvents: 'none', filter: 'blur(12px)'}}>
+        <path d={`M ${local}`} fill="none" stroke="rgb(20,16,12)" strokeOpacity={0.42} strokeWidth={30} />
+      </svg>
+      <svg width={W} height={H} style={{position: 'absolute', inset: 0, pointerEvents: 'none'}}>
+        <path d={`M ${line} L ${rim} Z`} fill="#FBF8F0" />
+      </svg>
+    </AbsoluteFill>
+  );
+};
+
 /** 방향성 블러(SVG) — CSS blur() 는 한 방향 블러가 없어서 필터를 매 프레임 갱신한다. */
 export const TransitionFilter: React.FC<{id: string; blurX: number; blurY: number}> = ({id, blurX, blurY}) => (
   <svg width={0} height={0} style={{position: 'absolute'}}>

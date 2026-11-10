@@ -86,7 +86,7 @@ const gentleTimeline = (tl) => {
 // morph-to 가 건드릴 수 있는 속성(레이아웃을 깨거나 스크립트를 부르는 것은 막는다)
 const MORPH_KEYS = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotate', 'opacity', 'width', 'height', 'backgroundColor',
   'color', 'letterSpacing', 'borderRadius', 'filter', 'left', 'top', 'padding', 'fontSize', 'strokeDashoffset', 'fill',
-  'stroke', 'skewX', 'skewY', 'xPercent', 'yPercent', 'clipPath', 'backgroundSize', 'borderColor', 'boxShadow']);
+  'stroke', 'xPercent', 'yPercent', 'clipPath', 'backgroundSize', 'borderColor', 'boxShadow']);
 
 const num = (v, d) => {
   const f = parseFloat(v);
@@ -127,13 +127,149 @@ const splitChars = (el) => {
   }
 };
 
+/** 결정적 난수 — renderer/src/components/paper/Paper.tsx seeded 와 같은 수열 */
+const seeded = (seed) => {
+  let s = (Math.floor(seed * 9973) ^ 0x5bd1e995) >>> 0 || 1;
+  return () => {
+    s ^= s << 13;
+    s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    s >>>= 0;
+    return s / 4294967296;
+  };
+};
+
+/** 값 노이즈 n 개(주기 period 칸) */
+const noise1 = (r, n, period) => {
+  const c = Array.from({length: Math.ceil(n / period) + 3}, () => r());
+  return Array.from({length: n}, (_, i) => {
+    const u = i / period;
+    const a = Math.floor(u);
+    const t = u - a;
+    return c[a] + (c[a + 1] - c[a]) * t * t * (3 - 2 * t);
+  });
+};
+
+/**
+ * 찢긴 종이의 윤곽: outer(섬유 단면의 바깥선) · mid(섬유가 겉장으로 스미는 선) · inner(겉장이 끝나는 선). 찢긴 변만 흔들리고 나머지는 재단선 그대로.
+ * 파인 곳은 안쪽으로만 — 종이 상자 밖으로 나가지 않는다. 섬유 폭은 2~fibre px 로 구간마다 다르다 — 폭이 고르면 흰 획으로 보인다.
+ * 변 끝 20px 에서 흔들림이 0 으로 모인다 — 옆 변과 어긋나 모서리에 뿔이 나지 않게.
+ */
+const tornPaths = (w, h, torn, seed, amp = 11, fibre = Math.min(14, amp * 1.4)) => {
+  const outer = [];
+  const mid = [];
+  const inner = [];
+  const side = (x0, y0, x1, y1, nx, ny, on, s) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    if (!on) {
+      for (const l of [outer, mid, inner]) l.push(`${x0} ${y0}`);
+      return;
+    }
+    const r = seeded(seed * 7 + s);
+    const n = Math.max(3, Math.round(len / 3) + 1);
+    const a = noise1(r, n, Math.max(9, Math.min(42, n * 0.34)));   // 짧은 변에서도 굴곡이 한두 번은 보이게
+    const b = noise1(r, n, 9);
+    const c = noise1(r, n, 3);
+    const d = noise1(r, n, 13);
+    const e = noise1(r, n, 3);
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const end = Math.min(1, (Math.min(t, 1 - t) * len) / 20);
+      const o = amp * (a[i] * 0.6 + b[i] * 0.28 + c[i] * 0.12) * end;
+      const q = (Math.min(2, fibre) + Math.max(0, fibre - 2) * clamp((d[i] - 0.25) / 0.5, 0, 1) ** 1.3 * (0.75 + 0.25 * e[i])) * end;
+      const x = x0 + (x1 - x0) * t;
+      const y = y0 + (y1 - y0) * t;
+      const at = (v) => `${(x + nx * v).toFixed(1)} ${(y + ny * v).toFixed(1)}`;
+      outer.push(at(o));
+      mid.push(at(o + q * 0.5));
+      inner.push(at(o + q));
+    }
+  };
+  side(0, 0, w, 0, 0, 1, torn.top, 1);
+  side(w, 0, w, h, -1, 0, torn.right, 2);
+  side(w, h, 0, h, 0, -1, torn.bottom, 3);
+  side(0, h, 0, 0, 1, 0, torn.left, 4);
+  const d = (l) => `M ${l.join(' L ')} Z`;
+  return {outer: d(outer), mid: d(mid), inner: d(inner)};
+};
+
+// 재질(card_dsl.md): data-surface · data-torn · data-tape. 텍스처는 미리 구운 파일이라 저자 CSS 의 url() 금지는 그대로다.
+// 색은 material/Texture.tsx FLAT 과 같다 — 파일을 못 읽어도 렌더는 간다
+const SURFACES = {eggshell: '#F4F3EE', parchment: '#EFE9DC', memo: '#FBF9F3', kraft: '#B89B72', graph: '#F2F2EA', newsprint: '#DED6C2',
+  desk: '#262220'};
+
+function applySurfaces(root, url) {
+  const W = root.offsetWidth || 1920;
+  const H = root.offsetHeight || 1080;
+  Array.from(root.querySelectorAll('[data-surface]')).forEach((el, i) => {
+    const name = el.dataset.surface;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (!SURFACES[name] || !w || !h) return;
+    const seed = i + 1;
+    const tex = (n, sd) => {
+      const k = Math.max(1, w / 1920, h / 1080);
+      const r = seeded(sd + 0.5);
+      return {backgroundColor: SURFACES[n], backgroundImage: url ? `url("${url(n)}")` : 'none', backgroundRepeat: 'no-repeat',
+        backgroundSize: `${1920 * k}px ${1080 * k}px`,
+        backgroundPosition: `${-Math.round((1920 * k - w) * r())}px ${-Math.round((1080 * k - h) * r())}px`};
+    };
+    if (w >= 0.9 * W && h >= 0.9 * H) {          // 카드 전체를 덮는 바탕 — 들뜨지 않는다
+      Object.assign(el.style, tex(name, seed));
+      return;
+    }
+    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    el.dataset.sheet = '1';
+    el.style.isolation = 'isolate';              // 글자 아래(z-index −1)에 재질 층을 깐다
+    const layer = (style) => {
+      const d = document.createElement('div');
+      d.dataset.mat = '1';
+      Object.assign(d.style, {position: 'absolute', inset: '0', zIndex: '-1', pointerEvents: 'none'}, style);
+      return d;
+    };
+    const layers = [];
+    const edges = (el.dataset.torn || '').split(/\s+/).filter(Boolean);
+    if (edges.length) {
+      const p = tornPaths(w, h, Object.fromEntries(edges.map((e) => [e, true])), seed);
+      el.style.filter = 'var(--lift-drop-2)';
+      layers.push(layer({...tex('memo', seed + 2), backgroundColor: '#EFE6D2', backgroundBlendMode: 'multiply', clipPath: `path('${p.outer}')`}),
+        layer({...tex(name, seed), clipPath: `path('${p.mid}')`, opacity: '0.45'}),
+        layer({...tex(name, seed), clipPath: `path('${p.inner}')`}));
+    } else {
+      // 아래 모서리가 들려 그림자가 벌어진다 — 평면 카드처럼 보이지 않게
+      const corner = (side, deg) => layer({inset: 'auto', [side]: '10px', bottom: '10px', width: '46%', height: '26px', rotate: `${deg}deg`,
+        boxShadow: '0 18px 20px rgba(34,30,26,0.36)'});
+      layers.push(corner('left', -1.6), corner('right', 1.6), layer({...tex(name, seed), boxShadow: 'var(--lift-2)'}));
+    }
+    el.prepend(...layers);
+    if ('tape' in el.dataset) {
+      const r = seeded(seed + 0.3);
+      const teeth = (edge, dir) => Array.from({length: 7}, (_, k) =>
+        `${(edge + dir * (k % 2 ? 1.5 + r() * 2.2 : r() * 0.8)).toFixed(1)}% ${(k / 6 * 100).toFixed(1)}%`);
+      const tw = clamp(w * 0.3, 96, 190);
+      const t = document.createElement('div');
+      t.dataset.mat = '1';
+      Object.assign(t.style, {position: 'absolute', left: `${(w - tw) / 2 + (r() - 0.5) * w * 0.12}px`, top: '-20px', width: `${tw}px`, height: '40px',
+        rotate: `${-4 + r() * 8}deg`, opacity: '0.72', mixBlendMode: 'multiply', pointerEvents: 'none'});
+      const face = document.createElement('div');
+      face.dataset.mat = '1';
+      Object.assign(face.style, {position: 'absolute', inset: '0', clipPath: `polygon(${[...teeth(0, 1), ...teeth(100, -1).reverse()].join(', ')})`,
+        background: '#FC5400'});
+      t.append(face);
+      el.append(t);
+    }
+  });
+}
+
 /**
  * @param gsap  GSAP 전역(모듈 import 또는 window.gsap)
  * @param root  카드 루트(.card) 또는 그 조상
- * @param {{fps?: number, duration?: number, timeline?: string}} opts  timeline = 직접 쓴 GSAP 코드(fn(tl, q, gsap, ctx) 본문)
+ * @param {{fps?: number, duration?: number, timeline?: string, surfaceUrl?: (name: string) => string}} opts  timeline = 직접 쓴 GSAP 코드(fn(tl, q, gsap, ctx) 본문)
  * @returns {{timeline, duration, seek(t), kinds: string[], problems: string[]}}
  */
 function compileCard(gsap, root, opts) {
+  applySurfaces(root, opts && opts.surfaceUrl);
   // libs = {SplitText, CustomEase, drawSVG, morphSVG, motionPath} — 호스트(HtmlCard·check.mjs)가 등록한 플러그인. 없으면 예전 방식으로 대체
   const libs = (opts && opts.libs) || {};
   const fps = (opts && opts.fps) || 30;
@@ -232,7 +368,7 @@ function compileCard(gsap, root, opts) {
           ease: easeOf(el, 'power3.out')}, at);
         break;
       case 'blur-in':
-        tl.fromTo(el, {opacity: 0, filter: 'blur(14px)'}, {...base, opacity: 1, filter: 'blur(0px)', duration: D,
+        tl.fromTo(el, {opacity: 0, y: 14, filter: 'blur(8px)'}, {...base, opacity: 1, y: 0, filter: 'blur(0px)', duration: D,
           ease: easeOf(el, 'power2.out')}, at);
         break;
       case 'mask-reveal': {
@@ -348,7 +484,7 @@ function compileCard(gsap, root, opts) {
         break;
       }
       case 'stagger-in': {
-        const kids = Array.from(el.children);
+        const kids = Array.from(el.children).filter((c) => !c.dataset.mat);
         if (!kids.length) break;
         tl.fromTo(kids, {opacity: 0, y: 18}, {...base, opacity: 1, y: 0, duration: D, ease: easeOf(el, 'power2.out'),
           stagger: clamp(num(el.dataset.animStagger, 0.09), 0.02, 0.6)}, at);
@@ -389,51 +525,20 @@ function compileCard(gsap, root, opts) {
     }
   }
 
-  // 떠다니는 움직임(data-float="px", 선택 data-float-at · data-float-period): 등장이 끝난 뒤 카드 끝까지 느린 사인으로 오르내림·
-  // 아주 작은 기울기. 요소마다 위상·주기를 달리해 함께 숨 쉬듯(같은 박자로 출렁이지 않게). 진폭 상한 14px(마지막 1초 검사 16px 아래)
-  // 떠다니기·흩어짐은 자기 하위 타임라인에 — '정착'(등장이 끝나는 시각)을 잴 때 빼려고(카드 끝까지 이어지므로)
-  const ambient = [];
-  if (total) {
-    const ft = gsap.timeline();
-    tl.add(ft, 0);
-    ambient.push(ft);
-    Array.from(root.querySelectorAll('[data-float]')).forEach((el, i) => {
-      if (el.classList.contains('card')) return;
-      const amp = clamp(num(el.dataset.float, 6), 2, 14);
-      const at0 = clamp(num(el.dataset.floatAt, 0.9), 0, Math.max(0, total - 0.5));
-      const period = clamp(num(el.dataset.floatPeriod, 5.2 + (i % 4) * 0.55), 2.5, 12);
-      const half = period / 2;
-      const n = Math.max(1, Math.ceil((total - at0) / half));
-      const dir = i % 2 ? -1 : 1;
-      ft.to(el, {...base, y: `+=${(dir * amp).toFixed(1)}`, rotation: dir * Math.min(1.2, amp / 10), duration: half,
-        ease: 'sine.inOut', yoyo: true, repeat: n - 1}, at0 + (i % 3) * 0.37);
-      kinds.push('float');
-    });
-  }
-
   // 디자인 v4 — 모션 디자이너·시그니처 빌더가 직접 쓴 GSAP 타임라인(docs/디자인_v4_모던모션.md 6절, card_dsl.md 7절).
   // 같은 일시정지 타임라인 tl 위에만 트윈을 얹는다(seek 가 전부 제어 → 결정론). 전역·네트워크·시계·난수는 이름을 가려 undefined 로.
   if (opts && typeof opts.timeline === 'string' && opts.timeline.trim()) {
     runTimeline(gsap, gentleTimeline(tl), root, opts.timeline, {duration: opts.duration || 8, fps: opts.fps || 30,
       w: root.getBoundingClientRect().width, h: root.getBoundingClientRect().height}, problems, libs);
   }
-  // 나가기 안무(LongForm 이 정한다 — opts.exit = {at, dur}): 요소들이 각자의 방향(화면 가운데에서 자기 자리 쪽)으로 흩어져
-  // 화면 밖으로 날아간다. data-carry 요소(다음 장면이 같은 자리에서 이어 받는 요소)는 그대로 남는다. 페이드 겹침 없음 —
-  // 투명도는 날아가는 끝에서만 내린다(2026-10-04 채널 주인: 'PPT 장면 전환·페이드되는 요소끼리 겹치는 것 금지')
-  if (opts && opts.exit && opts.exit.dur > 0) {
-    const et = gsap.timeline();
-    tl.add(et, 0);
-    ambient.push(et);
-    scatterExit(et, root, Number(opts.exit.at) || 0, Number(opts.exit.dur));
-  }
   const dur = tl.duration();
-  // 정착: 떠다니기·흩어짐과 장식(aria-hidden — 뒤에 깔린 큰 연도의 느린 흐름 등)만 움직이는 트윈을 뺀 마지막 등장·강조가
+  // 정착: 장식(aria-hidden)만 움직이는 트윈을 뺀 마지막 등장·강조가
   // 끝나는 시각(검수 스틸·읽기 시간·미리보기 칸이 쓴다)
   const decorOnly = (c) => typeof c.targets === 'function' && c.targets().length > 0
     && c.targets().every((t) => t && t.closest && t.closest('[aria-hidden="true"]'));
   let settle = 0;
   for (const c of tl.getChildren(false, true, true)) {
-    if (!ambient.includes(c) && !decorOnly(c)) settle = Math.max(settle, c.endTime());
+    if (!decorOnly(c)) settle = Math.max(settle, c.endTime());
   }
   const seek = (t) => {
     const tt = clamp(t, 0, Math.max(dur, 0.0001));
@@ -468,50 +573,6 @@ function parseCamera(raw, problems) {
   keys.sort((a, b) => a.t - b.t);
   if (keys.length < 2) problems.push('anim_camera_invalid:needs_two_keys');
   return keys.length >= 2 ? keys : [];
-}
-
-/** 흩어지며 나가기: 보이는 단위(자기 글자·그림·채운 면이 있는 가장 바깥 요소)를 모아 화면 가운데에서 바깥 방향으로 날린다.
- *  화면의 55% 넘는 면(바탕)과 data-carry 는 남는다. 가운데 것부터 차례로(0.025초 간격), 가속(power3.in) — 되튐 없음. */
-function scatterExit(tl, root, at, dur) {
-  const R = root.getBoundingClientRect();
-  if (!R.width || !R.height) return;
-  const cx = R.left + R.width / 2;
-  const cy = R.top + R.height / 2;
-  const canvas = R.width * R.height;
-  const isUnit = (el) => {
-    if (el.closest('[data-carry]')) return false;
-    const tag = el.tagName.toLowerCase();
-    if (tag === 'style' || tag === 'br') return false;
-    const r = el.getBoundingClientRect();
-    if (r.width * r.height <= 4 || r.width * r.height > 0.55 * canvas) return false;
-    if (tag === 'svg' || tag === 'img') return true;
-    if (el.closest('svg') && tag !== 'svg') return false;      // SVG 안은 SVG 통째로
-    if (Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim())) return true;
-    const cs = getComputedStyle(el);
-    const bg = cs.backgroundColor;
-    return (bg && bg !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(bg)) || cs.backgroundImage !== 'none';
-  };
-  const all = Array.from(root.querySelectorAll('*')).filter(isUnit);
-  const set = new Set(all);
-  const units = all.filter((el) => { for (let p = el.parentElement; p && p !== root; p = p.parentElement) if (set.has(p)) return false; return true; });
-  const items = units.map((el) => {
-    const r = el.getBoundingClientRect();
-    return {el, x: r.left + r.width / 2 - cx, y: r.top + r.height / 2 - cy, size: Math.max(r.width, r.height)};
-  }).sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y));
-  items.forEach((it, i) => {
-    let vx = it.x;
-    let vy = it.y;
-    let n = Math.hypot(vx, vy);
-    if (n < 8) { vx = Math.cos(i * 2.399); vy = Math.sin(i * 2.399); n = 1; }   // 가운데 것은 황금각으로 방향을 나눈다
-    vx /= n; vy /= n;
-    const dist = 0.55 * Math.max(R.width, R.height) + it.size * 0.6;
-    const t0 = at + Math.min(0.25, i * 0.025);
-    const d = Math.max(0.2, dur - (t0 - at));
-    const rot = ((i * 37) % 17 - 8) * 1.2;
-    tl.to(it.el, {x: `+=${(vx * dist).toFixed(1)}`, y: `+=${(vy * dist).toFixed(1)}`, rotation: `+=${rot.toFixed(1)}`,
-      scale: 0.92, duration: d, ease: 'power3.in', lazy: false, immediateRender: false}, t0);
-    tl.to(it.el, {opacity: 0, duration: d * 0.3, ease: 'power1.in', lazy: false, immediateRender: false}, t0 + d * 0.7);
-  });
 }
 
 /** 자유 타임라인 실행: fn(tl, q, gsap, ctx). q(sel) = 카드 안 요소 배열, gsap = 안전한 부분집합(utils·parseEase·nested timeline). */
@@ -588,4 +649,4 @@ function runTimeline(gsapLib, tl, root, code, ctx, problems, libs) {
   tl.pause(0, true);
 }
 
-export {compileCard, parseCamera, KINDS as CARD_ANIM_KINDS};
+export {compileCard, parseCamera, tornPaths, KINDS as CARD_ANIM_KINDS};

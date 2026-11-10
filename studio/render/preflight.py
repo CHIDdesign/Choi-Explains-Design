@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from ..motion.spec import no_content
+
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 IMG_TAG_RE = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*(["'])(.*?)\1[^>]*>""", re.I | re.S)
 
@@ -91,6 +93,26 @@ def fix_graphic(g: dict[str, Any], chk: MediaCheck, notes: list[str]) -> bool:
     if d.get("cut") and not chk.ok(d["cut"]):
         d.pop("cut")                    # 오린 PNG 가 없으면 원본 사진으로 그린다
         notes.append(f"오린 사진({at}) — 원본 사진으로")
+    if isinstance(d.get("cutouts"), list):
+        for c in d["cutouts"]:          # 망점 파일이 없으면 원본 사진을 인화지로 — 빈자리를 두지 않는다
+            if isinstance(c, dict) and not chk.ok(c.get("image")) and chk.ok(c.get("orig")):
+                c.update(image=c["orig"], cut=False)
+        keep = [c for c in d["cutouts"] if isinstance(c, dict) and chk.ok(c.get("image"))]
+        if len(keep) < len(d["cutouts"]):
+            notes.append(f"오림 스택({at}) — 파일 없는 그림 {len(d['cutouts']) - len(keep)}장 뺌")
+        d["cutouts"] = keep
+        if t == "cutout_stack" and not keep:
+            return False
+        if t in ("collage", "keyword_montage") and len(keep) < 2:
+            notes.append(f"콜라주·몽타주({at}) — 그림이 모자라 뺌")
+            return False
+    if isinstance(d.get("scraps"), list):
+        d["scraps"] = [s for s in d["scraps"] if isinstance(s, dict) and chk.ok(s.get("image"))]
+    if isinstance(d.get("overlays"), list):
+        keep = [o for o in d["overlays"] if isinstance(o, dict) and (not o.get("image") or chk.ok(o["image"]))]
+        if len(keep) < len(d["overlays"]):
+            notes.append(f"그림 위 오림({at}) — 파일 없음 {len(d['overlays']) - len(keep)}장 뺌")
+        d["overlays"] = keep
     assets = d.get("assets")
     if isinstance(assets, list) and assets:
         keep = []
@@ -101,6 +123,8 @@ def fix_graphic(g: dict[str, Any], chk: MediaCheck, notes: list[str]) -> bool:
             if a.get("cut") and not chk.ok(a["cut"]):
                 a.pop("cut")
             keep.append(a)
+        if keep and keep[0] is not assets[0] and isinstance(d.get("overlays"), list):
+            d["overlays"] = [o for o in d["overlays"] if not (o.get("box") or o.get("point") or o.get("poly"))]   # 좌표는 빠진 첫 그림의 것이다
         d["assets"] = keep
         if not keep and not (d.get("archive") or d.get("title")):
             return False                # 그림도 글도 없는 자료 카드는 빈 판이다
@@ -115,6 +139,9 @@ def fix_graphic(g: dict[str, Any], chk: MediaCheck, notes: list[str]) -> bool:
                     continue            # 그림 부품은 장면에서 뺀다
                 el.pop("src")           # 기기 등은 그림 없이(행·제목으로) 그린다
             els.append(el)
+        if len(els) < len(spec["elements"]) and no_content(els):
+            notes.append(f"모션 장면({at}) — 내용 부품이 모두 빠져 장면을 뺍니다")
+            return False
         spec["elements"] = els
     card = d.get("card")
     if isinstance(card, dict) and isinstance(card.get("html"), str) and "<img" in card["html"].lower():

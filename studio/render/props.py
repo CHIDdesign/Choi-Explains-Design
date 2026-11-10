@@ -1,6 +1,6 @@
 """편집 계획 → Remotion props(JSON). renderer/src/lib/types.ts 와 짝을 이룬다.
 
-long_props/short_props 가 기본 props 를 만들고, 파이프라인이 그 위에 편집 문법 엔진 결과(apply_edit·mark_soft_cuts),
+long_props/short_props 가 기본 props 를 만들고, 파이프라인이 그 위에 편집 문법 엔진 결과(apply_edit),
 숏폼 개념 텍스트(short_beats), 화면 글자와 같은 말인 자막 숨김(dedupe_captions)을 더한다.
 """
 from __future__ import annotations
@@ -9,7 +9,7 @@ import random
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..director.plan import TimedGraphic, word_edit_time
+from ..director.plan import OVERLAY_MAX, TimedGraphic, overlay_weight, word_edit_time
 from ..models import TimeMap, Utterance
 from ..settings import Brand
 from ..text.align import find_word, norm
@@ -24,14 +24,15 @@ SHORT_PRESETS = ("paper", "kinetic", "clean", "boxed", "bar")
 # 디자인 v3 팔레트(운영자 레퍼런스 프레임에서 잰 색): 중간 · 짙은(큰 글자·연도) · 옅은(형광펜·바닥 타원·이름표)
 # 디자인 색: ember = 채널 주인의 오렌지(2026-10-02 레퍼런스 실측 #FC5400 — 짙은 톤은 흰 바탕 글자용, 옅은 톤은 칩·행·형광)
 #            forest = 디자인 v3 레퍼런스의 짙은 초록 + 민트
-PALETTES = {"ember": {"accent": "#FC5400", "deep": "#D94600", "tint": "#FFD7C4"},
+PALETTES = {"talk": {"accent": "#FC5400", "deep": "#D94600", "tint": "#FFD7C4", "band": "#1F4D3E"},
+            "ember": {"accent": "#FC5400", "deep": "#D94600", "tint": "#FFD7C4"},
             "forest": {"accent": "#2B8A64", "deep": "#1E6B4F", "tint": "#86D9B5"}}
 
 
 def brand_props(b: Brand) -> dict[str, Any]:
     d = {"name": b.name, "shortName": b.short_name, "handle": b.handle, "presenter": b.presenter,
          "presenterTitle": b.presenter_title, "accent": b.accent, "ink": b.ink, "paper": b.paper, "year": b.year}
-    d.update(PALETTES.get(getattr(b, "palette", "ember"), {}))      # brand 면 강조색 그대로(renderer 가 짙은·옅은 색 계산)
+    d.update(PALETTES.get(getattr(b, "palette", "talk"), {}))      # brand 면 강조색 그대로(renderer 가 짙은·옅은 색 계산)
     return d
 
 
@@ -262,7 +263,7 @@ def long_props(
     skin: str = "classic",
     paper_texture: str = "",
     grain: float,
-    caption_preset: str = "paper",
+    caption_preset: str = "boxed",
     endcard: bool = True,
     use_sfx: bool = True,
     speech_onsets: Optional[list[float]] = None,
@@ -274,7 +275,7 @@ def long_props(
     end_dur = 6.0 if endcard else 0.0
     total = speech_total + end_dur
     em_keys = emphasis_keys(emphasis, utts, timemap)
-    cues = build_phrase_cues(utterance_word_groups(utts, timemap), emphasis=em_keys)
+    cues = build_phrase_cues(utterance_word_groups(utts, timemap), emphasis=em_keys, max_chars=24, max_dur=4.0, max_words=8)
     snap_cues_to_speech(cues, speech_onsets or [])
     face = remap_track(face_src, timemap)
     chapter_starts = [c["start"] for c in chapters]
@@ -294,7 +295,7 @@ def long_props(
         "bgm": {"src": bgm_src, "envelope": bgm_envelope(regions, total, swells), "loop": True} if bgm_src else None,
         "sfx": sfx_events(gdicts, sfx) if use_sfx else [],
         "captions": cues,
-        "captionPreset": caption_preset if caption_preset in LONG_PRESETS else "paper",
+        "captionPreset": caption_preset if caption_preset in LONG_PRESETS else "boxed",
         "face": face,
         "camera": camera_shots(timemap, speech_total, chapter_starts),
         "punches": punches(emphasis, utts, timemap),
@@ -306,7 +307,7 @@ def long_props(
         "endcard": {"start": round(speech_total + 0.2, 3), "dur": end_dur - 0.2} if endcard else None,
         "grain": grain,
         "grainFrames": [f"fx/{f}" for f in grain_frames],
-        "showChapterLabel": True,
+        "showChapterLabel": False,
         "peekEvery": 0,   # 렌더 중 진행 화면 미리보기 간격(프레임). 최종 렌더에서만 켠다
         # classic(기본) = 에디토리얼 + 레퍼런스 일부(얼굴 위 사진 액자·개념 카드 글 위계·타이틀 구도·출처·오늘의 정리),
         # paper = 레퍼런스 종이 콜라주 전체(구겨진 종이·거친 테두리·화자 액자 샷)
@@ -363,16 +364,6 @@ def short_props(
     snap_cues_to_speech(cues, speech_onsets or [])
     total = timemap.duration
     clips = clips if clips is not None else keep_clips(timemap)
-    # 페이오프 강조(글라이드): 강조어가 있는 청크 중 전체의 55~90% 지점
-    pun = []
-    for c in cues:
-        if any(w.get("em") for line in c["lines"] for w in line) and 0.55 * total <= c["start"] <= 0.9 * total:
-            pun.append({"t": c["start"], "end": min(total, c["end"] + 1.2), "amount": 0.06, "style": "glide"})
-            break
-    if cues and cues[0]["start"] < 1.5:
-        # 시각 훅: 살짝 당긴 프레이밍으로 시작해 첫 자막 청크가 끝나는 자연스러운 쉼에서 풀어준다
-        release = min(cues[0]["end"], 3.0, total)
-        pun.insert(0, {"t": 0.0, "end": round(max(0.8, release), 3), "amount": 0.06, "style": "glide"})
     gdicts = [g.to_dict() for g in graphics]
     regions = speech_regions([{"lines": c["lines"]} for c in cues], merge_gap=0.8)
     return {
@@ -390,7 +381,7 @@ def short_props(
         "captions": cues,
         "face": remap_track(face_src, timemap),
         "camera": [],
-        "punches": pun,
+        "punches": [],
         "graphics": gdicts,
         "transitions": [],
         "hookTitle": spec.get("hook_title") or two_lines(episode.title),
@@ -478,122 +469,6 @@ def shift_decisions(ed: Any, dt: float) -> None:
     ed.bgm_swells = [(round(a + dt, 3), round(b + dt, 3)) for a, b in ed.bgm_swells]
     ed.bgm_dips = [(round(a + dt, 3), round(b + dt, 3)) for a, b in ed.bgm_dips]
     ed.bgm_switch = [round(t + dt, 3) for t in ed.bgm_switch]
-
-
-# ---------------------------------------------------------------------------
-# 얼굴을 가리지 않는 배치(채널 피드백: 얼굴 옆 사진 액자·개념 텍스트가 자주 얼굴을 덮었다)
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# 🎓 롱폼 무대(docs/롱폼_무대_디자인.md) 편집법: 챕터 카드 목차 + 챕터 끝 정리 보드
-# ---------------------------------------------------------------------------
-RECAP_SOURCES = ("keyword", "definition", "stat", "list", "compare", "quote", "process", "cycle", "double_diamond",
-                 "matrix", "timeline", "venn", "pyramid", "motion", "card")
-RECAP_MIN_CHAPTER = 45.0      # 이보다 짧은 챕터는 정리하지 않는다
-RECAP_DUR = (7.0, 5.0)        # 먼저 7초, 안 되면 5초
-RECAP_SEARCH = 20.0           # 챕터 끝에서 이만큼 앞까지 빈 창을 찾는다(챕터 끝에 그래픽이 몰리면 12초로는 자주 못 찾았다)
-
-
-def _shorten(text: str, n: int = 26) -> str:
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
-
-
-def recap_point(g: dict[str, Any]) -> str:
-    """그래픽 하나 → 정리 보드 한 줄(핵심 개념)."""
-    d = g.get("data") or {}
-    tpl = g.get("template", "")
-    title = str(d.get("title") or "").strip()
-    body = str(d.get("body") or "").strip()
-    if tpl == "definition":
-        return _shorten(f"{title}: {body}" if title and body else title or body, 30)
-    if tpl == "stat":
-        return _shorten(f"{title} — {body}" if title and body else title or body, 30)
-    if tpl == "compare":
-        b = str(d.get("title_b") or "").strip()
-        return _shorten(f"{title} vs {b}" if title and b else d.get("subtitle") or title or b)
-    if tpl == "quote":
-        who = str(d.get("author") or "").strip()
-        return _shorten(f"{who}: “{body}”" if who and body else body or title, 30)
-    if tpl == "card":
-        card = d.get("card")
-        if isinstance(card, dict) and not title:
-            from ..motion.card import card_text
-            return _shorten(card_text(card).split("\n")[0] if card_text(card) else "")
-    if tpl == "motion" and not title:
-        spec = d.get("spec")
-        if isinstance(spec, dict):
-            title = str(spec.get("label") or "")
-    return _shorten(title)
-
-
-def chapter_recaps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]], speech_total: float,
-                   avoid: Optional[list[tuple[float, float]]] = None) -> list[dict]:
-    """챕터 끝 **정리 보드**(템플릿 recap, split): 그 챕터에서 나온 키워드·정의·숫자·목록·비교·도식 제목을 시간순으로 2~4개
-    모아, 챕터 끝 7초(안 되면 5초)에 다른 그래픽과 겹치지 않는 가장 늦은 창에 둔다. 45초 넘는 챕터만.
-    avoid: 편집 감독의 강조 순간·⚡ 펀치 구간(편집 시각) — 얼굴로 힘을 주는 자리라 보드로 덮지 않는다(자리가 없으면 정리를
-    건너뛴다). gdicts 에 바로 추가하고(시간순 유지) 추가한 것을 돌려준다. AI 가 만드는 목록과 다른, 앱의 롱폼 편집법."""
-    if not chapters:
-        return []
-    starts = sorted(float(c["start"]) for c in chapters)
-    bounds = starts + [float(speech_total)]
-    busy = [(g["start"] - 0.5, g["end"] + 0.3) for g in gdicts if g.get("template") != "lower_third"]
-    busy += [(float(a), float(b)) for a, b in (avoid or []) if b > a]
-    added: list[dict] = []
-    for ci, c in enumerate(sorted(chapters, key=lambda c: float(c["start"]))):
-        a, b = bounds[ci], bounds[ci + 1]
-        if b - a < RECAP_MIN_CHAPTER:
-            continue
-        points: list[str] = []
-        for g in sorted(gdicts, key=lambda g: g["start"]):
-            if not (a <= g["start"] < b) or g.get("template") not in RECAP_SOURCES:
-                continue
-            p = recap_point(g)
-            key = p.replace(" ", "").lower()
-            if p and key not in {q.replace(" ", "").lower() for q in points}:
-                points.append(p)
-        if len(points) < 2:
-            continue
-        points = points[:4]
-        placed = None
-        end = b - 0.4
-        while placed is None and end >= b - RECAP_SEARCH:
-            for dur in RECAP_DUR:
-                st = end - dur
-                if st < a + 20.0:
-                    continue
-                if not any(st < y and end > x for x, y in busy):
-                    placed = (st, end)
-                    break
-            end -= 0.5
-        if placed is None:
-            continue
-        st, end = placed
-        g = {"id": f"recap{c.get('number', ci + 1)}", "template": "recap", "layout": "split", "start": round(st, 3),
-             "end": round(end, 3), "priority": 6, "source": "auto",
-             "data": {"title": str(c.get("claim") or c.get("title") or ""), "subtitle": "이번 챕터 정리",
-                      "number": str(c.get("number", "")), "items": points}}
-        gdicts.append(g)
-        busy.append((st - 0.5, end + 0.3))
-        added.append(g)
-    if added:
-        gdicts.sort(key=lambda g: g["start"])
-    return added
-
-
-def chapter_maps(gdicts: list[dict[str, Any]], chapters: list[dict[str, Any]]) -> int:
-    """챕터 카드에 **목차**(전체 챕터 제목 + 지금 챕터)를 넣는다 → 렌더러 ChapterCard 가 그린다."""
-    titles = [str(c.get("title") or "") for c in sorted(chapters, key=lambda c: float(c["start"]))]
-    numbers = [str(c.get("number") or "") for c in sorted(chapters, key=lambda c: float(c["start"]))]
-    n = 0
-    for g in gdicts:
-        if g.get("template") != "chapter":
-            continue
-        d = g.setdefault("data", {})
-        d["items"] = titles
-        num = str(d.get("number") or "")
-        d["highlight"] = numbers.index(num) if num in numbers else -1
-        n += 1
-    return n
 
 
 # ---------------------------------------------------------------------------
@@ -692,37 +567,13 @@ def face_safe_layouts(gdicts: list[dict[str, Any]], face: list[dict[str, Any]], 
     return stats
 
 
-def mark_soft_cuts(clips: list[dict[str, Any]], camera: list[dict[str, Any]], transitions: list[dict[str, Any]],
-                   soft: float) -> int:
-    """프레이밍이 그대로 이어지는 점프컷에 소프트 컷(앞 장면 마지막 프레임을 soft 초 동안 섞기)을 표시.
-    프레이밍이 바뀌는 컷(카메라 경계)·전환이 있는 컷·앵글이 바뀌는 컷은 그대로 둔다. 길이·싱크는 바뀌지 않는다.
-    같은 keep 안에서 앵글만 바뀌는 자리(원본 시각이 이어짐)는 점프컷이 아니므로 애초에 소프트 컷 대상이 아니다."""
-    bounds = [float(s["start"]) for s in camera if not s.get("glide")]
-    tx = [float(e["t"]) for e in transitions]
-    n = 0
-    for prev, c in zip(clips, clips[1:]):
-        c.pop("soft", None)
-        t = float(c["start"])
-        if soft <= 0 or any(abs(b - t) < 0.05 for b in bounds) or any(abs(x - t) < 0.4 for x in tx):
-            continue
-        if prev.get("src") != c.get("src"):      # 앵글이 바뀌는 컷(다시점)은 하드 컷
-            continue
-        c["soft"] = round(soft, 3)
-        n += 1
-    return n
-
-
 def apply_edit(props: dict[str, Any], ed: Any) -> dict[str, Any]:
-    """studio/edit/grammar.py 의 EditDecisions → props(카메라·강조 글라이드·전환·콜아웃·강조 자막·소프트 컷)."""
+    """studio/edit/grammar.py 의 EditDecisions → props(카메라·전환·콜아웃)."""
     props["camera"] = ed.camera
     props["punches"] = ed.punches
     props["transitions"] = ed.transitions
-    mark_soft_cuts(props["clips"], ed.camera, ed.transitions, float(getattr(ed, "soft_cut", 0.0) or 0.0))
     if "callouts" in props or getattr(ed, "callouts", None):
         props["callouts"] = list(getattr(ed, "callouts", []) or [])
-    for i in ed.impact_cues:
-        if 0 <= i < len(props["captions"]):
-            props["captions"][i]["style"] = "impact"
     return props
 
 
@@ -749,6 +600,74 @@ def bridge_split_gaps(graphics: list[dict[str, Any]], *, gap: float = 1.0) -> in
     return n
 
 
+def chapter_scraps(graphics: list[dict], n: int = 2) -> None:
+    """전면 챕터 카드에 그 챕터의 실제 자료 조각(사진·문서 n 장)을 얹는다 — 내용 없는 장식 조각을 두지 않는다(docs/디자인_v5_토크쇼.md)."""
+    order = sorted(graphics, key=lambda g: float(g.get("start", 0) or 0))
+    big = lambda g: g.get("template") == "chapter" and g.get("layout") == "fullscreen"  # noqa: E731
+    for i, g in enumerate(order):
+        if not big(g):
+            continue
+        found: list[dict] = []
+        for x in order[i + 1:]:
+            if big(x) or len(found) >= n:
+                break
+            d = x.get("data") or {}
+            if x.get("template") == "evidence" and d.get("assets") and d["assets"][0].get("kind") in ("photo", "document"):
+                a = d["assets"][0]
+                item = {"image": a.get("src"), "w": a.get("w"), "h": a.get("h")}
+            elif x.get("template") == "photo" and not d.get("logo") and not d.get("mat"):
+                item = {"image": d.get("image"), "w": d.get("w"), "h": d.get("h")}
+            else:
+                continue
+            if item["image"] and all(f["image"] != item["image"] for f in found):
+                found.append(item)
+        if found:
+            g.setdefault("data", {})["scraps"] = found
+
+
+def board_scraps(graphics: list[dict], reach: float = 90.0) -> None:
+    """전면 도식 보드의 핵심 카드에 붙일 실물 한 장: 시간이 가장 가까운 자료 사진(오린 것이 있으면 그것) — 같은 사진을 두 보드에 쓰지 않고, reach 초 안에 없으면 붙이지 않는다."""
+    media: list[tuple[float, dict]] = []
+    for g in graphics:
+        d = g.get("data") or {}
+        if g.get("template") == "evidence" and d.get("assets") and d["assets"][0].get("kind") == "photo":
+            a = d["assets"][0]
+            media.append((float(g.get("start", 0)), {"image": a.get("cut") or a.get("tight") or a.get("src"), "w": a.get("w"), "h": a.get("h"), "cut": bool(a.get("cut"))}))
+        elif g.get("template") == "photo" and d.get("image") and not d.get("logo") and not d.get("mat"):
+            media.append((float(g.get("start", 0)), {"image": d["image"], "w": d.get("w"), "h": d.get("h"), "cut": False}))
+    used: set[str] = set()
+    boards = [g for g in graphics if g.get("template") in ("process", "cycle", "matrix", "timeline", "list") and g.get("layout") == "fullscreen"]
+    for g in sorted(boards, key=lambda g: float(g.get("start", 0))):
+        free = [(abs(t - float(g.get("start", 0))), i) for i, (t, m) in enumerate(media) if m["image"] and m["image"] not in used]
+        if not free or min(free)[0] > reach:
+            continue
+        item = media[min(free)[1]][1]
+        g.setdefault("data", {})["scraps"] = [item]
+        used.add(item["image"])
+
+
+def stamps_onto_media(graphics: list[dict]) -> None:
+    """전면 자료 위 도장 그래픽을 그 자료의 표시로 옮긴다 — 어디가 밝은지는 그림 좌표로만 안다(Overlays.tsx 가 밝은 자리에 찍고, 없으면 도장 뒤에 종이를 깐다).
+    렌더러가 표시 층을 안 그리는 자료(인용·큰 글자·접힌 키워드)나 표시가 이미 꽉 찬 자료에는 옮기지 않는다 — 도장 그래픽 그대로 둔다."""
+    media = [g for g in graphics if g.get("template") in ("photo", "broll", "evidence") and g.get("layout") == "fullscreen"]
+
+    def takes_mark(d: dict) -> bool:
+        marks = [o for o in d.get("overlays") or [] if o.get("kind") not in ("highlight", "expand")]
+        return d.get("kind") != "video" and not (d.get("quote") or d.get("display") or d.get("keyword")) \
+            and sum(overlay_weight(o) for o in marks) < OVERLAY_MAX
+
+    for s in [g for g in graphics if g.get("template") == "stamp"]:
+        base = next((m for m in media if m["start"] <= s["start"] < m["end"] and takes_mark(m.get("data") or {})), None)
+        if base is None:
+            continue
+        d = s.get("data") or {}
+        mark = {"kind": "stamp", "point": [0.54, 0.3], "text": d.get("title", ""), "at": round(s["start"] - base["start"], 3)}
+        if d.get("subtitle"):
+            mark["sub"] = d["subtitle"]
+        base.setdefault("data", {}).setdefault("overlays", []).append(mark)
+        graphics.remove(s)
+
+
 def bridge_fullscreen_gaps(graphics: list[dict[str, Any]], *, gap: float = 0.5) -> int:
     """전면 그래픽끼리 0.5초 이하로 떨어져 있으면 앞 그래픽을 다음 시작까지 늘린다 — 2026-10-03: 전면 그래픽 사이 0.2~0.5초
     틈에서 앞 그래픽이 디졸브로 나가고 다음이 디졸브로 들어오는 동안 화자 얼굴이 몇 프레임 비쳤다(채널 주인: "순간적으로 내
@@ -763,15 +682,6 @@ def bridge_fullscreen_gaps(graphics: list[dict[str, Any]], *, gap: float = 0.5) 
             a["end"] = round(b["start"], 3)
             n += 1
     return n
-
-
-def stack_avoid_spans(props: dict[str, Any]) -> list[tuple[float, float]]:
-    """F-9: 두 층 강조 자막을 피할 구간 — 글자 그래픽 + 콜아웃 + 얼굴 옆 메모·사진(pip/overlay). 같은 순간 글자 층은 둘까지."""
-    out = text_graphic_spans(props.get("graphics") or [])
-    out += [(float(c["start"]), float(c["end"])) for c in props.get("callouts") or [] if "start" in c and "end" in c]
-    out += [(g["start"], g["end"]) for g in props.get("graphics") or []
-            if g.get("layout") in ("pip", "overlay") and g["template"] in ("broll", "photo")]
-    return sorted(out)
 
 
 def text_graphic_spans(graphics: list[dict[str, Any]]) -> list[tuple[float, float]]:
@@ -933,15 +843,11 @@ def caption_overlays(props: dict[str, Any]) -> list[tuple[float, float, str]]:
 def mark_stack_cues(cues: list[dict[str, Any]], *, min_gap: float, avoid: Optional[list[tuple[float, float]]] = None,
                     max_chars: int = 16) -> int:
     """두 층 강조 자막(기울인 명조 앞말 + 굵은 그라데이션 핵심어)을 쓸 큐에 style='stack'.
-    참고 채널 실측: 몇 초에 한 번, 핵심어가 든 한 마디에만(롱폼은 18초 안팎, 숏폼은 3~5초에 하나).
-    grammar 가 이미 'impact' 로 고른 큐도 같은 모양으로 그리므로 간격 계산에 넣는다."""
+    숏폼 전용 — 몇 초에 한 번, 핵심어가 든 한 마디에만."""
     avoid = avoid or []
     last = -1e9
     n = 0
     for c in cues:
-        if c.get("style") == "impact":
-            last = c["start"]
-            continue
         if c.get("hidden") or c.get("style"):
             continue
         words = [w for line in c["lines"] for w in line]

@@ -1,312 +1,192 @@
 import React from 'react';
-import {interpolate} from 'remotion';
-import {EASE_OUT, enter, exit} from '../../lib/anim';
-import {estWidth, fitBlock, fitSize} from '../../lib/fit';
-import {FONT} from '../../design/tokens';
-import {DrawRule, MaskLine, ParenLabel} from '../layout/Editorial';
+import {Img, staticFile} from 'remotion';
+import {enter, exit} from '../../lib/anim';
+import {balanceLines, estWidth, fitBlock, fitSize} from '../../lib/fit';
+import {overlayStyle, paperSettle, stampIn} from '../../design/motion';
+import {FONT, MAT, SLOT_TYPE} from '../../design/tokens';
 import type {TemplateProps} from './common';
-import {PrintText} from '../press/Press';
-import {BigNumeral, CornerMarks, Echo, Headline, modernColors, Pill} from '../modern/Modern';
+import {Collage} from '../material/Collage';
+import {CutoutStack} from '../material/Cutout';
+import {Attach, Stamp} from '../material/Marks';
+import {Sheet} from '../material/Sheet';
+import {ChapterBadge, CenterWord, CornerCredit, DefinitionSlot, QuoteSlot, Super, TopicMemo, WordRise} from '../modern/Modern';
+import {hashSeed} from '../paper/Paper';
 
-// ---------------------------------------------------------------------------
-// 챕터 카드 — Ink 표면. 거대한 번호(Anton) + 챕터 제목 + 주장(명조 기울임) + 목차(전체 챕터, 지금 챕터 강조).
-// 롱폼 무대의 오리엔테이션 장치: 시청자가 '지금 어디쯤, 무슨 주장인지'를 챕터마다 다시 잡는다.
-// data.items = 전체 챕터 제목, data.highlight = 지금 챕터 인덱스(studio/render/props.py chapter_maps).
-// ---------------------------------------------------------------------------
-export const ChapterCard: React.FC<TemplateProps> = ({data, frame, surface, box, theme}) => {
-  const num = data.number || '01';
-  const title = data.title || '';
-  const map = (data.items || []).slice(0, 8);
-  const cur = typeof data.highlight === 'number' ? data.highlight : -1;
-  const {size, lines} = fitBlock(title, box.w * 0.52, box.h * (map.length ? 0.4 : 0.55), 124, 60, 1.08, 3, -0.04);
-  const numSize = Math.min(box.h * 0.78, 520);
-  const mapSize = 24;
-  return (
-    <div style={{position: 'absolute', inset: 0}}>
-      <div
-        style={{
-          position: 'absolute',
-          left: -numSize * 0.04,
-          bottom: -numSize * 0.12,
-          fontFamily: FONT.latin,
-          fontSize: numSize,
-          lineHeight: 1,
-          color: surface.accent,
-          translate: `0 ${interpolate(enter(frame, 0, 20), [0, 1], [18, 0])}%`,
-          opacity: enter(frame, 0, 10),
-        }}
-      >
-        {num}
-      </div>
-      <div style={{position: 'absolute', right: 0, top: box.h * 0.08, width: box.w * 0.55}}>
-        <ParenLabel text={`chapter ${num}`} surface={surface} frame={frame} delay={4} size={24} />
-        <div style={{height: 24}} />
-        <DrawRule frame={frame} delay={6} color={surface.rule} />
-        <div style={{height: 32}} />
-        {lines.map((l, i) => (
-          <MaskLine key={i} frame={frame} delay={8 + i * 4}>
-            <div style={{fontFamily: FONT.heavy, fontWeight: 400, fontSize: size, lineHeight: 1.1,
-              letterSpacing: '-0.01em', color: surface.fg}}>{l}</div>
-          </MaskLine>
-        ))}
-        {data.subtitle ? (
-          <MaskLine frame={frame} delay={16}>
-            <div style={{marginTop: 26, fontFamily: FONT.serif, fontStyle: 'italic', fontWeight: 500, fontSize: 34,
-              lineHeight: 1.4, color: 'rgba(255,255,255,0.78)', letterSpacing: '-0.01em'}}>
-              {data.subtitle}
-            </div>
-          </MaskLine>
-        ) : null}
-        {map.length > 1 ? (
-          <div style={{marginTop: 44, display: 'flex', flexDirection: 'column', gap: 10}}>
-            {map.map((m, i) => {
-              const on = i === cur;
-              const p = enter(frame, 20 + i * 3, 12);
-              return (
-                <div key={i} style={{display: 'flex', alignItems: 'center', gap: 14, opacity: p * (on ? 1 : 0.42),
-                  translate: `${interpolate(p, [0, 1], [12, 0])}px 0`}}>
-                  <span style={{width: 8, height: 8, borderRadius: 4, background: on ? theme.accent : surface.dim,
-                    flexShrink: 0}} />
-                  <span style={{fontFamily: FONT.latin, fontSize: mapSize * 0.95, color: on ? theme.accentLight : surface.dim,
-                    width: mapSize * 1.5, letterSpacing: '0.02em'}}>{String(i + 1).padStart(2, '0')}</span>
-                  <span style={{fontFamily: FONT.sans, fontWeight: on ? 700 : 500, fontSize: mapSize,
-                    color: surface.fg, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden',
-                    textOverflow: 'ellipsis'}}>{m}</span>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-};
+// 디자인 v5.1 슬롯(docs/디자인_v5_토크쇼.md): 템플릿은 자기 자리에 정해진 모양으로만 그린다.
 
-// ---------------------------------------------------------------------------
-// 키워드 슬램 — 리포트 p.8 "NOSTALGIA IS GOLD" 레이아웃.
-// ---------------------------------------------------------------------------
-export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, brand, layout, theme}) => {
-  const title = data.title || '';
-  const onBoard = surface.name === 'board';
-  const maxSize = onBoard ? 150 : 250;
-  const size = fitSize(title, box.w * (onBoard ? 0.92 : 0.94), maxSize, 60, -0.045);
-  const p = enter(frame, 0, 16);
-  const out = exit(frame, dur, 10);
-  const year = brand.year || '2026';
-  const small = data.subtitle || '';
-  // 디자인 v4 모던: 가운데 키네틱 헤드라인(어절마다 등장) + 둘레 네모 넷 + 아래 알약 칩(보조문)
-  if ((surface.name === 'modern' || surface.name === 'dark') && !onBoard && layout !== 'split') {
-    const c = modernColors(theme, surface.name === 'dark');
-    const hw = Math.min(box.w * 0.9, estWidth(title.replace(/\*/g, ''), size, -0.035) + size * 0.9);
-    const hh = size * 1.5;
-    return (
-      <div style={{position: 'absolute', inset: 0, opacity: out, display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', gap: size * 0.3, paddingBottom: box.h * 0.04}}>
-        {title.replace(/\*/g, '').length <= 14 && !small ? <Echo text={title} size={size} color={c.inkSoft} frame={frame} W={box.w} H={box.h} /> : null}
-        <div style={{position: 'relative', width: hw, height: hh, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-          <CornerMarks x={0} y={0} w={hw} h={hh} c={c} p={enter(frame, 2, 14)} size={Math.max(10, size * 0.09)} />
-          <Headline text={title} size={size} color={c.ink} accentColor={c.deep} frame={frame} delay={2} align="center" />
-        </div>
-        {small ? <Pill text={small} c={c} frame={frame} delay={12} size={Math.max(24, size * 0.2)} icon="gear" /> : null}
-      </div>
-    );
-  }
-  // 디자인 v3 종이 콜라주: 인쇄 얼룩 큰 글자(레퍼런스 3번) + 아래 명조 한 줄 — 옛 리포트 쪽 번호·양옆 보조문은 쓰지 않는다
-  if (surface.name === 'collage' && !onBoard && layout !== 'split') {
-    return (
-      <div style={{position: 'absolute', inset: 0, opacity: out, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 30, paddingBottom: box.h * 0.04}}>
-        <div style={{overflow: 'hidden', paddingBottom: size * 0.06}}>
-          <div style={{translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>
-            <PrintText text={title} size={size} color={surface.accent} paper={surface.bg} letterSpacing="0" />
-          </div>
-        </div>
-        {small ? (
-          <MaskLine frame={frame} delay={10}>
-            <div style={{fontFamily: FONT.serif, fontSize: 46, fontWeight: 400, color: surface.fg, letterSpacing: '-0.01em'}}>
-              {small}
-            </div>
-          </MaskLine>
-        ) : null}
-      </div>
-    );
-  }
-  const edge = (txt: string, side: 'left' | 'right', top: number) => (
-    <div style={{position: 'absolute', [side]: 0, top, fontFamily: FONT.sans, fontSize: 20, fontWeight: 500,
-      color: surface.dim, opacity: enter(frame, 6, 12)}}>{txt}</div>
-  );
-  return (
-    <div style={{position: 'absolute', inset: 0, opacity: out}}>
-      {!onBoard && layout !== 'split' ? (
-        <>
-          {edge(year.slice(0, 2), 'left', box.h * 0.36)}
-          {edge(year.slice(2), 'right', box.h * 0.36)}
-          {small ? (
-            <>
-              <div style={{position: 'absolute', left: box.w * 0.12, top: box.h * 0.33, fontFamily: FONT.sans,
-                fontSize: 30, fontWeight: 500, color: surface.fg, opacity: enter(frame, 8, 12), maxWidth: box.w * 0.34}}>
-                {small}
-              </div>
-              <div style={{position: 'absolute', right: box.w * 0.12, top: box.h * 0.33, fontFamily: FONT.sans,
-                fontSize: 30, fontWeight: 500, color: surface.fg, opacity: enter(frame, 10, 12), maxWidth: box.w * 0.34,
-                textAlign: 'right'}}>
-                {small}
-              </div>
-            </>
-          ) : null}
-        </>
-      ) : null}
-      <div
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: onBoard ? box.h * 0.3 : box.h * 0.46,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: onBoard ? 'flex-start' : 'center',
-        }}
-      >
-        <div style={{overflow: 'hidden'}}>
-          <div
-            style={{
-              fontFamily: FONT.heavy,
-              fontWeight: 400,
-              fontSize: size,
-              lineHeight: 1.04,
-              letterSpacing: '-0.01em',
-              color: surface.name === 'signal' ? surface.fg : surface.name === 'overlay' ? '#fff' : surface.fg,
-              translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {surface.name === 'collage'
-              ? <PrintText text={title} size={size} color={surface.accent} paper={surface.bg} letterSpacing="0" />
-              : title}
-          </div>
-        </div>
-        {onBoard ? (
-          <>
-            <svg width={Math.min(box.w, estWidth(title, size, -0.045))} height={30} style={{marginTop: 8, overflow: 'visible'}}>
-              <path
-                d={`M 4 18 Q ${box.w * 0.2} 6 ${Math.min(box.w, estWidth(title, size, -0.045)) - 6} 14`}
-                stroke={surface.accent}
-                strokeWidth={7}
-                fill="none"
-                strokeLinecap="round"
-                pathLength={1}
-                strokeDasharray={1}
-                strokeDashoffset={1 - enter(frame, 10, 14)}
-              />
-            </svg>
-            {small ? (
-              <MaskLine frame={frame} delay={12} style={{marginTop: 26}}>
-                <div style={{fontFamily: FONT.sans, fontSize: 38, fontWeight: 500, color: surface.dim}}>{small}</div>
-              </MaskLine>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-};
+const TALL_WORD_Y = 1210 / 1920;     // 숏폼 얹힌 글자의 고정 띠(y 1120~1300) 가운데
 
-// ---------------------------------------------------------------------------
-// 용어 정의 — 사전 항목처럼.
-// ---------------------------------------------------------------------------
-export const DefinitionCard: React.FC<TemplateProps> = ({data, frame, surface, box}) => {
-  const term = data.title || '';
-  const termSize = fitSize(term, box.w * 0.9, 150, 70, -0.04);
-  const body = fitBlock(data.body || '', box.w * 0.86, box.h * 0.36, 50, 32, 1.45, 4);
+/** 챕터 카드(split·창 안에서 쓰일 때) — 전면 챕터는 ModernChapter, 화자 위는 좌상단 배지 */
+export const ChapterCard: React.FC<TemplateProps> = ({data, surface, box}) => {
+  const {size, lines} = fitBlock(data.title || '', box.w * 0.9, box.h * 0.5, 96, 44, 1.16, 3, -0.02);
   return (
     <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
-      <ParenLabel text="정의 · definition" surface={surface} frame={frame} size={24} />
-      <div style={{height: 22}} />
-      <MaskLine frame={frame} delay={2} dur={18}>
-        <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: termSize, lineHeight: 1.05,
-          letterSpacing: '-0.04em', color: surface.fg}}>{term}</div>
-      </MaskLine>
-      {data.subtitle ? (
-        <MaskLine frame={frame} delay={7}>
-          <div style={{marginTop: 14, fontFamily: FONT.italic, fontStyle: 'italic', fontWeight: 400, fontSize: 44,
-            color: surface.accent, letterSpacing: '0'}}>{data.subtitle}</div>
-        </MaskLine>
-      ) : null}
-      <div style={{height: 40}} />
-      <DrawRule frame={frame} delay={9} color={surface.rule} />
-      <div style={{height: 36}} />
-      {body.lines.map((l, i) => (
-        <MaskLine key={i} frame={frame} delay={13 + i * 3}>
-          <div style={{fontFamily: FONT.sans, fontWeight: 500, fontSize: body.size, lineHeight: 1.45, color: surface.fg}}>
-            {l}
-          </div>
-        </MaskLine>
-      ))}
-    </div>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// 인용 카드 — Paper 표면 + 명조.
-// ---------------------------------------------------------------------------
-export const QuoteCard: React.FC<TemplateProps> = ({data, frame, surface, box}) => {
-  const text = data.body || '';
-  const {size, lines} = fitBlock(text, box.w * 0.8, box.h * 0.6, 72, 40, 1.5, 5);
-  const who = [data.author, data.source].filter(Boolean).join(' — ');
-  return (
-    <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center',
-      paddingLeft: box.w * 0.08}}>
-      <div style={{position: 'absolute', left: 0, top: box.h * 0.02, fontFamily: FONT.italic, fontStyle: 'italic',
-        fontWeight: 400, fontSize: 300, lineHeight: 1, color: surface.accent, opacity: enter(frame, 0, 12)}}>“</div>
+      <div style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: 120, lineHeight: 1, letterSpacing: '-0.02em', color: MAT.forest, marginBottom: 20, fontVariantNumeric: 'tabular-nums'}}>{data.number || '01'}</div>
       {lines.map((l, i) => (
-        <MaskLine key={i} frame={frame} delay={4 + i * 4} dur={20}>
-          <div style={{fontFamily: FONT.serif, fontWeight: 600, fontSize: size, lineHeight: 1.4, color: surface.fg,
-            letterSpacing: '-0.025em'}}>{l}</div>
-        </MaskLine>
+        <div key={i} style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: size, lineHeight: 1.16, letterSpacing: '-0.02em',
+          color: surface.fg}}>{l}</div>
       ))}
-      <div style={{height: 44}} />
-      <div style={{display: 'flex', alignItems: 'center', gap: 20, opacity: enter(frame, 14 + lines.length * 4, 14)}}>
-        <div style={{width: 64, height: 2, background: surface.fg}} />
-        <div style={{fontFamily: FONT.sans, fontSize: 32, fontWeight: 600, color: surface.fg}}>{who}</div>
-      </div>
     </div>
   );
 };
 
-// ---------------------------------------------------------------------------
-// 숫자 강조
-// ---------------------------------------------------------------------------
-export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box, theme}) => {
-  const num = data.title || '';
-  const numSize = fitSize(num, box.w * 0.55, 360, 120);
-  const p = enter(frame, 0, 18);
-  const body = fitBlock(data.body || '', box.w * 0.36, box.h * 0.5, 54, 30, 1.35, 4);
-  const modern = surface.name === 'modern' || surface.name === 'dark';
+/** 핵심어: 화자 위에서는 가슴 높이의 흰 고딕, 전면에서는 책상 위에 찢어 낸 인쇄물 한 조각 */
+export const KeywordCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, layout, id}) => {
+  const title = (data.title || '').replace(/\*/g, '');
+  const onHost = layout === 'overlay' || layout === 'pip';
+  if (onHost) {
+    return <CenterWord text={title} sub={data.subtitle} W={box.w} H={box.h} frame={frame} dur={dur} y={box.h > box.w ? TALL_WORD_Y : 0.66} />;
+  }
+  const size = fitSize(title, box.w * 0.8, 190, 64, -0.02);
+  const w = Math.min(box.w, title.length * size * 0.96 + 260);
+  const h = size * 2.05;
+  const seed = hashSeed(id);
+  const x = (box.w - w) / 2 - 30;
+  const y = box.h * 0.34;
   return (
-    <div style={{position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', gap: box.w * 0.05}}>
-      {modern ? (
-        // 디자인 v4(레퍼런스 '02:47 AM'): 숫자는 잉크, 구두점만 디자인 색, 단위는 작게 옆에
-        <BigNumeral text={num} size={numSize * 0.9} c={modernColors(theme, surface.name === 'dark')} frame={frame} unit={data.subtitle} />
-      ) : (
-      <div style={{overflow: 'hidden'}}>
-        <div style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: numSize * 0.9, lineHeight: 1.05, letterSpacing: '-0.05em',
-          paddingRight: numSize * 0.04, color: surface.accent, fontVariantNumeric: 'tabular-nums',
-          translate: `0 ${interpolate(p, [0, 1], [100, 0])}%`}}>{num}</div>
-      </div>
-      )}
-      <div style={{display: 'flex', flexDirection: 'column', gap: 18}}>
-        {body.lines.map((l, i) => (
-          <MaskLine key={i} frame={frame} delay={8 + i * 3}>
-            <div style={{fontFamily: FONT.serif, fontWeight: 700, fontSize: body.size, lineHeight: 1.35,
-              color: surface.name === 'signal' ? '#111' : surface.fg}}>{l}</div>
-          </MaskLine>
-        ))}
-        {data.subtitle && !modern ? (
-          <div style={{fontFamily: FONT.italic, fontStyle: 'italic', fontSize: 40, color: surface.dim, opacity: enter(frame, 16, 12)}}>
-            {data.subtitle}
+    <div style={{position: 'absolute', inset: 0}}>
+      <Sheet x={x} y={y} w={w} h={h} tex="memo" seed={seed} m={paperSettle(frame, -1.4, 12, 18, 2.6)} torn={{left: true, right: true}} amp={18}>
+        <div style={{position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT.sans, fontWeight: 900, fontSize: size, lineHeight: 1, letterSpacing: '-0.02em', color: MAT.ink, whiteSpace: 'nowrap'}}><div><WordRise lines={[title]} frame={frame - 5} /></div></div>
+        <Attach w={w} seed={seed} />
+      </Sheet>
+      {data.subtitle ? (
+        <Sheet x={x + w * 0.1} y={y + h - 8} w={estWidth(data.subtitle, 58, 0) * 0.82 + 110} h={108} tex="kraft" seed={seed + 3} m={paperSettle(frame - 5, 1.6, 10)} torn={{right: true, bottom: true}} amp={9}>
+          <div style={{position: 'absolute', left: 44, top: 0, height: 104, display: 'flex', alignItems: 'center', fontFamily: FONT.pen, fontSize: 58, lineHeight: 1, color: MAT.ink, whiteSpace: 'nowrap'}}>{data.subtitle}</div>
+        </Sheet>
+      ) : null}
+    </div>
+  );
+};
+
+/** 용어 정의: 좌하단 숲색 머리표 + 어둡게 흐린 본문 */
+export const DefinitionCard: React.FC<TemplateProps> = ({data, frame, dur, box}) => (
+  <DefinitionSlot title={data.title || ''} en={data.subtitle} body={data.body} frame={frame} dur={dur} box={box} />
+);
+
+/** 인용: 뒤를 흐리고 어둡게 + 큰 따옴표 + 명조 + 원전 */
+export const QuoteCard: React.FC<TemplateProps> = ({data, frame, dur, box}) => (
+  <QuoteSlot text={data.body || data.title || ''} who={[data.author, data.source].filter(Boolean).join(', ')} W={box.w} H={box.h} frame={frame} dur={dur} />
+);
+
+/** 괘선 인덱스 카드의 줄: 글줄이 있는 곳에만 rows 줄 — 큰 숫자 뒤를 지나면 숫자를 가른다 */
+const Rules: React.FC<{top: number; gap: number; rows: number}> = ({top, gap, rows}) => (
+  <div style={{position: 'absolute', left: 0, right: 0, top, height: rows * gap, backgroundImage: `repeating-linear-gradient(180deg, rgba(70,120,160,0) 0 ${gap - 1.5}px, rgba(70,120,160,0.26) ${gap - 1.5}px ${gap}px)`}} />
+);
+
+/** 숫자 뒤 단위 앞을 0.08em 띄운다 — 붙이면 마지막 숫자와 단위가 겹친다 */
+const NumUnit: React.FC<{text: string}> = ({text}) => {
+  const m = text.match(/^(.*\d)(\D+)$/);
+  return m ? <>{m[1]}<span style={{marginLeft: '0.08em'}}>{m[2]}</span></> : <>{text}</>;
+};
+
+/** 숫자 태그: 인덱스 카드에 큰 숫자, 비교 대상(title_b · items_b[0])과 함께. 화자 위에서는 얼굴 반대편, 전면에서는 큰 숫자 + 겹친 카드 */
+export const StatCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, layout, faceX = 0.5, id}) => {
+  const onHost = layout === 'overlay' || layout === 'pip';
+  const num = data.title || '';
+  const seed = hashSeed(id);
+  const body = data.body || '';
+  if (onHost && box.h > box.w) return <CenterWord text={num} sub={body} W={box.w} H={box.h} frame={frame} dur={dur} y={TALL_WORD_Y} />;     // 숏폼: 카드를 얼굴 아래 칸에 넣을 수 없다
+  if (onHost) {
+    const cw = 590;
+    const numSize = fitSize(num, cw - 110, 150, 72, -0.02);
+    const lines = balanceLines(body, 36, cw - 110, 3, -0.015);
+    const cmpH = data.title_b ? 106 : 0;
+    const subH = data.subtitle ? 58 : 0;
+    const bodyTop = 50 + numSize * 1.08 + 12;
+    const ch = bodyTop + lines.length * 46 + cmpH + subH + 40;
+    const right = faceX <= 0.5;
+    const rest = right ? 1.5 : -1.5;
+    const st = overlayStyle(Math.max(frame, 20), dur);
+    return (
+      <div style={{position: 'absolute', [right ? 'right' : 'left']: 66, top: box.h * 0.13, width: cw, height: ch, opacity: st.opacity, filter: st.filter}}>
+        <Sheet w={cw} h={ch} tex="memo" seed={seed} m={paperSettle(frame, rest)} style={{wordBreak: 'keep-all'}}>
+          <div style={{position: 'absolute', left: 0, right: 0, top: 34, height: 3, background: MAT.orange, opacity: 0.75}} />
+          <Rules top={bodyTop + 41 - 46 + 0.75} gap={46} rows={lines.length} />{/* 46px 글줄의 기준선 밑 */}
+          <div style={{position: 'absolute', left: 54, top: 50, fontFamily: FONT.sans, fontWeight: 900, fontSize: numSize, lineHeight: 1.08, letterSpacing: '-0.02em', color: MAT.forest, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap'}}><NumUnit text={num} /></div>
+          <div style={{position: 'absolute', left: 54, right: 40, top: bodyTop}}>
+            {lines.map((l, i) => <div key={i} style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: 36, lineHeight: '46px', letterSpacing: '-0.02em', color: MAT.ink, whiteSpace: 'nowrap'}}>{l}</div>)}
+            {data.title_b ? (
+              <div style={{display: 'flex', alignItems: 'baseline', gap: 16, marginTop: 20, whiteSpace: 'nowrap'}}>
+                <span style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: 64, lineHeight: 1, letterSpacing: '-0.02em', color: MAT.orange, fontVariantNumeric: 'tabular-nums'}}><NumUnit text={data.title_b} /></span>
+                {data.items_b?.[0] ? <span style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: 38, color: MAT.ink}}>{data.items_b[0]}</span> : null}
+              </div>
+            ) : null}
+            {data.subtitle ? <div style={{marginTop: 16, fontFamily: FONT.sans, fontWeight: 500, fontSize: SLOT_TYPE.statSub, color: MAT.inkSoft}}>{data.subtitle}</div> : null}
           </div>
-        ) : null}
+          <Attach w={cw} seed={seed} />
+        </Sheet>
       </div>
+    );
+  }
+  const numSize = fitSize(num, data.title_b ? Math.min(906, box.w - 730) : box.w * 0.8, 400, 120, -0.02);     // 비교 카드가 옆에 있으면: estWidth 는 숫자 900 을 약 8% 작게 잰다 — 실제 폭 980 안, 카드와 56px 이상
+  const lines = balanceLines(body, 64, data.title_b ? box.w - 700 : box.w * 0.78, 3, -0.025);
+  return (
+    <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingBottom: 30}}>
+      <div style={{fontFamily: FONT.sans, fontWeight: 900, fontSize: numSize, lineHeight: 1, letterSpacing: '-0.02em', color: MAT.forest, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', ...overlayStyle(frame)}}><NumUnit text={num} /></div>
+      <div style={{marginTop: 34, ...overlayStyle(frame - 6)}}>
+        {lines.map((l, i) => <div key={i} style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: 64, lineHeight: 1.26, letterSpacing: '-0.02em', color: surface.fg, whiteSpace: 'nowrap'}}>{l}</div>)}
+        {data.subtitle ? <div style={{marginTop: 18, fontFamily: FONT.sans, fontWeight: 500, fontSize: 36, color: surface.dim}}>{data.subtitle}</div> : null}
+      </div>
+      {data.title_b ? (
+        <Sheet x={box.w - 610} y={box.h * 0.17} w={590} h={410} tex="memo" seed={seed} m={paperSettle(frame - 10, 2.2)} on="board">
+          <div style={{position: 'absolute', left: 0, right: 0, top: 36, height: 3, background: MAT.orange, opacity: 0.75}} />
+          <Rules top={83} gap={50} rows={1} />
+          <div style={{position: 'absolute', left: 56, top: 74, fontFamily: FONT.pen, fontSize: 54, lineHeight: 1, color: MAT.graphite}}>비교하면</div>
+          <div style={{position: 'absolute', left: 54, top: 150, fontFamily: FONT.sans, fontWeight: 900, fontSize: 124, lineHeight: 1.05, letterSpacing: '-0.02em', color: MAT.orange, fontVariantNumeric: 'tabular-nums'}}><NumUnit text={data.title_b} /></div>
+          {data.items_b?.[0] ? <Rules top={323} gap={50} rows={1} /> : null}
+          {data.items_b?.[0] ? <div style={{position: 'absolute', left: 56, bottom: 44, fontFamily: FONT.sans, fontWeight: 700, fontSize: 40, letterSpacing: '-0.02em', color: MAT.ink, whiteSpace: 'nowrap'}}>{data.items_b[0]}</div> : null}
+          <Attach w={590} seed={seed + 1} />
+        </Sheet>
+      ) : null}
+    </div>
+  );
+};
+
+/** 도장: 자료 위 대각선, 잉크가 번진 도장(영상당 3개 이하). 책상 위 세로 인쇄물의 가운데 쪽에 찍혀 종이 밖으로 나가지 않는다. title = 글자, subtitle = 아랫줄 */
+export const StampCard: React.FC<TemplateProps> = ({data, frame, box, id}) => (
+  <Stamp text={data.title || ''} sub={data.subtitle} size={92} m={stampIn(frame)} seed={hashSeed(id) % 97} onPaper style={{position: 'absolute', left: box.w * 0.54, top: box.h * 0.3, translate: '-50% -50%'}} />
+);
+
+/** 오림 스택: data.cutouts 를 오른쪽 위에서 아래로 하나씩(얼굴이 오른쪽이면 왼쪽으로) */
+export const CutoutStackCard: React.FC<TemplateProps> = ({data, frame, dur, fps, box, faceX = 0.5}) => (
+  <>
+    <CutoutStack items={data.cutouts ?? []} frame={frame} dur={dur} fps={fps} box={box} side={faceX > 0.62 ? 'left' : 'right'} />
+    <CornerCredit text={data.credit || ''} tall={box.h > box.w} />
+  </>
+);
+
+/** 콜라주: data.cutouts 2~5장, data.disc, data.name */
+export const CollageCard: React.FC<TemplateProps> = ({data, frame, fps, box, id}) => (
+  <>
+    <Collage items={data.cutouts ?? []} W={box.w} H={box.h} frame={frame} fps={fps} seed={hashSeed(id)} disc={data.disc} name={data.name} sub={data.name_sub} />
+    <CornerCredit text={data.credit || ''} tall={box.h > box.w} />
+  </>
+);
+
+/** 컷 사이 0.7~1.5초: 낱말에 맞춘 시각은 쓰되 너무 붙으면 민다. 시각이 없으면 고르게 */
+const montageCuts = (at: (number | undefined)[], dur: number, fps: number): number[] => {
+  const n = at.length;
+  const even = Math.min(1.5 * fps, Math.max(0.7 * fps, dur / n));
+  const out: number[] = [];
+  at.forEach((a, i) => {
+    const t = i === 0 ? 0 : Math.round(a !== undefined ? a * fps : out[i - 1] + even);
+    out.push(i ? Math.max(t, out[i - 1] + Math.round(0.7 * fps)) : t);
+  });
+  return out;
+};
+
+/** 핵심어 몽타주: 큰 흰 고딕 낱말은 가운데 그대로, 뒤의 사진만 말에 맞춰 하드 컷으로 바뀐다 */
+export const KeywordMontageCard: React.FC<TemplateProps> = ({data, frame, dur, fps, box}) => {
+  const items = (data.cutouts ?? []).slice(0, 5);
+  if (!items.length) return null;
+  const cuts = montageCuts(items.map((c) => c.at), dur, fps);
+  const i = cuts.reduce((acc, t, k) => (frame >= t ? k : acc), 0);
+  const it = items[i];
+  return (
+    <div style={{position: 'absolute', inset: 0, overflow: 'hidden', background: '#0B0B0B'}}>
+      <Img src={staticFile(it.image)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: it.focus || '50% 38%'}} />{/* 어둡기·흐림은 파일에 구웠다(cutout.montage_still) */}
+      <CenterWord text={(data.title || '').replace(/\*/g, '')} sub={data.subtitle} W={box.w} H={box.h} frame={frame} dur={dur} y={box.h > box.w ? 0.46 : 0.47} scale={2.05} veil={false} />
+      <CornerCredit text={it.credit || data.credit || ''} tall={box.h > box.w} />
     </div>
   );
 };
@@ -317,7 +197,7 @@ export const StatCard: React.FC<TemplateProps> = ({data, frame, surface, box, th
 // ---------------------------------------------------------------------------
 export const TitleCard: React.FC<TemplateProps> = ({data, frame, dur, surface, box, brand, episode}) => {
   const title = data.title || episode.title;
-  const {size, lines} = fitBlock(title, box.w * 0.9, box.h * 0.8, 230, 110, 0.98, 3, -0.05);
+  const {size, lines} = fitBlock(title, box.w * 0.9, box.h * 0.8, 230, 110, 0.98, 3, -0.02);
   const out = exit(frame, dur, 10);
   const edgeStyle: React.CSSProperties = {position: 'absolute', fontFamily: FONT.sans, fontWeight: 600, fontSize: 22,
     color: surface.fg, textAlign: 'center', lineHeight: 1.2, opacity: enter(frame, 8, 14)};
@@ -338,58 +218,23 @@ export const TitleCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
       <div style={{...edgeStyle, right: 40, top: box.h * 0.66, width: 220, fontFamily: FONT.latin, fontSize: 26}}>{year.slice(2)}</div>
       <div style={{position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
         justifyContent: 'center'}}>
-        {lines.map((l, i) => (
-          <div key={i} style={{overflow: 'hidden'}}>
-            <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 0.98,
-              letterSpacing: '-0.05em', color: surface.fg, textAlign: 'center', whiteSpace: 'nowrap',
-              translate: `0 ${interpolate(enter(frame, i * 3, 18, EASE_OUT), [0, 1], [100, 0])}%`}}>{l}</div>
-          </div>
-        ))}
+        <div style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 0.98, letterSpacing: '-0.02em', color: surface.fg, textAlign: 'center'}}><WordRise lines={lines} frame={frame} /></div>
       </div>
     </div>
   );
 };
 
 // ---------------------------------------------------------------------------
-// 로어서드 — 화자 소개
+// 로어서드 — 좌하단 슈퍼(왼쪽 세로선 + 이름 + 소속). data.title 이 있으면 우상단 '오늘의 주제' 메모, slot badge 면 챕터 배지
 // ---------------------------------------------------------------------------
-export const LowerThird: React.FC<TemplateProps> = ({frame, dur, brand, theme, data}) => {
-  const out = exit(frame, dur, 12);
-  // '오늘의 주제' 태그(레퍼런스 채널 레퍼런스: 타이틀 뒤 5~6초 동안 이 영상의 질문을 한 줄로) — 파이프라인이 data.title 을 줄 때만
+export const LowerThird: React.FC<TemplateProps> = ({frame, dur, brand, theme, data, box}) => {
   const topic = String(data?.title || '').trim();
-  const topicSize = topic ? fitSize(topic, 980, 54, 34, -0.01) : 0;
+  if (data?.slot === 'badge') return <ChapterBadge title={topic} frame={frame} dur={dur} />;
+  if (data?.slot === 'super') return <Super name={topic} sub={data.subtitle} theme={theme} box={box} frame={frame} dur={dur} />;
   return (
-    <div style={{position: 'absolute', left: 96, bottom: 190, opacity: out}}>
-      {topic ? (
-        <div style={{marginBottom: 34}}>
-          <MaskLine frame={frame} delay={0}>
-            <span style={{display: 'inline-block', fontFamily: FONT.sans, fontWeight: 700, fontSize: 22, lineHeight: 1.2,
-              color: '#111111', background: theme.accent, borderRadius: 5, padding: '4px 11px 5px'}}>
-              {String(data?.subtitle || '오늘의 주제')}
-            </span>
-          </MaskLine>
-          <MaskLine frame={frame} delay={5}>
-            <div style={{marginTop: 12, maxWidth: 980, fontFamily: FONT.round, fontSize: topicSize, lineHeight: 1.18,
-              letterSpacing: '-0.01em', color: '#fff', whiteSpace: 'nowrap',
-              textShadow: '0 2px 14px rgba(0,0,0,0.55)'}}>{topic}</div>
-          </MaskLine>
-        </div>
-      ) : null}
-      <div style={{width: 360}}>
-        <DrawRule frame={frame} delay={topic ? 10 : 0} color="rgba(255,255,255,0.7)" />
-      </div>
-      <div style={{height: 16}} />
-      <MaskLine frame={frame} delay={topic ? 14 : 4}>
-        <div style={{display: 'flex', alignItems: 'center', gap: 14}}>
-          <span style={{width: 14, height: 14, background: theme.accent, display: 'inline-block'}} />
-          <span style={{fontFamily: FONT.sans, fontWeight: 800, fontSize: 40, color: '#fff',
-            textShadow: '0 2px 12px rgba(0,0,0,0.45)'}}>{brand.presenter}</span>
-        </div>
-      </MaskLine>
-      <MaskLine frame={frame} delay={topic ? 18 : 8}>
-        <div style={{marginTop: 8, fontFamily: FONT.sans, fontWeight: 500, fontSize: 24, color: 'rgba(255,255,255,0.86)',
-          textShadow: '0 2px 10px rgba(0,0,0,0.5)'}}>{brand.presenterTitle}</div>
-      </MaskLine>
-    </div>
+    <>
+      {topic ? <TopicMemo title={topic} frame={frame} dur={dur} /> : null}
+      <Super name={brand.presenter} sub={brand.presenterTitle} theme={theme} box={box} frame={frame} dur={dur} />
+    </>
   );
 };

@@ -126,7 +126,7 @@ export const PaperShort: React.FC<ShortProps> = (props) => {
   const t = frame / fps;
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
   const face = sampleFace(props.face, t);
-  const zoom = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
+  const zoom = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t);
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
   const gi = lastIndexAtOrBefore(props.graphics, t, (g) => g.start);
   const g = gi >= 0 && t < props.graphics[gi].end + 0.6 ? props.graphics[gi] : null;

@@ -1,7 +1,6 @@
 import React, {useMemo} from 'react';
 import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {ShortCaptions} from '../components/captions/ShortCaptions';
-import {Grain} from '../components/fx/Grain';
 import {LivePeek} from '../components/fx/LivePeek';
 import {TEMPLATE_COMPONENTS} from '../components/graphics';
 import {HookTitle, WindowTitle} from '../components/shorts/HookTitle';
@@ -102,7 +101,7 @@ const ClassicShort: React.FC<ShortProps> = (props) => {
   const theme = useMemo(() => makeTheme(props.brand), [props.brand]);
   const face = sampleFace(props.face, t);
   // 숏폼 카메라: 컷 지점에서 1.00 ↔ 1.06 이 바뀌는 점프컷 프레이밍(샷 최소 3.5초) + 강조 글라이드
-  const punch = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t, fps);
+  const punch = cameraAt(props.camera ?? [], t).zoom * punchFactor(props.punches, t);
   const tx = transitionState(props.transitions ?? [], t, W, H, theme);
 
   const gi = lastIndexAtOrBefore(props.graphics, t, (g) => g.start);
@@ -193,7 +192,6 @@ const ClassicShort: React.FC<ShortProps> = (props) => {
         <div style={{position: 'absolute', left: 0, top: 0, height: 6, width: (W * frame) / Math.max(1, durationInFrames),
           background: theme.accent, opacity: 0.8}} />
       ) : null}
-      <Grain frame={frame} frames={props.grainFrames} opacity={props.grain} />
       <LivePeek every={props.peekEvery} />
       {props.voice ? <Audio src={staticFile(props.voice.src)} volume={props.voice.volume} /> : null}
       {props.bgm ? (

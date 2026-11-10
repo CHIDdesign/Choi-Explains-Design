@@ -14,5 +14,6 @@ export type TemplateProps = {
   layout: Layout;
   brand: Brand;
   episode: Episode;
+  faceX?: number; // 화자 위 슬롯이 얼굴 반대편을 고를 때
   compact?: boolean; // classic 숏폼의 창·패널(window 창 / full·framed 도식 패널)
 };

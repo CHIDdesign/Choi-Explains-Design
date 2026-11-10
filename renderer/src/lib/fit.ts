@@ -68,6 +68,56 @@ export const wrap = (text: string, size: number, maxW: number, maxLines = 3, tra
   return lines;
 };
 
+// 뒤에서 끊으면 안 되는 관형사(바로 뒤 낱말에 붙는다) — '그 / 다음에는' 같은 줄바꿈을 막는다
+const HOLD_NEXT = /^(그|이|저|한|두|세|네|새|옛|첫|온|각|매|몇|어느|무슨|어떤|모든|이런|그런|저런|아무|다른|여러)$/;
+// 앞말에 붙는 의존 명사 — 이 앞에서 끊으면 '면적 / 중' 처럼 읽힌다
+const HOLD_PREV = /^(중|때|것\S{0,2}|수|등|뿐|데|바|줄|듯|채|만큼|대로|및)$/;
+const breakCost = (w: string, next = ''): number => {
+  if (HOLD_PREV.test(next)) return 4;
+  if (/[,.!?:;…]["'”’)]?$/.test(w)) return -0.7;
+  if (/(지만|는데|으며|하며|하고|해서|니까|라면|다면|므로|도록)$/.test(w)) return -0.28;
+  if (HOLD_NEXT.test(w)) return 4;
+  return /의$/.test(w) ? 0.5 : 0;
+};
+
+/** 어절 단위 줄 나누기(DP): 줄 길이를 고르게, 구두점·이음 어미 뒤에서 끊고 관형사 뒤에서는 끊지 않는다. 필요한 최소 줄 수를 쓴다. */
+export const balanceLines = (text: string, size: number, maxW: number, maxLines = 3, tracking = 0): string[] => {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const widthOf = (i: number, j: number) => estWidth(words.slice(i, j).join(' '), size, tracking);
+  const need = Math.min(maxLines, Math.max(1, Math.ceil(widthOf(0, words.length) / maxW)));
+  for (let n = need; n <= maxLines; n++) {
+    const target = widthOf(0, words.length) / n;
+    const best: Map<number, {cost: number; prev: number}>[] = Array.from({length: n + 1}, () => new Map());
+    best[0].set(0, {cost: 0, prev: -1});
+    for (let line = 1; line <= n; line++) {
+      for (const [i, {cost}] of best[line - 1]) {
+        for (let j = i + 1; j <= words.length; j++) {
+          const w = widthOf(i, j);
+          if (w > maxW * 1.02 && j > i + 1) break;
+          const atEnd = j === words.length;
+          if (atEnd !== (line === n)) continue;
+          const dev = (w - target) / target;
+          const c = cost + dev * dev + (atEnd ? 0 : breakCost(words[j - 1], words[j]));
+          const hit = best[line].get(j);
+          if (!hit || c < hit.cost) best[line].set(j, {cost: c, prev: i});
+        }
+      }
+    }
+    if (best[n].has(words.length)) {
+      const out: string[] = [];
+      let j = words.length;
+      for (let line = n; line >= 1; line--) {
+        const i = best[line].get(j)!.prev;
+        out.unshift(words.slice(i, j).join(' '));
+        j = i;
+      }
+      return out;
+    }
+  }
+  return wrap(text, size, maxW, maxLines, tracking);
+};
+
 /** 여러 줄 텍스트가 상자에 들어가는 가장 큰 크기 */
 export const fitBlock = (text: string, maxW: number, maxH: number, maxSize: number, minSize: number,
   lineHeight = 1.2, maxLines = 3, tracking = 0): {size: number; lines: string[]} => {

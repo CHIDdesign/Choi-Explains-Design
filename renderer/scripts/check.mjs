@@ -9,7 +9,7 @@
 // }
 // 카드마다 실제 Chrome(렌더와 같은 것)에 붙여 settle 시각으로 seek 한 뒤 검사한다:
 //   runtime_error · anim_*(컴파일러) · font_not_loaded · font_family_not_bundled · text_overflow · outside_canvas ·
-//   text_too_small · low_contrast. 결과는 stdout 에 JSON 한 줄씩({"type":"card", ...}) 과 outDir/check.json.
+//   text_too_small · text_overlap · low_contrast · page_chrome. 결과는 stdout 에 JSON 한 줄씩({"type":"card", ...}) 과 outDir/check.json.
 //   걸린 카드는 정착 시각의 화면을 outDir/<id>.jpg 로 찍어 `shot` 에 넘긴다(카드 디자이너가 보고 고친다).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,20 +24,34 @@ const FIRST_FRAME_SHARE = 0.35; // 게이트 C4: 0.5초 프레임의 잉크 ≥ 
 const CAPTION_ZONE_PX = 170; // 전체 화면·오버레이 카드 아래 자막 자리(LongCaptions paper 상자가 y≈920–1000 에 놓인다)
 const CONTRAST_BODY = 4.5;
 const CONTRAST_LARGE = 3.0;
+// 읽는 글자 예산(공백·aria-hidden 제외) — 원형마다 다르다. 도식의 이름표는 짧고, 시간 축은 항목이 많다
+const TEXT_BUDGET = {section_cut: 40, flow_diagram: 44, plan_mark: 28, same_plan_change: 28, map_locator: 28, dated_strip: 56,
+  scale_compare: 36, document_line: 40, chalk_diagram: 44, paper_chart: 44, printed_document: 40, cutout_stack: 40};
+const QUOTED = new Set(['document_line', 'printed_document']);   // 지면은 형광을 친 구절만 '읽는 글자'다
+const DEFAULT_BUDGET = 48;
+const LAYOUT_BUDGET = {split: 0.67, overlay: 0.42};
+// HtmlCard 가 캔버스를 상자에 맞춰 줄이는 배율(화자 옆 패널) — 화면에 실제로 나가는 글자 크기를 잰다
+const BOX_SCALE = {split: 0.9};
 
-// HtmlCard.tsx cardVars(디자인 v4)와 같은 값 — 검사와 렌더의 글꼴·색이 다르면 넘침·대비 판정이 틀린다
-// (2026-10-04: 여기만 v3(제목 고운바탕·크림 흰색·옛 주황)로 남아 있었다). 테마는 ember(#FC5400) 기준
+// HtmlCard.tsx cardVars(디자인 v5)와 같은 값 — 검사와 렌더의 글꼴·색이 다르면 넘침·대비 판정이 틀린다
 const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const ITALIC = '"Instrument Serif", "Playfair Display", serif';
 const vars = {
-  '--bg': '#F7F8F6', '--paper': '#F7F8F6', '--paper-line': 'rgba(18,19,21,0.10)', '--ink': '#121315', '--ink-soft': '#1C1C1C',
-  '--muted': 'rgba(28, 28, 28, 0.7)', '--accent': '#FC5400', '--accent-deep': '#D94600', '--accent-light': '#FD732E',
-  '--accent-soft': 'rgba(252, 84, 0, 0.32)', '--board': '#1A1C1B', '--board-edge': '#2A2D2B', '--chalk': '#F1ECDD',
-  '--chalk-dim': 'rgba(241, 236, 221, 0.58)', '--white': '#FFFFFF',
+  '--bg': '#F4F3EE', '--paper': '#F4F3EE', '--paper-line': 'rgba(30,33,36,0.14)', '--ink': '#1E2124', '--ink-soft': '#2B2E31',
+  '--muted': 'rgba(30, 33, 36, 0.7)', '--accent': '#FC5400', '--accent-deep': '#D94600', '--accent-light': '#FD732E',
+  '--accent-soft': 'rgba(252, 84, 0, 0.32)', '--board': '#1E2124', '--board-edge': '#2B2E31', '--chalk': '#F4F3EE',
+  '--chalk-dim': 'rgba(244, 243, 238, 0.6)', '--white': '#F4F3EE', '--band': '#1F4D3E',
   '--font-head': SANS, '--font-body': SANS, '--font-serif': SANS, '--font-latin': SANS, '--font-editorial': SANS,
-  '--font-poster': SANS, '--font-italic': ITALIC, '--font-heavy': SANS, '--font-round': SANS, '--font-hand': ITALIC,
-  '--font-numeral': ITALIC, '--font-mono': SANS,
+  '--font-poster': SANS, '--font-italic': ITALIC, '--font-heavy': SANS, '--font-round': SANS, '--font-hand': SANS,
+  '--font-numeral': SANS, '--font-mono': SANS,
+  '--font-pen': '"Nanum Pen Script", "Pretendard", sans-serif', '--font-quote': '"Gowun Batang", "Noto Serif KR", serif',
+  // tokens.ts lift(1~3, 1, 'board') · liftDrop(2, 1, 'board') 의 값
+  '--lift-1': '0 1px 2px rgba(60,50,35,0.45), 1.8px 8.0px 15.0px rgba(60,50,35,0.220)',
+  '--lift-2': '0 1px 2px rgba(60,50,35,0.45), 3.1px 14.0px 26.0px rgba(60,50,35,0.280)',
+  '--lift-3': '0 1px 2px rgba(60,50,35,0.45), 4.4px 20.0px 37.0px rgba(60,50,35,0.340)',
+  '--lift-drop-2': 'drop-shadow(0 1px 1px rgba(60,50,35,0.45)) drop-shadow(3.1px 14.0px 13.0px rgba(60,50,35,0.280))',
 };
+const TEX_DIR = pathToFileURL(path.join(root, 'public', 'fx', 'tex') + path.sep).href;   // check.py 가 make_textures 로 채운다
 
 const fontFaces = () => {
   // 번들 원본(assets/fonts, npm postinstall 이 채움)에서 읽는다 — public/fonts 는 렌더 번들 단계가 만드니 첫 실행의 카드 검사 때는 없다(2026-10-02 실제 실행에서 발견)
@@ -73,11 +87,13 @@ const fontFaces = () => {
   return {css: faces.join('\n'), links: links.join('\n')};
 };
 
-const harness = (card, animSrc, gsapSrc, pluginSrc) => {
+const harness = (card, animSrc, gsapSrc, pluginSrc, publicDir) => {
   const {css, links} = fontFaces();
   const varCss = Object.entries(vars).map(([k, v]) => `${k}:${v};`).join('');
   const bg = card.layout === 'overlay' ? '#6b6b6b' : '#EFEAE0';
-  return `<!doctype html><html><head><meta charset="utf-8">${links}
+  // 카드의 images/… 는 작업의 public 폴더 기준 — 미리보기에 진짜 자료가 보이게(없으면 outDir 기준)
+  const base = publicDir ? `<base href="${pathToFileURL(publicDir + path.sep).href}">` : '';
+  return `<!doctype html><html><head><meta charset="utf-8">${base}${links}
 <style>${css}
 html,body{margin:0;padding:0;background:${bg};}
 #stage{position:relative;width:${card.w}px;height:${card.h}px;overflow:hidden;}
@@ -94,7 +110,11 @@ window.__cardTimeline=${JSON.stringify(card.timeline || '')};</script>
 gsap.registerPlugin(SplitText, CustomEase, DrawSVGPlugin, MorphSVGPlugin, MotionPathPlugin);
 window.__libs = {SplitText, CustomEase, drawSVG: true, morphSVG: true, motionPath: true};</script>
 <script>${animSrc}
-window.__compileCard = (root, opts) => compileCard(window.gsap, root, Object.assign({libs: window.__libs}, opts));</script>
+window.__surfaces = SURFACES;
+window.__tex = (n) => '${TEX_DIR}' + n + '.jpg';
+window.__loadSurfaces = (root) => Promise.all(Array.from(new Set(Array.from(root.querySelectorAll('[data-surface]')).flatMap((e) => [e.dataset.surface, 'memo'])))
+  .filter((n) => SURFACES[n]).map((n) => { const i = new Image(); i.src = window.__tex(n); return i.decode().catch(() => undefined); }));
+window.__compileCard = (root, opts) => compileCard(window.gsap, root, Object.assign({libs: window.__libs, surfaceUrl: window.__tex}, opts));</script>
 </body></html>`;
 };
 
@@ -125,7 +145,6 @@ const audit = async (opts) => {
     for (const p of compiled.problems || []) push(p.split(':')[0], p);
     // 정착 = 선언(data-anim)이 끝난 때와 타임라인 전체가 끝난 때 중 늦은 쪽 — 직접 쓴 타임라인만 있는 카드를 0.3초(움직이는 중)에
     // 재서 마스크 아래 글자를 '잘림'으로 보던 것(2026-10-04)
-    // 정착 = 등장이 끝나는 시각(떠다니기는 카드 끝까지 이어지므로 compiled.settle — 떠다니기 없는 카드는 duration 과 같다)
     const animEnd = typeof compiled.settle === 'number' ? compiled.settle : compiled.duration;
     opts.settle = Math.min(opts.duration - 0.05, Math.max(opts.settle, animEnd + 0.05));
     compiled.seek(opts.settle);
@@ -135,7 +154,7 @@ const audit = async (opts) => {
   }
   for (const e of window.__errors || []) push('runtime_error', e);
   out.metrics.anims = compiled ? compiled.kinds : [];
-  // 직접 쓴 타임라인의 정착 시각(떠다니기·나가기 제외) — 파이프라인이 settle_s 로 읽기 시간·검수 스틸에 쓴다
+  // 직접 쓴 타임라인의 정착 시각(나가기 제외) — 파이프라인이 settle_s 로 읽기 시간·검수 스틸에 쓴다
   out.metrics.timeline = compiled ? Number((typeof compiled.settle === 'number' ? compiled.settle : compiled.duration).toFixed(2)) : 0;
   // 마지막 1초는 읽히게 멈춰 있어야 한다 — 다만 머무는 동안의 느린 흐름(Jitter 템플릿의 기본: 몇 px 떠오름·아주 느린 확대)은
   // 멈춤으로 본다. 타임라인이 길면 아래(잉크 검사 뒤)에서 마지막 1초의 실제 움직임을 잰다(2026-10-04: 5.6초 장면에 5.5초 흐름)
@@ -172,6 +191,8 @@ const audit = async (opts) => {
     // 조상 중 첫 불투명 배경색(그라데이션 배경은 '알 수 없음' → null)
     let e = el;
     while (e && e !== document.body) {
+      const flat = e.dataset && window.__surfaces[e.dataset.surface];
+      if (flat) return {r: parseInt(flat.slice(1, 3), 16), g: parseInt(flat.slice(3, 5), 16), b: parseInt(flat.slice(5, 7), 16), a: 1};
       const cs = getComputedStyle(e);
       const bgc = parse(cs.backgroundColor);
       if (cs.backgroundImage && cs.backgroundImage !== 'none' && (!bgc || bgc.a < 0.99)) return null;
@@ -207,15 +228,15 @@ const audit = async (opts) => {
     if (!el || el.closest('style')) continue;
     if (!visible(el)) continue;
     chars += n.nodeValue.trim().length;
-    if (!el.closest('[aria-hidden="true"]')) readChars += n.nodeValue.replace(/\s+/g, '').length;
+    // 지면·인용은 형광을 친 구절만 '읽는 글자'다(나머지는 화면에 깔린 원문)
+    const quoted = (opts.quoted || el.closest('blockquote')) && !el.closest('mark');
+    if (!el.closest('[aria-hidden="true"]') && !quoted) readChars += n.nodeValue.replace(/\s+/g, '').length;
     textEls.add(el);
   }
   out.metrics.chars = chars;
-  // 글자 예산(2026-10-04 채널 주인: '글자 설명은 최대한 줄이고 그림·인포그래픽으로'): 읽어야 하는 글자(공백·장식 글자 제외)
   out.metrics.read_chars = readChars;
-  const budget = opts.layout === 'split' ? 32 : opts.layout === 'overlay' ? 20 : 48;
-  if (readChars > budget) {
-    push('too_much_text', `${readChars} chars > ${budget} — replace words with icons, shapes, numbers, arrows (infographic)`);
+  if (readChars > opts.budget) {
+    push('too_much_text', `${readChars} chars > ${Math.round(opts.budget)} (${opts.archetype || 'card'}) — the host says the explanation; keep only names, years and short labels`);
   }
   out.metrics.text_elements = textEls.size;
   const seenSmall = new Set();
@@ -230,11 +251,16 @@ const audit = async (opts) => {
       const w = cs.fontWeight === 'bold' ? '700' : cs.fontWeight;
       if (!document.fonts.check(`${w} ${Math.round(fs)}px "${fam}"`)) push('font_not_loaded', `${fam} ${w}`, sel);
     }
+    // 흐림은 깊이·등장에 쓴다 — 정착한 글자가 흐리면 안 된다
+    for (let a = el; a && a !== root; a = a.parentElement) {
+      const m = (getComputedStyle(a).filter || '').match(/blur\(([\d.]+)px\)/);
+      if (m && parseFloat(m[1]) > 0.5) { push('text_blurred', `${m[1]}px blur at settle`, sel); break; }
+    }
     const rects = Array.from(el.getClientRects());
     const inWorld = !!el.closest('[data-world]');
     // 세계([data-world]) 안의 글자는 카메라 배율만큼 작아진다 — 정착 시각의 실제 화면 크기로 잰다(상자 높이 ÷ 레이아웃 높이)
     const zoom = inWorld && el.offsetHeight > 0 && rects.length ? el.getBoundingClientRect().height / el.offsetHeight : 1;
-    const fsEff = fs * (Number.isFinite(zoom) && zoom > 0 ? zoom : 1);
+    const fsEff = fs * (Number.isFinite(zoom) && zoom > 0 ? zoom : 1) * opts.boxScale;
     const onCanvas = (r) => r.width > 0 && r.right > R.left && r.left < R.right && r.bottom > R.top && r.top < R.bottom;
     if (fsEff < opts.minFont && !seenSmall.has(sel) && (!inWorld || rects.some(onCanvas))) {
       seenSmall.add(sel);
@@ -271,6 +297,46 @@ const audit = async (opts) => {
       const large = fs >= 40 || (fs >= 32 && parseInt(cs.fontWeight, 10) >= 700);
       const need = large ? opts.contrastLarge : opts.contrastBody;
       if (rt < need) push('low_contrast', `${rt.toFixed(2)}:1 < ${need}:1 (${cs.color} on ${bg ? `rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)})` : '?'})`, sel);
+    }
+  }
+  // 슬라이드 티(page_chrome): 쪽번호 · 자간 넓힌 대문자 라벨 · 구석의 작은 라벨 — 출처 표기는 자료의 필수 표기라 뺀다
+  const cornerW = Math.max(180, R.width * 0.14);
+  const cornerH = Math.max(120, R.height * 0.14);
+  for (const el of textEls) {
+    const own = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.nodeValue).join('').trim();
+    if (!own || /^(출처|자료|source)/i.test(own) || el.closest('[data-sheet]')) continue;   // 종이 조각 위 글자는 슬라이드 구석 라벨이 아니다
+    const cs = getComputedStyle(el);
+    const fs = parseFloat(cs.fontSize);
+    const track = parseFloat(cs.letterSpacing) / fs || 0;
+    const r = el.getBoundingClientRect();
+    const inCorner = (r.left - R.left < cornerW || R.right - r.right < cornerW) && (r.top - R.top < cornerH || R.bottom - r.bottom < cornerH);
+    if (/^\s*\d{1,3}\s*[\/／]\s*\d{1,3}\s*$/.test(own)) push('page_chrome', `page counter "${own}"`, desc(el));
+    else if (track >= 0.08 && (cs.textTransform === 'uppercase' || !/[a-z가-힣]/.test(own))) push('page_chrome', `tracked caps "${own.slice(0, 24)}"`, desc(el));
+    else if (inCorner && fs < 44 && own.length <= 16) push('page_chrome', `small corner label "${own}"`, desc(el));
+  }
+  // 글자끼리 겹침(정착 화면) — 글자 줄의 실제 상자(Range)로, 부모·자식은 같은 글이라 뺀다
+  const lines = [];
+  for (const el of textEls) {
+    if (el.closest('[aria-hidden="true"]')) continue;
+    for (const n of el.childNodes) {         // 글자 노드만 — 요소째 재면 안쪽의 그림·재질 층 상자까지 '글자'로 잡힌다
+      if (n.nodeType !== 3 || !n.nodeValue.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const r of range.getClientRects()) if (r.width > 2 && r.height > 2) lines.push({el, r});
+    }
+  }
+  const hit = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j < lines.length; j++) {
+      const a = lines[i], b = lines[j];
+      if (a.el === b.el || a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+      const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+      if (w <= 0 || h <= 0) continue;
+      if (w * h > 0.12 * Math.min(a.r.width * a.r.height, b.r.width * b.r.height) && !hit.has(desc(a.el) + desc(b.el))) {
+        hit.add(desc(a.el) + desc(b.el));
+        push('text_overlap', `overlaps ${desc(b.el)}`, desc(a.el));
+      }
     }
   }
   // 요소가 캔버스를 크게 벗어나는지(장식은 살짝 나갈 수 있다 → 절반 이상 밖이면)
@@ -429,7 +495,7 @@ const main = async () => {
   try {
     for (const card of job.cards || []) {
       const file = path.join(outDir, `${card.id}.html`);
-      fs.writeFileSync(file, harness(card, animSrc, gsapSrc, pluginSrc));
+      fs.writeFileSync(file, harness(card, animSrc, gsapSrc, pluginSrc, job.publicDir));
       const page = await browser.newPage({context: () => null, logLevel: 'error', indent: false, pageIndex: 0,
         onBrowserLog: null, onLog: () => undefined});
       let res;
@@ -438,7 +504,9 @@ const main = async () => {
         await page.goto({url: pathToFileURL(file).href, timeout: 20000});
         res = await page.evaluate(audit, {fps: card.fps || 30, duration: card.duration || 8, settle: card.settle || 2,
           minFont: MIN_FONT_PX, contrastBody: CONTRAST_BODY, contrastLarge: CONTRAST_LARGE, firstFrame: FIRST_FRAME_SHARE,
-          captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX, layout: card.layout || 'fullscreen'});
+          captionZone: card.layout === 'split' ? 0 : CAPTION_ZONE_PX, layout: card.layout || 'fullscreen',
+          archetype: card.archetype || '', quoted: QUOTED.has(card.archetype), budget: (TEXT_BUDGET[card.archetype] || DEFAULT_BUDGET) * (LAYOUT_BUDGET[card.layout] || 1),
+          boxScale: BOX_SCALE[card.layout] || 1});
         // 미리보기(shots: 카드 시작 기준 초 목록) — 스타일 프레임·시안 경쟁이 렌더 없이 같은 Chrome 으로 장면을 본다(정착 화면 + 움직임 칸)
         // 'auto' = 정착 시각을 잰 뒤 정한다: 0.5초 · 정착의 35% · 70% · 정착 · 머무는 끝(드리프트) — 시간 순서, 정착 화면은 넷째
         const settleAt = (res && res.metrics && res.metrics.settle) || card.settle || 2;
@@ -462,6 +530,7 @@ const main = async () => {
               await Promise.all(fams.flatMap((fm) => ['400', '700'].map((w) => document.fonts.load(`${w} 40px "${fm}"`, text))));
               await document.fonts.ready;
             } catch (e) { /* 글꼴 문제는 검사가 따로 적는다 */ }
+            await window.__loadSurfaces(root);
             const c = window.__compileCard(root, {fps: o.fps, duration: o.duration, timeline: window.__cardTimeline || ''});
             c.seek(o.t);
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))));

@@ -8,6 +8,7 @@ export type CompiledCard = {
 };
 export type CardLibs = {SplitText?: unknown; CustomEase?: unknown; drawSVG?: boolean; morphSVG?: boolean; motionPath?: boolean};
 export function compileCard(gsap: unknown, root: Element,
-  opts?: {fps?: number; duration?: number; timeline?: string; libs?: CardLibs; exit?: {at: number; dur: number}}): CompiledCard;
+  opts?: {fps?: number; duration?: number; timeline?: string; libs?: CardLibs; exit?: {at: number; dur: number}; surfaceUrl?: (name: string) => string}): CompiledCard;
 export function parseCamera(raw: string | undefined, problems: string[]): {t: number; x: number; y: number; z: number}[];
+export function tornPaths(w: number, h: number, torn: {top?: boolean; right?: boolean; bottom?: boolean; left?: boolean}, seed: number, amp?: number, fibre?: number): {outer: string; mid: string; inner: string};
 export const CARD_ANIM_KINDS: string[];

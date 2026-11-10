@@ -95,23 +95,3 @@ export const useFontGuard = () => {
   }, [handle]);
   if (err) throw new Error(err);
 };
-
-/** 분할 웹폰트(명조)가 특정 텍스트의 글리프를 다 받을 때까지 렌더를 멈춘다. */
-export const useFontForText = (fontSpec: string, text: string) => {
-  const [handle] = useState(() => delayRender(`font ${fontSpec}`));
-  useEffect(() => {
-    let done = false;
-    const finish = () => {
-      if (!done) {
-        done = true;
-        continueRender(handle);
-      }
-    };
-    document.fonts
-      .load(fontSpec, text || '가')
-      .then(finish)
-      .catch(finish);
-    const t = setTimeout(finish, 8000);
-    return () => clearTimeout(t);
-  }, [fontSpec, text, handle]);
-};

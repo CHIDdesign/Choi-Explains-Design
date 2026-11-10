@@ -16,7 +16,7 @@ export const HookTitle: React.FC<{
 }> = ({text, highlight, series, frame, theme, width}) => {
   const lines = text.split('\n').filter(Boolean).slice(0, 2);
   const maxW = width - 65 - 140;
-  const size = Math.min(...lines.map((l) => fitSize(l, maxW, 104, 64, -0.04)));
+  const size = Math.min(...lines.map((l) => fitSize(l, maxW, 104, 64, -0.02)));
   const p = enter(frame, 0, 8, EASE_OUT); // 첫 프레임부터 거의 다 보이도록 아주 짧게
   const renderLine = (l: string) => {
     if (!highlight || !l.includes(highlight)) return l;
@@ -43,7 +43,7 @@ export const HookTitle: React.FC<{
       ) : null}
       {lines.map((l, i) => (
         <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.12,
-          letterSpacing: '-0.04em', color: '#fff', textAlign: 'center', paintOrder: 'stroke fill',
+          letterSpacing: '-0.02em', color: '#fff', textAlign: 'center', paintOrder: 'stroke fill',
           WebkitTextStroke: '12px #0A0A0A', textShadow: '0 8px 24px rgba(0,0,0,0.35)', whiteSpace: 'nowrap',
           scale: `${interpolate(p, [0, 1], [0.97, 1])}`}}>
           {renderLine(l)}
@@ -66,7 +66,7 @@ export const WindowTitle: React.FC<{text: string; highlight: string; frame: numb
 }) => {
   const lines = text.split('\n').filter(Boolean).slice(0, 2);
   const maxW = width - 90;
-  const size = Math.min(96, ...lines.map((l) => fitSize(l, maxW, 96, 60, -0.035)));
+  const size = Math.min(96, ...lines.map((l) => fitSize(l, maxW, 96, 60, -0.02)));
   const p = enter(frame, 0, 6, EASE_OUT);
   const lineColor = (i: number) => (lines.length === 2 && i === 1 && !(highlight && lines.join('').includes(highlight))
     ? theme.accent : '#fff');
@@ -87,7 +87,7 @@ export const WindowTitle: React.FC<{text: string; highlight: string; frame: numb
       alignItems: 'center', opacity: interpolate(p, [0, 1], [0.85, 1])}}>
       {lines.map((l, i) => (
         <div key={i} style={{fontFamily: FONT.display, fontWeight: 900, fontSize: size, lineHeight: 1.13,
-          letterSpacing: '-0.035em', color: lineColor(i), textAlign: 'center', whiteSpace: 'nowrap'}}>
+          letterSpacing: '-0.02em', color: lineColor(i), textAlign: 'center', whiteSpace: 'nowrap'}}>
           {renderLine(l)}
         </div>
       ))}

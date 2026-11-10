@@ -1,5 +1,4 @@
-// 채널 디자인 시스템 — Musicbed/Filmsupply 2026 트렌드 리포트의 에디토리얼 문법을 한국어 교육 채널에 맞게 옮김.
-// 네 가지 표면(surface): Ink(챕터) · Board(칠판 패널/도식) · Paper(인용/정의) · Signal(키워드/타이틀)
+// 채널 디자인 토큰 — 현재 룩은 디자인 v5(docs/디자인_v5_토크쇼.md). NOTE·HOUSE·종이 그림자는 시험용 종이 스킨(components/paper/)만 쓴다.
 import type {Brand} from '../lib/types';
 
 const hexToRgb = (hex: string): [number, number, number] => {
@@ -31,6 +30,8 @@ export const makeTheme = (brand: Brand) => ({
   accent: brand.accent,
   // 표지처럼 같은 색 위에 올리는 짙은 강조색(디자인 팔레트가 정해 주면 그 값 — 레퍼런스의 짙은 초록 큰 글자)
   accentDeep: brand.deep || mix(brand.accent, '#000000', 0.32),
+  // 디자인 v5: 띠(챕터 배지·용어·아이덴트)의 짙은 숲색 — 채널 오렌지(accent)는 작은 표식과 밑줄에만
+  band: brand.band || '#1F4D3E',
   // 형광펜·바닥 타원·이름표(디자인 v3 종이 콜라주 — 레퍼런스의 민트)
   accentTint: brand.tint || mix(brand.accent, '#ffffff', 0.5),
   // 어두운 배경에서 읽히는 밝은 강조색
@@ -51,26 +52,24 @@ export const makeTheme = (brand: Brand) => ({
 export type Theme = ReturnType<typeof makeTheme>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 디자인 v4 — 모던 모션(운영자 레퍼런스 2026-10-02: 테크 설명 영상의 모션 디자인). 밝은 무대(흰/옅은 디자인 색) ·
-// 어두운 무대(검정) · 굵고 자간 좁은 산세리프 · 둥근 흰 UI 카드 · 부드러운 그림자. 종이 콜라주(v3)는 'collage' 표면으로만 남는다.
-export const DESIGN = 'v4' as const;
+// 디자인 v5 — 1인 시사교양 토크쇼(docs/디자인_v5_토크쇼.md). 화면의 주인공은 디자인된 면이 아니라 사람과 자료다.
+// 도식 면은 평면 #F4F3EE 또는 차콜 #1E2124, 그라디언트·번짐·카드 그림자 없음(글자 가독 그림자 TEXT_SHADOW 만).
+export const DESIGN = 'v5' as const;
 export const MODERN = {
-  bg: '#F7F8F6',
-  ink: '#121315',
-  inkSoft: 'rgba(18,19,21,0.64)',
-  line: 'rgba(18,19,21,0.10)',
-  card: '#FFFFFF',
-  dark: '#121214', // 어두운 무대: 레퍼런스의 구겨진 차콜(#2A2A2F)과 쇼릴의 검정 사이
-  darkInk: '#F4F4F2',
-  darkSoft: 'rgba(244,244,242,0.62)',
+  bg: '#F4F3EE',
+  ink: '#1E2124',
+  inkSoft: 'rgba(30,33,36,0.66)',
+  line: 'rgba(30,33,36,0.16)',
+  card: '#F4F3EE',
+  dark: '#1E2124',
+  darkInk: '#F4F3EE',
+  darkSoft: 'rgba(244,243,238,0.66)',
 } as const;
+/** 재질 키트 색(디자인 v5.1). 오렌지는 테이프·표식·형광 밑줄에만 — 넓은 면을 채우지 않는다. */
+export const MAT = {forest: '#1F4D3E', mint: '#8FC7A8', eggshell: '#F4F3EE', parchment: '#EFE9DC', memo: '#FBF9F3', kraft: '#B89B72', charcoal: '#1E2124',
+  ink: '#22211E', inkSoft: 'rgba(34,33,30,0.68)', orange: '#FC5400', graphite: '#3C3B38', stamp: '#C43A14', fibre: '#EFE6D2'} as const;
 
-/** v4 그림자: 광원은 위(살짝 왼쪽) 하나 — 넓게 번지는 부드러운 그림자 3단(1 칩 · 2 말풍선 · 3 패널·기기) */
-export const softShadow = (level: 1 | 2 | 3, dark = false): string => {
-  const a = dark ? 0.5 : 0.12;
-  const l = Math.max(1, Math.min(3, level));
-  return `${3 * l}px ${8 * l}px ${22 * l}px rgba(18,19,21,${(a + 0.02 * l).toFixed(2)}), 0 1px 2px rgba(18,19,21,${dark ? 0.6 : 0.06})`;
-};
+export const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.35)';
 
 // 롱폼 무대 재질 v2 — 종이 메모 룩(docs/롱폼_무대_디자인.md 5장): 크림 종이 · 웜 잉크 · 시그널(테마 accent) 세 색뿐
 export const NOTE = {
@@ -83,33 +82,9 @@ export const NOTE = {
   dots: 'rgba(38,33,30,0.13)',
 } as const;
 
-/**
- * 서체 역할표(docs/롱폼_무대_디자인.md 6장) — 내용·성격·크기·자리로 고른다. 한 화면에 세 가족까지.
- *  sans    Pretendard 400~700   읽는 글: 자막·본문·목록·각주·작은 라벨(26px 미만은 늘 이것)
- *  display Pretendard 800~900   정밀한 제목: 용어(정의)·도식·목록 제목
- *  heavy   Black Han Sans       한 방(1~4어절, 90px 이상, 화면 중앙·전면): 키워드 슬램·훅 타이틀·챕터 제목·두 층 자막 핵심어
- *  round   Jua                  말하듯 붙인 메모(2~8어절, 40~70px, 얼굴 옆·위): 메모 헤드라인·소제목 바·콜아웃·반전 상자
- *  serif   Noto Serif KR        문장(주장·인용·여운, 40~60px): 인용 카드·챕터 주장·정리 보드 헤드라인·엔드카드
- *  latin   Anton                큰 숫자: 챕터 번호·카운터·순번
- *  numeral Playfair Display     이탤릭 세리프 숫자·영문(본문 옆 작은 것): 연도·영문 원어·단위 — <Numerals> 가 자동으로 감싼다
- *  hand    Nanum Pen Script     손글씨 주석(26px 이상, 종이 위에만): 메모 각주·사진 캡션 설명·엔드카드 메모
- * 디자인 v3(종이 콜라주 — 운영자 레퍼런스: 이탤릭 세리프 연도 · 인쇄 질감 한 방 · 명조 인용):
- *  serif     Gowun Batang(고운바탕) 문장·인용·주장·개념 제목 — 예전 Noto Serif KR 은 대체 글꼴로만
- *  display   Gowun Batang 700 — 제목(정의·도식·목록·모션 장면 제목). 함렛은 굵으면 고딕처럼 보여 역할에서 뺐다
- *  editorial Song Myung(송명) 예술적인 큰 명조 제목(타이틀·챕터 제목) — 굵기 하나(400, 가짜 굵게 금지)
- *  poster    Song Myung(송명) 포스터 같은 명조 한 방(짧은 낱말, 120px 이상)
- *  numeral   Playfair Display 이탤릭 400·700·900 — 연도·큰 숫자(레퍼런스의 '1853')
- *  italic    Instrument Serif(이탤릭) 영문 원어·인용 출처·작은 킥커
- */
 const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const ITALIC = '"Instrument Serif", "Playfair Display", serif';
-/**
- * 디자인 v4(모던 모션): 역할 이름은 그대로 두고 글꼴만 바꾼다 — 거의 모든 역할이 Pretendard(굵기로 구분), 강조·연도·영문·
- * 각주는 Instrument Serif 이탤릭 하나. 명조·손글씨·블랙한산스는 번들에만 남는다(collage 표면이 쓸 때).
- *  display  Pretendard 800  제목(정의·도식·목록·모션 제목)        heavy   Pretendard 900  한 방(키워드·훅)
- *  serif    Pretendard 500  문장(인용·주장·본문)                 round   Pretendard 700  메모·콜아웃·소제목 바
- *  editorial/poster Pretendard 800 타이틀·챕터·포스터            italic/numeral/hand Instrument Serif 이탤릭
- */
+/** 디자인 v5: Pretendard 하나(라벨 600 · 본문 500 · 핵심어 800). 명조는 인용에만(quote), 기울임은 영문 원어 표기에만(italic). */
 export const FONT = {
   sans: SANS,
   display: SANS,
@@ -121,19 +96,13 @@ export const FONT = {
   heavy: SANS,
   round: SANS,
   memo: SANS,
-  numeral: ITALIC,
-  hand: ITALIC,
+  numeral: SANS,
+  hand: SANS,
   mono: SANS,
+  quote: '"Gowun Batang", "Noto Serif KR", serif',
+  masthead: '"Hahmlet", "Noto Serif KR", serif',      // 저널 제호(콜라주 이름표)
+  pen: '"Nanum Pen Script", "Pretendard", sans-serif', // 메모지 위 짧은 글에만
 };
-/** v3 종이 콜라주가 쓰던 글꼴(collage 표면 전용 — 기본 룩에서는 쓰지 않는다) */
-export const PRESS_FONT = {
-  display: '"Gowun Batang", "Noto Serif KR", "Pretendard", serif',
-  serif: '"Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", serif',
-  editorial: '"Song Myung", "Gowun Batang", "Noto Serif KR", serif',
-  heavy: '"Black Han Sans", "Pretendard", sans-serif',
-  numeral: '"Playfair Display", "Gowun Batang", serif',
-  hand: '"Nanum Pen Script", "Pretendard", cursive',
-} as const;
 
 // 1920 기준 타입 스케일(짧은 쪽 1080 기준으로 비례)
 export const TYPE = {
@@ -202,6 +171,29 @@ export const paperDropShadow = (level: number): string => {
     + `rgba(${LIGHT.rgb},${(e.a + e.contact * 0.4).toFixed(3)}))`;
 };
 
+/** 종이 그림자 v5.1: 접촉(선명) + 넓은 부드러운(들뜸) 두 겹. 광원은 위 왼쪽 하나. 놓인 곳마다 다르다 — photo: 사진·화자·책상 위(순수 어둠) · board: 밝은 종이 위(따뜻한 어둠) · dark: 아주 어두운 사진 위(넓은 그림자는 배경보다 밝아 안개가 된다) */
+const LIFT = {
+  photo: {rgb: '0,0,0', ca: 0.5, wy: [2, 3], wb: [6, 6], wa: [0.23, 0.06], dx: 0.25},
+  board: {rgb: '60,50,35', ca: 0.35, wy: [2, 6], wb: [4, 12], wa: [0.1, 0.06], dx: 0.43},
+  dark: {rgb: '0,0,0', ca: 0.5, wy: [0, 0], wb: [0, 0], wa: [0, 0], dx: 0},
+} as const;
+export type LiftOn = keyof typeof LIFT;
+/** level 0~3 실수, k = 종이마다 다른 들뜸(시드, ±30%) */
+const liftAt = (level: number, k: number, on: LiftOn) => {
+  const l = Math.max(0, Math.min(3, level));
+  const c = LIFT[on];
+  return {rgb: c.rgb, ca: c.ca, dx: c.dx, wy: (c.wy[0] + l * c.wy[1]) * k, wb: (c.wb[0] + l * c.wb[1]) * k, wa: (c.wa[0] + l * c.wa[1]) * k};
+};
+export const lift = (level: number, k = 1, on: LiftOn = 'photo'): string => {
+  const e = liftAt(level, k, on);
+  return `0 1px 2px rgba(${e.rgb},${e.ca}), ${(e.wy * e.dx).toFixed(1)}px ${e.wy.toFixed(1)}px ${e.wb.toFixed(1)}px rgba(${e.rgb},${e.wa.toFixed(3)})`;
+};
+/** 모양을 따라가는 같은 두 겹(찢긴 종이·오린 그림) — filter 값 */
+export const liftDrop = (level: number, k = 1, on: LiftOn = 'photo'): string => {
+  const e = liftAt(level, k, on);
+  return `drop-shadow(0 1px 1px rgba(${e.rgb},${e.ca})) drop-shadow(${(e.wy * e.dx).toFixed(1)}px ${e.wy.toFixed(1)}px ${(e.wb * 0.5).toFixed(1)}px rgba(${e.rgb},${e.wa.toFixed(3)}))`;
+};
+
 /** 종이 물성 — 0°·완전한 직선·완벽한 정렬은 디지털의 표식이다. 값은 시드로 고정한다. */
 export const PAPER_MAT = {
   rotate: {note: [0.6, 1.8], photo: [1, 3], tape: [3, 8], sticker: [2, 4], speaker: [0.3, 0.6]}, // ±도, 0 금지
@@ -232,6 +224,12 @@ export const GRID9 = {W: 1080, H: 1920, margin: 64, gutter: 20, cols: 6, col: 14
 export const TYPE_MIN = {
   long: {headSide: 56, headSheet: 72, body: 34, label: 28, credit: 22},
   short: {head: 72, body: 44, label: 32, credit: 26},
+} as const;
+
+/** 고정 자리 글자(1080p px · 비율은 그 자리 크기에 곱함). 렌더러와 게이트 P1(studio/gate.py slot_px)이 같이 읽는다. */
+export const SLOT_TYPE = {
+  caption: 40, band: 34, bandBody: 0.783, definition: 46, superName: 42, superSub: 28, credit: 24,
+  keywordMin: 44, keywordSub: 0.46, keywordSubMin: 28, quote: 0.06, quoteWho: 0.52, statSub: 28,
 } as const;
 
 /** 모션 DSL 의 size(상자 높이 대비 %)가 실제 몇 px 인지 — spec.py 의 검증과 같은 식. */

@@ -27,8 +27,8 @@ export const EASE = {
   move: Easing.bezier(0.2, 0, 0, 1), // 화면 안 A→B — Material 3 standard(빨리 떠나 길게 앉는다)
   exit: Easing.bezier(0.3, 0, 0.8, 0.15), // 퇴장 — Material 3 emphasized-accelerate
   settle: Easing.bezier(0.25, 0.9, 0.3, 1), // 정착 — 되튐 없이 길게 내려앉는다(숫자 끝·칩)
-  settlePaper: Easing.bezier(0.2, 0.85, 0.25, 1), // 종이 안착 — 되튐 없이
   pop: Easing.bezier(0.16, 1, 0.3, 1), // 펀치 구간·숏폼 훅 — 빠르게 오되 되튀지 않는다
+  expand: Easing.inOut(Easing.poly(4)), // 조각이 화면이 되는 전환 — GSAP power3.inOut
 } as const;
 
 export type EaseName = keyof typeof EASE;
@@ -184,19 +184,46 @@ export const peelOut = (frame: number, end: number, rest: number, dur = 8) => {
 export const enterP = (frame: number, start: number, dur: number, role: 'enter' | 'enterText' | 'enterLarge' = 'enter') =>
   interpolate(frame, [start, start + Math.max(1, dur)], [0, 1], {...clamp, easing: EASE[role]});
 
-/**
- * 떠다니는 움직임(플로팅) — 2026-10-04 채널 주인: "모션 그래픽은 떠다니는 움직임이 젠틀하게, 모션이 많아야 한다".
- * 결정적(같은 프레임은 늘 같은 값)인 느린 사인 두 개를 겹쳐 규칙적인 왕복처럼 보이지 않게 한다. amp px, period 초.
- */
-export const floatOffset = (frame: number, fps: number, seed = 0, amp = 6, period = 6.5) => {
-  const t = frame / fps;
-  const ph = seed * 1.7;
-  const y = amp * (0.7 * Math.sin((2 * Math.PI * t) / period + ph) + 0.3 * Math.sin((2 * Math.PI * t) / (period * 0.53) + ph * 2.3));
-  const x = amp * 0.35 * Math.sin((2 * Math.PI * t) / (period * 1.37) + ph * 0.7);
-  const rot = 0.35 * Math.sin((2 * Math.PI * t) / (period * 1.21) + ph * 1.3);
-  return {x, y, rot};
+// ─────────────────────────────────────────────────────────────────────────────
+// v5.1 재질 키트의 움직임(docs/디자인_v5_토크쇼.md): 되튐 없음, 정착하면 멈춘다.
+
+export const OVERLAY = {in: 9, out: 7, dist: 14, blur: 6} as const;
+
+/** 얹히는 요소: 올라오거나 옆에서 밀려오며 페이드 + 블러 → 선명(9f). 나갈 때는 더 짧게 흐려진다. dur 를 안 주면 퇴장 없음(컷) */
+export const overlayStyle = (frame: number, dur?: number, from: 'up' | 'left' | 'right' = 'up') => {
+  const p = interpolate(frame, [0, OVERLAY.in], [0, 1], {...clamp, easing: EASE.enter});
+  const q = dur === undefined ? 1 : interpolate(frame, [dur - OVERLAY.out, dur], [1, 0], {...clamp, easing: EASE.exit});
+  const v = Math.min(p, q);
+  const d = OVERLAY.dist * (1 - p);
+  const blur = OVERLAY.blur * (1 - v);
+  return {
+    opacity: Math.min(1, v * 1.2),
+    translate: from === 'up' ? `0 ${d.toFixed(2)}px` : `${(from === 'left' ? -d : d).toFixed(2)}px 0`,
+    filter: blur > 0.15 ? `blur(${blur.toFixed(2)}px)` : undefined,
+  };
 };
 
-/** 앰비언트 카메라 — 장면 내내 아주 느리게 다가간다(scale 1 → 1+push, 선형). 화면 가장자리가 드러나지 않게 1 이상만 */
-export const ambientPush = (frame: number, dur: number, push = 0.03) =>
-  1 + push * Math.min(1, Math.max(0, frame / Math.max(1, dur)));
+/** 종이가 놓인다: 살짝 뜬 채 들어와 각도·높이·그림자가 한 방향으로만 정착한다(placeIn 과 달리 지나쳤다 돌아오지 않는다) */
+export const paperSettle = (frame: number, rest: number, dur = 11, drop = 16, level = 2) => {
+  const p = interpolate(frame, [0, dur], [0, 1], {...clamp, easing: EASE.enterLarge});
+  return {
+    opacity: interpolate(frame, [0, 3], [0, 1], clamp),
+    rotate: rest + (rest >= 0 ? 1.4 : -1.4) * (1 - p),
+    y: -drop * (1 - p),
+    scale: 1.022 - 0.022 * p,
+    elev: 3 - (3 - level) * p,
+  };
+};
+
+/** 사진·문서의 약한 3% 푸시(그래픽 길이 전체) */
+export const photoPush = (frame: number, dur: number, amount = 0.03) =>
+  interpolate(frame, [0, Math.max(1, dur)], [1, 1 + amount], clamp);
+
+/** 스톱모션 콜라주의 8fps 시계: 몇 번째 칸인가 */
+export const collageStep = (frame: number, fps: number, rate = 8) => Math.floor((frame * rate) / fps);
+
+/** 도장: 2프레임에 나타나 5프레임에 내려앉는다 */
+export const stampIn = (frame: number) => ({
+  opacity: interpolate(frame, [0, 2], [0, 1], clamp),
+  scale: interpolate(frame, [0, 5], [1.2, 1], {...clamp, easing: EASE.enter}),
+});

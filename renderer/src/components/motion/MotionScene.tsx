@@ -1,13 +1,12 @@
 import React from 'react';
-import {Bubble, DeviceFrame, IsoBlocks, modernColorsFromSurface, Pill, UIPanel} from '../modern/Modern';
 import {Img, interpolate, staticFile} from 'remotion';
-import {ambientPush, DUR, EASE, exitFrames, floatOffset, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
+import {DUR, EASE, exitFrames, placeIn, STAGGER, stepFrame, unfoldIn} from '../../design/motion';
 import type {EaseName} from '../../design/motion';
-import {FONT, HOUSE, paperDropShadow, paperRotate, paperShadow} from '../../design/tokens';
+import {FONT, MODERN} from '../../design/tokens';
 import type {Surface} from '../../design/surfaces';
 import type {MotionColor, MotionEl, MotionKey, MotionSpec} from '../../lib/types';
-import {ChalkFilter, ParenLabel} from '../layout/Editorial';
-import {hashSeed, TornFrame} from '../paper/Paper';
+import {ChalkFilter} from '../layout/Editorial';
+import {hashSeed} from '../paper/Paper';
 
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
@@ -26,9 +25,9 @@ const colorOf = (c: MotionColor | 'none' | undefined, s: Surface, fallback: stri
     case 'bg':
       return s.bg;
     case 'white':
-      return HOUSE.paperLight; // 순백 대신 하우스 종이(docs/upgrade/06 3-1)
+      return MODERN.bg;
     case 'ink':
-      return HOUSE.ink; // 순흑 대신 웜 잉크
+      return MODERN.ink;
     case 'none':
       return 'none';
     default:
@@ -40,7 +39,7 @@ const easeOf = (e?: string): EaseName => (e === 'inOut' ? 'inOutCubic' : e === '
   : e === 'enterLarge' ? 'enterLarge' : e === 'move' ? 'move' : e === 'settle' ? 'settle' : 'outQuint');
 
 /** 어두운 무대인가(칠판·잉크·구겨진 종이·시그널) — 잉크 단색 그림을 종이색 선으로 뒤집을 때 */
-const darkSurface = (s: Surface) => s.name === 'board' || s.name === 'ink' || s.name === 'crumple' || s.name === 'signal';
+const darkSurface = (s: Surface) => s.name === 'dark' || s.name === 'board' || s.name === 'ink' || s.name === 'crumple' || s.name === 'signal';
 
 /** 키프레임 보간 — 시작 상태(요소의 x/y, 배율 1)를 암묵적으로 넣고, 화면 안 이동은 ease-in-out(animate-skill) */
 const sampleKeys = (keys: MotionKey[] | undefined, t: number, base: Required<MotionKey>) => {
@@ -168,16 +167,11 @@ const TextEl: React.FC<{el: Extract<MotionEl, {type: 'text'}>; c: Ctx}> = ({el, 
   const st = elementState(el, c);
   if (!st.visible) return null;
   const size = (el.size / 100) * c.H;
-  const named: Record<string, string> = {serif: FONT.serif, latin: FONT.latin, heavy: FONT.heavy, round: FONT.round,
-    hand: FONT.hand, sans: FONT.sans, display: FONT.display, poster: FONT.poster, italic: FONT.italic};
-  // 디자인 v3: 지정이 없으면 제목(6% 이상)은 명조(고운바탕 700), 본문·라벨은 고딕
-  const font = (el.font && named[el.font]) || (el.size >= 6 ? FONT.display : FONT.sans);
-  const single = ['latin', 'heavy', 'round', 'hand', 'poster', 'italic'].includes(el.font ?? '');
+  const font = FONT.sans;
   const color = colorOf(el.color, c.surface, c.surface.fg);
   const maxW = el.maxWidth ? (el.maxWidth / 100) * c.W : undefined;
-  const style: React.CSSProperties = {fontFamily: font, fontWeight: single ? 400 : el.weight ?? (font === FONT.sans ? 500 : 800),
-    fontStyle: el.font === 'italic' ? 'italic' : undefined,
-    fontSize: size, lineHeight: 1.12, letterSpacing: el.font === 'italic' ? '-0.01em' : size > 60 ? '-0.04em' : '-0.02em',
+  const style: React.CSSProperties = {fontFamily: font, fontWeight: el.weight ?? (el.size >= 6 ? 800 : 500),
+    fontSize: size, lineHeight: 1.12, letterSpacing: size > 60 ? '-0.04em' : '-0.02em',
     color, textAlign: el.align ?? 'center',
     maxWidth: maxW, whiteSpace: maxW ? 'normal' : 'nowrap', wordBreak: 'keep-all'};
   const reveal = el.reveal ?? (st.enter === 'mask' ? 'words' : 'none');
@@ -345,7 +339,7 @@ const CounterEl: React.FC<{el: Extract<MotionEl, {type: 'counter'}>; c: Ctx}> = 
   const txt = `${el.prefix ?? ''}${v.toFixed(el.decimals ?? 0)}${el.suffix ?? ''}`;
   return (
     <Wrap st={st} anchor={el.anchor}>
-      <div style={{fontFamily: FONT.numeral, fontStyle: 'italic', fontWeight: 900, fontSize: (el.size / 100) * c.H, lineHeight: 1,
+      <div style={{fontFamily: FONT.numeral, fontWeight: 800, fontSize: (el.size / 100) * c.H, lineHeight: 1,
         color: colorOf(el.color, c.surface, c.surface.accent), fontVariantNumeric: 'tabular-nums'}}>{txt}</div>
     </Wrap>
   );
@@ -362,8 +356,8 @@ const BarEl: React.FC<{el: Extract<MotionEl, {type: 'bar'}>; c: Ctx}> = ({el, c}
     <div style={{position: 'absolute', left: st.x + st.dx, top: st.y + st.dy - h / 2, width: w, opacity: st.opacity}}>
       {el.label ? <div style={{fontFamily: FONT.sans, fontWeight: 600, fontSize: Math.max(18, h * 0.8), color: c.surface.fg,
         marginBottom: 8}}>{el.label}</div> : null}
-      <div style={{width: w, height: h, background: c.surface.faint, borderRadius: h / 2, overflow: 'hidden'}}>
-        <div style={{width: w * p, height: h, background: colorOf(el.color, c.surface, c.surface.accent), borderRadius: h / 2}} />
+      <div style={{width: w, height: h, background: c.surface.faint, overflow: 'hidden'}}>
+        <div style={{width: w * p, height: h, background: colorOf(el.color, c.surface, c.surface.accent)}} />
       </div>
     </div>
   );
@@ -386,36 +380,11 @@ const ImageEl: React.FC<{el: Extract<MotionEl, {type: 'image'}>; c: Ctx}> = ({el
     : el.tint === 'duotone' ? (dark ? 'grayscale(1) invert(0.9) sepia(0.35) contrast(1.1)' : 'grayscale(1) sepia(0.35) contrast(1.15)')
       : undefined;
   const blend: React.CSSProperties['mixBlendMode'] = el.tint && el.tint !== 'none' ? (dark ? 'screen' : 'multiply') : undefined;
-  if (el.frame === 'print') {
-    // 종이 위에 붙인 프린트: 얇은 종이 테두리 + 높이 2 그림자 + 시드로 정한 각도(0° 금지, 06b PAPER_MAT.photo)
-    const border = 12;
-    return (
-      <Wrap st={st} anchor={el.anchor}>
-        <div style={{width: w, height: h, padding: border, boxSizing: 'border-box', background: HOUSE.paperLight,
-          boxShadow: paperShadow(2), rotate: `${paperRotate(hashSeed(el.src), 'photo')}deg`}}>
-          <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block',
-            filter: tint ? `${tint} saturate(0.75)` : 'saturate(0.75)'}} />
-        </div>
-      </Wrap>
-    );
-  }
-  if (el.frame === 'torn') {
-    // 종이 콜라주: 찢어진 흰 테두리 액자(레퍼런스 3)
-    return (
-      <Wrap st={st} anchor={el.anchor}>
-        <div style={{position: 'relative', width: w, height: h}}>
-          <TornFrame b={{x: 0, y: 0, w, h}} seed={hashSeed(el.src)}>
-            <Img src={staticFile(el.src)} style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}} />
-          </TornFrame>
-        </div>
-      </Wrap>
-    );
-  }
   return (
     <Wrap st={st} anchor={el.anchor}>
       <Img src={staticFile(el.src)} style={{width: w, height: h, objectFit: cutout ? 'contain' : 'cover',
         borderRadius: el.radius ?? 0, display: 'block', mixBlendMode: blend,
-        filter: [tint, cutout && !tint ? paperDropShadow(2) : undefined].filter(Boolean).join(' ') || undefined}} />
+        filter: tint}} />
     </Wrap>
   );
 };
@@ -495,48 +464,6 @@ const ghostOf = (el: MotionEl): MotionEl => {
   return base as MotionEl;
 };
 
-/** 디자인 v4 부품 — 장면 상자 안에서 가운데 (x, y) 에 놓이고 스스로 등장한다(frame = 요소의 local) */
-const ModernEl: React.FC<{el: Extract<MotionEl, {type: 'panel' | 'chip' | 'bubble' | 'device' | 'iso'}>; c: Ctx}> = ({el, c}) => {
-  const st = elementState(el, c);
-  if (!st.visible) return null;
-  const mc = modernColorsFromSurface(c.surface);
-  const f = Math.max(0, Math.round(st.local));
-  const px = (pct: number | undefined, d: number) => ((pct ?? d) / 100) * c.H;
-  if (el.type === 'iso') {
-    return (
-      <div style={{position: 'absolute', inset: 0, opacity: (el.opacity ?? 0.9) * st.opacity}}>
-        <IsoBlocks W={c.W} H={c.H} c={mc} frame={f} seed={el.seed} cols={el.cols} rows={el.rows} road={el.road} />
-      </div>
-    );
-  }
-  let node: React.ReactNode = null;
-  if (el.type === 'chip') {
-    node = <Pill text={el.text} c={mc} frame={f} size={px(el.size, 2.6)} icon={el.icon ?? 'check'} fill={el.fill ?? 'card'} />;
-  } else if (el.type === 'bubble') {
-    node = <Bubble text={el.text} sub={el.sub} c={mc} frame={f} size={px(el.size, 3.2)} tail={el.tail ?? 'bottom'} icon={el.icon ?? 'none'} />;
-  } else if (el.type === 'panel') {
-    const rows = el.rows.map((r, i) => {
-      const [label, value] = r.split('|');
-      return {label: label.trim(), value: value ? value.trim() : undefined, on: i === el.on, icon: 'dot' as const};
-    });
-    node = <UIPanel title={el.title} rows={rows} c={mc} frame={f} w={(el.w / 100) * c.W} size={px(el.size, 2.6)} tilt={el.tilt} />;
-  } else if (el.type === 'device') {
-    const w = (el.w / 100) * c.W;
-    const inner = localSrc(el.src) ? (
-      <Img src={staticFile(el.src!)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-    ) : el.rows && el.rows.length ? (
-      <div style={{position: 'absolute', inset: 0, background: mc.bg, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-        <UIPanel title={el.title} rows={el.rows.map((r) => {
-          const [label, value] = r.split('|');
-          return {label: label.trim(), value: value ? value.trim() : undefined, icon: 'dot' as const};
-        })} c={mc} frame={f} w={w * 0.62} size={w * 0.022} windowDots={false} />
-      </div>
-    ) : <div style={{position: 'absolute', inset: 0, background: mc.bg}} />;
-    node = <DeviceFrame kind={el.kind} w={w} c={mc} frame={f} screenBg={mc.bg}>{inner}</DeviceFrame>;
-  }
-  return <Wrap st={st} anchor={el.anchor}>{node}</Wrap>;
-};
-
 const renderEl = (el: MotionEl, key: React.Key, c: Ctx): React.ReactNode => {
   switch (el.type) {
     case 'text':
@@ -549,14 +476,8 @@ const renderEl = (el: MotionEl, key: React.Key, c: Ctx): React.ReactNode => {
       return <ImageEl key={key} el={el} c={c} />;
     case 'mark':
       return <MarkEl key={key} el={el} c={c} />;
-    case 'panel':
-    case 'chip':
-    case 'bubble':
-    case 'device':
-    case 'iso':
-      return <ModernEl key={key} el={el} c={c} />;
     default:
-      return <ShapeEl key={key} el={el} c={c} />;
+      return <ShapeEl key={key} el={el} c={c} />;  // 없어진 v4 부품(panel·chip·bubble·device·iso)이 든 옛 계획은 ShapeEl 이 아무것도 안 그린다
   }
 };
 
@@ -576,29 +497,16 @@ export const MotionScene: React.FC<{spec: MotionSpec; frame: number; fps: number
           ))}
         </svg>
       ) : null}
-      {spec.label ? (
-        <div style={{position: 'absolute', left: 0, top: -6}}>
-          <ParenLabel text={spec.label} surface={surface} frame={frame} size={22} />
-        </div>
-      ) : null}
-      {/* 떠다니는 내용 층(2026-10-04 채널 주인: '모션이 많아야 한다 — 떠다니듯 젠틀하게'): 요소 전체가 함께 몇 px 떠다니고
-          장면 내내 아주 느리게 다가간다 — 요소마다 따로 흔들면 글이 판에서 어긋나므로 한 층으로 */}
-      <div style={{position: 'absolute', inset: 0, transformOrigin: '50% 50%',
-        transform: (() => {
-          const fl = floatOffset(frame, fps, id.length, 5, 7);
-          return `translate(${fl.x.toFixed(2)}px, ${fl.y.toFixed(2)}px) rotate(${(fl.rot * 0.4).toFixed(3)}deg) scale(${ambientPush(frame, dur, 0.022).toFixed(4)})`;
-        })()}}>
-        {spec.elements.map((el, i) => {
-          // 자리 표시: 진입이 끝날 때까지 흐린 윤곽이 그 자리에 있다(그 뒤엔 본 요소만)
-          const ghostOn = el.ghost && frame < ((el.at ?? 0) + (el.dur ?? 0.4)) * fps + 2;
-          return (
-            <React.Fragment key={i}>
-              {ghostOn ? renderEl(ghostOf(el), `g${i}`, c) : null}
-              {renderEl(el, i, c)}
-            </React.Fragment>
-          );
-        })}
-      </div>
+    {spec.elements.map((el, i) => {
+        // 자리 표시: 진입이 끝날 때까지 흐린 윤곽이 그 자리에 있다(그 뒤엔 본 요소만)
+        const ghostOn = el.ghost && frame < ((el.at ?? 0) + (el.dur ?? 0.4)) * fps + 2;
+        return (
+          <React.Fragment key={i}>
+            {ghostOn ? renderEl(ghostOf(el), `g${i}`, c) : null}
+            {renderEl(el, i, c)}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 };
