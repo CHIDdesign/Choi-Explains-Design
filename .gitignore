@@ -18,6 +18,10 @@ user/
 projects/
 *.log
 
+# 에이전트 실행 기록(인수인계·감사 결과) — 프로젝트 스킬만 저장소에 둔다
+.omc/*
+!.omc/skills/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -31,3 +35,7 @@ models/hf/
 # 처음 실행 때 내려받는 효과음·배경음악·잡음 제거 모델(개인 사용, 저장소에 넣지 않음)
 assets/sound/
 assets/choi_studio.ico
+
+# 조사 원자료(릴스 계정 이름·출처 목록) — 완성 보고서만 docs/research/ 에 둔다
+research_notes/
+reports/
