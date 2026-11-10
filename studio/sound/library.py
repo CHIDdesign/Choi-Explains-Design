@@ -78,6 +78,13 @@ def _download(url: str, dst: Path, timeout: float = 25.0, rounds: int = 2) -> No
     net.download(url, dst, timeout=timeout, rounds=rounds)
 
 
+def _is_audio(p: Path) -> bool:
+    """머리 바이트로 오디오 파일인지(프록시가 HTTP 200 으로 준 HTML 을 걸러 낸다 — 해시 없는 항목의 유일한 검사)."""
+    with p.open("rb") as f:
+        h = f.read(12)
+    return h[:3] == b"ID3" or h[:4] in (b"RIFF", b"OggS", b"fLaC") or h[4:8] == b"ftyp" or (len(h) > 1 and h[0] == 0xFF and h[1] & 0xE0 == 0xE0)
+
+
 RETRY_AFTER = 6 * 3600       # 받지 못한 주소는 6시간 동안 다시 시도하지 않는다(작업마다 오래 기다리지 않게)
 HOST_GIVE_UP = 2             # 이번 작업에서 연달아 두 번 실패한 호스트는 건너뛴다(아예 연결이 안 되면 바로)
 
@@ -128,7 +135,8 @@ class SoundLibrary:
                 cancel.check()
             sub = {"sfx": "sfx", "bgm": "bgm", "models": "models"}[kind]
             dst = self.root / sub / (e["id"] + _ext(e.get("url", "")))
-            ok = dst.exists() and dst.stat().st_size > 0 and (not e.get("bytes") or dst.stat().st_size == e["bytes"])
+            checked = e.get("sha256") or kind == "models"
+            ok = dst.exists() and dst.stat().st_size > 0 and (not e.get("bytes") or dst.stat().st_size == e["bytes"]) and bool(checked or _is_audio(dst))
             if not ok and download:
                 for url in [e.get("url", "")] + list(e.get("mirrors", []) or []):
                     if not url:
@@ -143,6 +151,8 @@ class SoundLibrary:
                             self.log(f"(해시 불일치, 다른 주소 시도) {e['id']}")
                             dst.unlink(missing_ok=True)
                             continue
+                        if not checked and not _is_audio(dst):
+                            raise ValueError("오디오가 아닌 응답")
                         ok = True
                         got += 1
                         host_fail[host] = 0
@@ -217,9 +227,12 @@ class SoundLibrary:
             same = [s for s in pool if (getattr(s, "family", "") or "") == fam] if fam else []
             pool = same or pool
             last = getattr(self, "_last", {}).get(category)
-            choice = pool[seed % len(pool)]
-            if len(pool) > 1 and choice.path == last:
-                choice = pool[(seed + 1) % len(pool)]
+            used = self.__dict__.setdefault("_used", {})      # 다른 파일이 남아 있으면 같은 파일을 되풀이하지 않는다
+            low = min(used.get(s.path, 0) for s in pool)
+            rest = [s for k in range(len(pool)) for s in [pool[(seed + k) % len(pool)]] if used.get(s.path, 0) == low]
+            rest.sort(key=lambda s: s.source != "user")       # 채널 주인이 user/sfx 에 넣은 소리를 먼저
+            choice = next((s for s in rest if s.path != last), rest[0])
+            used[choice.path] = low + 1
             self._family = {**getattr(self, "_family", {}), category: getattr(choice, "family", "") or ""}
             self._last = {**getattr(self, "_last", {}), category: choice.path}
             return choice

@@ -20,6 +20,7 @@ from typing import Optional
 
 import numpy as np
 
+from ..sound.cues import align_stop, loudness_curve, peak_time, quietest_before
 from ..util import CancelToken, LogFn, noop_log, run_process
 from .ffmpeg import FFmpeg, FFmpegError
 
@@ -59,7 +60,7 @@ class BgmPlan:
     dip_fade: float = 2.5             # 음악을 비울 때 들어가는 페이드(초) — 뚝 끊기지 않게
     end_at: Optional[float] = None    # 끝 페이드가 시작할 곳(말이 끝난 곳) — 없으면 끝에서 fade_out 초 전
     # 🎼 큐 시트(04 문서 3절, studio/sound/cues.py) — 있으면 음악은 큐 안에서만 들린다(나머지는 침묵이 곧 큐).
-    # [{start, end, role(theme|bed|air|reprise), entry, exit}] · 상태별 레벨(6.3): 말 아래 bed · 쉼 · theme/reprise 의
+    # [{start, end, role(theme|bed|air|reprise), entry, exit, track_from}] · 상태별 레벨(6.3): 말 아래 bed · 쉼 · theme/reprise 의
     # 말 없는 1.5초 이상 = feature(목소리 −8 LU 까지) · air = 말 아래보다 8 dB 낮게
     cues: list[dict] = field(default_factory=list)
 
@@ -100,6 +101,22 @@ def measure_lufs(ff: FFmpeg, path: str | Path) -> Optional[float]:
     return None
 
 
+def voice_start(ff: FFmpeg, path: str | Path, *, within: float = 60.0) -> Optional[float]:
+    """앞 무음이 끝나는 시각(초) — 말이 시작되는 곳. within 초 안에 소리가 없거나 잴 수 없으면 None."""
+    lines: list[str] = []
+    code, _ = run_process([ff.ffmpeg, "-hide_banner", "-nostdin", "-t", f"{within:g}", "-i", str(path), "-vn", "-af",
+                           "silencedetect=n=-35dB:d=0.05", "-f", "null", "-"], on_line=lines.append)
+    if code != 0:
+        return None
+    text = "\n".join(lines)
+    first = re.search(r"silence_start:\s*(-?[\d.]+)", text)
+    if first is None or float(first.group(1)) > 0.01:
+        return 0.0
+    end = re.search(r"silence_end:\s*([\d.]+)", text)
+    # 파일 끝까지 무음이면 FFmpeg 는 끝 시각을 silence_end 로 찍는다
+    return float(end.group(1)) if end and float(end.group(1)) < min(within, ff.probe(path).duration) - 0.05 else None
+
+
 def _read_wav_frames(wf: wave.Wave_read, n: int) -> np.ndarray:
     raw = wf.readframes(n)
     ch, sw = wf.getnchannels(), wf.getsampwidth()
@@ -114,8 +131,18 @@ def _read_wav_frames(wf: wave.Wave_read, n: int) -> np.ndarray:
 # 덕킹 곡선
 # ---------------------------------------------------------------------------
 
+def _flip_short_runs(act: np.ndarray, value: float, max_hops: int) -> np.ndarray:
+    """act 에서 value 가 max_hops 미만으로 이어진 구간을 반대 값으로."""
+    edges = np.flatnonzero(np.diff(np.r_[False, act == value, False]))
+    for s, e in zip(edges[::2], edges[1::2]):
+        if e - s < max_hops:
+            act[s:e] = 1.0 - value
+    return act
+
+
 def voice_activity(voice_wav: str | Path, *, threshold_db: float = -42.0, hang: float = 0.5) -> np.ndarray:
-    """10ms 단위 보이스 활성(0/1). 짧은 쉼(hang)은 활성으로 메운다."""
+    """10ms 단위 보이스 활성(0/1). 파워를 50ms 로 평활 → 0.25초 미만 틈 메움 → 0.1초 미만 활성 제거(입소리·클릭에
+    음악이 내려가지 않게, 틈을 먼저 메워 짧은 음절은 살린다) → 짧은 쉼(hang)은 활성으로 메운다."""
     with wave.open(str(voice_wav), "rb") as wf:
         if wf.getframerate() != SR:
             raise ValueError("보이스 WAV 는 48kHz 여야 합니다")
@@ -128,9 +155,12 @@ def voice_activity(voice_wav: str | Path, *, threshold_db: float = -42.0, hang: 
             n = len(m) // HOP
             if n:
                 blk = m[: n * HOP].reshape(n, HOP)
-                levels.append(10 * np.log10(np.mean(blk * blk, axis=1) + 1e-12))
-    db = np.concatenate(levels) if levels else np.zeros(0)
-    act = (db > threshold_db).astype(np.float32)
+                levels.append(np.mean(blk * blk, axis=1))
+    if not levels:
+        return np.zeros(0, np.float32)
+    power = np.convolve(np.concatenate(levels), np.ones(5) / 5, "same")
+    act = (10 * np.log10(power + 1e-12) > threshold_db).astype(np.float32)
+    act = _flip_short_runs(_flip_short_runs(act, 0.0, 25), 1.0, 10)
     k = int(hang * 100)
     if k > 0 and len(act):
         # 앞뒤로 hang 만큼 넓힘(팽창) → 문장 사이 짧은 쉼에서 음악이 출렁이지 않게
@@ -162,9 +192,10 @@ def bgm_gain_curve(act: np.ndarray, plan: BgmPlan, total: float) -> np.ndarray:
         target[i0:i1] = np.maximum(target[i0:i1], plan.swell_db)
     dip_mask = np.zeros(n, np.float32)       # 0 = 그대로, 1 = 완전히 비움(진폭 비율로 섞는다)
     fade_n = max(1, int(plan.dip_fade * 100))
+    stops = [float(q["end"]) for q in plan.cues if q.get("exit") == "stop"]
     for s, e in plan.dips:
         i0, i1 = max(0, int(s * 100)), min(n, int(e * 100))
-        if i1 <= i0:
+        if i1 <= i0 or any(s - plan.dip_fade < t <= e for t in stops):   # 끊는 큐의 쌓임을 비우기 페이드가 미리 깎으면 스러짐으로 들린다
             continue
         dip_mask[i0:i1] = 1.0
         r0 = max(0, i0 - fade_n)
@@ -224,7 +255,7 @@ class _BgmSource:
 
     한 영상 한 곡: 곡을 앞 무음(lead_silence)을 건너뛰고 처음부터 한 번 깐다. 곡이 영상보다 짧으면 **끝→처음으로 잇지 않는다**
     (10/1: 11:42 에 곡 끝이 처음으로 붙었다) — 끝 2.5초를 페이드하고 다음 구조 앵커(챕터 카드, restart_at)에서 처음부터 다시.
-    앵커가 없으면 그 뒤는 음악 없이.
+    앵커가 없으면 그 뒤는 음악 없이. 큐 시트에 곡 위치(track_from)나 끊는 큐(exit=stop)가 있으면 큐마다 곡의 그 지점을 쓴다(`_place_cues`).
     """
 
     def __init__(self, ff: FFmpeg, plan: BgmPlan, n_total: int, xfade: float = 2.5):
@@ -233,12 +264,18 @@ class _BgmSource:
         path, lufs = (plan.playlist[0] if plan.playlist else (plan.path, plan.lufs))
         self.decoded: dict[str, np.ndarray] = {}
         self.pieces: list[tuple[int, int, str]] = []   # (시작 샘플, 길이, 경로)
+        self.offsets: list[int] = []                   # 조각마다 곡 안의 시작 샘플
+        self._cache: dict[int, np.ndarray] = {}
+        if any(q.get("exit") == "stop" or float(q.get("track_from", -1.0)) >= 0 for q in plan.cues):
+            self._place_cues(plan, self._track(path, lufs, 0.0), path, n_total)
+            return
         raw = self._track(path, lufs, plan.start_offset)
         anchors = sorted({int(t * SR) for t in plan.restart_at if 0 < t * SR < n_total - 6 * SR})
         pos = 0
         while len(raw) and pos < n_total:
             L = min(len(raw), n_total - pos)
             self.pieces.append((pos, L, path))
+            self.offsets.append(0)
             if pos + L >= n_total:
                 break
             nxt = [a for a in anchors if a >= pos + L + SR // 2]
@@ -246,7 +283,34 @@ class _BgmSource:
                 break
             pos = nxt[0]
         self._ends_early = {k for k, (a, L, _) in enumerate(self.pieces) if a + L < n_total}
-        self._cache: dict[int, np.ndarray] = {}
+        self._fades_in = set(range(1, len(self.pieces)))
+
+    def _place_cues(self, plan: BgmPlan, raw: np.ndarray, path: str, n_total: int) -> None:
+        """큐마다 곡의 위치를 정한다(곡 위치는 파일 시각): exit=stop 은 곡의 정점이 멈춤에 오고 멈춤은 바로 앞의 조용한 곳으로,
+        나머지는 track_from 이나 앞 큐에 이어서. 반복하지 않는다 — 곡이 모자라면 그 큐에서 끝난다. 큐를 고치면 믹스 곡선·리포트가 같이 본다."""
+        self._ends_early, self._fades_in = set(), set()
+        peak = peak_time(loudness_curve(raw, SR))
+        cursor = int(plan.start_offset * SR)
+        for q in sorted(plan.cues, key=lambda c: float(c["start"])):
+            stop = q.get("exit") == "stop"
+            if stop and float(q.get("track_from", -1.0)) < 0:
+                aligned = dict(q)
+                align_stop(aligned, peak)
+                if not self.pieces or float(aligned.get("track_from", -1.0)) * SR >= cursor:    # 앞 큐가 튼 구간으로 돌아가야 하면 정점을 포기하고 잇는다
+                    q.update(aligned)
+            tf = float(q.get("track_from", -1.0))
+            off = int(tf * SR) if tf >= 0 else cursor
+            if stop:
+                q["end"] = round(float(q["end"]) + quietest_before(raw, SR, off / SR + float(q["end"]) - float(q["start"])), 2)
+            a, b = int(float(q["start"]) * SR), min(n_total, int(float(q["end"]) * SR))
+            L = min(b - a, len(raw) - off)
+            if L <= 0:
+                continue
+            if L < b - a:
+                self._ends_early.add(len(self.pieces))
+            self.pieces.append((a, L, path))
+            self.offsets.append(off)
+            cursor = off + L
 
     def _track(self, path: str, lufs: Optional[float], offset: float) -> np.ndarray:
         key = f"{path}@{offset:.2f}"
@@ -262,9 +326,9 @@ class _BgmSource:
         if k not in self._cache:
             start, L, path = self.pieces[k]
             src = next(v for kk, v in self.decoded.items() if kk.startswith(path + "@"))
-            x = src[:L].copy()
+            x = src[self.offsets[k]:self.offsets[k] + L].copy()
             f = min(self.xf, L // 3)
-            if k > 0 and f:             # 앵커에서 다시 시작: 코사인 페이드 인
+            if k in self._fades_in and f:             # 앵커에서 다시 시작: 코사인 페이드 인
                 x[:f] *= (0.5 - 0.5 * np.cos(np.linspace(0, np.pi, f, dtype=np.float32)))[:, None]
             if k in self._ends_early and f:   # 곡이 끝나는 곳: 코사인 페이드 아웃(다음 곡·처음으로 잇지 않는다)
                 x[-f:] *= (0.5 + 0.5 * np.cos(np.linspace(0, np.pi, f, dtype=np.float32)))[:, None]
@@ -330,7 +394,8 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
         x = bank.get(c.path)
         if x is None or not len(x):
             continue
-        pk = max(0, int(round(c.peak * SR)))
+        peak = c.peak or float(np.abs(x).max(axis=1).argmax()) / SR   # 매니페스트에 peak_s 가 없으면(첫 실행에 받는 CC0 파일) 실제 최대점
+        pk = max(0, int(round(peak * SR)))
         if c.fade_out and len(x) > pk + int(c.fade_out * SR):
             # 긴 꼬리만 자른다: 정점(컷에 맞출 지점)까지는 그대로, 정점 뒤 fade_out 초에 걸쳐 사라지게.
             # (예전엔 앞 fade_out 초만 남기고 그것마저 0 으로 줄여, 라이저가 컷 1초 전에 끝나 버렸다)
@@ -338,7 +403,7 @@ def mix(ff: FFmpeg, voice_wav: str | Path, dst: str | Path, *, total: float, sfx
             x = x[:pk + m].copy()
             x[pk:] *= np.linspace(1, 0, m, dtype=np.float32)[:, None] ** 2
         g = 10 ** (c.gain_db / 20)
-        start = int(round((c.t - c.peak) * SR))
+        start = int(round((c.t - peak) * SR))
         if start < 0:
             x = x[-start:]
             start = 0

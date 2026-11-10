@@ -24,6 +24,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from studio.sound.cues import loudness_curve  # noqa: E402
+
 LIMITS = {"bed": {"onsets": 2.0, "band": 0.03}, "theme": {"onsets": 3.5, "band": 0.06},
           "reprise": {"onsets": 3.5, "band": 0.06}, "air": {"onsets": 0.5, "band": 0.03}, "tag": {"onsets": 3.5, "band": 0.06}}
 TEMPO = {"default": (56.0, 92.0), "brush": (56.0, 96.0)}
@@ -36,8 +38,9 @@ def decode_mono(ffmpeg: str, path: Path, sr: int = 22050) -> np.ndarray:
 
 
 def loudness(ffmpeg: str, path: Path) -> tuple[float, float]:
+    # 곡 메타데이터(제목 등)가 UTF-8 로 섞여 나오므로 cp949 콘솔에서 text=True 만 쓰면 reader 스레드가 죽어 LUFS 가 빈다
     r = subprocess.run([ffmpeg, "-hide_banner", "-nostdin", "-i", str(path), "-af", "ebur128", "-f", "null", "-"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     tail = r.stderr[-3000:]
     i = re.findall(r"I:\s+(-?[\d.]+) LUFS", tail)
     lra = re.findall(r"LRA:\s+(-?[\d.]+) LU", tail)
@@ -104,7 +107,8 @@ def measure(path: Path, ffmpeg: str = "ffmpeg") -> dict:
     last_on = float(ons[-1]) if len(ons) else 0.0
     return {"duration": round(dur, 2), "lufs_i": li, "lra": lra, "onsets_per_s": round(len(ons) / max(1.0, dur), 3),
             "bpm": round(tempo(flux, fps), 1), "band_1_4k": round(band_ratio(x, sr), 4),
-            "lead_silence_s": lead_silence(x, sr), "tail_after_last_onset_s": round(dur - last_on, 2)}
+            "lead_silence_s": lead_silence(x, sr), "tail_after_last_onset_s": round(dur - last_on, 2),
+            "curve": loudness_curve(x, sr)}
 
 
 def gate(m: dict, *, role: str, suite: str, license_class: str, proof: str, content_id: str, approved_by: str,

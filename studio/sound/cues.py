@@ -16,7 +16,10 @@ from typing import Any, Optional
 SUITES = ("felt", "analog", "brush", "air")
 ROLES = ("theme", "bed", "air", "reprise")
 ENTRIES = ("downbeat", "fade_in")
-EXITS = ("ending", "fade_bar", "into_next")
+EXITS = ("ending", "fade_bar", "into_next", "stop")
+STOP_TAIL = 0.3       # exit=stop: 쌓인 곡이 이만큼의 꼬리로 끊긴다
+LEAD_MAX = 2.5        # silences[].lead_s 상한
+PEAK_HOP = 5.0        # 곡의 라우드니스 곡선 칸(초)
 MIN_CUE = 12.0
 MIN_PIECE = 4.0       # 침묵이 자른 큐의 남은 조각(이보다 짧으면 버린다)
 JOIN_GAP = 4.0
@@ -33,6 +36,7 @@ class MusicCue:
     exit: str = "fade_bar"
     why_in: str = ""
     why_out: str = ""
+    track_from: float = -1.0   # 곡의 몇 초부터 쓸지(−1 = 앞 큐에 이어서)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -41,6 +45,13 @@ class MusicCue:
 def _int(v: Any, default: int = -1) -> int:
     try:
         return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _num(v: Any, default: float) -> float:
+    try:
+        return float(v)
     except (TypeError, ValueError):
         return default
 
@@ -64,8 +75,10 @@ def clean_music(raw: Any, valid: list[int]) -> dict[str, Any]:
                      "energy": max(0, min(5, _int(c.get("energy"), 1))),
                      "entry": c.get("entry") if c.get("entry") in ENTRIES else "fade_in",
                      "exit": c.get("exit") if c.get("exit") in EXITS else "fade_bar",
-                     "why_in": str(c.get("why_in") or "")[:120], "why_out": str(c.get("why_out") or "")[:120]})
-    silences = [{"start_seg": seg(x.get("start_seg")), "end_seg": seg(x.get("end_seg")), "why": str(x.get("why") or "")[:120]}
+                     "why_in": str(c.get("why_in") or "")[:120], "why_out": str(c.get("why_out") or "")[:120],
+                     "track_from": round(max(-1.0, _num(c.get("track_from"), -1.0)), 2)})
+    silences = [{"start_seg": seg(x.get("start_seg")), "end_seg": seg(x.get("end_seg")), "why": str(x.get("why") or "")[:120],
+                 "lead_s": round(min(LEAD_MAX, max(0.0, _num(x.get("lead_s"), 0.0))), 2)}
                 for x in raw.get("silences") or [] if isinstance(x, dict)]
     sh = raw.get("shorts") if isinstance(raw.get("shorts"), dict) else {}
     return {"suite": raw.get("suite") if raw.get("suite") in SUITES else "felt",
@@ -116,7 +129,9 @@ def resolve(music: dict[str, Any], seg_t: dict[int, tuple[float, float]], total:
             if 0.0 <= a - c <= 3.5:
                 return max(0.0, c - 0.3)
         return a
-    silences = [(t_of(x["start_seg"], False), t_of(x["end_seg"], True)) for x in music.get("silences") or []]
+    # lead_s: 침묵을 대사 첫 낱말보다 앞에서 연다(대사 앞의 빈 박자)
+    silences = [(max(0.0, t_of(x["start_seg"], False) - float(x.get("lead_s") or 0.0)), t_of(x["end_seg"], True))
+                for x in music.get("silences") or []]
     silences += [(a, b) for a, b in holds]
     silences += [(max(0.0, a - 2.5), b + 0.6) for a, b in strong]
     silences = [(a, b) for a, b in silences if b > a]
@@ -125,11 +140,12 @@ def resolve(music: dict[str, Any], seg_t: dict[int, tuple[float, float]], total:
         a, b = t_of(c["start_seg"], False), t_of(c["end_seg"], True)
         if b - a < min_len:            # 쓴 그대로 12초가 안 되는 큐는 버린다(짧은 큐가 잦으면 산만하다)
             continue
-        for s, e in _cut([(a, b)], silences):
-            if e - s < min_piece:
-                continue
-            cues.append(MusicCue(c["id"], round(s, 2), round(e, 2), c["role"], c["energy"], c["entry"], c["exit"],
-                                 c.get("why_in", ""), c.get("why_out", "")))
+        pieces = [(s, e) for s, e in _cut([(a, b)], silences) if e - s >= min_piece]
+        for i, (s, e) in enumerate(pieces):
+            # 침묵이 큐 가운데를 자르면 앞 조각은 쉼이다 — 끊는 것은 마지막 조각뿐, 곡 위치 지정은 첫 조각에만(뒤는 이어서)
+            exit_ = "fade_bar" if c["exit"] == "stop" and i < len(pieces) - 1 else c["exit"]
+            cues.append(MusicCue(c["id"], round(s, 2), round(e, 2), c["role"], c["energy"], c["entry"], exit_,
+                                 c.get("why_in", ""), c.get("why_out", ""), float(c.get("track_from", -1.0)) if i == 0 else -1.0))
     cues.sort(key=lambda q: q.start)
     merged: list[MusicCue] = []
     for q in cues:                         # 겹치면 앞 큐가 이긴다
@@ -140,7 +156,7 @@ def resolve(music: dict[str, Any], seg_t: dict[int, tuple[float, float]], total:
         merged.append(q)
     keep = [q for q in merged if q.end - q.start >= min_piece]
     for p, q in zip(keep, keep[1:]):      # 짧은 틈은 잇는다(편성만 바뀌는 것처럼)
-        if 0 < q.start - p.end < join_gap and not any(a < q.start and b > p.end for a, b in silences):
+        if 0 < q.start - p.end < join_gap and p.exit != "stop" and not any(a < q.start and b > p.end for a, b in silences):
             p.end = q.start
             p.exit = "into_next"
     return keep, silences
@@ -171,7 +187,7 @@ def fallback_music(chapter_segs: list[int], title_seg: int, last_seg: int, *, be
 
 def cue_windows(cues: list[MusicCue], total: float, step: float = 0.01) -> "Any":
     """10ms 해상도의 큐 진폭 창(0~1): 큐 밖 0, 시작은 entry(downbeat 0.3초 · fade_in 2초), 끝은 exit(fade_bar 2초 ·
-    ending 3초 · into_next 0.8초) 코사인."""
+    ending 3초 · into_next 0.8초 · stop 0.3초) 코사인."""
     import numpy as np
     n = int(np.ceil(total / step)) + 1
     w = np.zeros(n, np.float32)
@@ -181,13 +197,53 @@ def cue_windows(cues: list[MusicCue], total: float, step: float = 0.01) -> "Any"
             continue
         seg = np.ones(i1 - i0, np.float32)
         fi = min(len(seg) // 2, int((0.3 if q.entry == "downbeat" else 2.0) / step))
-        fo = min(len(seg) // 2, int({"ending": 3.0, "into_next": 0.8}.get(q.exit, 2.0) / step))
+        fo = min(len(seg) // 2, int({"ending": 3.0, "into_next": 0.8, "stop": STOP_TAIL}.get(q.exit, 2.0) / step))
         if fi > 0:
             seg[:fi] *= 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, fi, dtype=np.float32))
         if fo > 0:
             seg[-fo:] *= 0.5 + 0.5 * np.cos(np.linspace(0, np.pi, fo, dtype=np.float32))
         w[i0:i1] = np.maximum(w[i0:i1], seg)
     return w
+
+
+def loudness_curve(x: Any, sr: int, hop: float = PEAK_HOP) -> list[float]:
+    """곡의 hop 초 단위 RMS(dB) — 끝의 모자란 칸은 뺀다. x: 모노 또는 (N, 2)."""
+    import numpy as np
+    m = x.mean(axis=1) if x.ndim > 1 else x
+    k = int(hop * sr)
+    n = len(m) // k
+    if not n:
+        return []
+    return np.round(10 * np.log10(np.mean(m[: n * k].reshape(n, k) ** 2, axis=1) + 1e-12), 1).tolist()
+
+
+def peak_time(curve: list[float], hop: float = PEAK_HOP) -> float:
+    """곡의 정점: 가장 큰 칸이 끝나는 곡 안의 시각(초). 곡선이 비면 0."""
+    return (curve.index(max(curve)) + 1) * hop if curve else 0.0
+
+
+def align_stop(q: dict[str, Any], peak: float) -> None:
+    """exit=stop 큐: 곡의 정점이 멈춤에 오게 track_from 을 잡는다. 곡이 큐보다 짧으면 반복하지 않고 큐를 늦게 시작한다.
+    정점이 곡의 맨 앞(쌓임이 없는 곡)이면 건드리지 않는다."""
+    n = float(q["end"]) - float(q["start"])
+    if peak < min(n, MIN_CUE):
+        return
+    q["track_from"] = round(max(0.0, peak - n), 2)
+    q["start"] = round(max(float(q["start"]), float(q["end"]) - peak), 2)
+
+
+def quietest_before(x: Any, sr: int, at: float, within: float = 0.15) -> float:
+    """곡의 at 초 직전 within 초 안에서 에너지(10ms)가 가장 낮은 곳까지의 거리(초, 0 이하). 뒤로는 찾지 않는다 — 멈춤이
+    침묵 구간 안으로 넘어가면 대사 앞 빈 박자가 줄어든다."""
+    import numpy as np
+    hop = sr // 100
+    i1 = min(len(x), int(at * sr))
+    n = min(i1, int(within * sr)) // hop
+    if n < 2:
+        return 0.0
+    seg = x[i1 - n * hop: i1]
+    e = np.sum((seg.mean(axis=1) if seg.ndim > 1 else seg).reshape(n, hop) ** 2, axis=1)
+    return (int(np.argmin(e)) + 1 - n) * hop / sr
 
 
 def plan_cues(cues: list[MusicCue]) -> list[dict[str, Any]]:

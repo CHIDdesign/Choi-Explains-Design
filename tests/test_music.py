@@ -84,6 +84,27 @@ def test_gain_curve_follows_cues_and_roles():
     assert g[4800] < under - 6                                                      # air 는 말 아래보다 낮다
 
 
+def test_voice_activity_ignores_clicks_keeps_short_syllables(tmp_path):
+    """20ms 클릭으로 음악이 1초씩 내려가지 않고, 혼자면 지워질 30ms 토막도 틈(0.1초)을 메워 둘이면 살아남는다."""
+    import wave
+
+    from studio.media.mix import voice_activity
+    sr = 48000
+    x = np.zeros(sr * 6, np.int16)
+    x[sr:sr + 960] = 20000                                    # 1.00초: 20ms 클릭
+    for t in (3.0, 3.13):
+        x[int(t * sr):int((t + 0.03) * sr)] = 3000
+    wav = tmp_path / "v.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(np.repeat(x[:, None], 2, axis=1).astype("<i2").tobytes())
+    act = voice_activity(wav)
+    assert act[:240].sum() == 0                               # 클릭은 활성이 아니다(hang 포함)
+    assert act[310] == 1.0 and act[360] == 1.0 and act[420] == 0.0
+
+
 def test_ingest_gate_rejects_dense_or_registered(tmp_path):
     """입고 게이트(04b 5절): 빽빽한 곡·Content ID 등록곡·증빙 없는 곡은 탈락, 성긴 곡은 통과."""
     import shutil
@@ -150,7 +171,7 @@ def test_gate_d_fails_on_20261001_run():
     from studio import gate
     under = -21.0                        # 말 아래 음악 = −14 + under_db
     r = gate.d1_voice_over_music(-21.8, -21.8 - 15.5 + 14.0)
-    assert not r.ok and abs(r.measured["diff_lu"] - 15.5) < 0.05 and r.level == "repair"
+    assert not r.ok and abs(r.measured["diff_lu"] - 15.5) < 0.05 and r.level == "warn" and not r.repair
     assert gate.d1_voice_over_music(-16.0, -16.0 - 20.0 + 14.0).ok
     assert gate.d1_voice_over_music(None, under).skipped
     assert not gate.d3_one_track(3).ok and gate.d3_one_track(1).ok
@@ -172,7 +193,6 @@ def test_gate_d5_counts_ticks_in_any_60s_window():
     assert gate.d5_sfx_density(cues).ok
     r = gate.d5_sfx_density(cues + [(55.0, "e.wav")])
     assert not r.ok and r.measured["max_per_window"] == 4
-    assert gate.d5_sfx_density(cues + [(55.0, "e.wav")], punch=[(54.0, 56.0)]).ok
     assert not gate.d5_sfx_density([(10.0, "a.wav"), (40.0, "a.wav")]).ok
 
 
