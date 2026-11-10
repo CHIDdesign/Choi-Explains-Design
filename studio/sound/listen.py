@@ -83,6 +83,8 @@ def earshot_rank(query: str, paths: list[Path], log: LogFn = noop_log, timeout: 
 
 
 class Ears:
+    ask_timeout = 180.0
+
     def __init__(self, ff: Any, key: str, *, work: Path, max_calls: int = MAX_CALLS, log: LogFn = noop_log,
                  music_cache: Path = MUSIC_CACHE, excerpt_fn: Callable[..., Path] = excerpt):
         self.ff, self.key, self.work, self.max_calls, self.log = ff, key, Path(work) / "ears", max_calls, log
@@ -131,7 +133,7 @@ class Ears:
         body = {"contents": [{"parts": content}],
                 "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}}
         try:
-            r = net.request(f"{API}/models/{MODEL}:generateContent", data=json.dumps(body).encode("utf-8"), timeout=180, rounds=1,
+            r = net.request(f"{API}/models/{MODEL}:generateContent", data=json.dumps(body).encode("utf-8"), timeout=self.ask_timeout, rounds=1,
                             headers={"x-goog-api-key": self.key, "Content-Type": "application/json"})
             if not r.ok:
                 self.log(f"(👂 Gemini HTTP {r.status}: {self._redact(r.text)[:160]})")
@@ -229,6 +231,7 @@ class Ears:
 
     def hear_mix(self, mix: Path | str, *, silences: list, cues: list[dict], sfx: list) -> Optional[dict]:
         """완성 롱폼 믹스의 세 발췌(계획한 침묵 · 말 아래 음악 · 효과음) → {music_covers_voice, sfx_jumps_out, silence_clear, note}."""
+        self.ask_timeout = 45.0             # 렌더 뒤 완성본 출력 앞이라 — 경고만 내는 말단 기능이 영상 완성을 수 분 늦추지 않게
         if not self.ok():
             return None
         parts = []

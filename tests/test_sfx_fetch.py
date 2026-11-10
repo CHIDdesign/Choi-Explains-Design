@@ -46,8 +46,8 @@ def row(i, title, lic="cc0", ms=900, tags=("wood", "thud"), creator="kim"):
 class Http:
     """net.request 대역: 검색·원문 페이지·다운로드를 흉내 내고 어떤 주소를 불렀는지 남긴다."""
 
-    def __init__(self, results, pages=None, tone=None):
-        self.results, self.pages, self.tone, self.calls = results, pages or {}, tone or {}, []
+    def __init__(self, results, pages=None, tone=None, mixkit=""):
+        self.results, self.pages, self.tone, self.calls, self.mixkit = results, pages or {}, tone or {}, [], mixkit
         self.fail = None
 
     def __call__(self, url, params=None, headers=None, timeout=30.0, dst=None, rounds=4):
@@ -58,6 +58,8 @@ class Http:
             return net.Response(429, b"{}", {"Retry-After": "0"})
         if "openverse" in url:
             return net.Response(200, json.dumps({"results": self.results}).encode())
+        if "mixkit.co/free-sound-effects" in url:
+            return net.Response(self.fail if self.fail == 403 else 200, self.mixkit.encode())
         if "src.test" in url:
             return net.Response(200, self.pages.get(url, CC_ZERO).encode())
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +72,7 @@ def ff(monkeypatch):
     if not shutil.which("ffmpeg"):
         pytest.skip("ffmpeg 없음")
     monkeypatch.setattr(F, "SEARCH_GAP", 0.0)
+    monkeypatch.setattr(F, "MIXKIT_GAP", 0.0)
     return FFmpeg()
 
 
@@ -85,6 +88,37 @@ def need(idea="heavy wood thud", queries=("wood thud",), kind="thud"):
 
 def fetcher(lib, ff, tmp, **kw):
     return F.Fetcher(lib, ff, cache=tmp / "cache", user_dir=tmp / "sfx", **kw)
+
+
+def mixkit_item(i, title, sec="0:01", tags=("Wood", "Thud")):
+    links = "".join(f'<a class="meta-links__link" data-x="link" href="/free-sound-effects/{t.lower()}/">{t}</a>' for t in tags)
+    return (f'<div class="item-grid__item"><div data-audio-player-preview-url-value="https://assets.mixkit.co/active_storage/sfx/{i}/{i}-preview.mp3" '
+            f'data-audio-player-item-id-value="{i}"></div><h2 class="item-grid-card__title">\n  {title}\n</h2>{links}'
+            f'<div class="item-grid-sfx-preview__meta-time" data-test-id="duration">\n {sec}\n</div></div>')
+
+
+def test_mixkit_is_fetched_without_a_license_page_when_openverse_is_blocked(tmp_path, ff, monkeypatch):
+    http = Http([row(1, "Wood Thud")], pages={"https://src.test/1": CC_NC},
+                mixkit=mixkit_item(7, "Wood thud") + mixkit_item(8, "Wood thud long", "0:12") + mixkit_item(9, "Wood thud song", tags=("Music",)))
+    monkeypatch.setattr(net, "request", http)
+    lib = lib_of()
+    fetcher(lib, ff, tmp_path).run([need()])
+    s = next(x for x in lib.sfx)
+    assert (s.title, s.license_class, s.attribution, s.source) == ("Wood thud", "A", "", "mixkit")
+    assert not any("/8-preview" in u or "/9-preview" in u for u in http.calls)       # 8초 이상·음악 태그는 받지 않는다
+    assert any("/discover/wood-thud/" in u for u in http.calls)
+
+
+def test_mixkit_empty_phrase_falls_back_to_last_word_and_403_stops_knocking(tmp_path, ff, monkeypatch):
+    http = Http([])
+    monkeypatch.setattr(net, "request", http)
+    f = fetcher(lib_of(), ff, tmp_path)
+    assert f._search_mixkit("rubber stamp") == []
+    assert [u.rsplit("/discover/")[1] for u in http.calls] == ["rubber-stamp/", "stamp/", "rubber/"]
+    http.calls.clear()
+    http.fail = 403
+    assert f._search_mixkit("door knock") == [] and f.index["blocked"]["mixkit.co"]
+    assert len(http.calls) == 1 and f._search_mixkit("paper tear") == [] and len(http.calls) == 1
 
 
 def test_gag_downloads_measures_trims_and_never_touches_nc_or_mismatch(tmp_path, ff, monkeypatch):

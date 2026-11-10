@@ -1,11 +1,12 @@
 """🔍 효과음 자동 조달 — 작업마다 총괄 감독의 위트 소리(sound_gags)와 파일이 모자란 카테고리를 프로그램이 직접 찾아 받는다.
 
-순서: user/sfx(이름이 맞을 때) → 기존 라이브러리 → Openverse(CC0·CC BY, 8초 미만) → 없으면 로그 한 줄 남기고 뺀다.
+순서: user/sfx(이름이 맞을 때) → 기존 라이브러리 → Mixkit(사이트 전체 무료 라이선스) + Openverse(CC0·CC BY, 8초 미만) → 없으면 로그 한 줄 남기고 뺀다.
 Claude 는 소리를 듣지 못하므로 제목·태그 + 측정값(길이·RMS·스펙트럼 중심·어택)을 글로 읽고 고른다. AI 가 없으면 규칙 점수.
 Openverse 의 라이선스는 원문보다 늦을 수 있어(2026-11-10 cc0 로 나온 곡이 원문은 CC BY-NC) 받기 전에 원문 페이지와 대조한다.
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -41,7 +42,10 @@ SEARCH_GAP = 3.2                # Openverse 익명 한도 분당 20회
 MAX_PAGES = 12                  # 한 작업에서 새로 확인하는 원문 페이지 수 — 확인한 것은 캐시에 남아 다음 작업은 확인 없이 쓴다
 SEARCH_TTL = 30 * 86400
 DEADLINE = 180.0                # 이번 작업에서 찾는 데 쓰는 시간 상한
-LICENSE_CLASS = {"cc0": "A", "by": "C"}     # 효과음은 CC0·CC BY 만(게이트 D9 등급)
+MIXKIT = "https://mixkit.co/free-sound-effects/discover/"
+MIXKIT_LICENSE = "mixkit"       # Mixkit Sound Effects Free License — YouTube·상업 사용 가능, 출처 표기 불필요(2026-11-10 mixkit.co/license 원문). 낱개 재배포·Content ID 등록은 금지
+MIXKIT_GAP = 1.0
+LICENSE_CLASS = {"cc0": "A", "by": "C", MIXKIT_LICENSE: "A"}     # 효과음은 CC0·CC BY·Mixkit 만(게이트 D9 등급, 매니페스트의 Mixkit 과 같은 A)
 USABLE = ("A", "A-sa", "B", "C")
 STOP = {"a", "an", "the", "of", "on", "in", "with", "and", "no", "sound", "effect", "effects", "sfx", "wav", "mp3"}
 JUNK = {"song", "music", "melody", "vocal", "voice", "speech", "talking", "scream", "loop", "remix", "beat"}
@@ -131,6 +135,24 @@ def _reject(m: Optional[dict[str, float]]) -> str:
     return "찌그러짐" if m["clipped"] > 0.02 else ""
 
 
+def parse_mixkit(text: str, page: str, ban: set[str]) -> list[dict[str, Any]]:
+    """Mixkit 목록 페이지 → 후보들. 미리 듣기 mp3 가 곧 받을 파일이다."""
+    out = []
+    for block in text.split('class="item-grid__item"')[1:]:
+        url = re.search(r'preview-url-value="(https://assets\.mixkit\.co/[^"]+\.mp3)"', block)
+        item = re.search(r'item-id-value="(\d+)"', block)
+        name = re.search(r'item-grid-card__title">\s*([^<]+?)\s*<', block)
+        length = re.search(r'data-test-id="duration">\s*(\d+):(\d+)', block)
+        if not (url and item and name and length) or int(length[1]) * 60 + int(length[2]) >= MAX_SEC:
+            continue
+        title = html.unescape(name[1])
+        tags = [html.unescape(t) for t in re.findall(r'href="/free-sound-effects/[^"/]+/">([^<]+)</a>', block)]
+        if not _words(f"{title} {' '.join(tags)}") & ban:
+            out.append({"id": f"mixkit-{item[1]}", "title": title, "tags": tags[:12], "url": url[1], "page": page,
+                        "license": MIXKIT_LICENSE, "label": "Mixkit Free License", "credit": "", "source": "mixkit"})
+    return out
+
+
 def needs_for(plan: dict[str, Any], shorts: list[dict[str, Any]], lib: SoundLibrary) -> list[Need]:
     """이번 작업에서 찾을 것: 감독의 위트 소리 + 이 영상에 쓰이는데 실제 파일이 MIN_LOCAL 개보다 적은 카테고리."""
     out: dict[str, Need] = {}
@@ -160,6 +182,7 @@ class Fetcher:
         self.taken: set[str] = set()            # 다른 요청이 이미 쓰는 파일
         self.deadline = time.monotonic() + DEADLINE
         self._next_search = 0.0
+        self._next_mixkit = 0.0
         self.pages_left = MAX_PAGES
         self.index: dict[str, dict[str, Any]] = {"search": {}, "files": {}, "ai": {}, "blocked": {}, "heard": {}}
 
@@ -272,10 +295,39 @@ class Fetcher:
         self.index["search"][q] = {"t": time.time(), "r": out}
         return out
 
+    def _search_mixkit(self, q: str) -> list[dict[str, Any]]:
+        """Openverse 의 효과음은 대부분 Freesound 라 라이선스 확인이 막힌다 — Mixkit 은 키 없이 열리고 사이트 전체가 한 라이선스다."""
+        key = f"mixkit:{q}"
+        hit = self.index["search"].get(key)
+        if hit and time.time() - hit["t"] < SEARCH_TTL:
+            return hit["r"]
+        blocked = self.index.setdefault("blocked", {})
+        if time.time() - blocked.get("mixkit.co", 0) < RETRY_AFTER or time.monotonic() > self.deadline:
+            return []
+        ws = re.findall(r"[a-z0-9]+", q.lower())
+        out: list[dict[str, Any]] = []
+        for slug in dict.fromkeys(["-".join(ws), *reversed(ws)]):   # 'door-knock' 이 0건이면 'knock' → 'door' — 뒤의 _matches 가 맞는 것만 남긴다
+            time.sleep(max(0.0, self._next_mixkit - time.monotonic()))
+            self._next_mixkit = time.monotonic() + MIXKIT_GAP
+            try:
+                r = net.request(f"{MIXKIT}{slug}/", timeout=15, rounds=1)
+            except net.NetError as e:
+                self.log(f"(Mixkit 연결 실패: {net.redact(str(e))[:120]})")
+                return []
+            if r.status in (403, 429):              # 차단을 우회하지 않는다 — 한동안 두드리지 않는다
+                blocked["mixkit.co"] = time.time()
+                return []
+            if r.ok:
+                out = parse_mixkit(r.text, f"{MIXKIT}{slug}/", JUNK - _words(q))
+            if out:
+                break
+        self.index["search"][key] = {"t": time.time(), "r": out}
+        return out
+
     def _candidates(self, need: Need) -> list[dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
         for q in need.queries[:3]:
-            for c in self._search(q):
+            for c in [*self._search_mixkit(q), *self._search(q)]:
                 found.setdefault(c["id"], c)
             if sum(_matches(need, _cand_words(c)) for c in found.values()) >= KEEP_CANDS:
                 break
@@ -308,21 +360,23 @@ class Fetcher:
         host = net.host_of(c["page"])
         blocked = self.index.setdefault("blocked", {})
         cdn = net.host_of(c["url"])
-        if self.pages_left <= 0 or self._blocked(c):
+        sitewide = c["license"] == MIXKIT_LICENSE      # 항목별 라이선스 페이지가 없다 — 사이트 전체가 한 라이선스
+        if (self.pages_left <= 0 and not sitewide) or self._blocked(c):
             return None                        # 확인 못 한 후보는 쓰지 않는다
         try:
-            self.pages_left -= 1
-            page = net.request(c["page"], timeout=15, rounds=1)
-            if page.status in (403, 429):       # 차단을 우회하지 않는다 — 한동안 그 사이트를 두드리지 않는다
-                blocked[host] = time.time()
-                self.log(f"({host} 가 라이선스 확인을 막아({page.status}) 확인 못 한 후보는 쓰지 않습니다)")
-                return None
-            if not page.ok:
-                return None                     # 일시 오류일 수 있어 '거절'로 기억하지 않는다
-            lic = license_from_html(c["page"], page.text)
-            if lic is None or family(lic.id) != FAMILY[c["license"]]:     # 종류가 같아야(BY 와 BY-SA 는 다른 크레딧)
-                self.index["files"][c["id"]] = {"rejected": f"원문 라이선스 불일치({lic.id if lic else '확인 안 됨'})"}
-                return None
+            if not sitewide:
+                self.pages_left -= 1
+                page = net.request(c["page"], timeout=15, rounds=1)
+                if page.status in (403, 429):       # 차단을 우회하지 않는다 — 한동안 그 사이트를 두드리지 않는다
+                    blocked[host] = time.time()
+                    self.log(f"({host} 가 라이선스 확인을 막아({page.status}) 확인 못 한 후보는 쓰지 않습니다)")
+                    return None
+                if not page.ok:
+                    return None                     # 일시 오류일 수 있어 '거절'로 기억하지 않는다
+                lic = license_from_html(c["page"], page.text)
+                if lic is None or family(lic.id) != FAMILY[c["license"]]:     # 종류가 같아야(BY 와 BY-SA 는 다른 크레딧)
+                    self.index["files"][c["id"]] = {"rejected": f"원문 라이선스 불일치({lic.id if lic else '확인 안 됨'})"}
+                    return None
             net.download(c["url"], raw, timeout=25, rounds=1)
             if raw.stat().st_size > MAX_BYTES or not _is_audio(raw):
                 self.index["files"][c["id"]] = {"rejected": "오디오가 아니거나 너무 큼"}
@@ -431,7 +485,7 @@ class Fetcher:
                 path = self.cache / c["file"]
                 os.utime(path)                  # 캐시 상한: 오래 안 쓴 것부터 지운다
                 self.taken.add(str(path))
-                self.lib.sfx.append(Sound(f"ov_{path.stem[:8]}", need.category, path, duration=c["duration"], source="openverse",
+                self.lib.sfx.append(Sound(f"ov_{path.stem[:8]}", need.category, path, duration=c["duration"], source=c["source"] if c["source"] == "mixkit" else "openverse",
                                           title=c["title"], attribution=c["credit"], license_class=LICENSE_CLASS[c["license"]]))
                 self.log(f"🔊 효과음 '{need.idea or need.category}' → {c['title']} ({c['label']} · {c['source']})")
 
