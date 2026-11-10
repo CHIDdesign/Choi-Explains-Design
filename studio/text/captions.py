@@ -1,6 +1,6 @@
 """자막 큐 만들기.
 
-- 지금 쓰는 것(롱폼·숏폼 모두): build_phrase_cues — 한 줄에 한두 마디씩(롱폼 ≤13자·≤2.4초, 숏폼 12자·2.0초,
+- 지금 쓰는 것(롱폼·숏폼 모두): build_phrase_cues — 롱폼은 한 호흡 한 줄(≤24자·≤4초), 숏폼은 한두 마디(12자·2.0초,
   릴스식 8자·1.6초), 쉼표·문장 끝·이음 어미에서 끊고 snap_cues_to_speech 로 말소리 시작(VAD)에 맞춘다
 - 예전 방식(테스트·호환용): build_cues 롱폼 줄당 16자 × 최대 2줄(넷플릭스 한국어 가이드 · 레퍼런스 채널 리서치 규칙 16),
   build_short_chunks 숏폼 1~3어절·6~14자(숏폼 리서치 4-4)
@@ -289,11 +289,16 @@ def _chunk_cost(words: list[dict], max_chars: int, max_dur: float) -> float:
         cost += 25.0
     if n == 1:
         cost += 2.0 + (6.0 if _clen(words[0]["text"]) < 4 else 0.0)
-    elif n >= 4:
+    elif n >= 4 and max_chars < 20:         # 짧은 호흡(숏폼)만 — 긴 호흡은 글자 수·시간이 상한이다
         cost += 3.0 * (n - 3)
     if chars < 4:
         cost += 3.0
+    if max_chars >= 20 and chars < 10:     # 긴 호흡: 짧은 꼬리 조각은 앞줄에 붙인다
+        cost += 10 - chars
     return cost
+
+
+CUE_MAX_CHARS, CUE_MAX_SEC = 24, 4.0      # 자막 한 줄의 상한(디자인 v5) — 꼬리 합치기도 넘지 않는다
 
 
 def split_phrases(items: list[dict], *, max_chars: int = 13, max_dur: float = 2.4, max_words: int = 5) -> list[list[dict]]:
@@ -329,6 +334,7 @@ def build_phrase_cues(
     *,
     max_chars: int = 13,
     max_dur: float = 2.4,
+    max_words: int = 5,
     min_dur: float = 0.45,
     tail: float = 0.12,
     emphasis=None,
@@ -348,7 +354,7 @@ def build_phrase_cues(
             if em:
                 item["em"] = em
             items.append(item)
-        for chunk in split_phrases(items, max_chars=max_chars, max_dur=max_dur):
+        for chunk in split_phrases(items, max_chars=max_chars, max_dur=max_dur, max_words=max_words):
             line = [{k: v for k, v in it.items() if k != "raw"} for it in chunk]
             cues.append({"start": line[0]["start"], "end": line[-1]["end"], "lines": [line]})
     # 편집 시각 순으로(숏폼 재배치·겹친 단어가 있어도 끝 시각 계산이 음수가 되지 않게)
@@ -360,14 +366,15 @@ def build_phrase_cues(
         short = sum(_clen(x["text"]) for x in words_c) <= 2
         if merged and short and c["start"] - merged[-1]["end"] < 0.3:
             prev = merged[-1]["lines"][0]
-            if sum(_clen(x["text"]) for x in prev + words_c) + len(prev) <= max_chars + 3:
+            if (sum(_clen(x["text"]) for x in prev + words_c) + len(prev) <= min(max_chars + 3, CUE_MAX_CHARS)
+                    and c["end"] - merged[-1]["start"] <= CUE_MAX_SEC):
                 merged[-1]["lines"] = [prev + words_c]
                 merged[-1]["end"] = c["end"]
                 continue
         merged.append(c)
     for i, c in enumerate(merged):
         nxt = merged[i + 1]["start"] if i + 1 < len(merged) else c["end"] + 0.5
-        c["end"] = round(min(max(c["end"] + tail, c["start"] + min_dur), nxt), 3)
+        c["end"] = round(min(max(c["end"] + tail, c["start"] + min_dur), nxt, c["start"] + CUE_MAX_SEC), 3)
     one_em_per_cue(merged)
     return merged
 

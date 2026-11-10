@@ -17,6 +17,17 @@ def test_free_side_is_opposite_of_busy_subject():
     assert p3["side"] == "center" and p3["dark"] is True
 
 
+def test_soft_picture_is_flagged_for_no_full_frame(tmp_path):
+    import cv2
+    from PIL import Image
+    a = np.random.default_rng(3).integers(0, 255, (1000, 1400), np.uint8)
+    sharp, soft = tmp_path / "sharp.jpg", tmp_path / "soft.jpg"
+    Image.fromarray(a).convert("RGB").save(sharp, quality=95)
+    Image.fromarray(cv2.GaussianBlur(a, (0, 0), 6)).convert("RGB").save(soft, quality=95)
+    assert compose.analyze_image(sharp)["soft"] is False and compose.analyze_image(soft)["soft"] is True
+    assert compose.plan_media({"soft": True})["safe"]["soft"] is True
+
+
 def test_cover_crop_keeps_face_or_falls_back_to_contain():
     # 세로 사진(1000×1500)을 16:9 로 꽉 채우면 위아래가 잘린다 — 얼굴이 위쪽이면 초점을 얼굴로
     info = {"w": 1000, "h": 1500, "face": [0.3, 0.05, 0.4, 0.25], "side": "left", "dark": False}

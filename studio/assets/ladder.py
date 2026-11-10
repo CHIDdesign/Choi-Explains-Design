@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .. import net
+from ..vision import compose
 from ..broll.images import ImageResult
 from ..broll.resolve import MediaPlan, MediaResolver, _thumb_url
 from ..broll.wikipedia import _safe
@@ -63,6 +64,7 @@ def clean_item(it: dict[str, Any]) -> dict[str, Any]:
     d["web_pages"] = [str(x).strip() for x in d.get("web_pages") or [] if str(x).strip().startswith("http")][:3]
     d["display"] = str(d.get("display") or "").strip()[:8]
     d["quote"] = clip_words(d.get("quote"), 36)
+    d["annotations"] = [a for a in d.get("annotations") or [] if isinstance(a, dict)][:3]
     return d
 
 
@@ -161,7 +163,8 @@ class Ladder:
                      # 역추상화(자료 리서처): 같은 장면을 다른 각도(손·과정·장소·질감)로 찾는 검색어와 화면 전략
                      "alt_queries": [str(q) for q in items[i]["stock"].get("alt_queries") or [] if str(q).strip()][:3],
                      "angle": str(items[i]["stock"].get("angle") or ""),
-                     "context": self.d.context(items[i].get("start_seg")) if self.d.context else ""}
+                     "context": self.d.context(items[i].get("start_seg")) if self.d.context else "",
+                     "annotations": items[i]["annotations"]}
                     for i in stock_ix]
             try:
                 got = self.d.stock(reqs)
@@ -430,7 +433,7 @@ class Ladder:
         chosen: dict[int, list[tuple[int, dict[str, Any]]]] = {i: [(j, {"score": -1}) for j in pick_by_rule(c, it["count"])]
                                                                for i, it, c in live}
         if self.d.pick is not None:
-            from ..stock.research import contact_sheet
+            from ..stock.research import annotation_lines, contact_sheet
             sheets, lines = [], []
             for r, (i, it, cands) in enumerate(live, start=1):
                 cells = []
@@ -448,6 +451,7 @@ class Ladder:
                              f" · must_show: {it.get('must_show', '')}"
                              f" · avoid: {it.get('avoid', '')} · label: {it.get('label', '')} · count {it['count']}"
                              + (f"\n  그 장면의 말: 「{ctx[:160]}」" if ctx else "")
+                             + annotation_lines(it["annotations"])
                              + "".join(f"\n  C{j}: {m['name'][:60]} — {str(m.get('description', ''))[:70]}"
                                        f" ({m.get('src')}, {m.get('lic', {}).get('name', '')}"
                                        + (" · 인용 — 그 대상 자체를 설명하는 문장에서만" if m.get("tier") == "C" else "")
@@ -489,7 +493,7 @@ class Ladder:
                                title=str(m.get("title") or Path(m["name"]).stem),
                                creator=re.sub(r"\s+", " ", m.get("artist") or ""), source_url=m.get("page", ""),
                                lic_obj=lic, copy=False, focus=ch.get("focus_box") or [], shows=ch.get("shows", ""),
-                               score=int(ch.get("score", -1)), institution=str(m.get("institution") or ""),
+                               score=int(ch.get("score", -1)), marks=ch.get("marks"), institution=str(m.get("institution") or ""),
                                year=str(m.get("year") or ""),
                                credit=(cr[0], cr[1]) if isinstance(cr, (list, tuple)) and len(cr) == 2 else
                                ((None, m["credit_full"]) if m.get("credit_full") else None))
@@ -510,7 +514,7 @@ class Ladder:
                   role: str, title: str = "", creator: str = "", source_url: str = "", lic_text: str = "",
                   lic_obj: Optional[License] = None, tier: str = "", copy: bool = True, focus: list | None = None,
                   shows: str = "", score: int = -1, credit: Optional[tuple[Optional[str], str]] = None,
-                  institution: str = "", year: str = "") -> None:
+                  institution: str = "", year: str = "", marks: Optional[list] = None) -> None:
         from PIL import Image
         if copy:
             self.img_dir.mkdir(parents=True, exist_ok=True)
@@ -527,16 +531,14 @@ class Ladder:
             path = dst
         lic = lic_obj or (License(tier=tier, name=lic_text) if tier else classify(lic_text, origin=origin))
         orig = path
-        if kind == "photo" and origin in ("commons", "wikipedia", "openverse", "museum", "web") and lic.tier != "C" \
-                and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
-            # 하우스 트리트먼트 T1(07b): 색이 정보인 실물(작품·제품·건물)이라 색은 그대로 두고 레벨만 [잉크, 종이] 안으로
-            from ..grade.house import HOUSE_VERSION, treat_file
-            base = path.with_name(f"{path.stem}.full.h{HOUSE_VERSION}")
-            try:
-                path = base.with_suffix(".jpg") if base.with_suffix(".jpg").exists() else \
-                    treat_file(path, base, kind="photo", keep_color=True, surface="full")[0]
-            except Exception as e:  # noqa: BLE001
-                self.log(f"자료 톤 처리 실패({path.name}): {e}")
+        if kind == "photo":                                  # 스캔 여백·무자료 쐐기가 전면 자료의 가장자리에 보이면 전면도 아니고 놓인 인쇄물도 아니다
+            located = [m for m in marks or [] if isinstance(m, dict) and (m.get("box") or m.get("point") or m.get("outline"))]
+            trimmed = compose.trim_scan(path, marks_extent(located))
+            if trimmed:
+                path, rect = trimmed
+                marks = compose.reframe_marks(marks or [], rect)
+                if focus:
+                    focus = compose.reframe_marks([{"box": list(focus)}], rect)[0]["box"]
         w = h = 0
         try:
             with Image.open(path) as im:
@@ -572,14 +574,18 @@ class Ladder:
             # 디자인 v3 콜라주: 바탕이 고른 판화·스캔·제품 사진은 오려서 바닥 타원 위에 세운다(못 오리면 프린트로)
             from .cutout import cutout
             try:
-                c = cutout(path)
+                c = cutout(orig)
                 cut = c.relative_to(self.public).as_posix() if c is not None and c.is_relative_to(self.public) else ""
             except Exception as e:  # noqa: BLE001 - 오리기는 덤
                 self.log(f"오려 내기 실패({path.name}): {e}")
+        tight = ""
+        if kind == "photo" and not cut:                      # 못 오린 물건은 사각 인화지로 — 촬영 배경까지 붙이지 않는다
+            t = compose.tight_crop(orig)
+            tight = t.relative_to(self.public).as_posix() if t is not None and t.is_relative_to(self.public) else ""
         o["assets"].append({"src": rel, "kind": kind, "w": w, "h": h, "focus": meta.focus_box or None, "mat_src": mat,
-                            "cut": cut,
+                            "cut": cut, "tight": tight,
                             "credit": meta.credit_short, "credit_full": meta.credit_full, "tier": lic.tier,
-                            "origin": origin, "shows": shows, "score": score,
+                            "origin": origin, "shows": shows, "score": score, "marks": marks or [],
                             "meta": {"title": title[:80], "creator": creator[:60], "ref": source_url}})
         o["rung"] = o["rung"] or rung
         if self.d.library is not None and lic.tier in ("own", "A", "A-sa") and origin not in ("library",):
@@ -589,6 +595,23 @@ class Ladder:
                 self.d.library.add(orig, meta.to_dict(), names, qid=str(((o.get("info") or {}).get("qid")) or ""))
             except Exception as e:  # noqa: BLE001 - 라이브러리는 덤
                 self.log(f"자산 라이브러리 등록 실패: {e}")
+
+
+def marks_extent(marks: list[dict[str, Any]]) -> list[float] | None:
+    """표시 대상 전부를 담는 상자 [x, y, w, h] — 없으면 None."""
+    pts: list[tuple[float, float]] = []
+    for m in marks:
+        if isinstance(m.get("box"), list) and len(m["box"]) == 4:
+            x, y, bw, bh = m["box"]
+            pts += [(x, y), (x + bw, y + bh)]
+        if isinstance(m.get("point"), list) and len(m["point"]) == 2:
+            pts.append(tuple(m["point"]))
+        if isinstance(m.get("outline"), list):
+            pts += list(zip(m["outline"][::2], m["outline"][1::2]))
+    if not pts:
+        return None
+    x0, y0 = min(p[0] for p in pts), min(p[1] for p in pts)
+    return [x0, y0, max(p[0] for p in pts) - x0, max(p[1] for p in pts) - y0]
 
 
 def choose(pick: dict[str, Any], n: int, count: int, kind: str) -> list[tuple[int, dict[str, Any]]]:
@@ -613,7 +636,8 @@ def choose(pick: dict[str, Any], n: int, count: int, kind: str) -> list[tuple[in
             ok_box = isinstance(fb, list) and len(fb) == 4 and all(isinstance(v, (int, float)) for v in fb) \
                 and fb[2] > 0 and fb[3] > 0
             out.append((c - 1, {"score": score, "shows": str(ch.get("shows") or "")[:40],
-                                "focus_box": [max(0.0, min(1.0, float(v))) for v in fb] if ok_box else []}))
+                                "focus_box": [max(0.0, min(1.0, float(v))) for v in fb] if ok_box else [],
+                                "marks": ch.get("marks") or []}))
     out.sort(key=lambda x: -x[1]["score"])
     return out[:count]
 

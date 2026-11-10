@@ -13,14 +13,70 @@ from __future__ import annotations
 
 import html as _html
 import re
+import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from .models import Utterance
+from .paths import RENDERER_DIR
 from .util import fmt_ts, write_json
 
 LEVELS = ("block", "repair", "warn")
+
+# 숫자의 지위(docs/research/롱폼 숏폼 디렉팅 문법 조사.md): 차단·수리는 '구조'(프로그램이 결함을 있음/없음으로 판정 — 싱크·중복·자료 누락·대본 충실·
+# 라이선스·길이)만. 나머지는 경고. 측정 = 연구로 방향이 받쳐짐(초·퍼센트는 공학값) · 실무 = 이름 있는 현업·채널 주인 · 취향 = 시청 추정·공학값.
+# 시험값은 조사의 제안이라 A/B 로 정한다. tests/test_directing_rules.py 가 '구조'가 아닌 id 의 차단·수리를 막는다.
+THRESHOLDS: dict[str, tuple[str, str]] = {
+    "A1_length": ("구조", "대본 글자의 1.25배 · 대본 밖 포함 1.8배"),
+    "A2_planned": ("취향", "감독 예상의 0.8~1.25배"),
+    "A3_duplicates": ("구조", "같은 대본 구간 60% 겹침 0쌍"),
+    "A5_greetings": ("구조", "인사 첫 10% · 끝인사 마지막 10%"),
+    "A6_distribution": ("취향", "최대 10등분(칸 30초+)에 빈 칸 0"),
+    "A7_face_run": ("취향", "맨얼굴 50초"),
+    "A8_face_ratio": ("취향", "얼굴 40~85%"),
+    "A9_title": ("취향", "타이틀 40초 안"),
+    "A12_chain": ("취향", "이어진 그래픽 3개"),
+    "A14_hold_guard": ("구조", "선언한 홀드 안 그래픽 0"),
+    "A15_step_sync": ("구조", "단계마다 새 그래픽 0"),
+    "A16_hold_presence": ("취향", "60초+ 챕터에 얼굴 12초"),
+    "A18_word_sync": ("측정", "낱말 착지 중앙값 0.35초 · 최대 1초"),
+    "A19_link_audit": ("실무", "'그리고' 3연속(시험값)"),
+    "A20_reprise": ("측정", "질문 → 답 120초(시험값)"),
+    "H1_first_speech": ("취향", "첫 말 0.5초"),
+    "H2_first_change": ("취향", "첫 화면 변화 3초"),
+    "H3_question": ("취향", "8초 안에 질문"),
+    "H4_short_open": ("실무", "숏폼 2초 안에 말이나 훅 글자"),
+    "S1_hedge": ("실무", "뺀 단서 문장 0"),
+    "P1_phone_px": ("취향", "고정 자리 글자 28px"),
+    "B1_media_ratio": ("취향", "실물 자료 20%"),
+    "B2_hero": ("취향", "45초+ 챕터에 전면 자료"),
+    "B3_query_label": ("구조", "자료 라벨 = 검색어 0"),
+    "B4_direction": ("구조", "화면 글자 연출 메모 0"),
+    "B5_internal": ("구조", "화면 글자 내부 이름 0"),
+    "B6_relevance": ("구조", "비전 선택 2점 미만 0"),
+    "B7_variety": ("취향", "같은 템플릿 2연속 · 25% · 조합 20%"),
+    "B10_portraits": ("구조", "구도 분석 실패 0"),
+    "B11_motif_repeat": ("구조", "같은 도식 2회 · 로고 1회(채널 주인)"),
+    "B12_cutaway_role": ("실무", "임무 없는 컷어웨이 0 · mood 15%(시험값)"),
+    "F1_blotch": ("구조", "색 잡음 ×2.0 · 색상 튐 1%"),
+    "F3_sources": ("구조", "원본 사이 얼굴 ΔE 3"),
+    "F4_clipping": ("구조", "날아간 면 2% · 증가 1%p"),
+    "F6_tags": ("구조", "BT.709 · tv · yuv420p"),
+    "D1_voice_music": ("측정", "목소리 − 음악 18~26 LU(논문 하한은 10 LU, A/B 전 수리 금지)"),
+    "D3_one_track": ("구조", "한 영상 한 곡"),
+    "D5_sfx_density": ("취향", "60초 창 효과음 상한"),
+    "D6_fit": ("취향", "음악 감독 점수 7"),
+    "D8_occupancy": ("취향", "음악 점유율 30~65%"),
+    "D9_license": ("구조", "라이선스 미확인 0"),
+    "D10_voice": ("측정", "목소리 −16 ±1 LUFS"),
+    "D11_duration": ("구조", "믹스·렌더 길이 1프레임"),
+    "D11_sfx_landing": ("구조", "효과음·착지 0.25초"),
+    "D11_voice_caption": ("구조", "첫 자막·목소리 0.25초"),
+    "D12_silences": ("실무", "전환·정점 앞 진짜 침묵 2곳"),
+    "D13_ears": ("취향", "Gemini 가 믹스 발췌를 들은 소견 — 음악이 말을 덮음·효과음 튐·계획한 침묵(한 편 모델 소견이라 경고만)"),
+    "E_timeline": ("취향", "가중 3.8 — 한 편 모델 점수라 참고만"),
+}
 
 
 @dataclass
@@ -191,9 +247,9 @@ def _spans(graphics: list[dict], callouts: Optional[list[dict]] = None, *, skip:
 def a6_distribution(graphics: list[dict], total: float, callouts: Optional[list[dict]] = None, *,
                     bin_min: float = 30.0, max_bins: int = 10) -> GateResult:
     """영상을 (최대) 10등분했을 때 그래픽이 0개인 칸이 없어야 한다. 짧은 영상은 칸을 30초 이상으로(1분 영상 = 2칸).
-    타이틀·챕터 카드·이름 자막은 내용 그래픽이 아니라 세지 않는다."""
+    타이틀·챕터 카드·이름 자막은 내용 그래픽이 아니라 세지 않는다. 시계 기준이라 경고만 — 빈 칸은 토크 구간일 수 있다."""
     if total <= 0:
-        return _skip("A6_distribution", "block", "편집본 없음")
+        return _skip("A6_distribution", "warn", "편집본 없음")
     n = max(1, min(max_bins, int(total // bin_min)))
     w = total / n
     spans = _spans(graphics, callouts, skip=AUTO_ONLY)
@@ -201,10 +257,10 @@ def a6_distribution(graphics: list[dict], total: float, callouts: Optional[list[
     m = {"bins": n, "bin_sec": round(w, 1), "empty": empty,
          "empty_at": [[round(i * w, 1), round((i + 1) * w, 1)] for i in empty]}
     if empty:
-        return _bad("A6_distribution", "block", m,
+        return _bad("A6_distribution", "warn", m,
                     f"{n}등분 중 그래픽이 하나도 없는 칸 {len(empty)}개("
-                    + ", ".join(f"{fmt_ts(i * w)}–{fmt_ts((i + 1) * w)}" for i in empty[:4]) + ")", "fill_gaps")
-    return _ok("A6_distribution", "block", m, f"{n}등분 모든 칸에 그래픽 있음")
+                    + ", ".join(f"{fmt_ts(i * w)}–{fmt_ts((i + 1) * w)}" for i in empty[:4]) + ")")
+    return _ok("A6_distribution", "warn", m, f"{n}등분 모든 칸에 그래픽 있음")
 
 
 def face_only_spans(graphics: list[dict], callouts: Optional[list[dict]], total: float) -> list[tuple[float, float]]:
@@ -220,50 +276,17 @@ def face_only_spans(graphics: list[dict], callouts: Optional[list[dict]], total:
     return out
 
 
-def fill_targets(empty_bins: list, face_runs: list[tuple[float, float]], holds: list[tuple[float, float]], *,
-                 soft: float = 25.0, step: float = 18.0, edge: float = 3.0) -> list[float]:
-    """A6·A7 수리용 보충 카드 자리: 빈 칸의 가운데 + 25초 넘는 맨얼굴 구간 안 (시작 +10초부터) 18초마다. 홀드(편집 감독이
-    얼굴로 지킨 곳, 앞 2초 여유) 안에 떨어진 자리는 같은 칸·구간 안에서 홀드 밖 가장 가까운 곳(홀드 끝 +3초 / 시작 −3초)으로
-    옮기고, 옮길 곳이 없으면 버린다 — 2026-10-03: 빈 칸 가운데와 18초 자리가 모두 홀드 안이라 하나도 못 채우고 A7 block."""
-    want: list[tuple[float, float, float]] = [((a + b) / 2, a, b) for a, b in empty_bins]
-    for a, b in face_runs:
-        if b - a > soft:
-            t = a + 10.0
-            while t < b - 6.0:
-                want.append((t, a, b))
-                t += step
-
-    def hold_at(t: float):
-        return next(((x, y) for x, y in holds if x - 2.0 <= t <= y), None)
-
-    out: list[float] = []
-    for t, lo, hi in want:
-        h = hold_at(t)
-        if h is None:
-            out.append(t)
-            continue
-        alts = [x for x in (h[1] + edge, h[0] - edge) if lo + 1.5 <= x <= hi - 1.5 and hold_at(x) is None]
-        if alts:
-            out.append(min(alts, key=lambda x: abs(x - t)))
-    return sorted({round(x, 3) for x in out})
-
-
-A7_HARD = 40.0          # 맨얼굴이 이보다 길면 block(수리 뒤에도 남으면 멈춤)
-
-
 def a7_face_run(graphics: list[dict], total: float, callouts: Optional[list[dict]] = None, *,
-                soft: float = 25.0, hard: float = A7_HARD) -> GateResult:
-    """맨얼굴 최장 구간 — 25초 이하(플레이북 절대 상한). 25~40초는 repair, 40초 초과는 block."""
+                soft: float = 50.0) -> GateResult:
+    """맨얼굴 최장 구간 — 50초 넘으면 경고(30~50초 토크는 디자인 v5 의 곡선). 근거 없는 숫자라 카드를 끼워 고치지 않는다."""
     runs = face_only_spans(graphics, callouts, total)
     longest = max((b - a for a, b in runs), default=0.0)
     over = [(round(a, 1), round(b, 1)) for a, b in runs if b - a > soft]
-    m = {"max_face_run": round(longest, 1), "over_25": len(over), "runs": over[:8]}
+    m = {"max_face_run": round(longest, 1), "over_soft": len(over), "runs": over[:8]}
     if longest <= soft:
-        return _ok("A7_face_run", "block", m, f"얼굴만 이어진 최장 {longest:.0f}초")
+        return _ok("A7_face_run", "warn", m, f"얼굴만 이어진 최장 {longest:.0f}초")
     a, b = max(runs, key=lambda r: r[1] - r[0])
-    level = "block" if longest > hard else "repair"
-    return _bad("A7_face_run", level, m, f"얼굴만 {longest:.0f}초 이어짐({fmt_ts(a)}–{fmt_ts(b)}, 25초 넘는 곳 {len(over)}곳)",
-                "fill_gaps")
+    return _bad("A7_face_run", "warn", m, f"얼굴만 {longest:.0f}초 이어짐({fmt_ts(a)}–{fmt_ts(b)}, {soft:.0f}초 넘는 곳 {len(over)}곳)")
 
 
 def face_ratio(graphics: list[dict], total: float) -> float:
@@ -278,34 +301,33 @@ def face_ratio(graphics: list[dict], total: float) -> float:
     return max(0.0, 1.0 - covered / max(1e-6, total))
 
 
-def a8_face_ratio(ratio: float, *, lo: float = 0.08, hi: float = 0.40) -> GateResult:
-    """얼굴 화면 비율 15~55%(디자인 v3 — 채널 주인: 얼굴보다 시청각 자료를 최대한 많이. 예전 35~70%)."""
+def a8_face_ratio(ratio: float, *, lo: float = 0.40, hi: float = 0.85) -> GateResult:
+    """얼굴 화면 비율 40~85%(디자인 v5, 목표 50~60%). 수리 없음 — 카드를 더해도 비율은 바뀌지 않는다."""
     m = {"face_ratio": round(ratio, 3)}
     if lo <= ratio <= hi:
-        return _ok("A8_face_ratio", "repair", m, f"얼굴 화면 비율 {ratio * 100:.0f}%")
-    return _bad("A8_face_ratio", "repair", m,
+        return _ok("A8_face_ratio", "warn", m, f"얼굴 화면 비율 {ratio * 100:.0f}%")
+    return _bad("A8_face_ratio", "warn", m,
                 f"얼굴 화면 비율 {ratio * 100:.0f}%(권장 {lo * 100:.0f}~{hi * 100:.0f}%) — "
-                + ("전체화면 그래픽이 너무 적음" if ratio > hi else "얼굴이 너무 적게 보임"), "fill_gaps" if ratio > hi else "")
+                + ("전체화면 자료가 너무 적음" if ratio > hi else "얼굴이 너무 적게 보임"))
 
 
 def a9_title(graphics: list[dict], *, limit: float = 40.0) -> GateResult:
-    """타이틀 카드는 본편 시작 후 40초 안(10/1 테스트: 06:48)."""
+    """타이틀 카드는 본편 시작 후 40초 안(10/1 테스트: 06:48). 콜드 오픈 길이는 근거가 없는 숫자라 경고만."""
     ts = [float(g["start"]) for g in graphics if g.get("template") == "title"]
     if not ts:
-        return _skip("A9_title", "block", "타이틀 카드 없음")
+        return _skip("A9_title", "warn", "타이틀 카드 없음")
     t = min(ts)
     m = {"title_at": round(t, 1)}
     if t <= limit:
-        return _ok("A9_title", "block", m, f"타이틀 {fmt_ts(t)}")
-    return _bad("A9_title", "block", m, f"타이틀 카드가 본편 {fmt_ts(t)} 에 나옴(40초 안이어야 함)", "retime_title")
+        return _ok("A9_title", "warn", m, f"타이틀 {fmt_ts(t)}")
+    return _bad("A9_title", "warn", m, f"타이틀 카드가 본편 {fmt_ts(t)} 에 나옴(권장 40초 안)")
 
 
 # ---------------------------------------------------------------------------
-# 게이트 A11~A17 — 리듬(docs/upgrade/05_편집_문법_v2.md 4-2). 시계가 아니라 내용이 박자를 정한다:
-# '모든 것이 중간'(빠른 묶음도 긴 홀드도 없음)을 잡는다
+# 게이트 A12~A16 — 리듬(docs/upgrade/05_편집_문법_v2.md 4-2). 시계가 아니라 내용이 박자를 정한다
 # ---------------------------------------------------------------------------
 
-CONTENT_SKIP = ("title", "lower_third", "chapter", "recap")
+CONTENT_SKIP = ("title", "lower_third", "chapter")
 
 
 def _content(graphics: list[dict]) -> list[dict]:
@@ -315,26 +337,6 @@ def _content(graphics: list[dict]) -> list[dict]:
 
 def _seq_of(g: dict) -> str:
     return str((g.get("data") or {}).get("seq_id") or g.get("sequence_id") or "")
-
-
-def a11_fast_runs(graphics: list[dict], total: float, *, fast_gap: float = 2.5, min_total: float = 180.0) -> GateResult:
-    """빠른 묶음: 3장 이상 시퀀스 안에서 2.5초 이하 간격이 2번 이상 이어지는 곳이 하나는 있어야 한다(3분 넘는 영상)."""
-    if total < min_total:
-        return _skip("A11_fast_runs", "repair", "3분 미만 — 건너뜀")
-    seqs: dict[str, list[dict]] = {}
-    for g in _content(graphics):
-        if _seq_of(g):
-            seqs.setdefault(_seq_of(g), []).append(g)
-    fast = []
-    for sid, gs in seqs.items():
-        starts = [g["start"] for g in gs]
-        gaps = [b - a for a, b in zip(starts, starts[1:])]
-        if len(gs) >= 3 and sum(1 for x in gaps if x <= fast_gap) >= 2:
-            fast.append(sid)
-    m = {"sequences": len(seqs), "fast": fast}
-    if fast:
-        return _ok("A11_fast_runs", "repair", m, f"빠른 묶음 {len(fast)}곳")
-    return _bad("A11_fast_runs", "repair", m, f"빠른 묶음(시퀀스 안 2.5초 이하 컷)이 하나도 없음 — 시퀀스 {len(seqs)}개", "")
 
 
 def graphic_chains(graphics: list[dict], *, gap: float = 1.0) -> list[list[dict]]:
@@ -363,23 +365,10 @@ def a12_chain(graphics: list[dict], *, chain_max: int = 3) -> GateResult:
     longest = max((len(c) for c in graphic_chains(graphics)), default=1)
     m = {"longest": longest, "chains": [[g.get("id") for g in c] for c in chains[:4]]}
     if not chains:
-        return _ok("A12_chain", "repair", m, f"그래픽 사슬 최장 {longest}개")
+        return _ok("A12_chain", "warn", m, f"그래픽 사슬 최장 {longest}개")
     c = chains[0]
-    return _bad("A12_chain", "repair", m, f"시퀀스가 아닌 그래픽 {len(c)}개가 1초 안 간격으로 이어짐({fmt_ts(c[0]['start'])}–"
-                f"{fmt_ts(c[-1]['end'])}) — 3개까지", "trim_chain")
-
-
-def a13_duration_spread(graphics: list[dict], *, spread_min: float = 4.0) -> GateResult:
-    durs = sorted(g["end"] - g["start"] for g in _content(graphics))
-    if len(durs) < 6:
-        return _skip("A13_spread", "warn", "그래픽이 적어 건너뜀")
-    p10 = durs[int(0.1 * (len(durs) - 1))]
-    p90 = durs[int(round(0.9 * (len(durs) - 1)))]
-    r = p90 / max(0.1, p10)
-    m = {"p10": round(p10, 2), "p90": round(p90, 2), "ratio": round(r, 2)}
-    if r >= spread_min:
-        return _ok("A13_spread", "warn", m, f"길이 분포 p90/p10 = {r:.1f}")
-    return _bad("A13_spread", "warn", m, f"그래픽 길이가 다 비슷함(p90/p10 = {r:.1f}, {spread_min:.0f} 이상 권장) — 빠른 묶음·긴 자료가 없다")
+    return _bad("A12_chain", "warn", m, f"시퀀스가 아닌 그래픽 {len(c)}개가 1초 안 간격으로 이어짐({fmt_ts(c[0]['start'])}–"
+                f"{fmt_ts(c[-1]['end'])}) — 권장 3개까지")
 
 
 def a14_hold_guard(graphics: list[dict], holds: list[tuple[float, float]], callouts: Optional[list[dict]] = None,
@@ -456,17 +445,171 @@ def a16_hold_presence(graphics: list[dict], chapters: list[dict], total: float, 
                 f"(최장 {short[0]['longest']:.0f}초)")
 
 
-def a17_monotony(graphics: list[dict], *, cv_warn: float = 0.45) -> GateResult:
-    starts = [g["start"] for g in _content(graphics)]
-    gaps = [b - a for a, b in zip(starts, starts[1:])]
-    if len(gaps) < 6:
-        return _skip("A17_monotony", "warn", "그래픽이 적어 건너뜀")
-    mean = sum(gaps) / len(gaps)
-    cv = (sum((x - mean) ** 2 for x in gaps) / len(gaps)) ** 0.5 / max(1e-6, mean)
-    m = {"gap_cv": round(cv, 2), "mean_gap": round(mean, 1)}
-    if cv >= cv_warn:
-        return _ok("A17_monotony", "warn", m, f"간격 변화 CV {cv:.2f}")
-    return _bad("A17_monotony", "warn", m, f"그래픽 간격이 시계처럼 고름(CV {cv:.2f}) — 내용이 박자를 정하게")
+def a18_word_sync(graphics: list[dict], *, median_max: float = 0.35, any_max: float = 1.0) -> GateResult:
+    """표시가 말한 낱말에 착지했나. wordMarks = time_graphics 가 낱말을 찾은 표시마다 남긴 {land(그래픽 기준 초), spoken(편집 시각)}
+    — 그 뒤 겹침 풀기·수리로 그래픽이 밀리면 여기서 잡힌다. 하이라이트로 밀기 전 본편 시각에서 부른다."""
+    lags = [abs(float(g["start"]) + float(m["land"]) - float(m["spoken"])) for g in graphics for m in _d(g).get("wordMarks") or []]
+    if not lags:
+        return _ok("A18_word_sync", "warn", {"n": 0}, "낱말에 맞춘 표시 없음")
+    med, worst = statistics.median(lags), max(lags)
+    m = {"n": len(lags), "median": round(med, 3), "max": round(worst, 3)}
+    if med > median_max or worst > any_max:
+        return _bad("A18_word_sync", "warn", m, f"표시가 말과 어긋남: 중앙값 {med:.2f}초(≤{median_max}) · 최대 {worst:.2f}초(≤{any_max:.1f})")
+    return _ok("A18_word_sync", "warn", m, f"낱말 착지 {len(lags)}곳 · 중앙값 {med:.2f}초 · 최대 {worst:.2f}초")
+
+
+def and_runs(segments: list[dict], *, run: int = 3) -> list[list[dict]]:
+    """단락 연결 감사: 앞 단락과 '그리고'(link = and)로만 이어진 단락이 run 개 이상 연달아 있는 묶음들."""
+    out: list[list[dict]] = []
+    cur: list[dict] = []
+    for s in list(segments) + [{}]:
+        if s.get("link") == "and":
+            cur.append(s)
+            continue
+        if len(cur) >= run:
+            out.append(cur)
+        cur = []
+    return out
+
+
+def a19_link_audit(segments: list[dict]) -> GateResult:
+    """단락 연결(treatment.segments[].link)이 '그래서·그런데' 없이 '그리고'만 이어지는 곳. 대본은 못 고치므로 알리기만 하고
+    연출은 merge_plan(link_pauses)이 쉼으로 끊는다."""
+    links = [str(s.get("link") or "") for s in segments]
+    if not any(links):
+        return _skip("A19_link_audit", "warn", "단락 연결 선언 없음")
+    runs = and_runs(segments)
+    m: dict[str, Any] = {k: links.count(k) for k in ("therefore", "but", "and", "none")}
+    m["runs"] = [[r[0].get("start_seg"), r[-1].get("end_seg")] for r in runs]
+    if runs:
+        return _bad("A19_link_audit", "warn", m, f"단락이 '그리고'로만 이어진 곳 {len(runs)}곳"
+                    f"(S{m['runs'][0][0]}–S{m['runs'][0][1]}) — 대본은 그대로 두고 쉼으로 끊음")
+    return _ok("A19_link_audit", "warn", m, f"단락 연결 그래서 {m['therefore']} · 그런데 {m['but']} · 그리고 {m['and']}")
+
+
+REPRISE_AFTER = 120.0     # 질문을 연 지 이보다 오래면 답 앞에 다시 띄운다(Golman: 최근에 열린 질문일수록 답을 찾는다 — 초는 시험값)
+
+
+def reprise_slot(busy: list[tuple[float, float]], answer_at: float, *, need: float = 3.0, want: float = 4.0,
+                 back: float = 25.0) -> Optional[tuple[float, float]]:
+    """답 앞 back 초 안에서 답에 가장 가까운 빈 자리(need 초 이상, 길면 want 초). 없으면 None."""
+    floor = max(0.0, answer_at - back)
+    end = answer_at - 0.2
+    for a, b in sorted(busy, key=lambda r: -r[1]) + [(floor - 1.0, floor - 0.3)]:
+        start = max(floor, b + 0.3)
+        if end - start >= need:
+            return round(max(start, end - want), 3), round(end, 3)
+        end = min(end, a - 0.3)
+    return None
+
+
+def a20_reprise(span: Optional[tuple[float, float]], graphics: list[dict], *, after: float = REPRISE_AFTER) -> GateResult:
+    """중심 질문이 열린 시각 → 답(payoff_seg)이 2분 넘게 떨어져 있으면 답 앞에 질문이 다시 떠야 한다."""
+    if span is None:
+        return _skip("A20_reprise", "warn", "중심 질문이나 답 발화 없음")
+    gap = span[1] - span[0]
+    m = {"opened": round(span[0], 1), "answer": round(span[1], 1), "gap": round(gap, 1)}
+    if gap <= after:
+        return _ok("A20_reprise", "warn", m, f"질문에서 답까지 {gap:.0f}초 — 다시 띄울 필요 없음")
+    if any(g.get("id") == "reprise" for g in graphics):
+        return _ok("A20_reprise", "warn", m, f"질문에서 답까지 {gap:.0f}초 — 답 앞에 다시 띄움")
+    return _bad("A20_reprise", "warn", m, f"질문을 연 지 {gap:.0f}초 뒤에 답이 나오는데 답 앞에 다시 띄울 빈 자리가 없음({fmt_ts(span[1])})")
+
+
+# --- 훅(최종 타임라인: 하이라이트를 붙인 뒤의 롱폼 · 숏폼) --------------------------------------------------------------
+_WORDS = re.compile(r"[0-9A-Za-z가-힣]+")
+
+
+def h1_first_speech(captions: list[dict], *, limit: float = 0.5) -> GateResult:
+    """첫 말은 0.5초 안에."""
+    if not captions:
+        return _skip("H1_first_speech", "warn", "자막 없음")
+    t = min(float(c["start"]) for c in captions)
+    m = {"first_speech": round(t, 3)}
+    if t > limit:
+        return _bad("H1_first_speech", "warn", m, f"첫 말이 {t:.2f}초에 시작(≤{limit})")
+    return _ok("H1_first_speech", "warn", m, f"첫 말 {t:.2f}초")
+
+
+def h2_first_change(props: dict, *, limit: float = 3.0) -> GateResult:
+    """첫 화면 변화는 3초 안에: 그래픽 들고남 · 콜아웃 · 전환 · 펀치 · 프레이밍이 바뀌는 컷 · 다른 카메라."""
+    ev = [float(g[k]) for g in props.get("graphics") or [] for k in ("start", "end")]
+    ev += [float(c["start"]) for c in props.get("callouts") or []]
+    ev += [float(x["t"]) for k in ("transitions", "punches") for x in props.get(k) or []]
+    cam, clips = props.get("camera") or [], props.get("clips") or []
+    ev += [float(b["start"]) for a, b in zip(cam, cam[1:]) if b.get("cut") or abs(b["zoom"] - a["zoomEnd"]) > 1e-3]
+    ev += [float(b["start"]) for a, b in zip(clips, clips[1:]) if a["src"] != b["src"]]
+    first = min((t for t in ev if t > 0.05), default=None)
+    m = {"first_change": None if first is None else round(first, 3)}
+    if first is None or first > limit:
+        return _bad("H2_first_change", "warn", m, f"첫 {limit:.0f}초 동안 화면이 바뀌지 않음")
+    return _ok("H2_first_change", "warn", m, f"첫 화면 변화 {first:.2f}초")
+
+
+def h3_question(captions: list[dict], question: str, *, by: float = 8.0, share: float = 0.5) -> GateResult:
+    """계획이 선언한 질문이 8초 안에 들리나. 총괄 감독이 줄여 쓴 문장이라 어절의 앞 두 글자로 맞춘다(어미·조사가 달라도 같은 말)."""
+    q = _WORDS.findall(question or "")
+    if not q:
+        return _skip("H3_question", "warn", "계획에 질문 없음")
+    heard = {x[:2] for c in captions if float(c["start"]) < by for line in c.get("lines") or [] for w in line
+             for x in _WORDS.findall(w.get("text", ""))}
+    r = sum(w[:2] in heard for w in q) / len(q)
+    m = {"question": question[:40], "heard_share": round(r, 2)}
+    if r < share:
+        return _bad("H3_question", "warn", m, f"{by:.0f}초 안에 훅의 질문이 들리지 않음({r:.0%}): {question[:30]}")
+    return _ok("H3_question", "warn", m, f"{by:.0f}초 안에 질문이 들림({r:.0%})")
+
+
+def h4_short_open(props: dict, *, limit: float = 2.0) -> GateResult:
+    """숏폼은 2초 안에 말이나 훅 글자가 나와야 한다(훅 타이틀은 0초부터 화면에 있다 — HookTitle·ReelShort)."""
+    speech = min((float(c["start"]) for c in props.get("captions") or []), default=None)
+    hook = bool(str(props.get("hookTitle") or "").strip())
+    m = {"first_speech": None if speech is None else round(speech, 3), "hook_text": hook}
+    if not hook and (speech is None or speech > limit):
+        return _bad("H4_short_open", "warn", m, f"숏폼 첫 {limit:.0f}초에 말도 훅 글자도 없음")
+    return _ok("H4_short_open", "warn", m, "숏폼 시작에 훅 글자" if hook else f"숏폼 첫 말 {speech:.2f}초")
+
+
+# 숏폼 발췌에서 빠지면 주장이 단정으로 바뀌는 말(플레이북 8-3)
+HEDGE = re.compile(r"다만|물론|반론|에\s*따르면|에\s*의하면|아직\s*확인|확인되지\s*않|제\s*생각에는")
+
+
+def s1_hedge(segs: list[int], text_of: dict[int, str], kept: list[int], *, before: int = 1, after: int = 2) -> GateResult:
+    """주장 + 근거로 자른 숏폼이 단서 문장을 뺐는가. 고른 발화의 앞 before · 뒤 after 발화 중 빠진 것을 본다
+    (~에 따르면 은 주장 앞에, 다만 은 뒤에 온다). kept: 남긴 발화의 편집 순서."""
+    pos = {u: i for i, u in enumerate(kept)}
+    chosen = sorted(pos[s] for s in segs if s in pos)
+    if not chosen:
+        return _skip("S1_hedge", "warn", "숏폼 발화 없음")
+    near = {p for q in chosen for p in range(q - before, q + after + 1)}
+    lost = [kept[p] for p in sorted(near - set(chosen)) if 0 <= p < len(kept) and HEDGE.search(text_of.get(kept[p], ""))]
+    m = {"lost": lost, "examples": [text_of.get(u, "")[:30] for u in lost[:3]]}
+    if lost:
+        return _bad("S1_hedge", "warn", m, f"숏폼이 단서 문장 {len(lost)}개를 뺐다(예: 「{m['examples'][0]}」) — 주장이 단정으로 바뀔 수 있다")
+    return _ok("S1_hedge", "warn", m, "숏폼 곁의 단서 문장을 빼지 않음")
+
+
+# --- 폰 가독성(고정 자리) ---------------------------------------------------------------------------------------
+def slot_px() -> dict[str, float]:
+    """렌더러가 고정 자리에 쓰는 값(tokens.ts SLOT_TYPE) → 자리마다 가장 작아질 때의 px(1080p). 자유 카드는 check.mjs 가 잰다."""
+    src = (RENDERER_DIR / "src" / "design" / "tokens.ts").read_text(encoding="utf-8")
+    body = src[src.index("export const SLOT_TYPE"):]
+    t = {k: float(v) for k, v in re.findall(r"(\w+):\s*([\d.]+)", body[:body.index("}")])}
+    return {"자막": t["caption"], "띠 제목": t["band"], "용어 정의 본문": t["definition"] * t["bandBody"],
+            "슈퍼 이름": t["superName"], "슈퍼 소속": t["superSub"], "핵심어": t["keywordMin"],
+            "핵심어 보조": max(t["keywordSubMin"], t["keywordMin"] * t["keywordSub"]), "인용": 1080 * t["quote"],
+            "인용 원전": 1080 * t["quote"] * t["quoteWho"], "숫자 태그 보조": t["statSub"], "출처": t["credit"]}
+
+
+def p1_phone_px(slots: dict[str, float], *, floor: float = 28.0) -> GateResult:
+    """고정 자리 글자의 최소 px ≥ check.mjs 와 같은 28px."""
+    low = {k: round(v, 1) for k, v in slots.items() if v < floor}
+    m = {"floor": floor, "below": low, "slots": len(slots)}
+    if list(low) == ["출처"]:   # 출처는 읽으라고 띄우는 글이 아니라 자료 내내 깔리는 표기다(v5 '우하단 작게')
+        return _ok("P1_phone_px", "warn", m, f"고정 자리 글자 {floor:.0f}px 이상(출처 표기만 예외 {low['출처']}px)")
+    if low:
+        return _bad("P1_phone_px", "warn", m, "폰에서 작은 고정 자리: " + ", ".join(f"{k} {v}px" for k, v in low.items()))
+    return _ok("P1_phone_px", "warn", m, f"고정 자리 글자 모두 {floor:.0f}px 이상")
 
 
 def b7_variety(graphics: list[dict], *, run_max: int = 2, share_max: float = 0.25, combo_max: float = 0.20,
@@ -594,7 +737,7 @@ def motif_drops(graphics: list[dict], *, cap: int = 2, logo_cap: int = 1) -> lis
 # ---------------------------------------------------------------------------
 
 TEXT_FIELDS = ("title", "subtitle", "body", "title_b", "highlight", "author", "label", "keyword", "keyword_sub", "caption")
-LIST_FIELDS = ("items", "items_b")
+LIST_FIELDS = ("items", "items_b", "overlays")
 TEXT_TEMPLATES = ("keyword", "definition", "quote", "stat")
 
 INTERNAL_NAMES = {"motion", "card", "keyword", "broll", "b-roll", "photo", "recap", "stat", "chapter", "brand", "footage",
@@ -697,6 +840,8 @@ def is_real_media(g: dict) -> bool:
         return bool(d.get("src"))
     if t == "evidence":
         return any(a.get("kind") in ("photo", "video", "screen", "document") for a in d.get("assets") or [])
+    if t in ("collage", "keyword_montage"):
+        return bool(d.get("cutouts"))
     return False
 
 
@@ -718,24 +863,24 @@ def b10_portraits(plans: list[dict]) -> GateResult:
     return _ok("B10_portraits", "warn", m, f"사진 {len(plans)}장 구도 분석 — 얼굴 {len(faces)}(초점 조정 {moved} · 통째 {contain})")
 
 
-def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.40) -> GateResult:
-    """실물 자료가 보이는 시간 / 본편 ≥ 40%(목표 45~65% — 디자인 v4, 예전 15%·30%). 짧은 영상(90초 미만)은 건너뛴다."""
+def b1_media_ratio(graphics: list[dict], total: float, *, min_ratio: float = 0.20) -> GateResult:
+    """실물 자료가 보이는 시간 / 본편 ≥ 20%(목표 25~35% — 디자인 v5). 짧은 영상(90초 미만)은 건너뛴다."""
     secs = sum(max(0.0, float(g["end"]) - float(g["start"])) for g in graphics if is_real_media(g) and "end" in g)
     ratio = secs / total if total else 0.0
-    m = {"seconds": round(secs, 1), "ratio": round(ratio, 3), "target": [0.45, 0.65], "min": min_ratio}
+    m = {"seconds": round(secs, 1), "ratio": round(ratio, 3), "target": [0.25, 0.35], "min": min_ratio}
     if total < 90:
         r = _ok("B1_media_ratio", "warn", m, f"실물 자료 {ratio:.0%}(짧은 영상 — 건너뜀)")
         r.skipped = True
         return r
     if ratio < min_ratio:
-        return _bad("B1_media_ratio", "warn", m, f"실물 자료가 보이는 시간 {ratio:.0%}(최소 {min_ratio:.0%}, 목표 40~55%) — "
+        return _bad("B1_media_ratio", "warn", m, f"실물 자료가 보이는 시간 {ratio:.0%}(최소 {min_ratio:.0%}, 목표 25~35%) — "
                     "과제물·스케치·화면 캡처를 ④ 자료 폴더에 넣으면 채워진다")
     return _ok("B1_media_ratio", "warn", m, f"실물 자료 {ratio:.0%}")
 
 
 def b2_hero_per_chapter(graphics: list[dict], chapters: list[dict], total: float, *, min_len: float = 45.0) -> GateResult:
     """실물 자료가 있는 챕터(45초 이상)마다 전면 실물이 한 번 이상 — 얼굴 옆 작은 액자(pip)만으로 끝나는 챕터가 없다.
-    chapters: [{start, end?}] (끝이 없으면 다음 챕터 시작·전체 끝). 수리 promote_hero."""
+    chapters: [{start, end?}] (끝이 없으면 다음 챕터 시작·전체 끝)."""
     cs = sorted(chapters, key=lambda c: float(c.get("start", 0)))
     spans = [(float(c.get("start", 0)), float(c.get("end") or (cs[i + 1]["start"] if i + 1 < len(cs) else total)))
              for i, c in enumerate(cs)] or [(0.0, total)]
@@ -748,32 +893,46 @@ def b2_hero_per_chapter(graphics: list[dict], chapters: list[dict], total: float
             lacking.append([round(a, 1), round(b, 1)])
     m = {"lacking": lacking}
     if lacking:
-        return _bad("B2_hero", "repair", m, f"전면 실물 자료가 없는 챕터 {len(lacking)}개(얼굴 옆 작은 액자뿐)", "promote_hero")
-    return _ok("B2_hero", "repair", m, "자료가 있는 챕터마다 전면 자료가 있다")
+        return _bad("B2_hero", "warn", m, f"전면 실물 자료가 없는 챕터 {len(lacking)}개(얼굴 옆 작은 액자뿐)")
+    return _ok("B2_hero", "warn", m, "자료가 있는 챕터마다 전면 자료가 있다")
 
 
-def promote_hero(plan_graphics: list[dict], timed: list[dict], lacking: list[list[float]]) -> int:
-    """B2 수리: 그 챕터의 실물 사진 중 가장 큰(해상도) 것을 전면으로. timed(props 그래픽)로 챕터 안에 있는 것을 찾고,
-    plan_graphics(계획) 의 같은 그래픽 layout 을 fullscreen 으로 바꾼다. 반환: 올린 수."""
-    n = 0
-    by_id = {f"g{i}": g for i, g in enumerate(plan_graphics)}
-    for a, b in lacking:
-        cands = [g for g in timed if is_real_media(g) and a <= float(g.get("start", -1)) < b and g.get("id") in by_id
-                 and g.get("template") in ("photo", "broll")]
-        if not cands:
+# 자료 리서처의 role → 컷어웨이 임무(비트에 선언이 없을 때)
+EV_ROLE_TO_CUTAWAY = {"proof": "prove", "example": "prove", "context": "context", "process": "explain", "mood": "reset"}
+
+
+def cutaway_roles(graphics: list[dict], plan_graphics: list[dict], beats: list[dict]) -> dict[str, str]:
+    """화면의 그래픽(id g{i} = 계획 순서) → 임무. 자료 리서처가 mood 로 낸 자료는 비트가 뭐라 했든 reset."""
+    out: dict[str, str] = {}
+    for g in graphics:
+        m = re.fullmatch(r"g(\d+)", str(g.get("id", "")))
+        if not m or int(m.group(1)) >= len(plan_graphics):
             continue
+        pg = plan_graphics[int(m.group(1))]
+        seg = pg.get("start_seg", -1)
+        beat = next((b for b in beats if b.get("start_seg", 0) <= seg <= b.get("end_seg", -1)), {})
+        ev = EV_ROLE_TO_CUTAWAY.get(str((pg.get("evidence") or {}).get("role") or ""), "")
+        role = str(beat.get("cutaway") or "")
+        out[str(g["id"])] = "reset" if ev == "reset" else (role if role not in ("", "none") else ev)
+    return out
 
-        def size(g: dict) -> float:
-            pg = by_id[g["id"]]
-            ev = [x for x in (pg.get("assets") or []) if isinstance(x, dict)]
-            return max([float(x.get("w", 0) or 0) * float(x.get("h", 0) or 0) for x in ev] + [float(g["end"]) - float(g["start"])])
-        best = max(cands, key=size)
-        pg = by_id[best["id"]]
-        if pg.get("layout") != "fullscreen":
-            pg["layout"] = "fullscreen"
-            pg["promoted"] = "B2"
-            n += 1
-    return n
+
+def b12_cutaway_role(graphics: list[dict], roles: dict[str, str], *, mood_cap: float = 0.15) -> GateResult:
+    """컷어웨이(얼굴을 덮는 전면 그래픽)마다 임무가 있는가, 분위기뿐인 자료(reset)가 컷어웨이 시간의 15% 안인가. 시험값이라 경고만.
+    얼굴 위 pip 사진은 비트의 cutaway 가 none 인 자리라 세지 않는다."""
+    cuts = [g for g in _content(graphics) if g.get("layout") == "fullscreen"]
+    if not cuts or not any(roles.values()):
+        return _skip("B12_cutaway_role", "warn", "컷어웨이나 임무 선언 없음(규칙 폴백)")
+    total = sum(float(g["end"]) - float(g["start"]) for g in cuts)
+    mood = sum(float(g["end"]) - float(g["start"]) for g in cuts if roles.get(str(g.get("id"))) == "reset")
+    missing = [str(g.get("id")) for g in cuts if not roles.get(str(g.get("id")))]
+    share = mood / total if total else 0.0
+    m = {"cutaways": len(cuts), "mood_sec": round(mood, 1), "mood_share": round(share, 3), "undeclared": missing[:12]}
+    bad = ([f"임무를 선언하지 않은 컷어웨이 {len(missing)}개({', '.join(missing[:4])})"] if missing else []) \
+        + ([f"분위기뿐인 자료 {share:.0%}(상한 {mood_cap:.0%})"] if share > mood_cap else [])
+    if bad:
+        return _bad("B12_cutaway_role", "warn", m, " · ".join(bad))
+    return _ok("B12_cutaway_role", "warn", m, f"컷어웨이 {len(cuts)}개 모두 임무 있음 · 분위기뿐인 자료 {share:.0%}")
 
 
 def b6_pick_scores(graphics: list[dict]) -> GateResult:
@@ -841,12 +1000,12 @@ def d1_voice_over_music(voice_lufs: Optional[float], under_db: Optional[float], 
     """말 구간 목소리 − 음악 18~26 LU(목표 20). 음악은 곡마다 ref_lufs 로 맞춘 뒤 under_db 를 곱하므로
     말 아래 음악 ≈ ref_lufs + under_db — 게인 계획에서 잰다(곡 원래 다이내믹은 들어가지 않는다)."""
     if voice_lufs is None or under_db is None:
-        return _skip("D1_voice_music", "repair", "음악 없음")
+        return _skip("D1_voice_music", "warn", "음악 없음")
     d = voice_lufs - (ref_lufs + under_db)
     m = {"voice_lufs": round(voice_lufs, 1), "music_under_lufs": round(ref_lufs + under_db, 1), "diff_lu": round(d, 1)}
     if not lo <= d <= hi:
-        return _bad("D1_voice_music", "repair", m, f"목소리가 음악보다 {d:.1f} LU 위({lo:.0f}~{hi:.0f})", "bed_level")
-    return _ok("D1_voice_music", "repair", m, f"목소리 − 음악 {d:.1f} LU")
+        return _bad("D1_voice_music", "warn", m, f"목소리가 음악보다 {d:.1f} LU 위({lo:.0f}~{hi:.0f})")
+    return _ok("D1_voice_music", "warn", m, f"목소리 − 음악 {d:.1f} LU")
 
 
 def d3_one_track(tracks: int) -> GateResult:
@@ -857,12 +1016,10 @@ def d3_one_track(tracks: int) -> GateResult:
     return _ok("D3_one_track", "repair", m, "곡 하나" if tracks else "음악 없음")
 
 
-def d5_sfx_density(cues: list[tuple[float, str]], *, punch: list[tuple[float, float]] = (), window: float = 60.0,
-                   cap: int = 3) -> GateResult:
-    """효과음: 펀치 구간 밖 60초 창 어디서도 3개 이하(목록 틱 포함), 같은 파일 연속 2회 금지.
-    cues: (시각, 파일 경로) 시간순."""
+def d5_sfx_density(cues: list[tuple[float, str]], *, window: float = 60.0, cap: int = 3) -> GateResult:
+    """효과음: 60초 창 어디서도 cap 개 이하, 같은 파일 연속 2회 금지. cues: (시각, 파일 경로) 시간순."""
     cues = sorted(cues)
-    outside = [t for t, _ in cues if not any(a <= t < b for a, b in punch)]
+    outside = [t for t, _ in cues]
     worst, at = 0, 0.0
     for i, t in enumerate(outside):
         n = sum(1 for u in outside[i:] if u < t + window)
@@ -878,13 +1035,13 @@ def d5_sfx_density(cues: list[tuple[float, str]], *, punch: list[tuple[float, fl
 
 
 def d6_fit(fit_score: Optional[int], *, min_fit: int = 7) -> GateResult:
-    """음악 감독의 fit_score ≥ 7 — 아니면 air 판만(수리), 그것도 안 되면 음악 없음."""
+    """음악 감독의 fit_score ≥ 7 — 아니면 믹스가 air 판으로 간다(음악 감독 자신의 판단이라 게이트는 알리기만 한다)."""
     if fit_score is None:
-        return _skip("D6_fit", "repair", "큐 시트 없음")
+        return _skip("D6_fit", "warn", "큐 시트 없음")
     m = {"fit_score": fit_score}
     if fit_score < min_fit:
-        return _bad("D6_fit", "repair", m, f"맞는 음악 점수 {fit_score}/10 — air 만 쓴다", "air_only")
-    return _ok("D6_fit", "repair", m, f"맞는 음악 점수 {fit_score}/10")
+        return _bad("D6_fit", "warn", m, f"맞는 음악 점수 {fit_score}/10 — air 만 쓴다")
+    return _ok("D6_fit", "warn", m, f"맞는 음악 점수 {fit_score}/10")
 
 
 def d8_occupancy(share: Optional[float], cues: list[dict], *, lo: float = 0.30, hi: float = 0.65) -> GateResult:
@@ -917,6 +1074,64 @@ def d10_voice_level(voice_lufs: Optional[float], *, target: float = -16.0, tol: 
     if abs(voice_lufs - target) > tol:
         return _bad("D10_voice", "warn", m, f"목소리 {voice_lufs:.1f} LUFS(목표 {target:.0f} ±{tol:.0f})")
     return _ok("D10_voice", "warn", m, f"목소리 {voice_lufs:.1f} LUFS")
+
+
+def d11_duration(mix_sec: float, render_sec: float, fps: float, name: str = "") -> GateResult:
+    """믹스와 무음 렌더의 길이가 1프레임 넘게 다르면 합칠 때(-shortest) 끝이 잘린다."""
+    diff = abs(mix_sec - render_sec)
+    m = {"name": name, "mix_sec": round(mix_sec, 3), "render_sec": round(render_sec, 3), "diff_sec": round(diff, 3)}
+    if diff > 1.0 / fps + 1e-3:
+        return _bad("D11_duration", "block", m, f"{name} 소리와 영상 길이가 {diff:.3f}초 다름(믹스 {mix_sec:.3f} · 렌더 {render_sec:.3f})")
+    return _ok("D11_duration", "block", m, f"소리·영상 길이 차이 {diff:.3f}초")
+
+
+def d11_sfx_landing(cues: list[dict], landings: list[float], *, tol: float = 0.25) -> GateResult:
+    """그래픽 등장에서 나온 효과음(why 에 '등장')은 최종 타임라인에서 그 착지 tol 초 안에 있어야 한다."""
+    from_g = [float(c["t"]) for c in cues if "등장" in str(c.get("why", ""))]
+    off = [round(t, 2) for t in from_g if not any(abs(t - x) <= tol for x in landings)]
+    m = {"cues": len(from_g), "off": off[:8]}
+    if off:
+        return _bad("D11_sfx_landing", "warn", m, f"효과음 {len(off)}개가 그래픽 착지에서 {tol}초 넘게 떨어짐({off[0]:.1f}초 등)")
+    return _ok("D11_sfx_landing", "warn", m, f"그래픽 효과음 {len(from_g)}개 착지에 맞음")
+
+
+def d11_voice_caption(voice_sec: Optional[float], caption_sec: Optional[float], *, tol: float = 0.25) -> GateResult:
+    """실제 목소리 파일의 시작과 첫 자막이 tol 초 안에."""
+    if voice_sec is None or caption_sec is None:
+        return _skip("D11_voice_caption", "warn", "목소리 시작이나 자막이 없음")
+    diff = abs(voice_sec - caption_sec)
+    m = {"voice_sec": round(voice_sec, 3), "caption_sec": round(caption_sec, 3), "diff_sec": round(diff, 3)}
+    if diff > tol:
+        return _bad("D11_voice_caption", "warn", m, f"첫 자막이 목소리와 {diff:.2f}초 어긋남(≤{tol})")
+    return _ok("D11_voice_caption", "warn", m, f"첫 자막·목소리 차이 {diff:.2f}초")
+
+
+def d12_silences(spans: Optional[list[tuple[float, float]]], cues: list[dict], sfx: list[tuple[float, str]], *, need: int = 2,
+                 min_sec: float = 0.5) -> GateResult:
+    """총괄 감독이 전환·정점 앞에 선언한 침묵이 실제로 났는가: 말이 min_sec 이상 쉬고 그 사이 음악 큐·효과음이 없는 곳이 need 곳 이상.
+    spans: 최종 타임라인의 쉼(앞 발화 끝, 다음 발화 시작). None = 기획에 트리트먼트가 없다(규칙 폴백)."""
+    if spans is None:
+        return _skip("D12_silences", "warn", "트리트먼트 없음")
+    real = [(a, b) for a, b in spans if b - a >= min_sec
+            and not any(float(q["start"]) < b - 0.02 and float(q["end"]) > a + 0.02 for q in cues)     # 큐 경계는 0.01초로 반올림돼 있다
+            and not any(a <= float(t) <= b for t, _ in sfx)]
+    m = {"declared": len(spans), "real": len(real), "spans": [[round(a, 1), round(b, 1)] for a, b in real[:8]]}
+    if len(real) < need:
+        return _bad("D12_silences", "warn", m, f"전환·정점 앞 진짜 침묵 {len(real)}곳(선언 {len(spans)}, 필요 {need})")
+    return _ok("D12_silences", "warn", m, f"전환·정점 앞 침묵 {len(real)}곳")
+
+
+def d13_ears(heard: Optional[dict], why: str = "") -> GateResult:
+    """👂 Gemini 가 완성 믹스 발췌를 들은 소견(studio/sound/listen.py hear_mix). 경고만 — 믹스를 자동으로 바꾸지 않는다."""
+    if not heard:
+        return _skip("D13_ears", "warn", f"듣지 못함({why})" if why else "들을 발췌 없음")
+    bad = [t for k, t in (("music_covers_voice", "음악이 말을 덮음"), ("sfx_jumps_out", "효과음이 튐")) if heard.get(k) is True]
+    if heard.get("silence_clear") is False:
+        bad.append("계획한 침묵이 안 들림")
+    note = f" — {heard['note']}" if heard.get("note") else ""
+    if bad:
+        return _bad("D13_ears", "warn", dict(heard), "👂 " + " · ".join(bad) + note)
+    return _ok("D13_ears", "warn", dict(heard), "👂 믹스 발췌 이상 없음" + note)
 
 
 def b3_query_labels(graphics: list[dict]) -> GateResult:
@@ -1022,7 +1237,7 @@ PASS_SCORE = 3.8
 TL_KIND_TO_GATE = {"duplicate_take": ["A1_length", "A3_duplicates", "A5_greetings"],
                    "dead_air": ["A6_distribution", "A7_face_run"], "slide_chain": ["A12_chain"],
                    "hold_broken": ["A14_hold_guard"], "late_step": ["A15_step_sync"],
-                   "no_tails": ["A11_fast_runs", "A16_hold_presence"], "no_evidence": [], "wrong_image": [],
+                   "no_tails": ["A16_hold_presence"], "no_evidence": [], "wrong_image": [],
                    "label_leak": ["B3_query_label", "B4_direction", "B5_internal"], "template_repeat": [],
                    "surface_mix": [], "flat_hierarchy": [], "other": []}
 

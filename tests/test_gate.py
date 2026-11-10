@@ -108,13 +108,13 @@ def test_screen_gates_fail_like_the_1001_video():
     gs = [_g(408.0, 411.4, "title", "fullscreen")]
     gs += [_g(420.0 + 20 * k, 424.0 + 20 * k) for k in range(17)]
     a6 = gate.a6_distribution(gs, total)
-    assert not a6.ok and a6.blocking and a6.measured["empty"] == [0, 1, 2, 3, 4]
+    assert not a6.ok and a6.level == "warn" and not a6.repair and a6.measured["empty"] == [0, 1, 2, 3, 4]
     a7 = gate.a7_face_run(gs, total)
-    assert not a7.ok and a7.blocking and a7.measured["max_face_run"] >= 397
+    assert not a7.ok and a7.level == "warn" and not a7.repair and a7.measured["max_face_run"] >= 397
     a8 = gate.a8_face_ratio(0.953)
-    assert not a8.ok and a8.level == "repair" and a8.repair == "fill_gaps"
+    assert not a8.ok and a8.level == "warn" and not a8.repair
     a9 = gate.a9_title(gs)
-    assert not a9.ok and a9.blocking and a9.measured["title_at"] == 408.0
+    assert not a9.ok and a9.level == "warn" and not a9.repair and a9.measured["title_at"] == 408.0
 
 
 def test_screen_gates_pass_on_a_well_spread_edit():
@@ -125,9 +125,10 @@ def test_screen_gates_pass_on_a_well_spread_edit():
     assert gate.a7_face_run(gs, total).ok
     assert gate.a9_title(gs).ok
     assert 0.35 <= gate.face_ratio(gs, total) <= 1.0
-    # 25~40초 맨얼굴은 block 이 아니라 repair
-    r = gate.a7_face_run([_g(0, 4), _g(34, 38)], 60.0)
-    assert not r.ok and r.level == "repair"
+    # 30~50초 맨얼굴은 디자인 v5 의 토크 구간 — 통과, 50~60초는 경고만, 수리 카드 없음
+    assert gate.a7_face_run([_g(0, 4), _g(34, 38)], 60.0).ok
+    r = gate.a7_face_run([_g(0, 2), _g(57, 60)], 60.0)
+    assert not r.ok and r.level == "warn" and not r.repair
 
 
 def test_a6_bins_scale_with_length_and_ignore_auto_cards():
@@ -136,17 +137,6 @@ def test_a6_bins_scale_with_length_and_ignore_auto_cards():
     assert r.measured["bins"] == 2 and r.measured["empty"] == [0]
     # 콜아웃도 그래픽으로 센다
     assert gate.a6_distribution([_g(35, 39)], 60.0, callouts=[{"start": 10.0, "end": 13.0}]).ok
-
-
-def test_fill_targets_move_out_of_holds_instead_of_vanishing():
-    """2026-10-03 실제 작업: 빈 칸 05:04–05:42 의 가운데와 맨얼굴 04:47–05:58 안 18초 자리가 모두 홀드(04:47–05:03 · 05:12–05:26 ·
-    05:36–05:46) 안이라 보충 카드가 하나도 안 들어가고 A7 block — 자리를 홀드 밖 가장 가까운 곳으로 옮긴다."""
-    holds = [(287.0, 303.0), (312.0, 326.0), (336.0, 346.0)]
-    out = gate.fill_targets([[304.0, 342.0]], [(287.0, 358.0)], holds)
-    assert out and not any(x - 2.0 <= t <= y for t in out for x, y in holds)
-    assert 329.0 in out and 306.0 in out and 351.0 in out          # 칸 가운데 323 → 홀드 끝 +3 · 297 → 306 · 351 은 그대로
-    assert gate.fill_targets([], [(0.0, 20.0)], []) == []              # 25초 이하 맨얼굴은 자리 없음
-    assert gate.fill_targets([[0.0, 10.0]], [], [(0.0, 10.0)]) == []   # 칸 전체가 홀드면 버림
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +222,8 @@ def test_renderer_template_labels_are_never_internal_names():
     assert labels and all(not gate._internal(v) for v in labels.values() if v), labels
     for k in ("chapter", "keyword", "motion", "card", "broll", "title"):
         assert labels[k] == "", k
-    board = (ROOT / "renderer" / "src" / "components" / "longform" / "Board.tsx").read_text(encoding="utf-8")
-    assert "] || g.template" not in board            # 라벨이 비면 내부 이름으로 돌아가지 않는다
+    for tsx in (ROOT / "renderer" / "src").rglob("*.tsx"):
+        assert "] || g.template" not in tsx.read_text(encoding="utf-8"), tsx   # 라벨이 비면 내부 이름으로 돌아가지 않는다
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +247,8 @@ def test_merge_demote_combine_and_report(tmp_path):
     gate.write(tmp_path / "gate.json", res)
     data = json.loads((tmp_path / "gate.json").read_text(encoding="utf-8"))
     assert data["ok"] is True and len(data["results"]) == 2
-    err = gate.GateBlocked([gate.a9_title([_g(408, 411, "title", "fullscreen")])], "화면 구조")
-    assert str(err).startswith("품질 게이트") and "A9_title" in str(err)
+    err = gate.GateBlocked([gate.d9_license([("곡", "")])], "화면 구조")
+    assert str(err).startswith("품질 게이트") and "D9_license" in str(err)
 
 
 # ---------------------------------------------------------------------------
@@ -304,41 +294,19 @@ def test_pipeline_cut_gate_drops_the_weaker_pass_and_recuts(tmp_path):
 def test_pipeline_gate_blocks_and_explains_unless_forced(tmp_path):
     import pytest
     p = _pipe(tmp_path, [_utt(k, k, 4.0 * k) for k in range(95)])
-    bad = [gate.a9_title([_g(408, 411, "title", "fullscreen")])]
+    bad = [gate.d9_license([("곡", "")])]
     with pytest.raises(gate.GateBlocked) as e:
         p._gate_record(bad, "화면 구조")
-    assert "A9_title" in str(e.value)
+    assert "D9_license" in str(e.value)
     stop = (tmp_path / "품질게이트_중단.md").read_text(encoding="utf-8")
-    assert "--force-render" in stop and "A9_title" in stop
+    assert "--force-render" in stop and "D9_license" in stop
     p.force_render = True
-    p._gate_record([gate.a9_title([_g(408, 411, "title", "fullscreen")])], "화면 구조")   # 멈추지 않는다
+    p._gate_record([gate.d9_license([("곡", "")])], "화면 구조")   # 멈추지 않는다
     assert json.loads((tmp_path / "gate.json").read_text(encoding="utf-8"))["forced"] is True
 
 
-def test_pipeline_fills_face_only_stretches_with_sentence_keywords(tmp_path):
-    from types import SimpleNamespace
-    utts = [_utt(k, k, 4.0 * k) for k in range(95)]
-    p = _pipe(tmp_path, utts)
-    p.plan_long["emphasis"] = [{"seg": 30, "word": "원칙은", "kind": "highlight"}]
-    total = p.timemap.duration
-    lp = {"graphics": [_g(5.0, 8.4, "title", "fullscreen")]}
-    ed = SimpleNamespace(callouts=[], stats={})
-    added = p._fill_gaps(lp, ed)
-    gs = p.plan_long["graphics"]
-    assert added == len(gs) >= 10 and all(g["template"] == "keyword" and g["layout"] == "overlay" for g in gs)
-    assert all(g["title"] and not gate._internal(g["title"]) for g in gs)
-    # 강조어 '원칙'(2자 한 낱말)은 카드가 아니다 → 문장의 명사 구절 '디자인 원칙'
-    assert any(g["start_seg"] == 30 and g["title"] == "디자인 원칙" for g in gs) or all(g["start_seg"] != 30 for g in gs)
-    assert len({g["start_seg"] for g in gs}) == len(gs)             # 같은 문장에 두 번 넣지 않는다
-    # 채운 자리로 다시 재면 맨얼굴 25초 이하·빈 칸 없음(카드 4초)
-    from studio.director.plan import seg_edit_times
-    seg_t = seg_edit_times(utts, p.timemap)
-    timed = lp["graphics"] + [_g(seg_t[g["start_seg"]][0], seg_t[g["start_seg"]][0] + 4.0) for g in gs]
-    assert gate.a6_distribution(timed, total).ok and gate.a7_face_run(timed, total).ok
-
-
 # ---------------------------------------------------------------------------
-# 리듬 게이트 A11~A17 — 10/1 후반부('모든 것이 중간': 빠른 묶음 0 · 사슬 10 · p90/p10 3.1 · 홀드 침범 · 단계 지연)
+# 리듬 게이트 A12~A16 — 10/1 후반부(사슬 10 · 홀드 침범 · 단계 지연)
 # ---------------------------------------------------------------------------
 
 def _seq(gid, t0, t1, tpl="keyword", seq="", items=None, hl=-1, source="director"):
@@ -361,12 +329,8 @@ def test_rhythm_gates_fail_on_20261001_like_fixture():
     gs += [_seq("d0", 300.0, 303.5, "double_diamond", items=dd, hl=0), _seq("d1", 304.0, 307.5, "double_diamond",
                                                                           items=dd, hl=1),
            _seq("d2", 308.0, 311.5, "double_diamond", items=dd, hl=2)]
-    a11 = gate.a11_fast_runs(gs, total)
-    assert not a11.ok and a11.measured["sequences"] == 0
     a12 = gate.a12_chain(gs)
-    assert not a12.ok and a12.measured["longest"] == 10 and a12.repair == "trim_chain"
-    a13 = gate.a13_duration_spread(gs)
-    assert not a13.ok and a13.measured["ratio"] < 4
+    assert not a12.ok and a12.measured["longest"] == 10 and a12.level == "warn" and not a12.repair
     a14 = gate.a14_hold_guard(gs + [_seq("r1", 192.0, 197.0, "recap")], [(190.0, 205.0)])
     assert not a14.ok and a14.blocking
     a15 = gate.a15_step_sync(gs)
@@ -387,9 +351,7 @@ def test_rhythm_gates_pass_with_sequences_and_holds():
     gs.append({"id": "w1", "template": "double_diamond", "layout": "split", "start": 150.0, "end": 160.0,
                "data": {"items": ["a", "b", "c", "d"], "stepAt": [{"t": 0.5, "index": 0}, {"t": 4.0, "index": 1}]},
                "source": "director", "priority": 5})
-    assert gate.a11_fast_runs(gs, total).ok
     assert gate.a12_chain(gs).ok
-    assert gate.a13_duration_spread(gs).ok
     assert gate.a14_hold_guard(gs, [(100.0, 125.0)]).ok
     assert gate.a15_step_sync(gs).ok
     assert gate.a16_hold_presence(gs, [{"start": 0.0}, {"start": 230.0}], total).ok
@@ -533,26 +495,112 @@ def test_b11_motif_repeat_caps_same_diagram_and_logo():
     assert gate.b11_motif_repeat(gs[1:3]).ok and gate.b11_motif_repeat(gs[1:3]).measured["groups"]
 
 
-def test_gap_keyword_rejects_adverbs_and_verbs_and_prefers_concept_phrases(tmp_path):
-    """2026-10-03 실제 출력 05:25~06:02: 보충 카드 넷이 '결국'·'이론'·'가르치려'·'디자인' — 아트 디렉터가 label_leak 로 뺐다.
-    카드 글은 대본 용어 → 콜아웃 → 쓸 만한 강조어 → 두 낱말 명사 구절 → 4자 이상 명사. 없으면 카드를 넣지 않는다."""
-    import studio.pipeline as pl
-    texts = {40: "결국 디자인 이론 책들을 다시 펼쳐서 하나씩 공부할 거예요.", 41: "그래서 더 이상했어요.",
-             42: "이걸 디자인 고착이라고 부릅니다.", 43: "여러분이 가르치려 하지 않아도 됩니다.", 44: "핀터레스트부터 열면 비슷해집니다."}
-    utts = [_utt(k, k, 4.0 * k) for k in range(40)] + [_utt(k, -1, 4.0 * k, text=t) for k, t in texts.items()]
-    p = _pipe(tmp_path, utts)
-    p.spec.script = SCRIPT + "\n디자인 이론 책들을 다시 펼쳐서 하나씩 공부할 거예요. 이걸 '디자인 고착'이라고 부릅니다. 디자인 이론은 브레이크다."
-    p.plan_long["emphasis"] = [{"seg": 40, "word": "결국", "kind": "highlight"}, {"seg": 43, "word": "가르치려", "kind": "highlight"},
-                               {"seg": 44, "word": "핀터레스트부터", "kind": "highlight"}]
-    by = {u.id: u for u in utts}
-    assert p._gap_keyword(by[40]) == ("디자인 이론", "디자인")                 # 강조어 '결국'은 부사 → 명사 구절(대본에 자주 나옴)
-    assert p._gap_keyword(by[41]) == ("", "")                               # 올릴 말이 없다 → 카드 없음
-    assert p._gap_keyword(by[42])[0] == "디자인 고착"                          # 대본 용어가 먼저
-    assert p._gap_keyword(by[43]) == ("", "")                               # '가르치려'는 동사 토막
-    assert p._gap_keyword(by[44]) == ("핀터레스트", "핀터레스트부터")             # 4자 이상 고유명사 강조어는 쓴다
-    assert p._gap_keyword(by[41], strict=False)[0] != ""                    # A7 block 을 막을 때만 예전 낱말
-    assert pl.card_worthy("결국") is False and pl.card_worthy("이론") is False and pl.card_worthy("디자인") is False
-    assert pl.card_worthy("프로세스 장표") and pl.card_worthy("어포던스") and not pl.card_worthy("이렇게 합니다")
+# ---------------------------------------------------------------------------
+# 말 착지 · 훅 · 폰 가독성 · 소리 싱크(디자인 v5.1)
+# ---------------------------------------------------------------------------
+
+def _marks(*lags):
+    return [{"start": 10.0, "data": {"wordMarks": [{"land": 1.0, "spoken": 11.0 - lag} for lag in lags]}}]
+
+
+def test_a18_word_sync():
+    assert gate.a18_word_sync([{"start": 1.0, "data": {}}]).measured == {"n": 0}
+    good = gate.a18_word_sync(_marks(0.1, 0.2, 0.3))
+    assert good.ok and good.measured["n"] == 3 and good.measured["median"] == pytest.approx(0.2)
+    assert not gate.a18_word_sync(_marks(0.5, 0.6, 0.1)).ok                 # 중앙값 0.5 > 0.35
+    one = gate.a18_word_sync(_marks(0.1, 0.1, -1.2))                        # 말보다 일찍 온 것도 어긋남
+    assert not one.ok and one.level == "warn" and one.measured["max"] == pytest.approx(1.2)
+
+
+def _cue(t, text):
+    return {"start": t, "end": t + 2, "lines": [[{"text": w, "start": t, "end": t + 1} for w in text.split()]]}
+
+
+def test_h1_first_speech():
+    assert gate.h1_first_speech([]).skipped
+    assert gate.h1_first_speech([_cue(0.4, "안녕")]).ok
+    r = gate.h1_first_speech([_cue(1.5, "안녕"), _cue(4.0, "둘")])
+    assert not r.ok and r.level == "warn" and r.measured["first_speech"] == 1.5
+
+
+def test_h2_first_change_counts_real_screen_changes_only():
+    still = {"graphics": [{"start": 0.0, "end": 9.0}],
+             "camera": [{"start": 0.0, "end": 2.0, "zoom": 1.0, "zoomEnd": 1.0}, {"start": 2.0, "end": 9.0, "zoom": 1.0, "zoomEnd": 1.0}],
+             "clips": [{"src": "a", "start": 0.0}, {"src": "a", "start": 2.0}]}
+    assert not gate.h2_first_change(still).ok                               # 같은 프레이밍·같은 카메라는 변화가 아니다
+    crop = dict(still, camera=[{"start": 0.0, "end": 2.0, "zoom": 1.0, "zoomEnd": 1.0}, {"start": 2.0, "end": 9.0, "zoom": 1.12, "zoomEnd": 1.12}])
+    assert gate.h2_first_change(crop).measured["first_change"] == 2.0
+    late = dict(still, camera=[], graphics=[{"start": 5.0, "end": 9.0}])
+    assert not gate.h2_first_change(late).ok
+
+
+def test_h3_question_allows_different_endings():
+    assert gate.h3_question([_cue(1.0, "안녕")], "").skipped
+    heard = [_cue(2.0, "왜 디자인이 어려울까요"), _cue(9.0, "다음")]
+    assert gate.h3_question(heard, "왜 디자인은 어려운가").ok
+    r = gate.h3_question([_cue(2.0, "오늘은 날씨"), _cue(9.0, "왜 디자인이 어려울까요")], "왜 디자인은 어려운가")
+    assert not r.ok and r.level == "warn"                                   # 8초가 지나서야 나온 질문
+
+
+def test_h4_short_open():
+    assert gate.h4_short_open({"hookTitle": "훅", "captions": [_cue(5.0, "말")]}).ok
+    assert gate.h4_short_open({"hookTitle": "", "captions": [_cue(1.5, "말")]}).ok
+    r = gate.h4_short_open({"hookTitle": " ", "captions": [_cue(3.0, "말")]})
+    assert not r.ok and r.level == "warn"
+
+
+def test_p1_phone_px_exempts_only_a_lone_credit():
+    assert gate.p1_phone_px({"자막": 40.0, "슈퍼": 30.0}).ok
+    only = gate.p1_phone_px({"자막": 40.0, "출처": 20.0})
+    assert only.ok and "출처" in only.message
+    bad = gate.p1_phone_px({"자막": 40.0, "슈퍼 소속": 27.0, "출처": 20.0})
+    assert not bad.ok and bad.level == "warn" and set(bad.measured["below"]) == {"슈퍼 소속", "출처"}
+
+
+def test_slot_px_reads_the_constants_the_renderer_uses():
+    src = (ROOT / "renderer" / "src" / "design" / "tokens.ts").read_text(encoding="utf-8")
+    body = src[src.index("export const SLOT_TYPE"):]
+    keys = re.findall(r"(\w+):", body[:body.index("}")])
+    used = "".join(p.read_text(encoding="utf-8") for p in (ROOT / "renderer" / "src" / "components").rglob("*.tsx"))
+    assert keys and all(f"SLOT_TYPE.{k}" in used for k in keys)             # 표를 안 쓰는 자리가 생기면 게이트가 다른 것을 재게 된다
+    px = gate.slot_px()
+    assert px["자막"] == 40 and px["출처"] == 24 and px["인용"] == pytest.approx(64.8)
+
+
+def test_d11_duration_blocks_over_one_frame():
+    assert gate.d11_duration(10.02, 10.0, 30).ok
+    assert gate.d11_duration(10.0 + 1 / 30, 10.0, 30).ok                    # 딱 1프레임은 허용
+    r = gate.d11_duration(10.1, 10.0, 30, "롱폼")
+    assert r.blocking and "롱폼" in r.message
+
+
+def test_d11_sfx_landing_checks_only_cues_from_graphics():
+    cues = [{"t": 5.1, "why": "keyword 등장"}, {"t": 30.0, "why": "단락 시작(감독 지정)"}]
+    assert gate.d11_sfx_landing(cues, [5.0]).ok
+    r = gate.d11_sfx_landing(cues, [6.0])
+    assert not r.ok and r.level == "warn" and r.measured["off"] == [5.1]
+
+
+def test_d11_voice_caption():
+    assert gate.d11_voice_caption(None, 1.0).skipped
+    assert gate.d11_voice_caption(0.5, 0.6).ok
+    r = gate.d11_voice_caption(0.5, 0.9)
+    assert not r.ok and r.level == "warn"
+
+
+def test_voice_start_measures_the_file(tmp_path):
+    import shutil
+    import subprocess
+    from studio.media.ffmpeg import FFmpeg
+    from studio.media.mix import voice_start
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg 없음")
+    late, silent = tmp_path / "late.wav", tmp_path / "silent.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=200:d=3:sample_rate=48000",
+                    "-af", "adelay=1200:all=1", str(late)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "2", str(silent)], check=True)
+    assert voice_start(FFmpeg(), late) == pytest.approx(1.2, abs=0.05)
+    assert voice_start(FFmpeg(), silent) is None
 
 
 def test_gap_cards_do_not_print_internal_markers():
@@ -565,6 +613,3 @@ def test_gap_cards_do_not_print_internal_markers():
     assert q["source"] == "Dieter Rams"
     src = (Path(__file__).resolve().parents[1] / "studio" / "pipeline.py").read_text(encoding="utf-8")
     assert '"source": "gate"' not in src
-    tsx = (Path(__file__).resolve().parents[1] / "renderer" / "src" / "components" / "longform" / "Plates.tsx").read_text(
-        encoding="utf-8")
-    assert "keyword: '키워드'" not in tsx

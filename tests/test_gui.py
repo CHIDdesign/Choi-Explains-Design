@@ -16,11 +16,23 @@ pytest.importorskip("PySide6")
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     os.environ["CHOI_STUDIO_USER_DIR"] = str(tmp_path_factory.mktemp("user"))
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
     a = QApplication.instance() or QApplication(sys.argv)
     from studio.gui import theme
     theme.apply(a, "#F93107")
-    return a
+    from studio.gui.app import MainWindow, wait_bg
+    with pytest.MonkeyPatch.context() as mp:
+        # 창이 150ms 뒤에 띄우는 Claude 확인은 진짜 CLI 를 부른다. 뒤 테스트가 이벤트를 돌리면 그때 시작해, 스레드가 도는 채로
+        # 파이썬이 끝나 Qt 가 프로세스를 죽였다(0xC0000409, Git Bash 에선 127 — 테스트는 다 통과한 뒤)
+        mp.setattr(MainWindow, "_probe_ai", lambda self: None)
+        yield a
+    wait_bg()
+    # 창이 살아 있는 채로 인터프리터가 끝나도 같은 종료 코드로 죽는다(16번 중 9번) — 여기서 지운다
+    for w in QApplication.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 def test_three_inputs_make_a_spec(app, tmp_path):

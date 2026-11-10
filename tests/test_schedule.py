@@ -134,7 +134,7 @@ def test_sound_defaults_no_sfx_and_only_my_music(tmp_path):
 
     from studio.settings import Settings
     st = Settings()
-    assert st.sfx_enabled is False and st.sfx_mode == "directed" and st.music_mode == "mine"
+    assert st.sfx_enabled is False and st.sfx_mode == "directed" and st.music_mode == "auto"
     p = _bare(tmp_path)
     music = tmp_path / "music"
     music.mkdir()

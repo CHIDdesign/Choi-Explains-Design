@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..director.catalog import LAYOUTS, TEMPLATE_NAMES
-from ..director.schema import BOOL, GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, SHORTS_PLAN, STR, STR_LIST, _obj
+from ..director.schema import BOOL, GRAPHIC, HOOK_TYPES, INT, INT_LIST, NUM, OVERLAY_KINDS, SHORTS_PLAN, STR, STR_LIST, TONES, _obj
 
 INTENTS = ["hook", "context", "explain", "example", "name_concept", "story", "data", "compare", "transition",
            "return_to_life", "payoff"]
@@ -17,6 +17,9 @@ LOOKS = ["warm_rich", "natural", "warm_film", "clean_bright", "cinematic"]
 SHOWS = ["object", "example", "process", "comparison", "data", "structure", "source", "place_time",
          "metaphor", "emotion", "none"]
 FUNCTIONS = ["evidence", "example", "process", "compare", "data", "name", "orient", "breathe", "none"]
+# 화면이 얼굴을 떠날 때의 임무 — prove 증거 · explain 구조 설명 · context 시대·장소 · recognise 대상 알아보기 · reset 분위기·환기
+CUTAWAYS = ["none", "prove", "explain", "context", "recognise", "reset"]
+LINKS = ["therefore", "but", "and", "none"]               # 앞 단락과의 연결(대본은 못 고치므로 연출만 바꾼다)
 SEQ_TYPES = ["evidence_stack", "detail_zoom", "document_read", "walkthrough", "comparison", "montage"]
 SEQ_AUDIO = ["bed", "rest", "swell"]
 SEQ_ENTER = ["on_word", "voice_first", "picture_first"]
@@ -57,6 +60,23 @@ WORLD = _obj({
     "never": STR,      # 이 세계가 아닌 것 — "초중고 교실·칠판·아이들·크레용·색연필 세트·사무실 회의·AI 생성 그림"
 })
 TREATMENT = _obj({
+    "structures": {"type": "array", "items": _obj({"shape": STR, "opening": STR, "ending": STR, "why_not": STR})},   # 구성 3안
+    "chosen": INT, "chosen_why": STR,      # 고른 안(structures 번호)과 이유 — 처음 떠오른 안은 대개 상투다
+    "benchmark": _obj({"work": STR, "learn": STR, "avoid": STR}),
+    # 전환·정점 앞 진짜 침묵 2곳 이상 — 앱이 그 발화 뒤에 쉼을 두고 음악·효과음을 비운다
+    "silences": {"type": "array", "items": _obj({"after_seg": INT, "sec": NUM,
+                                                 "before": {"type": "string", "enum": ["turn", "peak"]}, "why": STR})},
+    # 🔊 위트 소리: 화면 사건 하나에 붙는 이름 있는 소리(0~4개) — 앱이 sound_idea·queries 로 직접 찾아 받는다(studio/sound/fetch.py)
+    "sound_gags": {"type": "array", "items": _obj({
+        "seg": INT,
+        "anchor": {"type": "string", "enum": ["word", "after_seg", "graphic_landing"]},
+        "anchor_word": STR,                # anchor=word 일 때 그 발화의 어절
+        "type": {"type": "string", "enum": ["thud", "silence_beat", "mismatch", "literal", "mickey", "callback"]},
+        "sound_idea": STR,                 # 영어 한 문장(silence_beat 는 "") — 콜백은 앞 소리와 같은 문장
+        "queries": STR_LIST,               # Openverse 영어 검색어 2~3개(구체적인 낱말 1~3개씩: "wood thud", "box drop")
+        "pre_silence_s": NUM,              # 직전 침묵 0~1.0초(그동안 음악을 비운다)
+        "why": STR,                        # 기대 → 어긋남 한 줄
+    })},
     "concept": STR,                        # 이 영상만의 시각 콘셉트(조사에 근거한 한 문단)
     "world": WORLD,
     "motifs": STR_LIST,                    # 되풀이되는 시각 장치 3~5개(예: '밀까 당길까 문 손잡이', '빨간 펜 교정 표시')
@@ -66,6 +86,7 @@ TREATMENT = _obj({
     # 대본의 흐름 그대로 — 단락(발화 범위)마다 화면 구성. 빈틈 없이 처음부터 끝까지
     "segments": {"type": "array", "items": _obj({
         "start_seg": INT, "end_seg": INT,
+        "link": {"type": "string", "enum": LINKS},
         "layout": {"type": "string", "enum": PLAN_LAYOUTS},
         "show": STR,                       # 화면에 무엇을(구체적인 대상·자료 이름 — '관련 이미지' 금지)
         "asset": STR,                      # 조사 노트의 무엇(인물·제품 이름·커먼즈 파일·재현 대상) — 없으면 ""
@@ -81,6 +102,7 @@ TREATMENT = _obj({
         "brief": STR,                      # 무엇을 어떻게 — 재현 사양(치수·색·배치·글자)과 움직임 순서
         "research_ref": STR,               # 조사 노트의 근거(recreations·entities 이름)
         "motion_ref": STR,                 # 모션 레퍼런스 목록(Jitter)의 slug — 그 움직임을 참고해 다시 짓는다(없으면 "")
+        "why": STR,                        # 왜 이 장면이어야 하는가 한 줄
         "sfx": {"type": "string", "enum": SFX_KINDS},
     })},
 })
@@ -99,10 +121,12 @@ BRIEF = _obj({
         "intent": {"type": "string", "enum": INTENTS},
         "show": {"type": "string", "enum": SHOWS},            # 이 문장이 보여야 할 것(emotion = 얼굴)
         "function": {"type": "string", "enum": FUNCTIONS},    # 이 화면이 하는 일 — 못 고르면 none(화면 없음)
+        "cutaway": {"type": "string", "enum": CUTAWAYS},      # 얼굴을 떠나는 이유(얼굴이면 none) — 게이트 B12
         "visual": {"type": "string", "enum": VISUALS},
         "idea": STR,
         "on_screen_text": STR,                                # 화면에 나갈 글자(말을 옮기지 않는다, 없으면 "")
         "sequence_id": STR,                                   # 속한 시퀀스(없으면 "")
+        "argument_tag": STR,                                  # 논증 배지(12~18자) — 90~150초마다 그 논증이 시작되는 비트에만, 나머지는 ""
         "priority": INT,
     })},
     "central_question": STR,                                  # 훅이 여는 질문 한 문장
@@ -137,9 +161,6 @@ EDITOR = _obj({
         "callout": STR,     # 화자 옆에 크게 띄울 2줄 문구(줄바꿈 \n, 줄당 4~9자) — 없으면 빈 문자열
         "label": STR,       # 콜아웃 위 작은 맥락 라벨(2~8자, 예: "핵심", "게슈탈트 원리")
     })},
-    # ⚡ 펀치 구간: 크리에이터식 펀치 편집(하드 펀치인·큰 단어 슬램·휩 전환·임팩트 효과음)을 허용하는 특정 구간 —
-    # 훅·클라이맥스·빠른 열거. 0~3개, 전체의 20% 이하. 그 밖은 젠틀 규칙 그대로
-    "energy_spans": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
     # 🙂 얼굴 홀드: 건드리지 않을 구간 — 그 안과 뒤 1.5초에 그래픽·정리 보드·콜아웃·전환·효과음이 없다(고백·결론·질문 뒤).
     # 영상당 4~8곳, 한 곳 6~25초(docs/upgrade/05 4-3)
     "holds": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "reason": STR})},
@@ -169,9 +190,9 @@ GRADE = _obj({
 
 # 🃏 자유 HTML 카드의 스타일(prompts/card_dsl.md · studio/motion/card.py STYLES 와 같게)
 CARD_STYLES = ["editorial", "academic", "whiteboard", "swiss", "minimal", "board"]
-# 구도 원형(prompts/layouts.md — 2026-10-04 'PPT 같다': 빈 좌표에서 시작하지 않는다). free = 원형 밖(이유를 reason 에)
-ARCHETYPES = ["statement", "object_callouts", "data_bars", "bento", "before_after", "process_path", "ui_screen", "timeline",
-              "fan_stack", "stat_ring", "term_split", "lower_third", "camera_world", "free"]
+# 자유 카드의 구도 원형(prompts/layouts.md) — 실물 자료가 보여 줄 수 없는 메커니즘만. 고정 슬롯(핵심어·정의·배지·인용·슈퍼)은 템플릿이다
+ARCHETYPES = ["section_cut", "flow_diagram", "plan_mark", "same_plan_change", "map_locator", "dated_strip", "scale_compare",
+              "document_line", "chalk_diagram", "paper_chart", "printed_document", "cutout_stack"]
 
 # 🎨 모션 디자이너 — 템플릿 그래픽 + 직접 설계한 모션 장면(spec_json 은 MotionSpec JSON 문자열) + 자유 HTML 카드(html 은 카드 조각)
 MOTION = _obj({
@@ -200,6 +221,7 @@ MOTION = _obj({
         "layout_name": {"type": "string", "enum": ["side", "desk", "sheet", "evidence", "stack", "strip"]},
         "archetype": {"type": "string", "enum": ARCHETYPES},
         "canvas": {"type": "string", "enum": ["long", "short"]},   # 숏폼용 카드는 숏폼 캔버스로 따로 쓴다
+        "why_not_evidence": STR,                                   # 왜 실물 자료 대신 이 그림인가(한 문장)
         "motif": STR,                                              # 되풀이하는 도식·사물의 이름(영상당 2회까지, 없으면 "")
         "reason": STR,
     })},
@@ -277,8 +299,9 @@ EVIDENCE = _obj({
         "treatment": {"type": "string", "enum": TREATMENTS},
         "focus": STR,                    # detail_zoom·annotate 대상(말로)
         "annotations": {"type": "array", "items": _obj({
-            "type": {"type": "string", "enum": ["circle", "arrow", "underline", "bracket", "label"]},
-            "target": STR, "text": STR, "at_word": STR})},
+            "kind": {"type": "string", "enum": list(OVERLAY_KINDS)},
+            "target": STR, "text": STR, "at_word": STR})},   # target: 비전 선택이 그림에서 찾을 말 · text: 화면 글
+        "tone": {"type": "string", "enum": ["none", *TONES]},
         "pair": _obj({"name_ko": STR, "name_en": STR, "label": STR}),   # compare_pair 가 아니면 전부 ""
         "tier_max": {"type": "string", "enum": TIERS},
         "fallback": {"type": "string", "enum": FALLBACKS},
@@ -299,6 +322,10 @@ EVIDENCE_PICK = _obj({
             "cliche": BOOL,
             "shows": STR,                                 # 실제로 보이는 것 한 줄
             "focus_box": {"type": "array", "items": NUM},  # [x, y, w, h] 0~1, 없으면 []
+            # 요청의 표시(A번호)가 이 그림의 어디인가 — 이미지 왼쪽 위 기준 0~1, 못 짚으면 비운다(추측 금지)
+            "marks": {"type": "array", "items": _obj({"annotation": INT, "box": {"type": "array", "items": NUM},
+                                                      "point": {"type": "array", "items": NUM},
+                                                      "outline": {"type": "array", "items": NUM}})},   # x1,y1,x2,y2 …
         })},
         "reason": STR,
         "retry_query_en": STR,     # 2점 이상이 없을 때: 맞는 자료를 찾을 영어 검색어 3~6낱말(다른 대상·행동·화각), 아니면 ""
@@ -309,7 +336,7 @@ EVIDENCE_PICK = _obj({
 SUITES = ["felt", "analog", "brush", "air"]
 CUE_ROLES = ["theme", "bed", "air", "reprise"]
 CUE_ENTRIES = ["downbeat", "fade_in"]
-CUE_EXITS = ["ending", "fade_bar", "into_next"]
+CUE_EXITS = ["ending", "fade_bar", "into_next", "stop"]
 MUSIC = _obj({
     "suite": {"type": "string", "enum": SUITES},
     "suite_reason": STR,        # 이 영상의 말투·논지와 왜 맞는지 한 줄
@@ -323,8 +350,9 @@ MUSIC = _obj({
         "entry": {"type": "string", "enum": CUE_ENTRIES},
         "exit": {"type": "string", "enum": CUE_EXITS},
         "why_in": STR, "why_out": STR,
+        "track_from": NUM,      # 곡의 몇 초부터(−1 = 앞 큐에 이어서, exit=stop 이면 곡의 정점이 멈춤에 오게)
     })},
-    "silences": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "why": STR})},
+    "silences": {"type": "array", "items": _obj({"start_seg": INT, "end_seg": INT, "why": STR, "lead_s": NUM})},
     "hero": {"type": "array", "items": _obj({
         "seg": INT, "kind": {"type": "string", "enum": ["ident", "tonal"]}, "why": STR})},
     "shorts": _obj({"role": {"type": "string", "enum": ["bed", "air", "none"]}, "energy": INT, "note": STR}),
@@ -333,6 +361,9 @@ MUSIC = _obj({
     "track_reason": STR,
     "notes": STR,
 })
+
+# 🎼 음악 감독(곡 찾기) — music_mode=auto 이고 내 음악 폴더가 비었을 때 큐 시트 전에 한 번
+MUSIC_SEARCH = _obj({"queries": STR_LIST, "arc": STR})
 
 # 🔤 자막 디자이너
 CAPTIONS = _obj({
@@ -413,6 +444,7 @@ SETPIECE = _obj({
     "html": STR,
     "timeline": STR,              # 직접 쓴 GSAP 타임라인 본문(card_dsl.md 7절) — 시그니처 장면은 거의 늘 쓴다
     "start_word": STR,
+    "why_not_evidence": STR,      # 왜 실물 자료만으로 안 되고 이 장면이 필요한가(한 문장)
     "notes": STR,
 })
 
@@ -446,7 +478,7 @@ REFERENCE = _obj({
         "name": STR,              # 기법 이름(한국어)
         "how": STR,               # 화면에서 어떻게 보이는가(수치: px·초·이징)
         "when": STR,              # 어떤 문장·역할에 쓰는가
-        "our_runtime": STR,       # 우리 카드 런타임(GSAP tl · data-anim · data-camera · data-float)으로 옮긴 한 줄
+        "our_runtime": STR,       # 우리 카드 런타임(GSAP tl · data-anim · data-camera)으로 옮긴 한 줄
     })},
     "palette": {"type": "array", "items": _obj({"hex": STR, "role": STR})},   # 측정된 색에 역할(무대·판·잉크·강조)
     "archetypes": STR_LIST,       # 어울리는 구도 원형 이름(layouts.md)
@@ -480,7 +512,7 @@ CARD_REVISE = _obj({"html": STR, "timeline": STR, "changes": STR})
 
 SHORTS = SHORTS_PLAN
 
-__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "REFERENCE", "DESIGN_JUDGE", "CARD_CRITIC", "CRITIC_SCORES", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
+__all__ = ["RESEARCH", "SETPIECE", "STYLE_FRAME", "REFERENCE", "DESIGN_JUDGE", "CARD_CRITIC", "CRITIC_SCORES", "ARCHETYPES", "TREATMENT", "SFX_KINDS", "PLAN_LAYOUTS", "MUSIC", "MUSIC_SEARCH", "EVIDENCE", "EVIDENCE_PICK", "NEEDS", "TREATMENTS", "BRIEF", "EDITOR", "GRADE", "MOMENT_KINDS", "BGM_MOODS", "LOOKS", "MOTION", "STOCK", "STOCK_PICK", "CAPTIONS", "COPY", "QA", "MOTION_REVISE",
            "CARD_REVISE", "CARD_STYLES", "PHOTO_KINDS", "SHORTS", "TEMPLATE_NAMES", "HOOK_TYPES", "INTENTS", "VISUALS"]
 
 

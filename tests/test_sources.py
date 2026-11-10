@@ -6,7 +6,6 @@ from studio.media.sources import (GAP, RATE, Cam, Group, Piece, Quality, SourceM
                                   clips_for, envelope, face_track, group_sources, master_audio_args, match,
                                   visual_scorer)
 from studio.models import Span, TimeMap
-from studio.render.props import mark_soft_cuts
 
 
 def _speech(sec: float, seed: int) -> np.ndarray:
@@ -144,11 +143,9 @@ def test_clips_face_and_grammar_follow_angles():
     tr = face_track(pieces, sm, faces)
     xs = {round(d["t"], 2): d["x"] for d in tr}
     assert xs[1.0] == 0.3 and xs[4.0] == 0.7 and xs[10.0] == 0.7
-    # 편집 문법: 앵글이 바뀌는 곳은 새 샷(와이드), 그 컷은 소프트 컷이 아니다
+    # 편집 문법: 앵글이 바뀌는 곳은 새 샷(와이드)
     shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[], angle_cuts=cuts)
     assert any(abs(s["start"] - 3.0) < 1e-6 and s["zoom"] == 1.0 for s in shots)
-    mark_soft_cuts(clips, [], [], 0.1)
-    assert "soft" not in clips[1]
     ed = build_short_edit(timemap=tm, total=tm.duration, graphics=[], cues=[], moments=[], angle_cuts=cuts)
     assert any(abs(s["start"] - 3.0) < 1e-6 and s["zoom"] == 1.0 for s in ed.camera)
 
@@ -201,5 +198,84 @@ def test_cut_audio_slices_samples_with_fades(tmp_path):
         y = np.frombuffer(r.readframes(r.getnframes()), np.int16).reshape(-1, 2)
     assert abs(total - 1.5) < 1e-9 and len(y) == int(1.5 * sr)
     assert y[0, 0] == 0 and y[int(0.25 * sr), 0] == 10000        # 이음새마다 페이드 인, 가운데는 원래 값
-    assert y[int(0.5 * sr) - 1, 0] == 0 and y[int(0.5 * sr) + 1000, 0] == 10000
+    # 이음새: 앞 keep 은 끝까지 원래 값, 다음 keep 머리는 equal-power(가운데 cos+sin = √2)로 파이지 않는다
+    assert y[int(0.5 * sr) - 1, 0] == 10000 and y[int(0.5 * sr) + 1000, 0] == 10000
+    assert y[int(0.5 * sr):int(0.5 * sr) + 576, 0].min() >= 10000 and abs(y[int(0.5 * sr) + 288, 0] - 14142) < 30
     assert np.all(y[int(1.1 * sr):, 0] == 0)                      # 끝을 넘은 부분은 무음(길이는 영상과 같게)
+
+
+def _wav_cut(tmp_path, x, keeps):
+    import wave
+
+    from studio.edit.assemble import cut_audio
+    src = tmp_path / "v.wav"
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes(x.astype("<i2").tobytes())
+    total = cut_audio(None, src, keeps, tmp_path / "o.wav", tmp_path)
+    with wave.open(str(tmp_path / "o.wav")) as r:
+        y = np.frombuffer(r.readframes(r.getnframes()), np.int16).reshape(-1, 2)
+    assert len(y) == int(round(total * 48000))                    # 크로스페이드해도 표본 수는 keep 합과 같다(싱크)
+    return y
+
+
+def test_seam_crossfade_keeps_room_tone_level(tmp_path):
+    """무상관 룸톤의 이음새: 예전 12ms 선형 페이드는 5ms 창에서 약 −18dB 파였다."""
+    sr = 48000
+    x = np.random.default_rng(1).normal(0, 300, (sr * 3, 2)).round().astype(np.int16)
+    y = _wav_cut(tmp_path, x, [Span(0.5, 1.0), Span(2.0, 2.5)]).astype(np.float32)
+    seam = int(0.5 * sr)
+    win = y[seam - 120:seam + 120]
+    assert 10 * np.log10(np.mean(win ** 2) / np.mean(y[1000:20000] ** 2)) > -3.0
+
+
+def test_seam_falls_back_where_handle_is_unusable(tmp_path):
+    sr = 48000
+    nf = 576
+    # 간격 0 = 페이드 없이 원본 그대로
+    x = np.full((sr * 3, 2), 8000, np.int16)
+    y = _wav_cut(tmp_path, x, [Span(0.5, 1.0), Span(1.0, 1.5)])
+    assert np.all(y[nf:-nf, 0] == 8000)
+    # 핸들이 디지털 무음(묶음 사이 2초 무음) → 선형 페이드, 이음새 표본 0
+    x = np.full((sr * 3, 2), 8000, np.int16)
+    x[sr:sr * 2] = 0
+    y = _wav_cut(tmp_path, x, [Span(0.5, 1.0), Span(2.0, 2.5)])
+    assert y[int(0.5 * sr) - 1, 0] == 0 and y[int(0.5 * sr), 0] == 0
+    # 핸들이 가장자리보다 +6dB 넘게 크면(지운 말) 섞지 않는다
+    x = np.full((sr * 3, 2), 800, np.int16)
+    x[sr:sr + nf] = 20000
+    y = _wav_cut(tmp_path, x, [Span(0.5, 1.0), Span(2.0, 2.5)])
+    assert y.max() <= 800
+    # 원본 끝을 넘는 핸들 · 간격 < 12ms(핸들이 다음 머리와 겹침) · 짧은 keep 도 선형
+    x = np.full((sr * 3, 2), 8000, np.int16)
+    y = _wav_cut(tmp_path, x, [Span(2.5, 3.0), Span(0.5, 1.0)])
+    assert y[int(0.5 * sr) - 1, 0] == 0
+    y = _wav_cut(tmp_path, x, [Span(0.5, 1.0), Span(1.006, 1.5)])
+    assert y.max() <= 8000 and y[int(0.5 * sr) - 1, 0] == 0
+    y = _wav_cut(tmp_path, x, [Span(0.5, 0.52), Span(2.0, 2.5)])
+    assert y.max() <= 8000
+
+
+def test_seam_handling_never_moves_samples(tmp_path):
+    """이음새 처리가 어떤 경로를 타도(크로스페이드·선형·간격 0) 출력 표본 수는 keep 합이고, 각 keep 가운데는 원본 표본 그대로(싱크)."""
+    sr = 48000
+    rng = np.random.default_rng(7)
+    x = rng.normal(0, 400, (sr * 40, 2)).round().astype(np.int16)
+    x[sr * 20:sr * 21] = 0                                        # 일부 이음새의 핸들은 무음 → 선형 경로
+    keeps, t = [], 0.3
+    for _ in range(60):
+        a = t + float(rng.choice([0.0, 0.004, 0.2, 0.7]))
+        b = a + float(rng.uniform(0.02, 0.9))
+        keeps.append(Span(a, b))
+        t = b
+    y = _wav_cut(tmp_path, x, keeps)
+    spans = [(int(round(k.start * sr)), int(round(k.end * sr))) for k in keeps]
+    assert len(y) == sum(b - a for a, b in spans)
+    pos = 0
+    for a, b in spans:
+        mid = (b - a) // 2
+        if a + mid < len(x):
+            assert np.array_equal(y[pos + mid], x[a + mid])
+        pos += b - a

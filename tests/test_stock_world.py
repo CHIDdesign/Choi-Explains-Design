@@ -173,5 +173,5 @@ def test_motion_brief_lists_failed_procurement_instead_of_dropping_it():
     outcomes = [{"i": 0, "need": "stock", "rung": "face", "assets": [], "archive": None, "stock": None, "why": "못 구함"},
                 {"i": 1, "need": "code_drawn", "rung": "code_drawn", "assets": [], "archive": None, "stock": None, "why": ""}]
     brief = evg.brief_for_motion(items, outcomes, [])
-    assert "조달 실패 — 비워 두지 않는다" in brief
+    assert "조달 실패 — 억지로 채우지 않는다" in brief       # 디자인 v5.1: 카드는 메커니즘에만, 기본은 화자
     assert "S3–S4" in brief and "foam model sanding" in brief and "미대 실기실" in brief

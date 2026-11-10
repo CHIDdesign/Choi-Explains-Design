@@ -77,6 +77,8 @@ FONT_OK = {"pretendard", "noto serif kr", "anton", "jua", "black han sans", "nan
            "ui-sans-serif", "ui-monospace", "inherit", "apple sd gothic neo", "malgun gothic", "nanum myeongjo"}
 CSS_FORBIDDEN = re.compile(r"@import|@font-face|@charset|expression\s*\(|behavior\s*:|-moz-binding|javascript:|"
                            r"position\s*:\s*fixed|url\s*\(|@keyframes|\btransition\b|\banimation\b", re.I)
+SURFACES = {"eggshell", "parchment", "memo", "kraft", "graph", "newsprint", "desk"}   # 재질(card-anim.mjs SURFACES)
+TORN_EDGES = {"top", "right", "bottom", "left"}
 STYLE_ATTR_FORBIDDEN = re.compile(r"expression\s*\(|url\s*\(|javascript:|position\s*:\s*fixed|\btransition\b|\banimation\b", re.I)
 
 
@@ -210,11 +212,11 @@ class _Sanitizer(HTMLParser):
             if kl.startswith("data-anim"):
                 anim[kl] = v.strip()
                 continue
+            if kl == "data-at-word":
+                out.append((kl, v.strip()[:24]))       # 렌더 전 plan.land_on_words 가 data-anim-at 으로 바꾼다
+                continue
             if kl == "data-world":
                 out.append(("data-world", "1"))        # 한 세계(캔버스보다 큰 장면) — 카메라가 위를 움직인다(card-anim.mjs)
-                continue
-            if kl == "data-carry":
-                out.append(("data-carry", "1"))
                 continue
             if kl == "data-camera":
                 keys = clean_camera(v, self.problems)
@@ -225,12 +227,17 @@ class _Sanitizer(HTMLParser):
                 if v in ANIM_EASES:
                     out.append((kl, v))
                 continue
-            if kl in ("data-float", "data-float-at", "data-float-period"):
-                # 떠다니는 움직임(card-anim.mjs) — 숫자만
-                try:
-                    out.append((kl, f"{max(0.0, min(60.0, float(v))):g}"))
-                except ValueError:
-                    self.problems.append(f"html_attr_removed:{kl}")
+            if kl == "data-surface":
+                if v.strip() in SURFACES:
+                    out.append((kl, v.strip()))
+                else:
+                    self.problems.append(f"surface_unknown:{v.strip()[:16]}")
+                continue
+            if kl == "data-torn":
+                out.append((kl, " ".join(dict.fromkeys(e for e in v.split() if e in TORN_EDGES)) or "bottom"))
+                continue
+            if kl == "data-tape":
+                out.append((kl, "1"))
                 continue
             if kl == "href" or kl == "xlink:href":
                 # svg <use href="#id"> 만
@@ -249,7 +256,7 @@ class _Sanitizer(HTMLParser):
                 if STYLE_ATTR_FORBIDDEN.search(v):
                     self.problems.append("html_style_attr_forbidden")
                     continue
-                out.append(("style", _check_fonts(v, self.problems)))
+                out.append(("style", limit_effects(_check_fonts(v, self.problems), self.problems)))
                 continue
             if kl == "id":
                 if ID_RE.match(v.strip()):
@@ -449,8 +456,72 @@ def house_backgrounds(css: str, problems: list[str]) -> str:
     return new
 
 
+EFFECT_DECL = re.compile(r"(?<![\w.#-])(-webkit-)?(box-shadow|text-shadow|filter|backdrop-filter)\s*:\s*([^;{}]*);?", re.I)
+GRADIENT_DECL = re.compile(r"(?<![\w-])[\w-]+\s*:[^;{}]*gradient\s*\([^;{}]*;?", re.I)
+FILTER_FN = re.compile(r"([a-z-]+)\(([^()]*(?:\([^()]*\)[^()]*)*)\)", re.I)
+FILTER_OK = {"grayscale", "saturate", "brightness", "contrast", "sepia"}
+MAX_SHADOW_PX = 48.0
+MAX_BLUR_PX = 24.0
+
+
+def _shadow_ok(value: str) -> bool:
+    """접촉·낙하 그림자만: 크기 상한 안, 색은 어두운 무채색(색 그림자·밝은 번짐은 글로우다). var(--lift-N) 토큰은 통과."""
+    v = re.sub(r"var\(--lift-(?:[123]|drop-2)\)", "", value, flags=re.I)
+    if "var(" in v.lower():
+        return False
+    if any(abs(float(n)) > MAX_SHADOW_PX for n in re.findall(r"(-?[\d.]+)px", v)):
+        return False
+    for m in re.finditer(r"rgba?\(([^)]*)\)|#([0-9a-f]{3,8})\b", v, flags=re.I):
+        if m.group(1) is not None:
+            rgb = [float(x) for x in re.findall(r"[\d.]+", m.group(1))[:3]]
+        else:
+            h = m.group(2)
+            h = "".join(c * 2 for c in h[:3]) if len(h) in (3, 4) else h
+            rgb = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+        if len(rgb) < 3 or max(rgb) > 70 or max(rgb) - min(rgb) > 24:
+            return False
+    return True
+
+
+def _filter_ok(value: str) -> bool:
+    v = value.strip().lower()
+    if v in ("none", "inherit", "initial"):
+        return True
+    fns = FILTER_FN.findall(v)
+    if not fns or FILTER_FN.sub("", v).strip():
+        return False
+    for name, arg in fns:
+        if name == "blur":
+            m = re.fullmatch(r"\s*([\d.]+)px\s*", arg)
+            if not m or float(m.group(1)) > MAX_BLUR_PX:
+                return False
+        elif name == "drop-shadow":
+            if not _shadow_ok(arg):
+                return False
+        elif name not in FILTER_OK:
+            return False
+    return True
+
+
+def limit_effects(css: str, problems: list[str]) -> str:
+    """효과의 한도(prompts/card_dsl.md): 그림자·흐림은 깊이를 만드는 만큼만. 색 번짐·유리·그라디언트 면은 지운다(재질은 data-surface 가 맡는다)."""
+    def effect(m: re.Match) -> str:
+        prop, value = m.group(2).lower(), m.group(3)
+        ok = {"box-shadow": _shadow_ok, "text-shadow": _shadow_ok, "filter": _filter_ok}.get(prop)
+        if ok and (value.strip().lower() == "none" or ok(value)):
+            return m.group(0)
+        problems.append(f"css_effect_removed:{prop}")
+        return ""
+
+    def gradient(m: re.Match) -> str:
+        problems.append("css_gradient_removed")
+        return ""
+
+    return EFFECT_DECL.sub(effect, GRADIENT_DECL.sub(gradient, css))
+
+
 def clean_css(css: str, card_id: str, problems: list[str]) -> str:
-    css = _strip_css_comments(css)
+    css = limit_effects(_strip_css_comments(css), problems)
     if CSS_FORBIDDEN.search(css):
         # 금지 항목은 선언 단위로 지운다
         def drop_decl(m: re.Match) -> str:

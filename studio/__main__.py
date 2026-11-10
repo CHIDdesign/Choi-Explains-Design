@@ -27,9 +27,13 @@ def _text_or_file(v: str) -> str:
 
 
 def _run(pipe, until: str) -> int:
+    from .director.claude_code import LoginExpired
     from .gate import GateBlocked
     try:
         pipe.run(until=until)
+    except LoginExpired as e:
+        print(f"\n{e}", flush=True)
+        return 4
     except GateBlocked as e:
         print(f"\n{e}\n\n이대로 만들려면: python -m studio rerender \"{pipe.dir}\" --force-render", flush=True)
         return 3

@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
+import contextlib
 import os
 import io
 import json
@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -43,23 +44,43 @@ EXTRA = [
     ("그래서 저는 늘 연필보다 질문을 먼저 듭니다.", 1.2),
 ]
 base.SPOKEN[-1:-1] = EXTRA
+# NG("아 다시 할게요") 뒤 쉼만 0.3초로 — 그 경계가 애매한 컷(150~400ms)이 되어 ✂️ 컷 경계 그림이 컷 총괄에게 간다
+# (EXTRA 를 넣은 뒤에 복사해야 한다)
+STUDIO_SPOKEN = [(t, 0.3) if t == "아 다시 할게요" else (t, p) for t, p in base.SPOKEN]
 SCRIPT = base.SCRIPT.replace("결국 좋은 디자인은", " ".join(t for t, _ in EXTRA) + "\n결국 좋은 디자인은")
 
 LOCK = threading.Lock()
 CALL_LOG = Path(os.environ.get("FAKE_CLAUDE_LOG", "/tmp/fake_claude_calls.jsonl"))
 
 
+@contextlib.contextmanager
+def _log_lock():
+    """가짜 CLI 는 호출마다 프로세스가 따로 떠서 스레드 잠금으로는 못 막는다 — Windows 의 append 는 원자적이지 않아 줄이 찢겼다."""
+    lock = CALL_LOG.with_suffix(".lock")
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL)
+            break
+        except OSError:
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        os.unlink(lock)
+
+
 def load_calls() -> list[dict]:
     """가짜 API 서버·가짜 Claude Code CLI 가 공통으로 남기는 호출 기록."""
     if not CALL_LOG.exists():
         return []
-    return [json.loads(x) for x in CALL_LOG.read_text(encoding="utf-8").splitlines() if x.strip()]
+    with _log_lock():
+        return [json.loads(x) for x in CALL_LOG.read_text(encoding="utf-8").splitlines() if x.strip()]
 
 
 def record_call(entry: dict) -> None:
-    with LOCK, CALL_LOG.open("a", encoding="utf-8") as f:
+    with LOCK, _log_lock(), CALL_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "motion_examples.json").read_text(encoding="utf-8"))
 CARD_EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
 
 
@@ -93,8 +114,11 @@ def _seg_with(segs: dict[int, str], word: str) -> int:
 
 
 def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict:
-    if agent == "cut_editor":  # 대본 + 컷 초안을 받는다(그림 없음)
-        assert n_images == 0 and "# 전사와 컷 초안" in json.dumps(body, ensure_ascii=False)
+    if agent == "cut_editor":  # 대본 + 컷 초안 + 애매한 컷 경계마다 그림 한 장(목록의 V번호와 같은 수)
+        text = "\n".join(str(b.get("text", "")) for m in body.get("messages", []) for b in m.get("content", [])
+                         if isinstance(b, dict)) or json.dumps(body, ensure_ascii=False)
+        views = re.findall(r"^V\d+ ", text.split("# 컷 경계 그림", 1)[1], re.M) if "# 컷 경계 그림" in text else []
+        assert "# 전사와 컷 초안" in text and n_images == len(views), (n_images, views)
         return {"utterances": [], "removals": [], "audio_events": [], "script_issues": [], "notes": "초안 그대로"}
     if agent == "colorist":  # 전사본 없이 비교 시트 + 원본 스코프 시트 두 장
         assert n_images == 2, n_images
@@ -118,14 +142,14 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "script_checks": [{"sentence": "더블 다이아몬드라는 모델이 있습니다", "verdict": "ok", "note": "", "source_url": ""}],
                 "visual_directions": ["마름모 두 개를 종이 위 선 그림으로 그리고 단계마다 형광펜"],
                 "sources": [{"title": "Design Council", "url": "https://www.designcouncil.org.uk/"}]}
-    if agent == "style_frame":  # 🎨 스타일 프레임 — 레퍼런스 보드(운영자 그림 또는 하우스 예시 보드)를 보고 룩 한 장 + 규칙
-        assert "## 만드는 것" in instruction and n_images >= 1, (n_images, instruction[:300])
-        ex = CARD_EXAMPLES["statement"]
-        return {"archetype": "statement", "html": ex["html"], "timeline": ex.get("timeline", ""),
+    if agent == "style_frame":  # 🎨 스타일 프레임 — 레퍼런스 보드·확보 자료를 보고 룩 한 장 + 규칙
+        assert "## 만드는 것" in instruction, instruction[:300]
+        ex = CARD_EXAMPLES["section_cut"]
+        return {"archetype": "section_cut", "html": ex["html"], "timeline": ex.get("timeline", ""),
                 "rules": {"grid": "왼쪽 150px 축", "type": "제목 150px 800 · 본문 44px", "color": "오렌지는 한 낱말만",
                           "shape": "모서리 28px · 선 3px", "motif": "모이는 점", "motion": "어절 마스크 상승 + 느린 드리프트",
                           "do": ["주인공 하나"], "dont": ["가운데 3단"]},
-                "notes": "하우스 보드의 statement 결"}
+                "notes": "단면 도식"}
     if agent == "design_judge":  # 🧑‍⚖️ 시안 심사 — 시안마다 정착 화면 + 움직임 시트, 앞에 스타일 프레임·보드
         assert "## 시안" in instruction and "V1" in instruction and n_images >= 4, (n_images, instruction[-400:])
         return {"ranking": [{"variant": 1, "score": 7.2, "strengths": "정확", "flaws": "평범"},
@@ -149,11 +173,11 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         assert n_images >= 2 and "## 모션 레퍼런스" in instruction, (n_images, instruction[-300:])
         assert "## 🎨 이 영상의 스타일 프레임" in instruction, instruction[-800:]
         m = re.search(r"## 이번 시안의 방향 \((\d)/", instruction)
-        key = ("statement", "object_callouts", "data_bars", "bento")[int(m.group(1)) - 1 if m else 0]
+        key = ("section_cut", "flow_diagram", "section_cut", "flow_diagram")[int(m.group(1)) - 1 if m else 0]
         ex = CARD_EXAMPLES[key]
         return {"layout": "fullscreen", "style": ex.get("style") or "editorial", "archetype": ex.get("archetype", key),
                 "title": "근접성 재현", "html": ex["html"], "timeline": ex.get("timeline", ""), "start_word": "",
-                "notes": "조사 노트의 근접성 은유"}
+                "why_not_evidence": "구조는 사진 한 장으로 보이지 않는다", "notes": "조사 노트의 근접성 은유"}
     segs = _segs(body)
     ids = sorted(segs)
     first, last = ids[0], ids[-1]
@@ -175,10 +199,10 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                               {"title": "문제를 다시 정의하기", "start_seg": s_skip, "end_seg": last, "purpose": "원리",
                                "claim": "해결책보다 질문이 먼저다"}],
                 "beats": [{"start_seg": s_dots, "end_seg": s_gestalt, "intent": "name_concept", "show": "structure",
-                           "function": "name", "visual": "motion", "idea": "점들이 모이며 무리로 보임", "on_screen_text": "근접성",
+                           "function": "name", "cutaway": "explain", "visual": "motion", "idea": "점들이 모이며 무리로 보임", "on_screen_text": "근접성",
                            "sequence_id": "", "priority": 1},
                           {"start_seg": s_sketch, "end_seg": s_sketch, "intent": "example", "show": "example",
-                           "function": "example", "visual": "stock_video", "idea": "스케치하는 손", "on_screen_text": "",
+                           "function": "example", "cutaway": "prove", "visual": "stock_video", "idea": "스케치하는 손", "on_screen_text": "",
                            "sequence_id": "q1", "priority": 2}],
                 "central_question": "좋은 디자인은 어디에서 시작할까", "payoff_seg": last,
                 "sequences": [{"id": "q1", "type": "evidence_stack", "start_seg": s_sketch, "end_seg": s_trip,
@@ -189,29 +213,35 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 "hook_segs": [first], "title_card_seg": ids[1], "shorts_ideas": [{"segments": ids[-5:], "angle": "통념 반박"}],
                 "caption_direction": "절제된 다큐멘터리 톤, 전문용어만 마커", "music": {"mood": "calm piano", "notes": ""},
                 "notes_for_team": "화자 중심, 도식은 크게",
-                "treatment": {"concept": "연구 노트 위에서 질문이 해결책을 앞지르는 장면", "motifs": ["물음표", "마름모"],
+                "treatment": {"structures": [{"shape": "통념 → 반례 → 원리", "opening": "스케치", "ending": "질문", "why_not": ""},
+                                             {"shape": "연대기", "opening": "옛 사례", "ending": "지금", "why_not": "상투"},
+                                             {"shape": "목록", "opening": "숫자", "ending": "요약", "why_not": "논증이 없다"}],
+                              "chosen": 0, "chosen_why": "반례가 논지를 세운다",
+                              "benchmark": {"work": "다큐 한 편", "learn": "세부 먼저", "avoid": "내레이션 말투"},
+                              "silences": [{"after_seg": s_wide, "sec": 1.2, "before": "turn", "why": "전환 앞"},
+                                           {"after_seg": s_trip, "sec": 1.0, "before": "peak", "why": "정점 앞"}],
+                              "concept": "연구 노트 위에서 질문이 해결책을 앞지르는 장면", "motifs": ["물음표", "마름모"],
                               "world": {"who": "미술대학 산업디자인과 학생(20대 초반)", "where": "실기실·모형실·크리틱 벽",
                                         "era": "2020년대", "props": "스케치북·마커·폼 모형", "look": "자연광",
                                         "never": "초중고 교실·아이·색연필 세트"},
                               "texture_note": "", "type_note": "", "sound_concept": "종이 소리만 드물게",
-                              "segments": [{"start_seg": first, "end_seg": s_wide, "layout": "face", "show": "화자",
+                              "segments": [{"start_seg": first, "end_seg": s_wide, "link": "none", "layout": "face", "show": "화자",
                                             "asset": "", "motion": "", "sfx": "none", "why": "훅"},
-                                           {"start_seg": s_sketch, "end_seg": s_trip, "layout": "stock_video",
+                                           {"start_seg": s_sketch, "end_seg": s_trip, "link": "but", "layout": "stock_video",
                                             "show": "스케치하는 손", "asset": "", "motion": "", "sfx": "whoosh_soft",
                                             "why": "현장"}],
                               "signature_scenes": [{"id": "sig1", "start_seg": s_ask, "end_seg": s_ask, "start_word": "",
                                                     "kind": "diagram", "title": "근접성 재현",
                                                     "brief": "점 여섯 개가 두 무리로 모인다", "research_ref": "근접성",
-                                                    "motion_ref": "the-stack-testimonial", "sfx": "pop"}]}}
+                                                    "motion_ref": "the-stack-testimonial", "sfx": "pop", "why": "말로는 안 보이는 묶임"}]}}
     if agent == "editor":
         s_pencil = _seg_with(segs, "연필보다")   # 그래픽이 없는(얼굴만 보이는) 문장 → 콜아웃 자리
         return {"drop": [], "moments": [
             {"seg": s_pencil, "word": "질문", "kind": "punchline", "intensity": 3, "callout": "연필보다\n질문 먼저",
              "label": "핵심"},
-            {"seg": last, "word": "", "kind": "conclusion", "intensity": 2, "callout": "", "label": ""},
+            # 앞 문장은 자리를 못 찾은 스톡 pip 이 차지한다 — 콜아웃은 얼굴만 보이는 마지막 문장에
+            {"seg": last, "word": "디자인은", "kind": "conclusion", "intensity": 2, "callout": "좋은 디자인은\n질문에서", "label": "핵심"},
             {"seg": s_q, "word": "", "kind": "number", "intensity": 2, "callout": "", "label": ""}],
-            # ⚡ 펀치 구간: 핵심 한 방 문장 하나만 — 그 안의 강조는 하드 펀치인(cut)이 된다
-            "energy_spans": [{"start_seg": s_pencil, "end_seg": s_pencil, "reason": "핵심 한 방"}],
             # 🙂 얼굴 홀드(여운 문장) · 리듬 · 정점(docs/upgrade/05)
             "holds": [{"start_seg": s_hidden, "end_seg": s_hidden, "reason": "여운"}],
             "rhythm": [{"start_seg": first, "end_seg": s_hidden, "level": "steady", "reason": "설명"},
@@ -227,8 +257,14 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
         # 확보 자료 컨택트 시트 + 🎨 스타일 프레임(정지·움직임) + 레퍼런스 보드
         assert "## 확보된 자료" in instruction and "재현 요청" in instruction and n_images >= 2, (n_images, instruction[:300])
         assert "## 🎨 이 영상의 스타일 프레임" in instruction, instruction[-600:]
-        spec = copy.deepcopy(EXAMPLES["fixation_two_groups"])
-        card = CARD_EXAMPLES["stat_ring"]   # 글자가 적어 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
+        # 이 슬롯은 약 7초 — 12초짜리 예제를 넣으면 뒤 요소가 나오기 전에 장면이 끝난다. 말에 맞춘 자리는 at_word 로
+        spec = {"bg": "paper", "elements": [
+            {"type": "text", "x": 50, "y": 12, "at": 0.1, "text": "근접성", "size": 9, "weight": 800},
+            {"type": "dots", "x": 50, "y": 48, "at": 0.3, "count": 6, "cols": 6, "gap": 11, "r": 2.4,
+             "groups": [3, 3], "groupAt": 2.0, "groupGap": 16},
+            {"type": "text", "x": 50, "y": 76, "at": 2.0, "enter": "up", "text": "가까우면 한 무리", "size": 5.5, "at_word": "무리로"},
+            {"type": "mark", "kind": "underline", "x": 50, "y": 76, "w": 30, "h": 7, "at": 3.0, "at_word": "근접성"}]}
+        card = CARD_EXAMPLES["flow_diagram"]   # 글자가 적어 한 문장 안에 끝나는 카드 — 뒤 스톡 사진 자리를 침범하지 않게
         # 🎨 트리트먼트의 시그니처 장면 구간(S{s_ask})은 🛠 빌더 몫 — 지시에 그 구간이 적혀 있으면 카드를 내지 않는다(진짜 모션 디자이너처럼)
         sig = f"S{s_ask}–S{s_ask}" in instruction and "시그니처 장면 구간" in instruction
         return {"graphics": [], "scenes": [{"start_seg": s_dots, "end_seg": s_gestalt, "start_word": "", "layout": "fullscreen",
@@ -237,8 +273,8 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
                 # 🃏 자유 HTML 카드(HyperFrames 규약) — 렌더 전 검사(check)를 거쳐 렌더된다
                 "cards": [] if sig else [{"start_seg": s_ask, "end_seg": s_ask, "start_word": "", "layout": "fullscreen",
                                           "style": "editorial", "title": "문제를 정의하라", "html": card["html"],
-                                          "timeline": card.get("timeline", ""), "archetype": "stat_ring",
-                                          "reason": "한 문장 한 방"}]}
+                                          "timeline": card.get("timeline", ""), "archetype": "flow_diagram",
+                                          "why_not_evidence": "돈의 흐름은 사진으로 보이지 않는다", "reason": "흐름"}]}
     if agent == "card_revise":
         m = re.search(r"```html\n(.*?)\n```", instruction, re.S)
         return {"html": m.group(1) if m else "", "changes": "지적대로 수정"}
@@ -262,11 +298,13 @@ def fake_answer(agent: str, body: dict, n_images: int, instruction: str) -> dict
             ev(s_sketch, "stock", claim="스케치가 가득한 책상", treatment="full", sequence_id="q1",
                stock={"kind": "video", "query_en": "student sketching", "query_ko": "스케치하는 학생", "angle": "detail",
                       "alt_queries": ["marker drawing paper", "sketchbook pages"]}, must_show="손과 연필",
-               avoid="아이·크레용"),
+               avoid="아이·크레용", tone="darken", annotations=[{"kind": "circle", "target": "연필 끝", "text": "", "at_word": ""},
+                                                             {"kind": "memo", "target": "", "text": "방향 없는 손", "at_word": ""}]),
             ev(s_trip, "stock", claim="방향 없는 여행", treatment="pip",
                stock={"kind": "photo", "query_en": "question mark notebook", "query_ko": "물음표 노트"}, must_show="물음표"),
             ev(s_draw, "own_material", claim="해결책부터 그린 스케치", local_file="해결책_스케치.jpg",
-               label="해결책부터 그린 손", caption="2학년 과제 · 2024"),
+               label="해결책부터 그린 손", caption="2학년 과제 · 2024",
+               annotations=[{"kind": "label", "target": "", "text": "해결책부터", "at_word": ""}]),
             ev(s_skip, "primary_source", claim="고착 실험", role="proof", treatment="archive_card", fallback="type_card",
                source={"citation": "Jansson & Smith (1991) Design fixation. Design Studies 12(1)", "doi": "", "url": "",
                        "as_of": "", "locator": "예시를 본 뒤 그 형태에 묶인다"}, label="고착 실험"),
@@ -484,7 +522,7 @@ def main() -> int:
         CALL_LOG.unlink(missing_ok=True)
     os.environ["FAKE_CLAUDE_LOG"] = str(CALL_LOG)
 
-    words, duration = make_words()
+    words, duration = make_words(STUDIO_SPOKEN)
     video = work / "source.mp4"
     if not video.exists():
         make_media(video, words, duration)
@@ -512,6 +550,7 @@ def main() -> int:
     pl.transcribe = fake_transcribe
 
     settings = Settings()
+    settings.style_frame, settings.design_variants = True, 3     # 스타일 프레임·시안 경쟁 경로까지 지나가게(기본은 꺼짐)
     settings.anthropic_api_key = "sk-ant-test"
     settings.pixabay_api_key = "pb-test"
     settings.unsplash_access_key = "us-test"
@@ -525,9 +564,8 @@ def main() -> int:
     settings.ai_backend = args.backend
     if args.backend == "claude_code":
         # 진짜 Claude Code 대신 가짜 CLI(같은 가짜 답변 로직, 호출은 CALL_LOG 에 기록)
-        shim = work / "fake_claude"
-        shim.write_text(f"#!/bin/sh\nexec {sys.executable} {ROOT / 'tests' / 'fake_claude.py'} \"$@\"\n")
-        shim.chmod(0o755)
+        from cli_shim import make_shim     # Windows 는 .exe 런처(sh 를 못 돌린다)
+        shim = make_shim(ROOT / "tests" / "fake_claude.py", work, name="fake_claude")
         settings.claude_code_path = str(shim)
         os.environ["ANTHROPIC_API_KEY"] = "sk-should-be-stripped"  # 구독 모드에서는 자식 프로세스에 넘어가면 안 된다
     # ④ 자료 폴더(화자 자료) — 자료 리서처가 own_material 로 고르고 사다리가 hero 로 넣는다
@@ -590,6 +628,10 @@ def main() -> int:
     for a in ("research", "setpiece", "director", "editor", "motion", "stock", "captions", "shorts", "copy", "stock_pick", "art_director",
               "motion_revise", "colorist", "cut_editor"):
         assert a in agents, f"{a} 호출 없음: {agents}"
+    # ✂️ 컷 경계 그림 — NG 뒤 0.3초 경계(STUDIO_SPOKEN)가 그림으로 컷 총괄에게 갔다
+    assert any(c["agent"] == "cut_editor" and c.get("images", 0) >= 1 for c in CALLS), \
+        [c for c in CALLS if c["agent"] == "cut_editor"]
+    assert list((job / "work" / "cut_views").glob("V*.jpg")), "컷 경계 그림 파일 없음"
     # 🔎 주제 조사는 총괄 감독보다 먼저(소리·얼굴과 동시에), 웹 도구는 조사·시그니처 장면에만
     assert agents.index("research") < agents.index("director") < agents.index("setpiece"), agents
     if args.backend == "claude_code":
@@ -623,7 +665,7 @@ def main() -> int:
     assert agents.index("card_critic") > agents.index("motion") and agents.index("card_critic") < agents.index("art_director"), agents
 
     lp = json.loads((job / "render" / "props_long.json").read_text(encoding="utf-8"))
-    assert lp["captionPreset"] == "paper", lp["captionPreset"]        # 채널 템플릿 자막(흰 종이 상자)
+    assert lp["captionPreset"] == "boxed", lp["captionPreset"]        # 디자인 v5 자막(검정 75% 상자)
     tpl = [g["template"] for g in lp["graphics"]]
     assert "motion" in tpl and "broll" in tpl, tpl
     motion = next(g for g in lp["graphics"] if g["template"] == "motion")
@@ -633,9 +675,10 @@ def main() -> int:
     plan0 = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
     assert any(g.get("signature") for g in plan0["long"]["graphics"] if g["template"] == "card"), "시그니처 장면 없음"
     assert plan0["long"]["studio"]["treatment"]["concept"], plan0["long"]["studio"].get("treatment")
+    assert len(plan0["long"]["silences"]) == 2 and plan0["long"]["studio"]["treatment"]["benchmark"]["learn"], plan0["long"].get("silences")
     card = next(g for g in lp["graphics"] if g["template"] == "card")
     cid = card["data"]["card"]["id"]   # 카드 스코프 id(card{n}) — 그래픽 id(g{n}) 와 다르다
-    assert card["data"]["card"]["html"].startswith('<div class="root">') and card["data"]["card"]["css"].count(f'.card[data-card-id="{cid}"]') > 3, cid
+    assert card["data"]["card"]["html"].startswith('<div class="root"') and card["data"]["card"]["css"].count(f'.card[data-card-id="{cid}"]') > 3, cid
     plan = json.loads((job / "work" / "plan.json").read_text(encoding="utf-8"))
     checks = plan["long"].get("card_checks") or {}
     assert checks and all(v["ok"] for v in checks.values()), checks
@@ -644,6 +687,9 @@ def main() -> int:
         assert (job / "render" / "public_src" / g["data"]["src"]).exists(), g
         assert "Pixabay" in g["data"]["credit"] or "Unsplash" in g["data"]["credit"], g
     assert any(g["data"]["kind"] == "video" for g in brolls) and any(g["data"]["kind"] == "photo" for g in brolls)
+    # 영상 위 표시: 좌표를 쓰는 동그라미는 빠지고 메모만 — 바탕 처리와 착지 시각이 props 까지 온다
+    marked = next(g for g in brolls if g["data"]["kind"] == "video")["data"]
+    assert [o["kind"] for o in marked["overlays"]] == ["memo"] and marked["overlays"][0]["at"] >= 0 and marked["tone"] == "darken", marked
     ems = [w.get("em") for c in lp["captions"] for line in c["lines"] for w in line if w.get("em")]
     assert "term" in ems, ems
     for c in lp["captions"]:
@@ -651,24 +697,11 @@ def main() -> int:
     sp = json.loads((job / "render" / "props_short_1.json").read_text(encoding="utf-8"))
     assert sp["layout"] == "reel" and sp["camera"], sp["layout"]
     assert (job / "render" / "props_short_2.json").exists()
-    # 편집 문법 엔진: 부드러운 프레이밍(100↔106%)·글라이드 강조·콜아웃·챕터 전환
-    # 젠틀 편집: 프레이밍은 100↔106%(콜아웃 110%)에 느린 푸시(최대 +5%)뿐. 콜아웃 뒤 조각은 원래 푸시가 닿았을 값(예 1.05)에서
-    # 이어지므로 정확한 집합이 아니라 범위로 본다
-    assert lp["camera"] and all(1.0 <= c["zoom"] <= 1.12 and c["zoomEnd"] <= 1.17 for c in lp["camera"]), lp["camera"]
-    # 강조 글라이드: 있으면 glide 뿐이고, 그래픽(전면·분할) 위에는 놓이지 않는다. 몇 개인지는 기획의 그래픽 배치에 따라
-    # 0 도 될 수 있다(그래픽 위 · 콜아웃 40초 안의 강조 순간은 건너뛴다)
-    # 인물 확대는 아주 느린 글라이드뿐(2026-10-04 채널 주인: "확대·이완이 너무 빠르다 — 교양 있고 차분하고 딥하게") — 펀치 구간도
-    assert all(p.get("style") == "glide" and p.get("in", 0) >= 1.5 for p in lp["punches"]), lp["punches"]
-    hl_dur = next(t["t"] for t in lp["transitions"] if t["type"] == "zoom" and t["t"] > 2.0)   # 🎬 하이라이트 → 본편
-    # 📋 챕터 정리 보드(있으면)는 펀치 구간·강조 순간을 덮지 않는다 — 이 대본은 2챕터 끝이 펀치 구간이라 건너뛸 수 있다
-    for g in lp["graphics"]:
-        if g["template"] == "recap":
-            assert g["layout"] == "split" and 2 <= len(g["data"]["items"]) <= 4, g
-            assert not any(p["style"] == "cut" and g["start"] < p["end"] and g["end"] > p["t"] for p in lp["punches"]), g
-    # ⚡ 펀치 구간(핵심 한 방)도 하드 펀치인이 아니라 아주 느린 밀기 — +3~7%, 들어가는 데 1.5초 이상(2026-10-04 '확대가 너무 빠르다').
-    # 그 자리가 이미 프레이밍이 바뀌는 곳이면 밀기는 빠진다(예전엔 하드 펀치인만 남았다)
-    assert all(p["style"] == "glide" and 0.03 <= p["amount"] <= 0.07 and p["in"] >= 1.5 for p in lp["punches"]), lp["punches"]
-    assert plan["long"]["energy_spans"] and plan["long"]["energy_spans"][0]["reason"] == "핵심 한 방", plan["long"].get("energy_spans")
+    # 디자인 v5: 화자는 100↔112% 크롭의 하드 컷뿐 — 드리프트·글라이드·펀치·장면 전환 없음
+    assert lp["camera"] and all(c["zoom"] in (1.0, 1.12) and c["zoomEnd"] == c["zoom"] for c in lp["camera"]), lp["camera"]
+    assert lp["punches"] == [] and lp["transitions"] == [], (lp["punches"], lp["transitions"])
+    assert not any(g["template"] == "recap" for g in lp["graphics"])
+    hl_dur = lp["chapters"][0]["start"]                     # 🎬 하이라이트 → 본편: 첫 챕터가 그만큼 뒤로 밀린다
     # 시퀀스·리듬·홀드가 계획에 남고(재정규화에도), 품질 게이트가 홀드 보호를 확인했다
     assert plan["long"]["holds"] and plan["long"]["sequences"][0]["id"] == "q1" and plan["long"]["rhythm"], plan["long"].get("holds")
     gate_json = json.loads((job / "work" / "gate.json").read_text(encoding="utf-8"))
@@ -687,12 +720,10 @@ def main() -> int:
     for gid in ("D1_voice_music", "D3_one_track", "D5_sfx_density", "D6_fit", "D8_occupancy", "D9_license", "D10_voice"):
         assert gid in by_gate, (gid, sorted(by_gate))
     assert by_gate["D9_license"]["ok"] and by_gate["D3_one_track"]["ok"] and by_gate["D6_fit"]["ok"], by_gate["D9_license"]
-    covers = [(g["start"], g["end"]) for g in lp["graphics"] if g["layout"] in ("fullscreen", "split")]
-    assert not any(a - 0.4 <= p["t"] <= b + 0.4 for p in lp["punches"] for a, b in covers), (lp["punches"], covers)
+    for gid in ("A19_link_audit", "A20_reprise", "B12_cutaway_role", "S1_hedge", "D12_silences"):
+        assert gid in by_gate and by_gate[gid]["level"] == "warn", (gid, sorted(by_gate))
     assert lp["callouts"] and "질문" in lp["callouts"][0]["text"], lp["callouts"]
-    assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "질문"
-    # 슬라이드식 장면 전환(와이프·빛샘)은 없다 — 전면 그래픽 사이는 렌더러의 안무(아이리스·흩어짐·다이브)가 잇는다
-    assert all(t["type"] == "zoom" for t in lp["transitions"]), lp["transitions"]
+    assert lp["callouts"][0]["label"] == "핵심" and lp["callouts"][0]["highlight"] == "디자인은"
     assert lp["voice"] is None and lp["sfx"] == []          # 음향은 FFmpeg 에서 따로 믹스
     # 🎬 오프닝 하이라이트: 편집 감독이 고른 조각 2개(첫 발화는 제외, 조각 = seg~end_seg)가 본편 앞에 붙고, 본편(타이틀·챕터)은
     # 그만큼 뒤로. 길이는 20~30초가 목표 — 이 합성 본편은 짧아 본편의 12% 상한(최소 12초)이 걸린다
@@ -741,6 +772,7 @@ def main() -> int:
     a0 = hero["data"]["assets"][0]
     assert (job / "render" / "public_src" / a0["src"]).exists() and a0["tier"] == "own", hero
     assert hero["data"]["title"] == "해결책부터 그린 손" and hero["data"]["caption"] == "2학년 과제 · 2024", hero["data"]
+    assert [o["kind"] for o in hero["data"]["overlays"]] == ["label"] and hero["data"]["safe"]["side"], hero["data"]
     # 출처 카드는 계획에 있다 — 이 합성 대본은 챕터 카드·출처·화자 자료가 3초 문장 둘에 몰려, 밀려 온 출처 카드는 제 시각의
     # 화자 자료에 자리를 내준다(plan.resolve_overlaps: 제 문장의 자료가 이긴다)
     assert any((g.get("archive") or {}).get("variant") == "source" for g in plan["long"]["graphics"]), evs
@@ -781,4 +813,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from cli_shim import utf8_console
+    utf8_console()      # Windows 콘솔(cp949)에 이모지·상자 문자를 찍다 죽지 않게
     sys.exit(main())

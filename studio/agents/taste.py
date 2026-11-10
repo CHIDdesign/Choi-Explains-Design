@@ -6,7 +6,6 @@
 - 레퍼런스 보드: `user/taste/` 에 운영자가 넣은 그림(좋아하는 영상의 정지 화면 등). 저장소에는 넣지 않는다(CLAUDE.md 규칙).
 - 장면 평가 기억: 결과 화면 '장면 평가'에서 장면마다 👍/👎 + 한 줄 → `user/taste/memory.json`, 그 장면의 정지 화면은
   `liked/`·`disliked/` 로 복사 → 다음 작업부터 보드(좋아한 장면 · 싫어한 장면)와 메모 블록으로 들어간다. 쓸수록 운영자 취향으로 모인다.
-- 운영자 그림이 하나도 없으면 파이프라인이 렌더로 확인한 하우스 예시 카드(prompts/examples/card_examples.json)를 보드로 쓴다.
 - 🎯 레퍼런스 분석기(`reference.py`, 창의 '레퍼런스 분석' · run_reference.bat): 끌어다 놓은 사진·영상을 재고 Claude 가 규칙으로 옮긴 것
   (`refs/<slug>.json` + 컷 시트)이 보드 그림(`ref_sheets`)과 지시 끝 블록(`rules_block`)으로 디자인 역할마다 들어간다.
 """

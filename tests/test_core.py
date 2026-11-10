@@ -496,3 +496,18 @@ def test_shorts_follow_edit_order_when_takes_are_cross_cut():
     plan = fallback.shorts_plan(JobBrief(title="t"), utts, [], count=1, max_sec=60, order=order)
     segs = plan["shorts"][0]["segments"]
     assert segs and [order.index(i) for i in segs] == list(range(order.index(segs[0]), order.index(segs[0]) + len(segs))), segs
+
+
+def test_long_form_captions_are_one_breath_up_to_24_chars():
+    from studio.models import Word
+    from studio.text.captions import build_phrase_cues
+    sent = "1960년대 서울시는 한강 남쪽에 새로운 도심을 만들기로 결정했고 그 결과 강남이라는 지역이 탄생하게 됩니다."
+    ws, t = [], 0.0
+    for w in sent.split():
+        d = 0.08 * len(w) + 0.05
+        ws.append(Word(w, t, t + d))
+        t += d + 0.05
+    cues = build_phrase_cues([ws], max_chars=24, max_dur=4.0, max_words=8)
+    texts = [" ".join(x["text"] for x in c["lines"][0]) for c in cues]
+    assert 2 <= len(texts) <= 4 and all(len(x) <= 24 for x in texts) and all(len(c["lines"]) == 1 for c in cues)
+    assert all(c["end"] - c["start"] <= 4.2 for c in cues)

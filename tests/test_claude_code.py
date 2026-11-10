@@ -10,10 +10,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from studio.director.claude import DirectorError  # noqa: E402
-from studio.director.claude_code import (ClaudeCodeClient, _scratch_bases, describe_auth, explain_error,  # noqa: E402
-                                         resolve_backend, scratch_dir)
+from studio.director.claude_code import (ClaudeCodeClient, LoginExpired, _scratch_bases, describe_auth,  # noqa: E402
+                                         explain_error, is_login_failure, resolve_backend, scratch_dir)
 
 FAKE = r'''
 import json, os, sys
@@ -38,6 +39,13 @@ if mode == "limit":
     print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": "Claude AI usage limit reached|1790000000"}))
 elif mode == "login":
     print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": "Not logged in · Please run /login"}))
+elif mode == "oauth":
+    print(json.dumps({"type": "assistant", "message": {"model": "<synthetic>", "content": [
+        {"type": "text", "text": "Failed to authenticate: OAuth session expired"}]}}))
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                      "result": "Failed to authenticate: OAuth session expired"}))
+elif mode == "net":
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": "API Error: Connection error"}))
 elif mode == "text":
     print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "```json\n{\"a\": 2}\n```"}))
 else:
@@ -51,9 +59,8 @@ else:
 def fake(tmp_path, monkeypatch):
     script = tmp_path / "fake_claude.py"
     script.write_text(FAKE, encoding="utf-8")
-    shim = tmp_path / "claude"
-    shim.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
-    shim.chmod(0o755)
+    from cli_shim import make_shim     # Windows 는 .exe 런처(sh 를 못 돌린다)
+    shim = make_shim(script, tmp_path)
     log = tmp_path / "log.jsonl"
     monkeypatch.setenv("FAKE_LOG", str(log))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-must-not-leak")
@@ -66,7 +73,6 @@ def fake(tmp_path, monkeypatch):
 SCHEMA = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"], "additionalProperties": False}
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh shim")
 def test_structured_call_args_images_env(fake):
     shim, calls, tmp = fake
     logs: list[str] = []
@@ -88,18 +94,67 @@ def test_structured_call_args_images_env(fake):
     assert any("Claude 구독" in m for m in logs)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh shim")
-@pytest.mark.parametrize("mode, needle", [("limit", "사용량 한도"), ("login", "로그인")])
+@pytest.mark.parametrize("mode, needle", [("limit", "사용량 한도"), ("net", "Connection error")])
 def test_errors_are_explained(fake, monkeypatch, mode, needle):
     shim, _, tmp = fake
     monkeypatch.setenv("FAKE_MODE", mode)
     c = ClaudeCodeClient(str(shim), workdir=tmp / "wd")
     with pytest.raises(DirectorError) as e:
         c.structured(system="s", shared_context="c", instruction="i", schema=SCHEMA)
-    assert needle in str(e.value)
+    assert needle in str(e.value) and not c.login_expired
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh shim")
+@pytest.mark.parametrize("mode", ["oauth", "login"])
+def test_login_failure_stops_once_and_is_not_a_director_error(fake, monkeypatch, mode):
+    """2026-11-10 실제 실행: OAuth 만료로 호출마다 <synthetic> 답 → 규칙 폴백 → 정상 종료. 한 번 확인되면 CLI 를 더 부르지 않는다."""
+    shim, calls, tmp = fake
+    monkeypatch.setenv("FAKE_MODE", mode)
+    c = ClaudeCodeClient(str(shim), workdir=tmp / "wd")
+    for _ in range(2):
+        with pytest.raises(LoginExpired) as e:
+            c.structured(system="s", shared_context="c", instruction="i", schema=SCHEMA)
+        assert "claude auth login" in str(e.value) and "설정 → AI → 로그인" in str(e.value)
+        assert not isinstance(e.value, DirectorError)   # 규칙 폴백(except DirectorError)으로 새지 않게
+    assert len(calls()) == 1
+
+
+def _soft_pipeline(claude):
+    from studio.pipeline import Pipeline
+    from studio.util import CancelToken
+    p = Pipeline.__new__(Pipeline)
+    p.claude, p.cancel, p.soft_failures, p.work = claude, CancelToken(), [], None
+    p.log = p._log_file_only = lambda m: None
+    p._stage = lambda *a: None
+    p.eta = type("E", (), {"start": lambda s, k: None, "finish": lambda s, k: None})()
+    return p
+
+
+def _raiser(e):
+    def fn():
+        raise e
+    return fn
+
+
+def test_pipeline_stops_on_login_but_network_stays_soft():
+    p = _soft_pipeline(None)
+    p._run_stage_inner("research", _raiser(DirectorError("API Error: Connection error")))
+    assert [f["stage"] for f in p.soft_failures] == ["research"]        # 일시 오류는 그 단계만 건너뛴다
+    with pytest.raises(LoginExpired):
+        p._run_stage_inner("research", _raiser(LoginExpired("x")))       # 말단 단계여도 삼키지 않는다
+    # 단계 안의 except Exception 폴백이 삼켰어도 클라이언트 표시로 멈춘다
+    swallowed = _soft_pipeline(type("C", (), {"login_expired": True})())
+    with pytest.raises(LoginExpired):
+        swallowed._run_stage_inner("research", lambda: None)
+
+
+def test_is_login_failure_wording():
+    assert is_login_failure("Failed to authenticate: OAuth session expired")
+    assert is_login_failure("Invalid API key · Please run /login")
+    assert not is_login_failure("Failed to authenticate: connection timed out")
+    assert not is_login_failure("API Error: 529 overloaded")
+    assert not is_login_failure("Claude AI usage limit reached|1790000000")
+
+
 def test_old_cli_drops_unknown_option_and_text_fallback(fake, monkeypatch):
     shim, calls, tmp = fake
     monkeypatch.setenv("FAKE_MODE", "old")

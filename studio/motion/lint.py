@@ -392,7 +392,7 @@ def lint(spec: dict, dur: float, words=None, box=BOXES["paper"]) -> list[Issue]:
         add("L14_single_property", "warn", f'한 속성(fade, none) 진입이 {len(single)}/{n}')
     pops = [i for i, e in enumerate(els) if kinds[i] == "pop" or e.get("ease") == "back"]
     if len(pops) > P["pop_max"]:
-        add("L15_pop", "error", f'pop/back 이 {len(pops)}개 - 롱폼 본편에서는 쓰지 않는다(펀치 구간·숏폼 훅만)', [_name(i, els[i]) for i in pops])
+        add("L15_pop", "error", f'pop/back 이 {len(pops)}개 - 롱폼 본편에서는 쓰지 않는다(숏폼 훅만)', [_name(i, els[i]) for i in pops])
     for i, e in enumerate(els):
         d = e.get("dur")
         if d is not None and e["type"] not in ("counter", "bar", "path", "line", "arrow") and not (P["dur_min_s"] <= d <= P["dur_max_s"]):

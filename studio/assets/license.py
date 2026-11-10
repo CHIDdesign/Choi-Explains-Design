@@ -33,6 +33,11 @@ class License:
         return asdict(self)
 
 
+def family(lic_id: str) -> str:
+    """'CC-BY-SA-4.0' → 'CC-BY-SA': 판 번호를 뗀 종류 — 원문 페이지와 대조할 때 'CC-BY-' 앞글자 비교는 BY-SA 도 통과시켰다."""
+    return re.sub(r"-\d\.\d$", "", lic_id or "")
+
+
 def _cc_url(kind: str, ver: str) -> str:
     if kind == "zero":
         return "https://creativecommons.org/publicdomain/zero/1.0/"
@@ -124,6 +129,9 @@ class AssetMeta:
         return d
 
 
+NOT_A_SOURCE = re.compile(r"(인터넷|유튜브|구글|웹|온라인|internet|youtube|google|web|online)( ?(검색|캡처|이미지|화면|영상))?", re.I)   # 플랫폼은 출처가 아니다
+
+
 def credits(meta: AssetMeta) -> tuple[str, str]:
     """(화면용, 설명란용) — 정책 6절 형식. 검색어·내부 식별자·라이선스 약칭만 덩그러니 두지 않는다."""
     lic, who = meta.license, (meta.creator or "작가 미상").strip()
@@ -142,6 +150,8 @@ def credits(meta: AssetMeta) -> tuple[str, str]:
                 f"{meta.title}({meta.year}), {who}. 비평·교육 목적의 인용(저작권법 제28조). {meta.source_url}".strip())
     repo = {"commons": "Wikimedia Commons", "wikipedia": "Wikimedia Commons", "openverse": "Openverse",
             "logo": "Wikimedia Commons"}.get(meta.origin, meta.institution or meta.origin)
+    if NOT_A_SOURCE.fullmatch(repo.strip()):
+        repo = re.sub(r"^https?://(www\.)?", "", meta.source_url).split("/")[0] or "출처 확인 필요"
     if lic.tier == "A" and not lic.attribution_required:
         short = (f"{meta.title}, {who}" if meta.title and meta.origin not in ("commons", "wikipedia") else f"사진: {who}") \
             + f" · {lic.name} · {repo}"

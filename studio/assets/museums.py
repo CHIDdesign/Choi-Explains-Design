@@ -30,10 +30,12 @@ AIC_IIIF = "https://www.artic.edu/iiif/2/{id}/full/{w},/0/default.jpg"
 CMA = "https://openaccess-api.clevelandart.org/api/artworks/"
 MET_SEARCH = "https://collectionapi.metmuseum.org/public/collection/v1.1/search"
 MET_OBJECT = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{id}"
+RIJKS = "https://data.rijksmuseum.nl/search/collection"
+RIJKS_EN = "300388277"              # 언어 어휘(Getty AAT): 영어
 CONTACT = "https://github.com/chiddesign/choi-explains-design"
 UA = f"Mozilla/5.0 (compatible; ChoiStudio/1.0; +{CONTACT})"
 INSTITUTIONS = {"aic": "Art Institute of Chicago", "cma": "The Cleveland Museum of Art",
-                "met": "The Metropolitan Museum of Art"}
+                "met": "The Metropolitan Museum of Art", "rijks": "Rijksmuseum"}
 STOP = {"the", "and", "with", "for", "from", "of", "a", "an", "in", "on", "by", "de", "la", "le", "no", "nr"}
 
 
@@ -59,11 +61,25 @@ def relevant(query: str, m: dict[str, Any]) -> bool:
     return hit >= min(2, len(ts))
 
 
+def rijks_open_image(record: dict[str, Any]) -> Optional[tuple[str, str]]:
+    """라익스 레코드 → (IIIF 주소, 'CC0'|'Public Domain') 또는 None. 이미지의 권리는 subject_of → digitally_carried_by →
+    referred_to_by 의 content 만 믿는다 — 레코드 맨 위의 CC0(subject_to)는 메타데이터의 것이라 저작권 있는 이미지에도 붙어 있다."""
+    for s in record.get("subject_of") or []:
+        for d in s.get("digitally_carried_by") or []:
+            url = next((str(a.get("id") or "") for a in d.get("access_point") or []), "")
+            rights = " ".join(str(r.get("content") or "") for r in d.get("referred_to_by") or [])
+            if "iiif" in url and "publicdomain/zero" in rights:
+                return url, "CC0"
+            if "iiif" in url and "publicdomain/mark" in rights:
+                return url, "Public Domain"
+    return None
+
+
 class Museums:
     """search(query) → 후보 메타(커먼즈 후보와 같은 키 + origin='museum'·institution·thumb_url)."""
 
     def __init__(self, *, cache_dir: Optional[Path] = None, log: LogFn = noop_log,
-                 get: Optional[Callable[..., Any]] = None, sources: tuple[str, ...] = ("aic", "met", "cma")):
+                 get: Optional[Callable[..., Any]] = None, sources: tuple[str, ...] = ("aic", "met", "cma", "rijks")):
         self.cache_dir = cache_dir
         self.log = log
         self._get_raw = get or net.request
@@ -90,9 +106,9 @@ class Museums:
 
     @staticmethod
     def _cand(src: str, *, oid: Any, title: str, artist: str, date: str, kind: str, page: str, url: str, thumb: str,
-              w: int, h: int, medium: str = "") -> dict[str, Any]:
+              w: int, h: int, medium: str = "", license: str = "CC0") -> dict[str, Any]:
         inst = INSTITUTIONS[src]
-        lic = classify("CC0")             # 세 기관 모두 퍼블릭 도메인 작품 이미지를 CC0 로 공개한다
+        lic = classify(license)           # 시카고·메트·클리블랜드는 퍼블릭 도메인 작품 이미지를 CC0 로 공개한다
         desc = " · ".join(x for x in (title, date, medium, inst) if x)
         name = re.sub(r"[\\/:*?\"<>|]+", " ", f"{title} ({inst} {oid}).jpg")[:120]
         return {"name": name, "url": url, "thumb_url": thumb, "orig_url": url, "width": int(w or 0),
@@ -156,6 +172,51 @@ class Museums:
                               url=d["primaryImage"], thumb=d.get("primaryImageSmall") or d["primaryImage"], w=0, h=0)
         with ThreadPoolExecutor(max_workers=4) as ex:
             return [m for m in ex.map(one, ids) if m]
+
+    def rijks(self, query: str, limit: int) -> list[dict[str, Any]]:
+        ids: list[str] = []
+        # title·description 은 구절 그대로 맞춘다('Thonet chair' 0건, 'Thonet' 3건) — 안 되면 가장 긴 낱말로
+        for key, val in (("title", query), ("description", query), ("title", max(terms(query), key=len))):
+            data = self._get(RIJKS, {key: val, "imageAvailable": "true"}) or {}
+            ids = [str(x.get("id")) for x in data.get("orderedItems") or [] if x.get("id")][: limit * 2]
+            if ids:
+                break
+
+        def one(oid: str) -> Optional[dict[str, Any]]:
+            try:
+                return self._rijks_object(oid)
+            except Exception:  # noqa: BLE001 - 객체 하나의 실패로 나머지를 버리지 않는다
+                return None
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            return [m for m in ex.map(one, ids) if m]
+
+    def _rijks_object(self, oid: str) -> Optional[dict[str, Any]]:
+        d = self._get(oid) or {}
+        image = rijks_open_image(d)
+        if not image:
+            return None
+        base = image[0].rsplit("/full/", 1)[0]
+        info = self._get(f"{base}/info.json") or {}
+        names = [n for n in d.get("identified_by") or [] if n.get("type") == "Name" and n.get("content")]
+        en = [n for n in names if any(RIJKS_EN in str(x.get("id")) for x in n.get("language") or [])]
+        title = str((en or names or [{"content": ""}])[0]["content"])
+        made = d.get("produced_by") or {}
+        who = [v.get("@value") for p in [made] + list(made.get("part") or []) for c in p.get("carried_out_by") or []
+               for v in c.get("notation") or [] if v.get("@language") == "en"]
+        when = made.get("timespan") or {}                 # 레코드에 따라 객체이기도 목록이기도 하다(2026-11-09 실호출)
+        spans = (when[0] if isinstance(when, list) else when).get("identified_by") or [{}]
+        page = next((str(a.get("id")) for s in d.get("subject_of") or [] for dc in s.get("digitally_carried_by") or []
+                     if dc.get("format") == "text/html" for a in dc.get("access_point") or []), oid)
+        w0, h0 = int(info.get("width") or 0), int(info.get("height") or 0)
+        w = min(1920, w0)                 # 원본보다 크게 요청하면 IIIF level2 가 거절한다
+        if not w:
+            return None
+        accession = next((n.get("content") for n in d.get("identified_by") or [] if n.get("type") == "Identifier"), oid)
+        other = next((str(n["content"]) for n in names if str(n["content"]) != title), "")   # 네덜란드어 제목 — 검색어 맞춤과 비전 설명용
+        return self._cand("rijks", oid=accession, title=title, artist=", ".join(dict.fromkeys(who)),
+                          date=str(spans[0].get("content") or ""), kind="", medium=other, page=page,
+                          url=f"{base}/full/{w},/0/default.jpg", thumb=f"{base}/full/400,/0/default.jpg",
+                          w=w, h=round(h0 * w / w0), license=image[1])
 
     # ------------------------------------------------------------------
     def search(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:

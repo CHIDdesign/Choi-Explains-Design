@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+
+import pytest
 
 from studio.agents import schemas as S
 from studio.agents.studio import merge_plan
@@ -10,6 +13,7 @@ from studio.director.catalog import TEMPLATES
 from studio.director.plan import reading_chars
 from studio.motion.card import CANVAS, card_settle_time, card_text, clean_anim, clean_card, fragment
 from studio.render.props import _graphic_text
+from browser_path import headless_browser
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
@@ -27,18 +31,86 @@ GOOD = '''<div class="card" data-card-id="c-x">
 
 
 def test_examples_are_clean_and_render_ready():
-    """예시 카드(구도 원형 12, prompts/layouts.md)는 정화에 걸리는 것이 없고, 안무(data-anim 또는 GSAP timeline)가 있다.
-    렌더 전 검사·실제 렌더는 예시를 바꿀 때 직접 돌려 확인한다(2026-10-04 12개 모두 check 통과·Remotion 렌더 확인)."""
+    """예시 카드(prompts/examples/card_examples.json)는 정화에 걸리는 것이 없고, 원형 설명이 있고, 재질은 CSS 로 흉내 내지 않고 런타임(data-surface)에 맡긴다."""
     import re
     layouts = (ROOT / "prompts" / "layouts.md").read_text(encoding="utf-8")
-    assert len(EXAMPLES) >= 10
+    assert len(EXAMPLES) == 12
+    assert sum("data-surface" in ex["html"] for ex in EXAMPLES.values()) == 12
+    assert sum("data-at-word" in ex["html"] for ex in EXAMPLES.values()) >= 9        # 말한 낱말에 착지하는 표시를 가르친다
+    assert sum("<img" in ex["html"] for ex in EXAMPLES.values()) >= 6
     for name, ex in EXAMPLES.items():
         c = clean_card({"html": ex["html"], "timeline": ex.get("timeline", "")}, layout=ex.get("layout", "fullscreen"))
         assert c and not c.get("problems"), (name, c and c.get("problems"))
         assert (c["w"], c["h"]) == CANVAS[ex.get("layout", "fullscreen")]
         assert (card_settle_time(c) > 0 or c.get("timeline")) and card_text(c)
-        assert f"`{ex['archetype']}`" in layouts, name                    # 예시마다 원형 설명이 있다
-        assert not re.search(r"font-size:\s*(1\d|2[0-7])px", ex["html"]), name   # 28px 미만 글자 없음
+        assert f"`{ex['archetype']}`" in layouts and ex["archetype"] in S.ARCHETYPES, name
+        assert len(ex["html"]) + len(ex.get("timeline", "")) < 3000, name
+        assert not re.search(r"font(-size)?:[^;}]*\b(1\d|2[0-7])px", ex["html"]), name   # 28px 미만 글자 없음
+        for bad in ("box-shadow", "gradient", "border-radius", "<em>", "font-style:italic", "data-float"):
+            assert bad not in ex["html"], (name, bad)
+
+
+def _example_cards(tmp_path):
+    """예시 카드 + 그것이 쓰는 그림(합성) — 그림은 out_dir/images/ 에서 풀린다."""
+    import re
+
+    from PIL import Image
+    (tmp_path / "images").mkdir(exist_ok=True)
+    cards = []
+    for name, ex in EXAMPLES.items():
+        for src in re.findall(r'src="(images/[^"]+)"', ex["html"]):
+            Image.new("RGB", (1200, 800), (120, 128, 118)).save(tmp_path / src)
+        c = clean_card({"html": ex["html"], "timeline": ex.get("timeline", "")}, layout=ex["layout"], card_id=name[:10])
+        c["layout"], c["archetype"] = ex["layout"], ex["archetype"]
+        cards.append((c, float(ex["duration"])))
+    return cards
+
+
+def test_examples_pass_the_render_check(tmp_path):
+    """예시는 전부 렌더 전 검사(글자 예산·겹침·슬라이드 티 포함)를 그대로 통과한다 — 프롬프트에 실리는 기준선이다."""
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = headless_browser()
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    cards = _example_cards(tmp_path)
+    res = check_cards([c for c, _ in cards], node=find_node(""), out_dir=tmp_path, fps=30,
+                      durations={c["id"]: d for c, d in cards}, browser_executable=browser)
+    bad = {k: r["problems"] for k, r in res.items() if not r["ok"]}
+    assert not bad, bad
+
+
+def test_checker_budgets_chrome_and_overlap(tmp_path):
+    """글자 예산은 원형마다(지면은 형광만 센다), 슬라이드 티(쪽번호·자간 대문자·구석 라벨)와 글자 겹침을 잡는다."""
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = headless_browser()
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+
+    def mk(cid, body, extra, archetype):
+        css = (".root{width:100%;height:100%;position:relative;background:var(--paper)}"
+               ".p{position:absolute;font:500 40px/1.2 var(--font-body);color:var(--ink)}" + extra)
+        c = clean_card({"html": f'<div class="root">{body}</div>', "css": css}, layout="fullscreen", card_id=cid)
+        c["archetype"] = archetype
+        return c
+
+    long = "글자" * 30
+    doc = mk("doc", f'<p class="p" style="left:200px;top:200px;width:1400px">{long}<mark>짧은 구절</mark></p>', "", "document_line")
+    plan = mk("pln", f'<p class="p" style="left:200px;top:200px;width:1400px">{long}</p>', "", "plan_mark")
+    chrome = mk("chr", '<p class="p" style="left:30px;top:30px">오늘의 주제</p><p class="p" style="left:800px;top:400px">01 / 05</p>'
+                       '<p class="p t" style="left:800px;top:600px">SECTION</p>',
+                ".t{letter-spacing:.14em;text-transform:uppercase}", "section_cut")
+    over = mk("ovr", '<p class="p" style="left:300px;top:300px">겹치는 글자</p><p class="p" style="left:320px;top:310px">다른 글자</p>', "", "section_cut")
+    src = mk("src", '<p class="p" style="right:60px;top:852px">출처: 국가기록원</p><p class="p" style="left:300px;top:300px">복도</p>', "", "plan_mark")
+    res = check_cards([doc, plan, chrome, over, src], node=find_node(""), out_dir=tmp_path, fps=30, durations={}, browser_executable=browser)
+    codes = {k: {p["code"] for p in r["problems"]} for k, r in res.items()}
+    assert "too_much_text" not in codes["doc"] and res["doc"]["metrics"]["read_chars"] == 4
+    assert "too_much_text" in codes["pln"]
+    details = " ".join(p["detail"] for p in res["chr"]["problems"] if p["code"] == "page_chrome")
+    assert "01 / 05" in details and "SECTION" in details and "오늘의 주제" in details
+    assert "text_overlap" in codes["ovr"]
+    assert "page_chrome" not in codes["src"]                       # 출처 표기는 구석에 있어도 된다
 
 
 def test_clean_card_rescopes_css_and_strips_wrapper():
@@ -87,6 +159,43 @@ def test_clean_card_removes_scripts_urls_events_and_bad_css():
     assert set(c["problems"]) >= {"html_tag_removed:script", "html_tag_removed:iframe", "html_external_src_removed",
                                   "html_attr_removed:onerror", "css_forbidden_removed", "font_family_not_bundled:Inter"}
     assert clean_card(hostile, card_id="g1", strict=True) is None
+
+
+def test_clean_card_keeps_materials_and_limits_effects():
+    """v5.1: 재질은 data-surface 로만. 그림자·흐림은 깊이만큼, 색 번짐·유리·그라디언트 면·url() 은 지운다."""
+    c = clean_card({"html": '<div class="root" data-surface="memo" data-tape data-torn="bottom left nope">가</div><p data-surface="plastic">나</p>',
+                    "css": ".a{box-shadow:var(--lift-2);color:red}.b{box-shadow:0 0 40px #FC5400}.c{filter:blur(8px) brightness(.6)}"
+                           ".d{backdrop-filter:blur(4px)}.e{filter:blur(40px)}.f{background:linear-gradient(#000,#fff)}.g{background:url(x.png)}"
+                           ".h{text-shadow:0 2px 4px rgba(0,0,0,.5)}"}, card_id="m")
+    assert 'data-surface="memo"' in c["html"] and 'data-tape="1"' in c["html"] and 'data-torn="bottom left"' in c["html"]
+    assert "plastic" not in c["html"]
+    for ok in ("var(--lift-2)", "blur(8px)", "0 2px 4px"):
+        assert ok in c["css"], ok
+    for bad in ("#FC5400", "backdrop", "blur(40px)", "gradient", "url("):
+        assert bad not in c["css"], bad
+    assert {"surface_unknown:plastic", "css_gradient_removed", "css_effect_removed:box-shadow", "css_effect_removed:backdrop-filter",
+            "css_effect_removed:filter"} <= set(c["problems"])
+    assert clean_card(c, layout="fullscreen")["html"] == c["html"]
+
+
+def test_checker_applies_surfaces_and_rejects_blurred_text(tmp_path):
+    """재질 층은 글자 대비·겹침 검사를 흐리지 않는다: 찢긴 메모 위 글자는 그 종이색으로 재고, 정착한 글자의 흐림은 걸린다."""
+    from studio.motion.check import check_cards
+    from studio.render.remotion import find_node
+    browser = headless_browser()
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    css = (".root{width:100%;height:100%;position:relative}.t{position:absolute;left:300px;top:300px;padding:20px;"
+           "font:600 44px/1.2 var(--font-body);color:var(--ink)}.w{color:#fff}.b{filter:blur(6px)}")
+    good = clean_card({"html": '<div class="root" data-surface="desk"><div class="t" data-surface="memo" data-torn="bottom" data-tape>메모 위 글자</div></div>',
+                       "css": css}, layout="fullscreen", card_id="tg")
+    pale = clean_card({"html": '<div class="root" data-surface="eggshell"><div class="t w" data-surface="memo" data-torn="bottom">흰 글자</div></div>',
+                       "css": css}, layout="fullscreen", card_id="tp")
+    blur = clean_card({"html": '<div class="root" data-surface="eggshell"><div class="t b">흐린 글자</div></div>', "css": css}, layout="fullscreen", card_id="tb")
+    res = check_cards([dict(c, layout="fullscreen") for c in (good, pale, blur)], node=find_node(""), out_dir=tmp_path, fps=30, durations={}, browser_executable=browser)
+    assert res["tg"]["ok"], res["tg"]["problems"]
+    assert "low_contrast" in {p["code"] for p in res["tp"]["problems"]}
+    assert "text_blurred" in {p["code"] for p in res["tb"]["problems"]}
 
 
 def test_clean_card_limits_and_rejects_empty():
@@ -143,7 +252,7 @@ def test_check_accepts_bundled_display_fonts(tmp_path):
 
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
     html = ('<div class="card"><p class="k">핵심</p><h1 class="h">여백은 숨</h1><p class="m">손으로 쓴 메모</p>'
@@ -208,7 +317,7 @@ def test_gsap_plugin_kinds_are_validated_and_render_in_the_checker(tmp_path):
     chk = (ROOT / "renderer" / "scripts" / "check.mjs").read_text(encoding="utf-8")
     for name in ("SplitText", "CustomEase", "DrawSVGPlugin", "MorphSVGPlugin", "MotionPathPlugin"):
         assert name in tsx and name in chk
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
     html = ('<div class="card" data-card-id="p1"><style>.card[data-card-id="p1"] .root{width:100%;height:100%;'
@@ -242,15 +351,15 @@ def test_merge_plan_keeps_card_and_setpiece_timelines():
     results = {"director": {"beats": []},
                "motion": {"graphics": [], "scenes": [], "cards": [{"start_seg": 1, "end_seg": 2, "start_word": "", "layout": "fullscreen",
                                                                    "style": "editorial", "title": "t", "html": html,
-                                                                   "timeline": tl, "archetype": "statement", "reason": ""}]},
+                                                                   "timeline": tl, "archetype": "section_cut", "reason": ""}]},
                "setpieces": [{"scene": {"start_seg": 3, "end_seg": 4, "title": "s", "kind": "diagram"}, "layout": "fullscreen",
-                              "style": "editorial", "archetype": "process_path", "html": html, "timeline": tl, "notes": ""}]}
+                              "style": "editorial", "archetype": "flow_diagram", "html": html, "timeline": tl, "notes": ""}]}
     long_plan, _ = merge_plan(results)
     cards = [g for g in long_plan["graphics"] if g["template"] == "card"]
     assert len(cards) == 2 and all(g["card"].get("timeline") == tl for g in cards)
-    assert [g["card"].get("archetype") for g in cards] == ["statement", "process_path"]
+    assert [g["card"].get("archetype") for g in cards] == ["section_cut", "flow_diagram"]
     again = _clean_graphic(cards[0], [1, 2, 3, 4])           # 저장된 계획을 다시 정규화해도 남는다
-    assert again["card"]["timeline"] == tl and again["card"]["archetype"] == "statement"
+    assert again["card"]["timeline"] == tl and again["card"]["archetype"] == "section_cut"
 
 
 def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
@@ -263,10 +372,10 @@ def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
 
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
-    ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))["statement"]
+    ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))["section_cut"]
     drift = ex["timeline"] + "\ntl.fromTo(q('.root'), {scale: 1.03}, {scale: 1, duration: ctx.duration, ease: 'none'}, 0);"
     late = ex["timeline"] + "\ntl.from(q('.root'), {y: 200, opacity: 0, duration: 0.5}, ctx.duration - 0.8);"
     cards = [clean_card({"html": ex["html"], "timeline": t}, layout="fullscreen", card_id=cid)
@@ -280,9 +389,8 @@ def test_last_second_must_settle_but_slow_drift_is_fine(tmp_path):
                                                                     if p["code"] == "anim_ends_too_late")
 
 
-def test_bouncy_eases_are_rendered_gently_and_float_is_allowed(tmp_path):
-    """2026-10-04 채널 주인: '바운시한 느낌은 싫다 — 떠다니듯 젠틀하게'. 디자이너가 back.out(4)·되튀는 사용자 곡선을 써도
-    렌더 엔진이 부드러운 감속으로 바꾼다(검사·렌더 같은 엔진). data-float 는 정화에서 숫자로 남는다."""
+def test_bouncy_eases_are_rendered_gently_and_float_is_gone(tmp_path):
+    """디자이너가 back.out(4)·되튀는 사용자 곡선을 써도 렌더 엔진이 부드러운 감속으로 바꾼다. 떠다니기(data-float)는 디자인 v5 에서 없앴다."""
     import shutil
 
     import pytest
@@ -292,8 +400,8 @@ def test_bouncy_eases_are_rendered_gently_and_float_is_allowed(tmp_path):
     from studio.render.remotion import find_node
     c0 = clean_card({"html": '<div class="card"><div class="root"><div class="b" data-float="30" data-float-at="x"></div>'
                              '</div></div>', "css": ".root{position:absolute;inset:0}"}, layout="fullscreen", card_id="fl")
-    assert 'data-float="30"' in c0["html"] and "data-float-at" not in c0["html"]
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    assert "data-float" not in c0["html"]
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
     html = ('<div class="card"><div class="root"><div class="b"></div><div class="c"></div></div></div>')
@@ -326,15 +434,15 @@ def test_checker_measures_card_background_brightness(tmp_path):
 
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
     ex = _json.loads((ROOT / "prompts" / "examples" / "card_examples.json").read_text(encoding="utf-8"))
     cards = [clean_card({"html": ex[k]["html"], "timeline": ex[k]["timeline"]}, layout="fullscreen", card_id=k[:6])
-             for k in ("fan_stack", "statement")]
+             for k in ("flow_diagram", "section_cut")]
     res = check_cards([dict(c, layout="fullscreen") for c in cards], node=find_node(""), out_dir=tmp_path, fps=30,
                       durations={c["id"]: 7.0 for c in cards}, browser_executable=browser)
-    assert res["fan_st"]["metrics"]["bg_lum"] < 0.3 < res["statem"]["metrics"]["bg_lum"], res
+    assert res["flow_d"]["metrics"]["bg_lum"] < 0.3 < res["sectio"]["metrics"]["bg_lum"], res
 
 
 def test_card_metrics_do_not_change_qa_cache_key():
@@ -372,8 +480,10 @@ def test_checker_measures_camera_zoom_and_empty_holds(tmp_path):
     빈 곳에 머무는 카메라는 camera_hold_empty."""
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
-    ex = EXAMPLES["camera_world"]
+    browser = headless_browser()
+    if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
+        pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
+    ex = EXAMPLES["map_locator"]
     good = clean_card({"html": ex["html"], "timeline": ex["timeline"]}, layout="fullscreen", card_id="cw")
     css = ('.card[data-card-id="ce"] .root{width:100%;height:100%;background:var(--paper)}'
            '.card[data-card-id="ce"] .world{position:absolute;left:0;top:0;width:4000px;height:1080px}'
@@ -391,9 +501,31 @@ def test_checker_measures_camera_zoom_and_empty_holds(tmp_path):
     res = check_cards([dict(good, layout="fullscreen"), dict(empty, layout="fullscreen"), dict(zoom, layout="fullscreen")],
                       node=find_node(""), out_dir=tmp_path, fps=30, durations={"cw": 8.0, "ce": 5.0, "cz": 4.0}, browser_executable=browser)
     assert res["cw"]["ok"], res["cw"]["problems"]
-    assert "camera" in res["cw"]["metrics"]["anims"] and res["cw"]["metrics"]["camera_keys"] == 6
+    assert "camera" in res["cw"]["metrics"]["anims"] and res["cw"]["metrics"]["camera_keys"] == 4
     codes = {p["code"] for p in res["ce"]["problems"]}
     assert "camera_hold_empty" in codes, res["ce"]["problems"]
     assert "outside_canvas" not in codes and "text_overflow" not in codes, res["ce"]["problems"]
     small = [p for p in res["cz"]["problems"] if p["code"] == "text_too_small"]
     assert small and "camera zoom" in small[0]["detail"], res["cz"]["problems"]
+
+
+def test_saved_plan_keeps_a_card_that_now_fails_the_check(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import studio.pipeline as pl
+    from studio.models import Span, TimeMap
+    seen = {}
+
+    def fake(cards, **kw):
+        seen.update(kw)
+        return {c["id"]: {"ok": False, "problems": [{"code": "text_too_small", "detail": ""}], "metrics": {}} for c in cards}
+
+    monkeypatch.setattr(pl, "check_cards", fake)
+    monkeypatch.setattr(pl, "find_node", lambda *_: "node")
+    p = object.__new__(pl.Pipeline)
+    g = {"template": "card", "layout": "fullscreen", "start_seg": 0, "title": "", "card": {"id": "card0", "html": "<div></div>"}}
+    p.plan_long, p.utts, p.work, p.public, p.fps, p.cancel = {"graphics": [g]}, [], tmp_path, tmp_path / "public", 30, None
+    p.settings = SimpleNamespace(node_path="", render=SimpleNamespace(browser_executable=None, gl=None))
+    p.log = (logs := []).append
+    p._check_cards(TimeMap([Span(0.0, 10.0)]), revise=False)
+    assert p.plan_long["graphics"] == [g] and not p.plan_long["card_checks"]["card0"]["ok"] and any("그대로" in m for m in logs)
+    assert seen["public_dir"] == p.public                    # 사진 바탕 카드도 그림이 있는 채로 잰다

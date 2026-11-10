@@ -47,6 +47,7 @@ def drop_ref(spec: dict[str, Any], el: dict[str, Any]) -> None:
     """못 구한 참조: 이미지 부품은 장면에서 빼고, 기기(device)는 화면 그림만 비운다(행·제목으로 그려진다)."""
     if el.get("type") == "image":
         spec["elements"] = [e for e in spec.get("elements", []) or [] if e is not el]
+        spec["lost_parts"] = True           # 남은 것이 제목·판뿐이면 clean_spec 이 장면째 뺀다
     else:
         el.pop("src", None)
 
@@ -64,7 +65,9 @@ def strip_stock_images(graphic_lists: list[list[dict[str, Any]]]) -> int:
 
 
 def request_key(st: dict[str, Any]) -> str:
-    return text_hash(st.get("kind", ""), st.get("query_en", ""), st.get("query_ko", ""), "stock-v1")
+    """표시 목록이 다르면 다른 요청이다 — 고른 그림의 좌표(marks)는 A번호로 그 목록에 묶여 있다."""
+    marks = [f"{a.get('kind', '')}:{a.get('target', '')}" for a in st.get("annotations") or [] if isinstance(a, dict)]
+    return text_hash(st.get("kind", ""), st.get("query_en", ""), st.get("query_ko", ""), *marks, "stock-v1")
 
 
 # 그림 고르기에서 뜻이 없는 낱말(화각·꾸밈) — 핵심 명사로 세지 않는다
@@ -129,6 +132,12 @@ def tag_hits(st: dict[str, Any], c: StockCandidate) -> int:
     return best
 
 
+def annotation_lines(anns: list[dict[str, Any]]) -> str:
+    """이 요청에서 비전이 그림 위 자리를 찾아 줄 표시(A번호 = 순서)."""
+    parts = [f"A{n} {a.get('kind', '')} 「{a['target']}」" for n, a in enumerate(anns or [], start=1) if a.get("target")]
+    return "\n  표시(고른 그림의 어디인가): " + " · ".join(parts) if parts else ""
+
+
 def request_line(n: int, st: dict[str, Any], cands: list[StockCandidate], *, retried: bool = False) -> str:
     """후보 시트 하나의 설명 — 낱말이 아니라 문장의 뜻·이 영상의 세계·금지로 고르게."""
     alts = [q for q in st.get("alt_queries") or [] if q]
@@ -138,6 +147,7 @@ def request_line(n: int, st: dict[str, Any], cands: list[StockCandidate], *, ret
             + (f" · 금지(avoid): {st['avoid']}" if st.get("avoid") else "")
             + (f" · 화면 전략: {st['angle']}" if st.get("angle") else "")
             + (f"\n  그 장면의 말: 「{st['context']}」" if st.get("context") else "")
+            + (annotation_lines(st.get("annotations") or []) if st.get("kind") == "photo" else "")
             + "".join(f"\n  C{j}: {c.alt[:70]}" + (" ⚠ AI·애니·만화 태그" if junk(c) else "")
                       for j, c in enumerate(cands, 1) if c.alt)
             + ("\n  (리서처의 새 검색어로 다시 찾은 후보)" if retried else ""))
@@ -194,6 +204,7 @@ class StockResearcher:
         self.fallbacks: list[dict[str, Any]] = []        # 못 구한 요청 → 자료 카드(type_card) 또는 잃음(lost)
         self.stats: dict[str, int] = {}
         self._tried: dict[str, list[str]] = {}           # 요청마다 다시 찾아 본 검색어
+        self._marks: dict[str, list[Any]] = {}           # 요청마다 비전이 고른 그림 위에서 짚은 자리
 
     # ------------------------------------------------------------------
     def search(self, st: dict[str, Any]) -> list[StockCandidate]:
@@ -208,7 +219,8 @@ class StockResearcher:
             thumbs = [(f"C{j} {c.provider[:7]}" + (f" {c.duration:.0f}s" if c.kind == "video" else " photo"),
                        self._thumb(c))
                       for j, c in enumerate(cands[k], 1)]
-            sheets.append((f"R{n}", contact_sheet(thumbs, contain=str(st.get("kind", "")).startswith("image")),
+            # 표시 좌표는 그림 전체 기준이다 — 가운데만 잘라 보여 주면 좌표가 어긋난다
+            sheets.append((f"R{n}", contact_sheet(thumbs, contain=str(st.get("kind", "")).startswith("image") or bool(st.get("annotations"))),
                            "image/jpeg"))
             # 낱말이 아니라 문장의 뜻으로 고르게: 그 장면에서 하는 말 + 후보마다 제공처의 설명(태그) + 금지 + 다른 각도
             lines.append(request_line(n, st, cands[k], retried=retried))
@@ -222,6 +234,7 @@ class StockResearcher:
                 if 1 <= r <= len(live):
                     k = live[r - 1]
                     choice[k] = c - 1 if 1 <= c <= len(cands[k]) else -1     # 없는 번호는 거절로(첫 후보로 바꾸지 않는다)
+                    self._marks[k] = list(p.get("marks") or []) if choice[k] >= 0 else []
                     if choice[k] < 0:
                         self.stats["rejected"] += 1
                         retry[k] = str(p.get("retry_query_en") or "").strip()
@@ -243,6 +256,10 @@ class StockResearcher:
                     retry[k] = rest[0]
         return choice, retry
 
+    def _resolved(self, g: dict[str, Any]) -> bool:
+        """조달 사다리가 이미 받아 고른 스톡 — 다시 찾으면 다른 그림이 와서 그 그림에 맞춘 표시가 어긋난다."""
+        return bool(g.get("src")) and (self.public / str(g["src"])).exists()
+
     def _thumb(self, c: StockCandidate) -> Optional[bytes]:
         if not c.thumb:
             return None
@@ -258,7 +275,7 @@ class StockResearcher:
         reqs: dict[str, dict[str, Any]] = {}
         for gl in graphic_lists:
             for g in gl:
-                if g.get("template") == "broll" and isinstance(g.get("stock"), dict):
+                if g.get("template") == "broll" and isinstance(g.get("stock"), dict) and not self._resolved(g):
                     reqs.setdefault(request_key(g["stock"]), g["stock"])
         if not reqs:
             return
@@ -339,6 +356,8 @@ class StockResearcher:
             for c in [cands[k][idx]] + spare:
                 try:
                     got = self._fetch(c)
+                    if c is cands[k][idx]:
+                        got["marks"] = self._marks.get(k, [])        # 좌표는 비전이 본 그 그림의 것
                     break
                 except Cancelled:
                     raise
@@ -357,7 +376,7 @@ class StockResearcher:
         for gl in graphic_lists:
             keep = []
             for g in gl:
-                if g.get("template") != "broll":
+                if g.get("template") != "broll" or self._resolved(g):
                     keep.append(g)
                     continue
                 res = self.cache.get(request_key(g.get("stock") or {}), {})
@@ -375,12 +394,11 @@ class StockResearcher:
                     self.fallbacks.append({"query": st.get("query_en"), "origin": "type_card" if card else "lost",
                                            "why": why})
                     continue
-                g.update(src=res["src"], kind=res["kind"], credit=res["credit"], stock_url=res["url"])
+                if g.get("src") and g["src"] != res["src"]:
+                    g.pop("overlays", None)       # 표시의 좌표는 앞 그림의 것이다
+                g.update(src=res["src"], kind=res["kind"], credit=res["credit"], stock_url=res["url"], marks=res.get("marks") or [])
                 if res["kind"] == "photo":
                     g.setdefault("kenburns", "in")
-                    # 하우스 트리트먼트(07b): 놓이는 곳(전면 · 종이 위)에 맞춰 [잉크, 종이] 안으로 — 캐시는 원본 그대로 두고
-                    # 그래픽마다 처리한 사본을 쓴다(파일 이름에 처리·판)
-                    g["src"] = self._house(res["src"], "photo", "full" if g.get("layout") == "fullscreen" else "paper")
                     if g.get("layout") == "fullscreen":
                         self._collage_extras(g)
                 keep.append(g)

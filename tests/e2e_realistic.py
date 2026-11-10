@@ -156,4 +156,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from cli_shim import utf8_console
+    utf8_console()      # Windows 콘솔(cp949)에 이모지·상자 문자를 찍다 죽지 않게
     sys.exit(main())

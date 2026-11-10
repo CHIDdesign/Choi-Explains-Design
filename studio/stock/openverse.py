@@ -10,6 +10,7 @@ from typing import Any
 from .base import StockCandidate, StockProvider
 
 API = "https://api.openverse.org/v1/images/"
+AUDIO_API = "https://api.openverse.org/v1/audio/"
 
 
 class Openverse(StockProvider):
@@ -39,6 +40,18 @@ class Openverse(StockProvider):
                        "source": src, "attribution": r.get("attribution") or ""}))
             if len(out) >= per_page:
                 break
+        return out
+
+    def search_audio(self, query: str, *, per_page: int = 20, max_sec: float = 3.0) -> list[dict[str, Any]]:
+        """효과음 입고 후보: CC0 이고 짧은 소리만 → 매니페스트 항목의 재료. Openverse 의 라이선스는 원문보다 늦을 수 있다
+        (2026-11-10: cc0 로 나온 Freesound 한 곡이 원문에서는 CC BY-NC) — 켜기 전에 page 를 확인한다."""
+        data = self._get_json(AUDIO_API, {"q": query, "page_size": max(1, min(20, per_page)), "license": "cc0", "mature": "false"})
+        out: list[dict[str, Any]] = []
+        for r in data.get("results", []) or []:
+            sec = float(r.get("duration") or 0) / 1000.0
+            if r.get("url") and r.get("license") == "cc0" and 0 < sec <= max_sec:
+                out.append({"title": r.get("title") or "", "url": r["url"], "page": r.get("foreign_landing_url") or "", "duration": sec,
+                            "source": r.get("source") or "", "license": license_label(r["license"], str(r.get("license_version") or ""))})
         return out
 
 

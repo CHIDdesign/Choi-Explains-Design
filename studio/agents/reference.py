@@ -303,7 +303,7 @@ def make_client(settings: Any, log: LogFn = noop_log) -> tuple[Any, str]:
 
 def _system() -> str:
     from .studio import lean_system_prompt
-    return lean_system_prompt(("layouts.md", "skills/agents/jitter.md"))
+    return lean_system_prompt(("layouts.md",))
 
 
 def _instruction(rec: dict[str, Any]) -> str:

@@ -13,6 +13,10 @@ class DirectorError(RuntimeError):
     pass
 
 
+class Refused(DirectorError):
+    """안전 분류기의 거절 — 같은 모델로 다시 보내도 같다. 다른 모델(전역)로만 넘어간다."""
+
+
 WEB_FETCH_BETA = "web-fetch-2025-09-10"
 
 
@@ -33,6 +37,15 @@ def _supports_adaptive(model: str) -> bool:
 
 def _supports_fallbacks(model: str) -> bool:
     return model in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
+
+
+def served_mismatch(want: str, actual: str) -> bool:
+    """요청한 것과 다른 모델이 답했는가. 전체 ID 는 앞부분까지 맞아야 하고, 별칭('opus')은 계열만 본다."""
+    want = want.split("[")[0]
+    if not want or not actual or actual.startswith(want):
+        return False
+    fam = [next((f for f in ("fable", "opus", "sonnet", "haiku", "mythos") if f in m), m) for m in (want, actual)]
+    return want.startswith("claude-") or fam[0] != fam[1]
 
 
 def extract_json(text: str) -> Any:
@@ -58,6 +71,7 @@ class ClaudeClient:
         self.effort = effort
         self.log = log
         self.usage: list[dict] = []
+        self._warned_models: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------
     def structured(
@@ -117,6 +131,8 @@ class ClaudeClient:
         for k, ts in enumerate(tool_sets):
             try:
                 return self._structured_once(base, ts, schema, use_model, cancel, label)
+            except Refused:
+                raise
             except DirectorError as e:
                 last_err = e
                 if k + 1 < len(tool_sets):
@@ -147,6 +163,8 @@ class ClaudeClient:
                 last_err = e
                 self.log(f"{label}: '{name}' 요청 거부됨({e.message[:160]}) → 다른 방식으로 재시도")
                 continue
+            except Refused:
+                raise
             except DirectorError as e:
                 last_err = e
                 self.log(f"{label}: {e} → 다른 방식으로 재시도")
@@ -198,9 +216,13 @@ class ClaudeClient:
                  "label": label, "model": getattr(msg, "model", self.model)}
             self.usage.append(u)
             self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {u['input']} (캐시 {u['cache_read']}) · 출력 {u['output']} 토큰")
+        served, want = str(getattr(msg, "model", "") or ""), str(kwargs.get("model") or "")
+        if served_mismatch(want, served) and (want, served) not in self._warned_models:
+            self._warned_models.add((want, served))
+            self.log(f"⚠ 요청한 모델은 {want} 인데 {served} 이 답했습니다(서버 폴백 등)")
         if msg.stop_reason == "refusal":
             detail = getattr(msg, "stop_details", None)
-            raise DirectorError(f"모델이 요청을 거절했습니다: {getattr(detail, 'category', '')}")
+            raise Refused(f"모델이 요청을 거절했습니다: {getattr(detail, 'category', '')}")
         if msg.stop_reason == "max_tokens":
             raise DirectorError("출력이 max_tokens 에서 잘렸습니다")
         texts = [getattr(b, "text", "") for b in msg.content if getattr(b, "type", "") == "text"]

@@ -1,4 +1,4 @@
-"""⚡ 펀치 구간 — 편집 감독의 energy_spans 안에서만 하드 펀치인·휩·임팩트를 허용하고, 그 밖은 젠틀 규칙 그대로."""
+"""디자인 v5 카메라·효과음·음악 비우기 — 화자에게 슬로우 줌 없음, 점프컷은 하드 크롭, 효과음은 그래픽 착지에."""
 from __future__ import annotations
 
 import sys
@@ -7,11 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from studio.agents import schemas as S  # noqa: E402
-from studio.agents.studio import merge_plan  # noqa: E402
-from studio.edit.grammar import PARAMS, PUNCH, Moment, build_long_edit, build_short_edit, in_spans  # noqa: E402
+from studio.director.plan import ENTER_EXIT  # noqa: E402
+from studio.edit.grammar import PARAMS, Moment, auto_motion_sfx, build_long_edit, build_short_edit, directed_sfx  # noqa: E402
 from studio.models import Span, TimeMap  # noqa: E402
-from studio.pipeline import Pipeline  # noqa: E402
 
 
 def _cues(total: float, step: float = 2.0) -> list[dict]:
@@ -23,89 +21,95 @@ def _cues(total: float, step: float = 2.0) -> list[dict]:
     return out
 
 
-def test_in_spans():
-    assert in_spans(5, [(0, 10)]) and not in_spans(11, [(0, 10)]) and not in_spans(5, None) and not in_spans(5, [])
+def _long(moments=(), graphics=(), chapters=(), total=120.0, **kw):
+    tm = kw.pop("tm", TimeMap([Span(0, total)]))
+    return build_long_edit(timemap=tm, total=total, speech_total=total, graphics=list(graphics), chapters=list(chapters),
+                           moments=list(moments), cues=_cues(total), sentence_starts=[float(t) for t in range(0, int(total), 10)], **kw)
 
 
-def test_long_edit_punch_only_inside_spans():
-    tm = TimeMap([Span(0, 120)])
-    moments = [Moment(t=10.0, end=11.0, kind="punchline", intensity=2),          # 밖: 글라이드
-               Moment(t=30.0, end=31.0, kind="reveal", intensity=3),             # 안: 하드 펀치인
-               Moment(t=33.0, end=34.0, kind="number", intensity=2),             # 안이지만 6초 안 → 탈락
-               Moment(t=37.0, end=38.5, kind="punchline", intensity=1),          # 안: 강도 1 도 허용
-               Moment(t=80.0, end=81.0, kind="punchline", intensity=2)]          # 밖: 40초 규칙으로 글라이드 하나 더
-    graphics = [{"id": "g0", "template": "photo", "layout": "fullscreen", "start": 44.0, "end": 48.0}]
-    ed = build_long_edit(timemap=tm, total=125.0, speech_total=120.0, graphics=graphics, chapters=[], moments=moments,
-                         cues=_cues(120), sentence_starts=[0.0, 30.0, 60.0, 90.0], punch_spans=[(25.0, 50.0)])
-    by_t = {p["t"]: p for p in ed.punches}
-    assert by_t[10.0]["style"] == "glide" and by_t[10.0]["amount"] == PARAMS["punch"][2]
-    # 2026-10-04 채널 주인: 확대·이완은 어디서나 아주 느리게 — 펀치 구간도 한 프레임 펀치인이 아니라 느린 밀기
-    assert by_t[30.0]["style"] == PUNCH["punch_style"] == "glide" and by_t[30.0]["amount"] == PUNCH["punch"][3]
-    assert by_t[30.0]["end"] - 30.0 <= PUNCH["punch_max"] + 1e-6
-    assert 33.0 not in by_t and by_t[37.0]["amount"] == PUNCH["punch"][1]
-    # 핵심어보다 먼저 밀기 시작해(from) 아주 천천히 당기고 풀린다
-    g = by_t[10.0]
-    assert g["from"] <= 10.0 - 2.0 and g["in"] >= 2.5 and g["out"] >= 3.0 and g["end"] - 10.0 >= 3.0, g
-    assert by_t[30.0]["in"] >= 2.0 and by_t[30.0]["from"] < 30.0
-    assert by_t[80.0]["style"] == "glide"
-    assert ed.stats["punch_spans"] == 1 and ed.stats["hot_punches"] == 2
-    # 효과음(문구 팔레트 04c 6절): 펀치 구간 안은 도장(강도 3)·종이 놓기(강도 1), 밖의 강조 글라이드는 소리 없음.
-    # 말 시작 0.15초 안이면 앞으로 당긴다
-    def near(t):
-        return next((s["category"] for s in ed.sfx if abs(s["t"] - t) <= 0.16), None)
-    assert near(30.0) == "stamp" and near(37.0) == "paper_place" and near(10.0) is None
-    # 화면 전환 효과(휩 포함)는 보내지 않는다 — 전면 그래픽의 들고 나기는 렌더러의 장면 안무(2026-10-04)
-    assert ed.transitions == []
+def test_jump_cut_is_hard_crop_and_speaker_never_drifts():
+    tm = TimeMap([Span(0, 20), Span(25, 60), Span(70, 130)])        # NG 를 잘라낸 큰 점프 둘
+    ed = _long(tm=tm, total=115.0, moments=[Moment(t=30.0, end=31.0, kind="reveal", intensity=3)])
+    assert ed.punches == []
+    assert {s["zoom"] for s in ed.camera} == {1.0, PARAMS["medium"]} and PARAMS["medium"] == 1.12
+    assert all(s["zoom"] == s["zoomEnd"] and "glide" not in s for s in ed.camera)
+    assert max(s["end"] - s["start"] for s in ed.camera) <= PARAMS["max_shot"] + PARAMS["min_shot"]
 
 
-def test_no_punch_over_split_panel_even_when_hot():
-    tm = TimeMap([Span(0, 60)])
-    moments = [Moment(t=20.0, end=21.0, kind="number", intensity=3), Moment(t=40.0, end=41.0, kind="reveal", intensity=3)]
-    graphics = [{"id": "g0", "template": "definition", "layout": "split", "start": 18.0, "end": 24.0}]
-    ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=graphics, chapters=[], moments=moments,
-                         cues=_cues(60), sentence_starts=[0.0, 30.0], punch_spans=[(15.0, 45.0)])
-    assert [p["t"] for p in ed.punches] == [40.0] and ed.punches[0]["style"] == "glide"
-    assert ed.punches[0]["from"] >= 24.0 + 0.2                                           # 분할 판이 끝난 뒤에야 밀기 시작
+def test_callout_lasts_three_seconds_and_keeps_gap():
+    moments = [Moment(t=10.0, end=11.0, intensity=2, callout="핵심어"), Moment(t=15.0, end=16.0, intensity=3, callout="너무 가까움"),
+               Moment(t=50.0, end=58.0, intensity=2, callout="둘째"), Moment(t=90.0, end=91.0, intensity=1, callout="약함")]
+    ed = _long(moments)
+    assert [c["text"] for c in ed.callouts] == ["핵심어", "둘째"]
+    assert all(c["end"] - c["start"] <= PARAMS["callout_sec"] + 0.1 for c in ed.callouts)
+    assert "impact_captions" not in ed.stats and not hasattr(ed, "impact_cues")
 
 
-def test_long_edit_without_spans_is_unchanged():
-    tm = TimeMap([Span(0, 60)])
-    moments = [Moment(t=10.0, end=11.0, kind="punchline", intensity=3), Moment(t=40.0, end=41.0, kind="reveal", intensity=1)]
-    ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=[], chapters=[], moments=moments,
-                         cues=_cues(60), sentence_starts=[0.0, 30.0])
-    assert [p["style"] for p in ed.punches] == ["glide"] and ed.stats["hot_punches"] == 0
+def test_auto_sfx_only_on_template_entry_and_lands_on_the_word():
+    g = [{"template": "keyword", "layout": "overlay", "start": 10.0, "end": 13.0},
+         {"template": "photo", "layout": "fullscreen", "start": 20.0, "end": 24.0},
+         {"template": "evidence", "layout": "fullscreen", "start": 30.0, "end": 34.0},
+         {"template": "broll", "layout": "fullscreen", "start": 40.0, "end": 44.0},
+         {"template": "motion", "layout": "fullscreen", "start": 50.0, "end": 60.0,
+          "data": {"spec": {"elements": [{"type": "chip", "at": 2.0}, {"type": "counter", "at": 4.0}]}}}]
+    ev = auto_motion_sfx(g)
+    assert [(e["category"], e["t"]) for e in ev] == [("pop", 10.0 + ENTER_EXIT["overlay"][0]),
+                                                     ("paper_slide", 50.0 + ENTER_EXIT["fullscreen"][0])]
 
 
-def test_short_edit_hook_is_hot():
+def test_directed_sfx_cap_gap_and_audible_gain():
+    g = [{"template": "keyword", "layout": "overlay", "start": 10.0 + i * 2.0, "end": 12.0 + i * 2.0} for i in range(20)]
+    out = directed_sfx(g, [], total=120.0, auto=True)
+    ts = [x["t"] for x in out]
+    assert all(b - a >= PARAMS["sfx_min_gap"] for a, b in zip(ts, ts[1:]))
+    assert all(sum(1 for u in ts if t <= u < t + 60) <= 4 for t in ts)
+    assert PARAMS["sfx_per_min"] == 4 and PARAMS["sfx_min_gap"] == 4.0
+    assert -20 <= min(PARAMS["sfx_gain"].values()) and max(PARAMS["sfx_gain"].values()) <= -10
+
+
+def test_music_dips_only_at_peak_and_chapter_ends():
+    moments = [Moment(t=t, end=t + 1, kind="reveal", intensity=3) for t in (20.0, 60.0, 100.0)]
+    ed = _long(moments, chapters=[{"start": 0.0}, {"start": 80.0}], peak=60.0, holds=[(30.0, 40.0)])
+    assert ed.bgm_dips == [(59.2, 60.2), (78.2, 79.4)]
+
+
+def test_highlight_style_call_has_no_punch():
+    ed = _long(total=20.0)
+    assert ed.punches == [] and ed.transitions == []
+
+
+def test_short_edit_has_no_glide_on_the_speaker():
     tm = TimeMap([Span(0, 30)])
     moments = [Moment(t=1.5, end=2.2, kind="punchline", intensity=3), Moment(t=12.0, end=13.0, kind="number", intensity=2)]
     ed = build_short_edit(timemap=tm, total=30.0, graphics=[], cues=_cues(30), moments=moments)
-    by_t = {p["t"]: p for p in ed.punches}
-    assert by_t[1.5]["style"] == "glide" and by_t[1.5]["amount"] == PUNCH["punch"][3]   # 훅(첫 3초)도 느린 밀기
-    assert by_t[1.5]["in"] >= 1.5 and by_t[1.5]["out"] >= 2.0
-    assert by_t[12.0]["style"] == "glide"
-    assert not any(s["t"] < 3.0 for s in ed.sfx)                                         # 훅 문장 위에는 효과음 없음
-    ed2 = build_short_edit(timemap=tm, total=30.0, graphics=[], cues=_cues(30), moments=moments, hook=0.0)
-    assert all(p["style"] == "glide" for p in ed2.punches)
+    assert ed.punches == [] and all(c["zoom"] == c["zoomEnd"] for c in ed.camera)
+    assert not any(s["t"] < 3.0 for s in ed.sfx)
 
 
-def test_pipeline_punch_spans_budget_and_segment_filter():
-    class P:
-        plan_long = {"energy_spans": [{"start_seg": 0, "end_seg": 1, "reason": "훅"},
-                                      {"start_seg": 5, "end_seg": 9, "reason": "절정"},
-                                      {"start_seg": 3, "end_seg": 3, "reason": "짧음"}]}
-
-    seg_t = {i: (i * 10.0, i * 10.0 + 9.0) for i in range(10)}      # 총 99초 → 예산 24.75초
-    spans = Pipeline._punch_spans(P(), seg_t)
-    assert spans[0] == (0.0, 19.0)                                  # 첫 구간 그대로
-    assert spans[1][0] == 50.0 and abs((spans[1][1] - 50.0) - (24.75 - 19.0)) < 1e-6   # 예산만큼 잘림
-    assert len(spans) == 2                                          # 예산 소진 뒤는 버림
-    only = Pipeline._punch_spans(P(), seg_t, segs={5, 6})            # 숏폼: 그 숏폼의 발화만
-    assert only == [(50.0, 69.0)]
+def test_short_auto_sfx_stays_within_the_per_minute_cap():
+    tm = TimeMap([Span(0.0, 55.0)])
+    gs = [{"start": t, "end": t + 3.0, "template": "keyword", "layout": "overlay"} for t in range(5, 50, 7)]
+    ed = build_short_edit(timemap=tm, total=55.0, graphics=gs, cues=_cues(55), moments=[])
+    assert 0 < len(ed.sfx) <= PARAMS["sfx_per_min"]
 
 
-def test_merge_plan_keeps_energy_spans_and_schema():
-    raw, _ = merge_plan({"editor": {"drop": [], "moments": [], "pacing_notes": "",
-                                    "energy_spans": [{"start_seg": 2, "end_seg": 4, "reason": "훅"}, "bad"]}})
-    assert raw["energy_spans"] == [{"start_seg": 2, "end_seg": 4, "reason": "훅"}]
-    assert "energy_spans" in S.EDITOR["properties"]
+def test_stamp_sound_has_a_landing_after_moving_onto_the_media():
+    from studio.edit.grammar import graphic_landings
+    from studio.render.props import stamps_onto_media
+    host = {"template": "photo", "layout": "fullscreen", "start": 10.0, "end": 20.0, "data": {"image": "a.jpg"}}
+    stamp = {"template": "stamp", "layout": "fullscreen", "start": 11.0, "end": 13.0, "data": {"title": "철거"}}
+    gs = [host, stamp]
+    before = graphic_landings(gs)[1]
+    stamps_onto_media(gs)
+    assert gs == [host] and any(abs(t - before) <= 0.25 for t in graphic_landings(gs))
+
+
+def test_stamp_stays_a_graphic_when_the_media_will_not_draw_marks():
+    from studio.render.props import stamps_onto_media
+    for data in ({"display": "여백"}, {"quote": "인용"}, {"keyword": "핵심"},
+                 {"overlays": [{"kind": "circle", "text": "지붕"}, {"kind": "arrow"}]}):
+        host = {"template": "evidence", "layout": "fullscreen", "start": 10.0, "end": 20.0, "data": dict(data)}
+        stamp = {"template": "stamp", "layout": "fullscreen", "start": 11.0, "end": 13.0, "data": {"title": "철거"}}
+        gs = [host, stamp]
+        stamps_onto_media(gs)
+        assert stamp in gs and not any(o["kind"] == "stamp" for o in host["data"].get("overlays", []))

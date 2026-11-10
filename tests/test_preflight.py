@@ -157,4 +157,14 @@ def test_scenes_revised_after_stock_get_their_pictures_resolved_or_dropped(tmp_p
 def test_renderer_never_loads_unresolved_scene_pictures():
     tsx = (Path(__file__).resolve().parents[1] / "renderer" / "src" / "components" / "motion" / "MotionScene.tsx")
     src = tsx.read_text(encoding="utf-8")
-    assert "localSrc(el.src) ?" in src and "!localSrc(el.src)" in src     # 기기 화면·그림 둘 다
+    assert "!localSrc(el.src)" in src
+
+
+def test_marks_measured_on_a_missing_first_picture_do_not_land_on_the_second(tmp_path):
+    pub = _public(tmp_path)
+    d = {"assets": [{"src": "images/gone.jpg"}, {"src": "images/own.jpg"}],
+         "overlays": [{"kind": "circle", "box": [0.1, 0.1, 0.2, 0.2]}, {"kind": "cutout", "point": [0.5, 0.5], "image": "images/own.jpg"},
+                      {"kind": "memo", "text": "메모"}, {"kind": "expand"}]}
+    props = {"graphics": [{"template": "evidence", "start": 1.0, "end": 5.0, "data": d}]}
+    preflight.fix_props(props, preflight.MediaCheck(pub, {}))
+    assert [o["kind"] for o in props["graphics"][0]["data"]["overlays"]] == ["memo", "expand"]

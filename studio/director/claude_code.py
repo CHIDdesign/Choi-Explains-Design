@@ -29,7 +29,24 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..util import CancelToken, LogFn, noop_log
-from .claude import DirectorError, extract_json
+from .claude import DirectorError, Refused, extract_json, served_mismatch
+
+class LoginExpired(RuntimeError):
+    """구독 로그인이 만료되어 AI 호출이 전부 실패할 때 — 메시지는 사용자에게 그대로 보인다. DirectorError 가 아니다: 규칙 폴백·말단
+    건너뛰기로 넘어가면 그럴듯한 규칙 기반 결과물이 정상 종료로 나온다(2026-11-10 실제 실행)."""
+
+
+LOGIN_MSG = ("Claude 로그인이 만료되어 작업을 멈췄습니다 — 이대로 계속하면 AI 없이 규칙으로만 만든 결과가 나옵니다.\n"
+             "명령 창에서 claude auth login 을 실행하거나 설정 → AI → 로그인을 누른 뒤 '전체 제작'을 다시 누르세요.")
+_AUTH_FAIL = re.compile(r"failed to authenticate|oauth (session|token)|token has expired|not logged in|please run /login"
+                        r"|invalid api key|authentication_error", re.I)
+_NET_FAIL = re.compile(r"timed? ?out|connection|network|econn|enotfound|socket|fetch failed|overloaded|\b5\d\d\b", re.I)
+
+
+def is_login_failure(text: str) -> bool:
+    """로그인 문제인가 — 인증 단계에서 난 일시적 네트워크·서버 오류는 아니다(말단으로 남는다)."""
+    return bool(_AUTH_FAIL.search(text)) and not _NET_FAIL.search(text)
+
 
 def _scratch_bases() -> list[Path]:
     """CLI 작업 폴더 후보(앞이 우선). 실행 .bat 이 TEMP/TMP 를 설치 폴더 안 `tools\\tmp` 로 돌려 두므로(C 드라이브 절약)
@@ -92,7 +109,9 @@ def scratch_dir(tag: str, bases: Optional[list[Path]] = None, log: LogFn = noop_
 
 
 # 구독 로그인 대신 API 키로 과금되게 만드는 환경변수(실행할 때 뺀다)
-STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+STRIP_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
+             # 🏢 역할별 --model·--effort 를 조용히 이기는 전역 변수(공식 문서: CLAUDE_CODE_EFFORT_LEVEL 은 모든 effort 설정을 이긴다)
+             "CLAUDE_CODE_EFFORT_LEVEL", "ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL")
 # 어느 폴더에서 돌든 CLAUDE.md(프로젝트·사용자 메모)를 한 장도 읽지 않게 — 공식 환경변수(옛 버전은 모르면 무시)
 GUARD_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}
 # 오래된 Claude Code 에 없을 수 있는 선택 옵션(모르는 옵션이라고 하면 빼고 다시 실행)
@@ -270,7 +289,9 @@ class ClaudeCodeClient:
         self.usage: list[dict] = []
         self.rate_limit: dict[str, Any] = {}   # 마지막 rate_limit_event(5시간·7일 창 사용률) — 사용량 표시용
         self._drop: set[str] = set()   # 이 버전이 모르는 선택 옵션
+        self._warned_models: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
+        self.login_expired = False     # 한 번 확인되면 더 부르지 않고, 폴백이 삼켜도 Pipeline._check_login 이 멈춘다
 
     # ------------------------------------------------------------------
     def _system_file(self, system: str) -> Path:
@@ -307,6 +328,8 @@ class ClaudeCodeClient:
         같은 역할을 여러 번 부르는 호출(그림 고르기·장면 수정·자기 검토·검수)이 그 자료를 매번 새로 읽지 않고 캐시에서 읽는다
         (캐시 읽기는 새로 읽기의 1/10). 사용자 메시지에는 그림과 지시만 남는다."""
         import base64
+        if self.login_expired:
+            raise LoginExpired(LOGIN_MSG)
         if ctx_in_system and shared_context.strip():
             system = system + "\n\n# 이 작업의 공통 자료(모든 호출이 같은 것을 본다)\n\n" + shared_context
             content: list[dict[str, Any]] = []
@@ -349,6 +372,7 @@ class ClaudeCodeClient:
         limit = float(timeout or self.timeout)
         searches = 0
         served = ""
+        synthetic = ""      # CLI 가 모델 대신 지어낸 답(model=<synthetic>) — 인증 실패가 여기로 온다
         try:
             proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     cwd=str(self.workdir), env=clean_env(), text=True, encoding="utf-8",
@@ -413,6 +437,9 @@ class ClaudeCodeClient:
                     self.rate_limit = dict(ev["rate_limit_info"], at=time.time())
                 elif ev.get("type") == "assistant":
                     served = str(((ev.get("message") or {}).get("model")) or served)
+                    if served == "<synthetic>":
+                        synthetic += " ".join(str(b.get("text", "")) for b in (ev.get("message") or {}).get("content") or []
+                                              if isinstance(b, dict))
                     # 웹 도구만 센다 — 구조화 출력(--json-schema)도 도구 호출로 오므로 그것까지 '웹 조사'로 세던 것
                     searches += sum(1 for b in (ev.get("message") or {}).get("content") or []
                                     if isinstance(b, dict) and b.get("type") == "tool_use"
@@ -428,6 +455,10 @@ class ClaudeCodeClient:
         if cancel is not None:
             cancel.unregister(proc)
         stderr = "".join(err)
+        if is_login_failure(f"{synthetic} {'' if result else stderr[-600:]}") or (
+                result and result.get("is_error") and is_login_failure(str(result.get("result") or ""))):
+            self.login_expired = True
+            raise LoginExpired(LOGIN_MSG)
         if result is None:
             unknown = _parse_unknown_option(stderr)
             if unknown is not None:
@@ -436,6 +467,8 @@ class ClaudeCodeClient:
                                 f"{stderr.strip()[-600:] or '로그인 상태를 확인하세요(설정 → AI → 로그인).'}")
         self._record(result, label, t0, served=served, requested=next((args[i + 1] for i, a in enumerate(args)
                                                                        if a == "--model" and i + 1 < len(args)), ""))
+        if is_refusal(result):
+            raise Refused(f"{label}: 모델이 요청을 거절했습니다")
         if result.get("is_error") or result.get("subtype") not in (None, "success"):
             raise DirectorError(explain_error(str(result.get("result") or result.get("subtype") or "")))
         if schema_mode and isinstance(result.get("structured_output"), dict):
@@ -449,7 +482,7 @@ class ClaudeCodeClient:
     def _record(self, ev: dict, label: str, t0: float, *, served: str = "", requested: str = "") -> None:
         u = ev.get("usage") or {}
         used = [m for m in (ev.get("modelUsage") or {}) if isinstance(m, str)]
-        # 실제로 답한 모델 — 요청은 Opus 인데 다른 모델이 답했다면(구독 등급·한도·폴백) 화면에 알린다
+        # 실제로 답한 모델 — 요청과 다른 모델이 답했다면(구독 등급·한도·폴백) 화면에 알린다
         actual = served or (max(used, key=lambda m: ((ev.get("modelUsage") or {}).get(m) or {}).get("outputTokens", 0))
                             if used else "")
         rec = {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
@@ -461,11 +494,10 @@ class ClaudeCodeClient:
         self.log(f"{label}: 완료 {time.time() - t0:.0f}s · 입력 {rec['input']} · 캐시 읽기 {rec['cache_read']} · "
                  f"캐시 쓰기 {rec['cache_write']} · 출력 {rec['output']} 토큰 · {actual or '모델 미확인'} · Claude 구독")
         want = (requested or self.model).split("[")[0]
-        if actual and want and not actual.startswith(want) and "opus" in want and "opus" not in actual:
-            if not getattr(self, "_warned_model", False):
-                self._warned_model = True
-                self.log(f"⚠ 요청한 모델은 {want} 인데 {actual} 이 답했습니다 — 구독 등급·사용량 한도 때문일 수 있습니다. "
-                         "Max 인데 Pro 로 보이면 `claude auth logout` → 설정 › AI › 로그인으로 다시 로그인하세요.")
+        if served_mismatch(want, actual) and (want, actual) not in self._warned_models:
+            self._warned_models.add((want, actual))
+            self.log(f"⚠ 요청한 모델은 {want} 인데 {actual} 이 답했습니다 — 구독 등급·사용량 한도 때문일 수 있습니다. "
+                     "Max 인데 Pro 로 보이면 `claude auth logout` → 설정 › AI › 로그인으로 다시 로그인하세요.")
 
 
 class _UnknownOption(DirectorError):
@@ -480,6 +512,17 @@ def _parse_unknown_option(stderr: str) -> Optional[str]:
     if m:
         return m.group(1).split("=")[0]
     return "" if "unknown option" in stderr else None
+
+
+def is_refusal(result: dict) -> bool:
+    """CLI 결과가 안전 분류기의 거절인가 — stop_reason 이 없는 판에서는 CLI 가 고정 문구로 끝낸다.
+    답(구조화 출력, 또는 result 안의 JSON)이 있으면 그 안의 'usage policy' 는 영상의 내용이다."""
+    if result.get("stop_reason") == "refusal":
+        return True
+    if isinstance(result.get("structured_output"), dict):
+        return False
+    text = str(result.get("result") or "").lower()
+    return "{" not in text and ("usage policy" in text or "unable to respond to this request" in text)
 
 
 def explain_error(msg: str) -> str:

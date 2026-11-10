@@ -48,90 +48,55 @@ def test_camera_alternates_and_never_flickers():
     zooms = [c["zoom"] for c in ed.camera]
     assert set(zooms) == {PARAMS["wide"], PARAMS["medium"]}
     assert all(c["end"] - c["start"] >= 0.99 for c in ed.camera[:-1])
-    # 교육 영상용 젠틀 편집: 앵글 차이는 작고(≤6%), 프레이밍은 NG 점프·챕터·그래픽 복귀에서만 바뀐다
-    assert PARAMS["medium"] <= 1.07
+    assert PARAMS["medium"] == 1.12                             # 점프컷은 크롭을 12% 바꾼 하드 컷
     cuts = {round(c, 3) for c in tm.cut_points()} | {100.1}
     covers_end = {17.4, 48.0, 75.0, 102.6, 140.0}
-    for c in ed.camera[1:]:
-        if c.get("glide"):
-            continue
-        assert any(abs(c["start"] - x) < 0.01 for x in cuts | covers_end), c
-    # 긴 샷은 느린 드리프트(최대 5%)
-    assert all(c["zoomEnd"] / c["zoom"] - 1 <= PARAMS["push_max"] + 1e-6 for c in ed.camera)
+    assert all(not c.get("glide") and c["zoomEnd"] == c["zoom"] for c in ed.camera)   # 슬로우 줌·글라이드 없음
+    sentences = {float(t) for t in range(0, int(total), 7)}
+    assert all(any(abs(c["start"] - x) < 0.01 for x in cuts | covers_end | sentences) for c in ed.camera[1:])
 
 
 def test_no_ppt_stage_transitions():
     """2026-10-04 채널 주인: 'PPT 장면 전환(디졸브·푸시·와이프·빛샘) 금지'. 전면 그래픽의 들고 나기는 렌더러의 장면 안무
-    (원형 열기·흩어지기·다이브)가 맡고, 편집 문법은 화면 전환 효과를 보내지 않는다."""
+    하드 컷이고, 편집 문법은 화면 전환 효과를 보내지 않는다."""
     _, _, ed = _long_case()
-    assert ed.transitions == []
-    assert all(p["style"] == "glide" for p in ed.punches)
+    assert ed.transitions == [] and ed.punches == []
 
 
-def test_punch_callout_and_sfx_rules():
+def test_callout_and_sfx_rules():
     _, _, ed = _long_case()
-    ts = [p["t"] for p in ed.punches]
-    assert 30.0 in ts and 31.0 not in ts and 44.0 not in ts     # 간격·풀스크린 그래픽 규칙
-    assert ed.punches[0]["amount"] == PARAMS["punch"][3] <= 0.1
-    assert all(p["style"] == "glide" for p in ed.punches)      # 하드컷 줌 없이 천천히 당긴다
     # 문구 팔레트(04c): 거친·UI 효과음 없음
     assert not {"impact", "sub_drop", "glitch", "riser", "pop", "click", "whoosh_soft", "ding"} & {s["category"] for s in ed.sfx}
     c = ed.callouts[0]
     assert c["text"] == "좋은 디자인은\n질문에서" and c["highlight"] == "질문" and c["label"] == "핵심"
     assert c["side"] == "right"                                  # 얼굴이 왼쪽(x=0.35) → 오른쪽 빈 공간
-    assert 2.0 <= c["end"] - c["start"] <= 4.5
+    assert 1.8 <= c["end"] - c["start"] <= 3.2
     for a, b in zip(ed.sfx, ed.sfx[1:]):                       # 목록 틱·챕터까지 모두 간격 규칙 안(게이트 D5)
         assert b["t"] - a["t"] >= PARAMS["sfx_min_gap"] - 1e-6
     for s0 in ed.sfx:                                            # 60초 창 어디서도 3개 이하
         assert sum(1 for s1 in ed.sfx if s0["t"] <= s1["t"] < s0["t"] + 60) <= PARAMS["sfx_per_min"]
-    assert any(s["category"] == "page_turn" for s in ed.sfx)     # 챕터 진입(와이프와 한 소리)
-    assert ed.bgm_dips and ed.bgm_dips[0][1] - ed.bgm_dips[0][0] == pytest.approx(1.0)  # 강도 3 직전 음악 비우기
+    assert any(s["category"] == "page_turn" for s in ed.sfx)     # 챕터 진입
 
 
-def test_centered_speaker_is_reframed_for_callout():
-    """화자가 가운데면 콜아웃 동안 반대쪽으로 천천히 옮겨 자리를 만들고, 같은 순간의 강조 글라이드는 뺀다."""
-    tm = TimeMap([Span(0, 60)])
-    moments = [Moment(t=20.0, end=23.0, kind="punchline", intensity=3, word="질문", callout="연필보다\n질문 먼저")]
-    face = [{"t": float(t), "x": 0.5, "y": 0.4, "s": 0.3} for t in range(60)]
-    ed = build_long_edit(timemap=tm, total=60.0, speech_total=60.0, graphics=[], chapters=[], moments=moments,
-                         cues=[_cue(19.9, 22.5, "연필보다 질문")], sentence_starts=[0, 10, 20, 30, 40, 50], face=face)
-    c = ed.callouts[0]
-    shot = next(s for s in ed.camera if s["start"] <= c["start"] + 0.01 < s["end"])
-    assert shot["start"] == pytest.approx(c["start"]) and shot["end"] == pytest.approx(c["end"])
-    assert shot["zoom"] == PARAMS["callout_zoom"]
-    assert (shot["x"] < 0) == (c["side"] == "right")          # 콜아웃 반대쪽으로 화자를 민다
-    assert shot["glide"] > 0.3                                 # 컷이 아니라 천천히 옮겨 간다
-    back = next(s for s in ed.camera if abs(s["start"] - c["end"]) < 0.01)
-    assert back["glide"] > 0.3                                 # 돌아올 때도
-    assert not any(abs(p["t"] - 20.0) < 0.01 for p in ed.punches)
-    assert any(s["category"] == "paper_place" and abs(s["t"] - 20.0) < 0.3 for s in ed.sfx)   # 말 시작 0.15초 앞으로
-    assert all(s["end"] - s["start"] >= 0.99 for s in ed.camera[:-1])
-
-
-def test_callouts_are_not_capped_by_punch_glides():
-    """콜아웃은 강조 글라이드(40초 간격)와 따로 20초 간격으로 — 레퍼런스의 얼굴+오버레이 비율(약 21%)에 가깝게.
-    글라이드가 없는 콜아웃은 등장에 종이 놓는 소리(paper_place). 얼굴만 이어지는 가장 긴 구간을 통계로 남긴다."""
+def test_callouts_keep_20s_gap_and_count_in_stats():
+    """콜아웃은 20초 간격으로. 얼굴만 이어지는 가장 긴 구간을 통계로 남긴다."""
     tm = TimeMap([Span(0, 120)])
     moments = [Moment(t=float(t), end=t + 2.5, kind="punchline", intensity=2, word="핵심", callout=f"핵심 {t}")
                for t in (10, 32, 54, 76, 98)]
     face = [{"t": float(t), "x": 0.3, "y": 0.4, "s": 0.3} for t in range(120)]
     ed = build_long_edit(timemap=tm, total=120.0, speech_total=120.0, graphics=[], chapters=[], moments=moments,
                          cues=[], sentence_starts=list(range(0, 120, 8)), face=face)
-    assert len(ed.punches) == 3                                   # 글라이드는 40초 간격 그대로
     starts = [round(c["start"] + 0.08) for c in ed.callouts]
     assert starts == [10, 32, 54, 76, 98]                         # 콜아웃은 모두(20초 간격 이상)
-    no_glide = [t for t in starts if not any(abs(p["t"] - t) < 0.01 for p in ed.punches)]
-    assert no_glide and all(any(s["category"] == "paper_place" and abs(s["t"] - t) < 0.2 for s in ed.sfx)
-                            for t in no_glide)
     assert ed.stats["callouts"] == 5 and 0 < ed.stats["max_face_run"] < 30
 
 
-def test_long_face_only_stretch_gets_a_gentle_framing_change():
-    """얼굴만 max_shot(30초) 넘게 이어지면 문장 시작에서 글라이드로 프레이밍을 한 번 바꾼다(컷 없음)."""
+def test_long_face_only_stretch_changes_crop_at_sentence():
+    """얼굴만 max_shot(20초) 넘게 이어지면 문장 시작에서 크롭을 한 번 바꾼다(글라이드 없음)."""
     tm = TimeMap([Span(0, 70)])
     shots = camera_plan(tm, 70.0, chapter_starts=[], covers=[], sentence_starts=list(range(0, 70, 5)))
     assert len(shots) >= 2 and all(s["end"] - s["start"] <= PARAMS["max_shot"] + 1e-6 for s in shots)
-    assert all(s.get("glide", 0) > 0 for s in shots[1:])
+    assert all("glide" not in s for s in shots)
 
 
 def test_camera_plan_merges_micro_shots():
@@ -146,27 +111,15 @@ def test_short_edit_is_fast_but_sparse():
     cues = [_cue(t * 1.2, t * 1.2 + 1.1, "짧은 자막") for t in range(int(total / 1.2))]
     cues[5]["lines"][0][0]["em"] = "keyword"
     ed = build_short_edit(timemap=tm, total=total, graphics=[{"start": 8.0, "end": 12.0, "template": "keyword"},
-                                                             {"start": 15.0, "end": 18.0, "template": "photo"}],
+                                                             {"start": 15.0, "end": 18.0, "template": "photo"},
+                                                             {"start": 25.0, "end": 28.0, "template": "keyword"}],
                           cues=cues, moments=[Moment(t=20.0, end=22.0, intensity=3)])
     assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "zoom"       # 되감기 이음새 하나(디졸브 대신 줌스루)
-    assert {c["zoom"] for c in ed.camera} <= {1.0, 1.06}
+    assert {c["zoom"] for c in ed.camera} <= {1.0, 1.12} and all(c["zoom"] == c["zoomEnd"] for c in ed.camera)      # 디자인 v5: 하드 컷 크롭만
     assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
-    assert all(p["style"] == "glide" for p in ed.punches)
-    assert 2 <= len(ed.sfx) <= 6 and {s["category"] for s in ed.sfx} <= {"paper_place", "print_place", "paper_slide"}
-    # 컷·이음새·강조 글라이드에는 소리 없음 — 그래픽이 놓일 때만(참고 채널 · 04c)
-    assert ed.soft_cut > 0
-
-
-def test_soft_cuts_only_where_framing_continues():
-    from studio.render.props import mark_soft_cuts
-    clips = [{"start": 0.0}, {"start": 5.0}, {"start": 9.0}, {"start": 14.0}, {"start": 20.0}]
-    camera = [{"start": 0.0, "end": 9.0}, {"start": 9.0, "end": 20.0},
-              {"start": 20.0, "end": 30.0, "glide": 0.7}]
-    n = mark_soft_cuts(clips, camera, [{"t": 14.1}], 0.1)
-    assert n == 2
-    assert clips[1]["soft"] == 0.1 and clips[4]["soft"] == 0.1    # 같은 프레이밍·글라이드 샷
-    assert "soft" not in clips[2] and "soft" not in clips[3]       # 앵글 전환·전환 효과가 있는 컷
-    assert "soft" not in clips[0]
+    assert ed.punches == []
+    assert 2 <= len(ed.sfx) <= 6 and {s["category"] for s in ed.sfx} <= {"paper_place", "paper_slide"}
+    # 컷·이음새·강조 글라이드·사진에는 소리 없음 — 글자·도식이 놓일 때만
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +384,7 @@ def test_manifest_disabled_entries_not_loaded(tmp_path):
         encoding="utf-8")
     (tmp_path / "sfx").mkdir(exist_ok=True)
     for n in ("ok_1", "nc_1", "off_1"):
-        (tmp_path / "sfx" / f"{n}.wav").write_bytes(b"x")
+        (tmp_path / "sfx" / f"{n}.wav").write_bytes(b"RIFF")
     lib = SoundLibrary(tmp_path, tmp_path / "manifest.json")
     lib.ensure(download=False, kinds=("sfx",))
     assert {x.id for x in lib.sfx if x.source != "synth"} == {"ok_1"}
@@ -604,9 +557,9 @@ def test_stack_captions_are_rare_and_skip_busy_or_hidden():
         {"text": w, "start": a, "end": a + 1.0, **({"em": "keyword"} if w == em else {})} for w in txt.split()]], **kw}
     cues = [cue(1, "좋은 질문이", "질문이"), cue(5, "먼저 입니다", "먼저"), cue(20, "디자인의 시작", "시작"),
             cue(30, "숨긴 자막", "자막", hidden=True), cue(45, "아주 아주 긴 문장이라 두 층으로는 안 된다", "문장이라"),
-            cue(60, "그래픽 위", "위"), cue(80, "결론은 질문", "질문", style="impact"), cue(85, "바로 다음", "다음")]
+            cue(60, "그래픽 위", "위"), cue(85, "바로 다음", "다음")]
     n = mark_stack_cues(cues, min_gap=18.0, avoid=[(59.5, 62.0)])
-    assert [c.get("style") for c in cues] == ["stack", None, "stack", None, None, None, "impact", None] and n == 2
+    assert [c.get("style") for c in cues] == ["stack", None, "stack", None, None, None, "stack"] and n == 3
 
 
 def test_design_v3_is_one_collage_look():
@@ -617,7 +570,7 @@ def test_design_v3_is_one_collage_look():
     plan = style.choose_looks([g("t", "title", 0.2, "fullscreen"), g("k", "keyword", 10), g("pr", "process", 70)],
                               chapters, 120.0, lambda a, b: "제가 경험을 예를 들어")
     assert [c["look"] for c in plan.chapters] == ["classic", "classic"] and set(plan.graphic_skins.values()) == {"classic"}
-    assert plan.paper_ranges() == [] and "콜라주" in plan.summary()
+    assert plan.paper_ranges() == [] and "토크쇼" in plan.summary()
 
 
 def test_hybrid_looks_follow_content_and_always_mix(monkeypatch):
@@ -685,71 +638,6 @@ def test_face_safe_pip_placement_picks_free_side_or_falls_back_to_split():
 
 def _g(i, tpl, a, b, layout="split", **data):
     return {"id": i, "template": tpl, "layout": layout, "start": a, "end": b, "data": data}
-
-
-def test_chapter_recaps_collects_points_and_sits_in_free_window_at_chapter_end():
-    from studio.render.props import chapter_recaps
-    chapters = [{"start": 0.0, "title": "들어가며", "number": "01", "claim": ""},
-                {"start": 60.0, "title": "문제 정의", "number": "02", "claim": "좋은 답은 질문을 바꿀 때 나온다"}]
-    gs = [_g("k1", "keyword", 5, 9, "overlay", title="발산 먼저"),
-          _g("d1", "definition", 70, 76, title="어포던스", body="형태가 사용법을 알려주는 성질"),
-          _g("s1", "stat", 90, 94, "overlay", title="85%", body="다섯 명이면 충분"),
-          _g("l1", "list", 100, 108, title="좋은 질문의 조건", items=["가", "나"]),
-          _g("k2", "keyword", 100, 103, "overlay", title="좋은 질문의 조건"),      # 같은 말은 한 번만
-          _g("p1", "broll", 122, 126, "pip", src="x.mp4")]
-    added = chapter_recaps(gs, chapters, 130.0)
-    assert len(added) == 1, added
-    r = added[0]
-    assert r["template"] == "recap" and r["layout"] == "split" and r["id"] == "recap02"
-    assert r["data"]["title"] == "좋은 답은 질문을 바꿀 때 나온다"
-    assert r["data"]["items"] == ["어포던스: 형태가 사용법을 알려주는 성질", "85% — 다섯 명이면 충분", "좋은 질문의 조건"]
-    # 챕터 끝(129.6) 창은 122~126 스톡과 겹치므로 그 앞의 빈 창으로
-    assert r["end"] <= 129.6 and r["end"] - r["start"] in (7.0, 5.0)
-    assert not any(r["start"] < g["end"] + 0.3 and r["end"] > g["start"] - 0.5 for g in gs if g is not r)
-    assert gs == sorted(gs, key=lambda g: g["start"])          # 시간순 유지
-    # 첫 챕터(60초)는 개념이 하나뿐이라 정리하지 않는다
-
-
-def test_chapter_recaps_never_covers_emphasis_moments_or_punch_spans():
-    """편집 감독의 강조 순간·펀치 구간은 얼굴로 힘을 주는 자리 — 정리 보드가 덮지 않고, 그 앞의 빈 창으로 가거나 건너뛴다."""
-    from studio.render.props import chapter_recaps
-    chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 10.0, "title": "B", "number": "02"}]
-    mk = lambda: [_g("k1", "keyword", 20, 24, "overlay", title="하나"), _g("k2", "keyword", 40, 44, "overlay", title="둘")]
-    gs = mk()
-    added = chapter_recaps(gs, chapters, 80.0, avoid=[(72.0, 79.0)])          # 끝 7초가 펀치 구간 → 그 앞 창으로
-    assert added and added[0]["end"] <= 72.0 and added[0]["start"] >= 44.3
-    gs = mk()
-    assert chapter_recaps(gs, chapters, 80.0, avoid=[(60.0, 79.6)]) == []    # 끝 20초가 통째로 강조 → 건너뛴다
-
-
-def test_chapter_recaps_skips_short_chapters_and_busy_endings():
-    from studio.render.props import chapter_recaps
-    chapters = [{"start": 0.0, "title": "A", "number": "01"}, {"start": 30.0, "title": "B", "number": "02"}]
-    gs = [_g("k1", "keyword", 2, 5, "overlay", title="하나"), _g("k2", "keyword", 8, 11, "overlay", title="둘"),
-          _g("k3", "keyword", 40, 43, "overlay", title="셋"), _g("k4", "keyword", 50, 53, "overlay", title="넷"),
-          _g("m1", "motion", 58, 79.8, "fullscreen", title="장면")]
-    assert chapter_recaps(gs, chapters, 80.0) == []           # 30초 챕터 + 끝 20초가 전체화면으로 꽉 찬 챕터
-
-
-def test_chapter_maps_fill_chapter_cards_with_table_of_contents():
-    from studio.render.props import chapter_maps
-    chapters = [{"start": 0.0, "title": "들어가며", "number": "01"}, {"start": 60.0, "title": "문제 정의", "number": "02"},
-                {"start": 120.0, "title": "정리", "number": "03"}]
-    gs = [_g("ch02", "chapter", 59.9, 63.1, "fullscreen", title="문제 정의", number="02"),
-          _g("ch03", "chapter", 119.9, 123.1, "fullscreen", title="정리", number="03"),
-          _g("k", "keyword", 5, 8, "overlay", title="x")]
-    assert chapter_maps(gs, chapters) == 2
-    assert gs[0]["data"]["items"] == ["들어가며", "문제 정의", "정리"] and gs[0]["data"]["highlight"] == 1
-    assert gs[1]["data"]["highlight"] == 2 and "items" not in gs[2]["data"]
-
-
-def test_recap_point_texts():
-    from studio.render.props import recap_point
-    assert recap_point(_g("a", "compare", 0, 1, title="발산", title_b="수렴")) == "발산 vs 수렴"
-    assert recap_point(_g("a", "quote", 0, 1, body="적게, 그러나 더 좋게", author="디터 람스")) == "디터 람스: “적게, 그러나 더 좋게”"
-    assert recap_point(_g("a", "motion", 0, 1, spec={"label": "게슈탈트 · 근접성", "elements": []})) == "게슈탈트 · 근접성"
-    long = recap_point(_g("a", "keyword", 0, 1, title="아주 아주 아주 아주 아주 아주 아주 긴 제목입니다 정말로"))
-    assert long.endswith("…") and len(long) <= 26
 
 
 def test_fold_keywords_into_media_makes_keyword_slam_on_the_photo():
@@ -982,3 +870,85 @@ def test_two_sources_are_matched_by_face_lab():
     assert after < 3.0 and after < before, (before, after)
     assert not G.is_identity(c, G.GradeChoice(look="natural", strength=0.0, match=0.0, match_lab=shifts[1]))
     assert G.GradeChoice(match_lab=(20.0, -20.0, 1.0)).clamp().match_lab == (6.0, -6.0, 1.0)
+
+
+def test_highlight_press_keeps_hue_and_is_monotonic():
+    """하이라이트 누름은 채널을 같은 비율로 — 예전 채널별 곡선은 램프 빛 색상을 3.7° 돌렸다. 대비는 뒤집히지 않고 흰 것은 L* 1.2 안."""
+    from studio.grade import auto as G
+    x = np.array([[0.97, 0.93, 0.84], [0.95, 0.78, 0.66], [0.70, 0.84, 0.98], [0.92, 0.92, 0.92]], np.float32)
+    hl = G.HL_PER_ROLLOFF * max(lk.rolloff for lk in G.LOOKS.values())
+    y = G.apply_tone(x, hl)
+    L0, a0, b0 = G.srgb_to_lab(x[:3])
+    L1, a1, b1 = G.srgb_to_lab(y[:3])
+    assert np.abs(np.degrees(np.arctan2(b1, a1) - np.arctan2(b0, a0))).max() < 0.1
+    assert np.all(L1 < L0) and L0[0] - L1[0] < 1.6
+    assert G.srgb_to_lab(x[3:])[0][0] - G.srgb_to_lab(y[3:])[0][0] < 1.6
+    ramp = np.linspace(0, 1, 1001, dtype=np.float32)
+    out = G.apply_tone(np.stack([ramp] * 3, -1), hl)[..., 0]
+    assert np.all(np.diff(out) >= 0) and out[100] == pytest.approx(ramp[100], abs=1e-3)   # 어두운 곳은 그대로
+
+
+def _match_scene():
+    img = np.empty((120, 200, 3), np.float32)
+    img[:] = [0.45, 0.42, 0.38]
+    img[:, :50] = [0.10, 0.09, 0.08]
+    img[:40, 130:] = [0.90, 0.88, 0.82]
+    img[60:, 60:110] = [0.75, 0.57, 0.47]       # 피부
+    return np.clip(img + np.random.default_rng(5).normal(0, 0.01, img.shape), 0, 1).astype(np.float32)
+
+
+def test_reference_match_is_opt_in(tmp_path):
+    """기준 프레임이 없으면(폴더 없음·빈 폴더·그림 아닌 파일) 맞춤을 풀지 않고, 기준이 지금 결과와 같으면 휠은 0 에 붙는다."""
+    from dataclasses import replace
+
+    from studio.grade import auto as G
+    assert G.reference_frames(None) == [] and G.reference_frames(tmp_path / "none") == []
+    (tmp_path / "memo.txt").write_text("x", encoding="utf8")
+    assert G.reference_frames(tmp_path) == []
+    assert G.is_identity(G.Correction(), G.untouched_choice())
+    x = _match_scene()
+    ch = G.untouched_choice()
+    wheels = G.solve_match([x], [x], G.Correction(), ch)
+    assert max(abs(v) for v in wheels) < 0.02
+    assert np.allclose(G.grade(x, G.Correction(), replace(ch, match_wheels=wheels)), x, atol=0.01)
+
+
+def test_reference_match_converges_to_reference_stats():
+    """기준 프레임의 3톤 통계로 수렴(잔차 1/4 아래), 피부 색상은 8° 안에서."""
+    from studio.grade import auto as G
+    x = _match_scene()
+    ch = G.untouched_choice()
+    truth = (0.15, 0.05, -0.12, 0.10, 0.10, -0.05, 0.05, -0.08, 0.04, 0.08)
+    ref = G.apply_wheels(x, truth)
+    stats = lambda f: G._match_stats(f.reshape(-1, 3))  # noqa: E731
+    before = float(np.linalg.norm(G._match_residual(stats(x), stats(ref))))
+    wheels = G.solve_match([x], [ref], G.Correction(), ch)
+    out = G.apply_wheels(x, wheels)
+    assert float(np.linalg.norm(G._match_residual(stats(out), stats(ref)))) < before / 4
+    hue = lambda s: float(np.degrees(np.arctan2(s[1], s[0])))  # noqa: E731
+    assert abs(hue(stats(out)["skin"]) - hue(stats(x)["skin"])) <= 8.0
+
+
+def test_premiere_luts_are_copied_per_source(tmp_path):
+    """원본 이름으로 큐브를 복사하고 적용법을 둔다 — HDR·보정 없는 원본은 뺀다, 같은 이름의 원본은 덮어쓰지 않는다."""
+    from types import SimpleNamespace as NS
+
+    from studio.pipeline import Pipeline
+    pl = Pipeline.__new__(Pipeline)
+    pl.media, pl.extras = tmp_path / "media", tmp_path / "ex"
+    pl.media.mkdir()
+    pl.log = lambda *_: None
+    for name, body in (("grade.cube", "A"), ("grade_2.cube", "B"), ("grade_3.cube", "C")):
+        (pl.media / name).write_text(body, encoding="ascii")
+    pl.smap = NS(cams=[NS(idx=0, path="a/촬영.mp4"), NS(idx=1, path="b/촬영.mp4"), NS(idx=2, path="c/hdr.mov"), NS(idx=3, path="d/plain.mp4")])
+    pl.infos = {0: NS(is_hdr=False), 1: NS(is_hdr=False), 2: NS(is_hdr=True), 3: NS(is_hdr=False)}
+    pl.spec = NS(lut="", auto_grade=True)
+    pl._export_luts()
+    out = pl.extras / "premiere_LUT"
+    assert sorted(p.name for p in out.iterdir()) == ["적용법.txt", "촬영.cube", "촬영_2.cube"]
+    assert (out / "촬영.cube").read_text(encoding="ascii") == "A" and (out / "촬영_2.cube").read_text(encoding="ascii") == "B"
+    assert "촬영_2.cube" in (out / "적용법.txt").read_text(encoding="utf8")
+    pl.extras = tmp_path / "off"
+    pl.spec = NS(lut="", auto_grade=False)
+    pl._export_luts()
+    assert not pl.extras.exists()                                 # 자동 보정을 끈 작업의 옛 큐브를 내보내지 않는다

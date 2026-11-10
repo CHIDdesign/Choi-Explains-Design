@@ -2,7 +2,7 @@
 
 기본 순서: Pixabay(영상·사진, 한국어 검색) → Pexels(키가 있으면) → Coverr(영상) → Unsplash(사진)
 → Google 이미지(SerpApi 키가 있으면 — 재사용 가능 라이선스만, 원문에서 확인. 한 요청에 첫 검색어로 한 번: `once`)
-→ Openverse(사진, 키 없이 항상 동작).
+→ Openverse(사진)·NASA(사진·영상) — 키 없이 항상 동작.
 요청마다 제공처별 후보를 번갈아 섞어 최대 N개를 만들고, 🎞 자료 리서처가 썸네일 시트를 보고 고른다.
 검색 중 오류: 키 오류(StockError.fatal)만 그 제공처를 이번 작업에서 끄고, 연결 실패·일시 차단·한도는 잠시 쉬었다가
 계속 쓴다(3번 연속이면 끈다).
@@ -90,6 +90,7 @@ class StockHub:
     def from_settings(cls, settings: Any, *, log: LogFn = noop_log, cache_dir: Optional[Path] = None) -> "StockHub":
         from .coverr import Coverr
         from .google import GoogleImages
+        from .nasa import Nasa
         from .openverse import Openverse
         from .pexels import Pexels
         from .pixabay import Pixabay
@@ -99,14 +100,14 @@ class StockHub:
                 (GoogleImages, getattr(settings, "serpapi_key", ""))]
         provs = [cls_(key, log=log, cache_dir=cache_dir) for cls_, key in spec if key]
         if getattr(settings, "keyless_stock", True):
-            provs.append(Openverse(log=log, cache_dir=cache_dir))
+            provs += [Openverse(log=log, cache_dir=cache_dir), Nasa(log=log, cache_dir=cache_dir)]
         return cls(provs, log=log)
 
     def check(self) -> str:
         """키가 있는 제공처를 한 번씩 불러 본다(키 오류·차단을 작업 초반에 드러냄). 결과 요약 문자열."""
         out = []
         for p in self.providers:
-            if p.name == "Openverse":
+            if p.name in ("Openverse", "NASA"):
                 continue
             if hasattr(p, "status"):          # 횟수를 쓰지 않는 계정 확인(SerpApi 월 250회 무료)
                 msg = p.status()
@@ -124,7 +125,7 @@ class StockHub:
                 out.append(f"⚠ {p.name}: {e}")
             except Exception as e:  # noqa: BLE001
                 out.append(f"⚠ {p.name}: {type(e).__name__}: {str(e)[:120]}")
-        return " · ".join(out) or "키가 있는 제공처 없음(Openverse 만)"
+        return " · ".join(out) or "키가 있는 제공처 없음(키 없이 되는 Openverse·NASA 만)"
 
     def _call(self, p: StockProvider, method: str, query: str, **kw: Any) -> list[StockCandidate]:
         if p.name in self.disabled or not query:

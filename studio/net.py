@@ -36,7 +36,8 @@ BLOCKED = (403, 406, 503)          # 차단·보호 페이지로 보이는 응�
 STRATEGIES = ("requests", "urllib", "curl")
 ROUND_WAIT = (0.0, 2.5, 6.0, 12.0)   # 모든 방식이 막혔을 때 다시 돌기 전 대기(초)
 HOST_GAP = 0.35                      # 같은 호스트 요청 사이 최소 간격(초)
-HOST_GAPS = {"cdn.pixabay.com": 1.6, "pixabay.com": 0.7}   # 속도 제한이 있는 곳
+HOST_GAPS = {"cdn.pixabay.com": 1.6, "pixabay.com": 0.7,    # 속도 제한이 있는 곳
+             "freesound.org": 3.0, "cdn.freesound.org": 1.6}  # 2026-11-10 실측: 몰아서 부르면 사이트 전체가 403
 
 _lock = threading.Lock()
 _best: dict[str, str] = {}                              # 호스트 → 먼저 쓸 방식
@@ -108,9 +109,10 @@ def _full_url(url: str, params: Optional[dict[str, Any]]) -> str:
 # 방식별 구현(dst 가 있으면 파일로 스트리밍)
 # ---------------------------------------------------------------------------
 
-def _via_requests(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path]) -> Response:
+def _via_requests(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path], data: Optional[bytes] = None) -> Response:
     import requests
-    with requests.get(url, headers=headers, timeout=timeout, stream=dst is not None) as r:
+    with requests.request("POST" if data is not None else "GET", url, headers=headers, data=data, timeout=timeout,
+                          stream=dst is not None) as r:
         if dst is not None and r.ok:
             with open(dst, "wb") as f:
                 for chunk in r.iter_content(1 << 20):
@@ -119,13 +121,13 @@ def _via_requests(url: str, headers: dict[str, str], timeout: float, dst: Option
         return Response(r.status_code, r.content, dict(r.headers), "requests", r.url)
 
 
-def _via_urllib(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path]) -> Response:
+def _via_urllib(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path], data: Optional[bytes] = None) -> Response:
     h = {"User-Agent": BROWSER_UA, "Accept": "*/*", "Accept-Language": "ko,en;q=0.8"}
     ref = _referer(host_of(url))
     if ref:
         h["Referer"] = ref
     h.update(headers)
-    req = urllib.request.Request(url, headers=h)
+    req = urllib.request.Request(url, data=data, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             hdr = {k: v for k, v in r.headers.items()}
@@ -146,7 +148,7 @@ def _curl_exe() -> Optional[str]:
     return shutil.which("curl.exe" if sys.platform == "win32" else "curl") or shutil.which("curl")
 
 
-def _via_curl(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path]) -> Response:
+def _via_curl(url: str, headers: dict[str, str], timeout: float, dst: Optional[Path], data: Optional[bytes] = None) -> Response:
     exe = _curl_exe()
     if not exe:
         raise NetError("curl 없음")
@@ -155,6 +157,9 @@ def _via_curl(url: str, headers: dict[str, str], timeout: float, dst: Optional[P
         hdr_file = Path(td) / "headers"
         args = [exe, "-sS", "-L", "--max-time", str(int(timeout)), "-o", str(out), "-D", str(hdr_file),
                 "-w", "%{http_code}"]
+        if data is not None:
+            (Path(td) / "post").write_bytes(data)
+            args += ["--data-binary", f"@{Path(td) / 'post'}"]
         if sys.platform == "win32":
             args.append("--ssl-no-revoke")   # 인증서 폐기 목록 서버에 못 닿는 환경(백신·방화벽)에서도 검증은 그대로
         ref = _referer(host_of(url))
@@ -193,8 +198,9 @@ def _pace(host: str) -> None:
 
 
 def request(url: str, *, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None,
-            timeout: float = 30.0, dst: Optional[Path] = None, rounds: int = len(ROUND_WAIT)) -> Response:
-    """GET. 차단(403 등)·인증서·연결 오류면 다음 방식으로, 다 막히면 쉬었다가 한 바퀴 더.
+            timeout: float = 30.0, dst: Optional[Path] = None, rounds: int = len(ROUND_WAIT),
+            data: Optional[bytes] = None) -> Response:
+    """GET(data 를 주면 POST). 차단(403 등)·인증서·연결 오류면 다음 방식으로, 다 막히면 쉬었다가 한 바퀴 더.
     끝까지 안 되면 마지막 응답을 돌려주거나 NetError."""
     full = _full_url(url, params)
     host = host_of(full)
@@ -215,7 +221,7 @@ def request(url: str, *, params: Optional[dict[str, Any]] = None, headers: Optio
             dst.parent.mkdir(parents=True, exist_ok=True)
             tmp = dst.with_name(dst.name + ".part")
         try:
-            r = _IMPL[via](full, dict(headers or {}), timeout, tmp)
+            r = _IMPL[via](full, dict(headers or {}), timeout, tmp, **({"data": data} if data is not None else {}))
         except Exception as e:  # noqa: BLE001 - 인증서·연결·타임아웃 → 다음 방식
             reason = redact(f"{type(e).__name__}: {e}")
             reasons.append(f"{via} {reason[:120]}")

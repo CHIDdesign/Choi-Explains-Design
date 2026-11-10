@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, QThread, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
+                               QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox,
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ..director.claude_code import auth_status, claude_version, describe_auth, find_claude, format_quota, open_login, probe_quota
 from ..settings import save_quota, usage_summary
 from ..settings import Settings
+from ..stock.providers import StockHub
+from ..stock.sources import status as source_status
 from .widgets import hint
 
 
@@ -49,6 +52,21 @@ class _Quota(QObject):
             self.done.emit("한도 창(방금 확인): " + format_quota(r["quota"]))
         else:
             self.done.emit("한도 창을 받지 못했습니다: " + (r.get("error") or "응답에 rate_limit 정보 없음(Claude Code 를 업데이트하세요)"))
+
+
+class _StockCheck(QObject):
+    """입력한 키로 제공처를 한 번씩 불러 본다 — 창을 얼리지 않게 스레드에서"""
+    done = Signal(str)
+
+    def __init__(self, keys: dict[str, str]):
+        super().__init__()
+        self.keys = keys
+
+    def run(self) -> None:
+        try:
+            self.done.emit(StockHub.from_settings(SimpleNamespace(**self.keys)).check())
+        except Exception as e:  # noqa: BLE001 - 어떤 실패든 창에 이유만 보이면 된다
+            self.done.emit(f"확인 실패: {type(e).__name__}: {str(e)[:120]}")
 
 
 # 모델·사고 강도는 선택만(직접 입력 없음 — 오타가 곧 오류였다) · 하나가 모든 에이전트에(채널 주인 2026-10-03)
@@ -145,10 +163,16 @@ class SettingsDialog(QDialog):
         self.workers.setRange(1, 8)
         self.workers.setValue(s.studio_workers)
         self.workers.setToolTip("총괄 감독 아래에서 동시에 일하는 전문 에이전트 수(한도에 자주 걸리면 2로)")
+        self.routing = QComboBox()
+        self.routing.addItem("🏢 자동 — 일마다 맞는 모델·사고 강도(권장)", "auto")
+        self.routing.addItem("전역 하나 — 아래 모델·강도를 모든 에이전트에", "global")
+        _pick(self.routing, getattr(s, "agent_routing", "auto"), "auto")
+        m.addRow("배정", self.routing)
         m.addRow("모델", self.model)
         m.addRow("사고 강도", self.effort)
-        m.addRow("", hint("모델과 사고 강도 하나가 모든 에이전트(조사·기획·컷·모션·자료·검수)에 똑같이 쓰입니다. "
-                          "xhigh 는 high 보다 오래 생각하고 토큰을 더 씁니다."))
+        m.addRow("", hint("자동: 기획·컷 총괄은 Fable 5.1, 편집·숏폼·카피·디자인은 Opus 5.5, 그림 고르기·자막·음악은 Sonnet 5.5 — "
+                          "긴 녹화는 한 단계 더 생각합니다. 아래 모델·강도는 '전역 하나'일 때(자동이면 표에 없는 역할과 "
+                          "배정 모델을 못 쓸 때의 대체)에 쓰입니다."))
         m.addRow("동시 에이전트", self.workers)
         self.research_web = QCheckBox("웹 조사 — 🔎 리서치 디렉터·🛠 시그니처 장면이 인물·제품·개념을 검색해 확인한다(권장)")
         self.research_web.setChecked(bool(getattr(s, "research_web", True)))
@@ -165,9 +189,6 @@ class SettingsDialog(QDialog):
         self.variants.setToolTip("시그니처 장면마다 서로 다른 방향의 시안을 이만큼 지어 렌더한 뒤 심사가 하나를 고릅니다. "
                                  "1 이면 경쟁 없이 한 안(토큰이 가장 적음).")
         m.addRow("시안 수", self.variants)
-        self.screen_look = QCheckBox("모니터 질감 — 그래픽 위에 아주 약간의 흐림·빛 번짐·화면 격자·입자(레트로하면서 디지털한 화면)")
-        self.screen_look.setChecked(float(getattr(s, "screen_look", 1.0) or 0) > 0)
-        m.addRow("화면 질감", self.screen_look)
         m.addRow("", hint("레퍼런스 보드: user/taste 폴더에 좋아하는 모션 디자인의 정지 화면을 넣으면 모든 디자이너·심사가 매번 그림으로 봅니다. "
                           "결과 화면의 '장면 평가'(👍/👎)도 여기에 쌓여 다음 작업부터 반영됩니다."))
         v.addLayout(m)
@@ -224,10 +245,44 @@ class SettingsDialog(QDialog):
         self.serpapi = key_edit(getattr(s, "serpapi_key", ""), "serpapi.com 가입 → 대시보드의 API Key (무료 월 250회, 카드 없음)")
         fs.addRow("Pixabay (추천)", self.pixabay)
         fs.addRow("Google 이미지 (SerpApi)", self.serpapi)
+        self.gemini = key_edit(getattr(s, "gemini_key", ""), "aistudio.google.com/apikey — 곡·효과음·완성 믹스의 짧은 발췌를 듣는다(비우면 GEMINI_API_KEY)")
+        fs.addRow("Gemini (소리 듣기)", self.gemini)
         fs.addRow("Unsplash", self.unsplash)
         fs.addRow("Coverr", self.coverr)
         fs.addRow("Pexels", self.pexels)
-        self.museums = QCheckBox("미술관 소장품 사진(시카고·메트·클리블랜드, CC0 — 키 없음)")
+        self.stock_keys = {"pixabay_api_key": self.pixabay, "unsplash_access_key": self.unsplash, "coverr_api_key": self.coverr,
+                           "pexels_api_key": self.pexels, "serpapi_key": self.serpapi}
+        table = QGridLayout()
+        for c, head in enumerate(["제공처", "상태", "여는 것", "비용", "알아 둘 것"]):
+            table.addWidget(QLabel(f"<b>{head}</b>"), 0, c)
+        self.source_state: dict[str, QLabel] = {}
+        for r, row in enumerate(source_status(s), start=1):
+            table.addWidget(QLabel(row["name"] + (" (추천)" if row["recommended"] else "")), r, 0)
+            self.source_state[row["name"]] = QLabel()
+            table.addWidget(self.source_state[row["name"]], r, 1)
+            table.addWidget(QLabel(row["unlocks"]), r, 2)
+            table.addWidget(QLabel(row["cost"]), r, 3)
+            note = QLabel(row["note"])
+            note.setWordWrap(True)
+            table.addWidget(note, r, 4)
+            if row["signup"]:
+                btn = QPushButton("가입")
+                btn.clicked.connect(lambda _=False, u=row["signup"]: QDesktopServices.openUrl(QUrl(u)))
+                table.addWidget(btn, r, 5)
+        table.setColumnStretch(4, 1)
+        fs.addRow(table)
+        self.check_stock = QPushButton("키 확인")
+        self.check_stock.clicked.connect(self._check_stock)
+        self.stock_msg = QLabel("키를 넣고 누르면 제공처마다 한 번씩 불러 봅니다.")
+        self.stock_msg.setWordWrap(True)
+        check_row = QHBoxLayout()
+        check_row.addWidget(self.check_stock)
+        check_row.addWidget(self.stock_msg, 1)
+        fs.addRow(check_row)
+        for e in self.stock_keys.values():
+            e.textChanged.connect(self._refresh_sources)
+        self._refresh_sources()
+        self.museums = QCheckBox("미술관 소장품 사진(시카고·메트·클리블랜드·라익스, CC0 — 키 없음)")
         self.museums.setChecked(bool(getattr(s, "museum_search", True)))
         fs.addRow("", self.museums)
         self.quote = QCheckBox("인용 자료 쓰기(웹·앱 화면 캡처 · 논문 첫 화면 · 그 대상 자체의 웹 이미지) — C 등급")
@@ -235,7 +290,7 @@ class SettingsDialog(QDialog):
         fs.addRow("", self.quote)
         fs.addRow("", hint("키를 넣은 곳을 모두 검색해 후보를 섞고, 🎞 자료 리서처가 썸네일을 보고 고릅니다. "
                            "Pixabay(사진+영상+벡터, 한국어 검색)가 기본, Google 이미지는 재사용 가능 라이선스만 찾고 원문 페이지에서 "
-                           "라이선스를 다시 확인한 것만 씁니다. 키가 없어도 Openverse(CC 사진)·위키미디어·미술관은 검색합니다. "
+                           "라이선스를 다시 확인한 것만 씁니다. 키가 없어도 Openverse(CC 사진)·NASA(사진·영상)·위키미디어·미술관은 검색합니다. "
                            "출처는 화면 ▣ 와 설명란·자료 대장에 자동 표기."))
         tabs.addTab(st, "스톡")
 
@@ -248,19 +303,20 @@ class SettingsDialog(QDialog):
         cur = "auto" if getattr(s, "sfx_enabled", False) else str(getattr(s, "sfx_mode", "directed") or "directed")
         self.sfx.setCurrentIndex(max(0, self.sfx.findData(cur)))
         self.music = QComboBox()
-        modes = [("mine", "내 음악 폴더의 곡만"), ("library", "기본 라이브러리(자동 선곡)"), ("off", "배경음악 없음")]
+        modes = [("auto", "자동(내 음악 폴더 → 없으면 영상마다 찾아서 받기)"), ("mine", "내 음악 폴더의 곡만"),
+                 ("library", "기본 라이브러리(자동 선곡)"), ("off", "배경음악 없음")]
         for key, label in modes:
             self.music.addItem(label, key)
         keys = [k for k, _ in modes]
-        mode = getattr(s, "music_mode", "mine")
+        mode = getattr(s, "music_mode", "auto")
         self.music.setCurrentIndex(keys.index(mode) if mode in keys else 0)
         self.music_dir = QLineEdit(getattr(s, "music_dir", ""))
         self.music_dir.setPlaceholderText("비우면 user\\music 폴더")
         fso.addRow("효과음", self.sfx)
         fso.addRow("배경음악", self.music)
         fso.addRow("내 음악 폴더", self.music_dir)
-        fso.addRow("", hint("기본은 효과음 없이, 배경음악은 내 음악 폴더에 넣은 곡만 씁니다(mp3·wav·m4a 등, 목소리 아래로 "
-                            "작게 깔림). 폴더가 비어 있으면 배경음악 없이 만듭니다. 마음에 들지 않는 소리를 넣느니 넣지 않습니다."))
+        fso.addRow("", hint("자동이면 내 음악 폴더의 곡을 먼저 쓰고, 폴더가 비어 있으면 영상마다 맞는 곡을 찾아 받습니다"
+                            "(CC0·CC BY·CC BY-SA 만, 출처는 업로드 정보에 자동으로). 맞는 곡이 없으면 음악 없이 만듭니다."))
         tabs.addTab(so, "소리")
 
         # --- 브랜드
@@ -283,10 +339,11 @@ class SettingsDialog(QDialog):
         f2.addRow("강조색", self.b_accent)
         # 디자인 v3(종이 콜라주): 레퍼런스의 초록 팔레트 또는 위 강조색
         self.b_palette = QComboBox()
-        self.b_palette.addItem("채널 오렌지(#FC5400 — 디자인 v4 기본)", "ember")
+        self.b_palette.addItem("토크쇼(오렌지 표식 + 숲색 띠 — 기본)", "talk")
+        self.b_palette.addItem("채널 오렌지(#FC5400)", "ember")
         self.b_palette.addItem("숲 초록(짙은 초록 글자 + 민트)", "forest")
         self.b_palette.addItem("브랜드 강조색에서 만들기", "brand")
-        self.b_palette.setCurrentIndex({"ember": 0, "forest": 1}.get(getattr(b, "palette", "ember"), 2))
+        self.b_palette.setCurrentIndex({"talk": 0, "ember": 1, "forest": 2}.get(getattr(b, "palette", "talk"), 3))
         f2.addRow("디자인 색", self.b_palette)
         tabs.addTab(br, "브랜드")
 
@@ -357,6 +414,26 @@ class SettingsDialog(QDialog):
         self._qworker.done.connect(self._qthread.quit)
         self._qthread.start()
 
+    def _keys(self) -> dict[str, str]:
+        return {attr: e.text().strip() for attr, e in self.stock_keys.items()}
+
+    def _refresh_sources(self) -> None:
+        names = {"set": "키 있음", "empty": "키 없음", "keyless": "키 필요 없음"}
+        for row in source_status(SimpleNamespace(**self._keys())):
+            self.source_state[row["name"]].setText(names[row["state"]])
+
+    def _check_stock(self) -> None:
+        self.stock_msg.setText("확인 중…")
+        self.check_stock.setEnabled(False)
+        self._sthread = QThread(self)
+        self._sworker = _StockCheck(self._keys())
+        self._sworker.moveToThread(self._sthread)
+        self._sthread.started.connect(self._sworker.run)
+        self._sworker.done.connect(self.stock_msg.setText)
+        self._sworker.done.connect(lambda _: self.check_stock.setEnabled(True))
+        self._sworker.done.connect(self._sthread.quit)
+        self._sthread.start()
+
     def _login(self) -> None:
         exe = find_claude(self.cc_path.text().strip())
         if not exe:
@@ -378,18 +455,19 @@ class SettingsDialog(QDialog):
         s.anthropic_api_key = self.key.text().strip()
         s.claude_model = str(self.model.currentData() or "claude-opus-5-5")
         s.claude_effort = str(self.effort.currentData() or "xhigh")
-        s.agent_models, s.agent_effort = {}, {}      # 전역 하나로 통합 — 옛 에이전트별 덮어쓰기는 저장할 때 지운다
+        s.agent_routing = str(self.routing.currentData() or "auto")
+        s.agent_models, s.agent_effort = {}, {}      # 옛 에이전트별 덮어쓰기는 저장할 때 지운다(배정은 agent_routing)
         s.studio_workers = self.workers.value()
         s.research_web = self.research_web.isChecked()
         s.style_frame = self.style_frame.isChecked()
         s.design_critic = self.design_critic.isChecked()
         s.design_variants = self.variants.value()
-        s.screen_look = 1.0 if self.screen_look.isChecked() else 0.0
         s.pixabay_api_key = self.pixabay.text().strip()
         s.unsplash_access_key = self.unsplash.text().strip()
         s.coverr_api_key = self.coverr.text().strip()
         s.pexels_api_key = self.pexels.text().strip()
         s.serpapi_key = self.serpapi.text().strip()
+        s.gemini_key = self.gemini.text().strip()
         s.museum_search = self.museums.isChecked()
         s.whisper_model = self.whisper.currentText().strip()
         s.whisper_device = self.device.currentText()
@@ -399,7 +477,7 @@ class SettingsDialog(QDialog):
         s.brand.presenter_title = self.b_ptitle.text().strip()
         s.brand.year = self.b_year.text().strip()
         s.brand.accent = self.b_accent.text().strip()
-        s.brand.palette = self.b_palette.currentData() or "ember"
+        s.brand.palette = self.b_palette.currentData() or "talk"
         gloss = {}
         for line in self.glossary.toPlainText().splitlines():
             if "=" in line:
@@ -417,7 +495,7 @@ class SettingsDialog(QDialog):
         s.allow_quote = self.quote.isChecked()
         s.sfx_mode = str(self.sfx.currentData() or "directed")
         s.sfx_enabled = False
-        s.music_mode = self.music.currentData() or "mine"
+        s.music_mode = self.music.currentData() or "auto"
         s.music_dir = self.music_dir.text().strip()
         s.save()
         self.accept()

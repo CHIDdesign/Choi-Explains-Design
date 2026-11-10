@@ -28,6 +28,9 @@ def _obj(props: dict, required: list[str] | None = None) -> dict:
             "additionalProperties": False}
 
 
+OVERLAY_KINDS = ("outline", "circle", "arrow", "label", "memo", "cutout", "impact", "stamp", "focus", "highlight", "dimension", "expand")   # 이미지 위 그래픽(data.overlays)
+TONES = ("desaturate", "darken", "blur")                                                                  # 바탕 처리(data.tone)
+
 STR = {"type": "string"}
 INT = {"type": "integer"}
 BOOL = {"type": "boolean"}

@@ -8,21 +8,23 @@ from typing import Any, Callable, Optional
 
 from ..models import Tag, TimeMap, Utterance
 from ..motion.card import card_settle_time, card_text, clean_card
-from ..motion.spec import clean_spec
+from ..motion.lint import settle_of
+from ..motion.spec import clean_spec, stage_first
 from ..text.align import find_word, norm
 from ..text.topic import strip_label
 from .catalog import DIAGRAM_ALIASES, PRESET_DIAGRAMS, TAG_TO_TEMPLATE, TEMPLATES
-from .schema import HOOK_TYPES
+from .schema import HOOK_TYPES, OVERLAY_KINDS, TONES
 
 EM_TYPES = ("keyword", "term", "number", "contrast")  # 자막 강조 유형(renderer EmType)
 MOMENT_KINDS = ("punchline", "reveal", "shift", "conclusion", "question", "number", "joke")  # 강조 순간
+SOUND_GAG_TYPES = ("thud", "silence_beat", "mismatch", "literal", "mickey", "callback")
 
 # 렌더러로 넘기는 그래픽 데이터 키(템플릿별로 없는 키는 생략)
 DATA_KEYS = ("title", "subtitle", "body", "items", "title_b", "items_b", "highlight", "author", "source", "image")
 EXTRA_DATA_KEYS = ("credit", "src", "kind", "kenburns", "stock_url", "logo", "mat", "motif",
                    "assets", "treatment", "archive", "caption", "tier",   # 뒤 다섯 = 증거 자료(evidence, 03b 1절)
                    "year", "display", "quote", "cut", "w", "h",          # 디자인 v3 콜라주(연도 · 큰 글자 · 인용 · 오린 사진)
-                   "safe", "face", "focus", "fit")                       # 사진 위 구도(studio/vision/compose.py)
+                   "cutouts", "safe", "face", "focus", "fit", "tone", "name", "name_sub", "disc")               # 사진 위 구도(studio/vision/compose.py) · 바탕 처리
 # 증거 자료(evidence)의 트리트먼트별 기본 유지 시간(03b 14절 — 읽을 것이 있으면 길게)
 EVIDENCE_HOLD = {"hero": 4.5, "full": 3.5, "collage": 5.0, "archive_card": 4.2, "browser_frame": 5.0, "doc_highlight": 6.0,
                  "grid": 4.5, "compare_pair": 6.0, "pip": 3.0}
@@ -31,11 +33,158 @@ SFX_DIRECTED = ("paper_slide", "paper_place", "page_turn", "pencil_stroke", "pen
                 "whoosh_soft", "swoosh_short", "swipe", "pop", "click", "typing", "camera_shutter", "paper", "ding",
                 "bell_soft", "notification")
 EVIDENCE_ASSET_KEYS = ("src", "kind", "w", "h", "focus", "credit", "credit_full", "tier", "origin", "shows", "score",
-                       "meta", "mat_src", "cut")
+                       "meta", "mat_src", "cut", "tight")
 
 GRAPHIC_KEYS = ("template", "layout", "start_seg", "end_seg", "start_word", "title", "subtitle", "body",
                 "items", "title_b", "items_b", "highlight", "author", "source", "image", "reason", "motif")
 LOGO_MAX_SEC = 4.0      # 로고는 이름표 — 길어도 4초(2026-10-03: 큰 흰 판 가운데 작은 휘장 하나가 12.3초)
+
+
+PIECE_TEMPLATES = ("cutout_stack", "collage", "keyword_montage")     # data.cutouts 를 말에 착지시키는 템플릿
+OVERLAY_FREE = ("memo", "label")      # 좌표 없이 빈 쪽에 놓을 수 있는 것 — 나머지는 어디를 가리키는지 알아야 한다
+OVERLAY_MAX = 3                       # 한 화면에
+OUTLINE_MIN = 8                       # 꼭짓점이 이보다 적은 윤곽은 대상을 따라가지 못한다 — 손으로 그린 원으로
+OVERLAY_TEXT = {"memo": 18, "stamp": 6, "dimension": 12}
+OVERLAY_SETTLE = 0.33                 # 렌더러의 착지 10프레임
+CREDIT_MAX = 120
+CUTOUT_KEYS = ("image", "label", "cut", "w", "h", "credit", "credit_full", "seg", "word", "orig", "kind")
+
+
+def _unit(v: Any, n: int) -> list[float]:
+    """길이 n 의 0~1 숫자 목록. 모양이 틀리면 []."""
+    if not isinstance(v, list) or len(v) != n or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v):
+        return []
+    return [round(max(0.0, min(1.0, float(x))), 4) for x in v]
+
+
+def overlay_weight(o: dict[str, Any]) -> int:
+    return 2 if o.get("text") and o["kind"] not in ("label", "memo", "stamp", "dimension") else 1
+
+
+def _within_budget(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """한 화면 OVERLAY_MAX 개까지 — 글이 달린 표시는 표시 + 종이 표찰 둘로 센다. 말에 착지하는 것(at_word)부터 남기고 순서는 그대로(Overlays.tsx withinBudget 과 같은 규칙)."""
+    keep: set[int] = set()
+    used = 0
+    for o in sorted(items, key=lambda o: not o.get("at_word")):
+        w = overlay_weight(o)
+        if used + w <= OVERLAY_MAX:
+            keep.add(id(o))
+            used += w
+    return [o for o in items if id(o) in keep]
+
+
+def clean_overlays(raw: Any) -> list[dict[str, Any]]:
+    """이미지 위 그래픽의 규칙 한 곳: 한 화면 3개, 좌표는 그림을 본 비전이 준 0~1 만. 좌표가 없으면 memo·label 만 남는다
+    (추측 금지 — 다른 종류는 글이 있으면 label 로 낮추고 없으면 뺀다)."""
+    from ..assets.ladder import clip_words
+    out: list[dict[str, Any]] = []
+    for o in raw if isinstance(raw, list) else []:
+        if not isinstance(o, dict) or o.get("kind") not in OVERLAY_KINDS:
+            continue
+        kind = o["kind"]
+        if kind == "expand":                 # 자리가 없는 전환 표시 — 짝과 횟수는 렌더러(crop.ts expandPairs)가 최종 타임라인에서 가른다
+            out.append({"kind": "expand"})
+            continue
+        text = clip_words(o.get("text"), OVERLAY_TEXT.get(kind, 14))
+        if kind == "dimension" and not any(c.isdigit() for c in text):      # 치수선은 실제 숫자에만
+            continue
+        box = _unit(o.get("box"), 4)
+        box = box if box and box[2] > 0.005 and box[3] > 0.005 else []
+        point = _unit(o.get("point"), 2)
+        poly = [p for p in (_unit(q, 2) for q in (o.get("poly") if isinstance(o.get("poly"), list) else [])) if p]
+        if kind == "dimension":              # 두 끝점. 비전이 상자만 줬으면 긴 변을 따라
+            poly = [poly[0], poly[-1]] if len(poly) >= 2 else []
+            if not poly and box:
+                x, y, w, h = box
+                poly = [[x, round(y + h, 4)], [round(x + w, 4), round(y + h, 4)]] if w >= h else [[round(x + w, 4), y], [round(x + w, 4), round(y + h, 4)]]
+        elif len(poly) < 3:
+            poly = []
+        if poly and not box:
+            xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+            box = [min(xs), min(ys), round(max(xs) - min(xs), 4), round(max(ys) - min(ys), 4)]
+        if kind == "outline" and box and len(poly) < OUTLINE_MIN:
+            kind, poly = "circle", []
+        located = poly if kind == "dimension" else box if kind in ("outline", "focus", "highlight") else (box or point)
+        if kind == "cutout" and not o.get("image"):
+            located = []
+        if not located and kind not in OVERLAY_FREE:
+            if not text:
+                continue
+            kind, box, point, poly = "label", [], [], []
+        if kind in ("label", "memo", "stamp") and not text:
+            continue
+        item: dict[str, Any] = {"kind": kind}
+        item.update({k: v for k, v in (("box", box), ("point", point), ("poly", poly), ("text", text)) if v})
+        if kind == "cutout":
+            item.update(image=str(o["image"]), cut=bool(o.get("cut")))
+            item.update({k: o[k] for k in ("w", "h") if o.get(k)})
+        word = str(o.get("at_word") or "").strip()[:24]
+        if word:
+            item["at_word"] = word
+        out.append(item)
+    return _within_budget([o for o in out if o["kind"] != "expand"]) + [o for o in out if o["kind"] == "expand"][:1]
+
+
+def land_overlays(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float, dur: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """표시의 at_word → 그 낱말 0.2초 전에 내려앉는 at(그래픽 시작 기준 초). 낱말을 못 찾은 표시는 앞 표시 뒤 1초, 그래픽 끝 0.6초 안에는
+    놓지 않는다. 반환: (표시, 게이트 A18 의 wordMarks)."""
+    items = [dict(o) for o in g["overlays"] if o["kind"] != "expand"]
+    steps = [{"word": str(o.get("at_word") or ""), "highlight": i} for i, o in enumerate(items)]
+    spoken = {s["index"]: s["t"] for s in step_times({**g, "steps": steps}, utts, timemap, start, min_steps=1)}
+    out, marks = [], []
+    prev = -0.4
+    for i, o in enumerate(items):
+        o.pop("at_word", None)
+        at = max(0.0, spoken[i] - 0.2 - OVERLAY_SETTLE) if i in spoken else prev + 1.0
+        if at > dur - 0.6:
+            continue
+        o["at"] = prev = round(at, 3)
+        out.append(o)
+        if i in spoken:
+            marks.append({"land": round(at + OVERLAY_SETTLE, 3), "spoken": round(start + spoken[i], 3)})
+    return out + [o for o in g["overlays"] if o["kind"] == "expand"], marks
+
+
+def land_cutouts(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float, dur: float) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """오림 스택: 그림마다 자기 사례를 말한 낱말에 내려앉는다(at = 그래픽 시작 기준 초). 못 찾은 그림은 at 없이 — 렌더러가 고르게 놓는다.
+    그래픽 끝 0.6초 안이나 끝 뒤에 닿는 그림은 놓일 틈이 없어 뺀다."""
+    steps = [{"word": c.get("word", ""), "highlight": i, "seg": c.get("seg")} for i, c in enumerate(g["cutouts"])]
+    spoken = {s["index"]: s["t"] for s in step_times({**g, "steps": steps}, utts, timemap, start, min_steps=1)}
+    items, marks = [], []
+    for i, c in enumerate(g["cutouts"]):
+        item = {k: v for k, v in c.items() if k not in ("seg", "word")}
+        if i in spoken:
+            item["at"] = round(max(0.0, spoken[i] - 0.2 - OVERLAY_SETTLE), 3)
+            if item["at"] > max(0.0, dur - 0.6):
+                continue
+            marks.append({"land": round(item["at"] + OVERLAY_SETTLE, 3), "spoken": round(start + spoken[i], 3)})
+        items.append(item)
+    return items, marks
+
+
+def credit_line(pieces: list[dict[str, Any]]) -> str:
+    """조각들의 화면 출처 한 줄(CREDIT_MAX 자): 통째로 들어가는 출처만 — 이름 가운데서 자르지 않는다(전문은 설명란의 credit_full)."""
+    from ..assets.ladder import clip_words
+    line = ""
+    for c in dict.fromkeys(p["credit"] for p in pieces if p.get("credit")):
+        if line and len(line) + 3 + len(c) > CREDIT_MAX:
+            break
+        line = f"{line} · {c}" if line else c
+    return clip_words(line, CREDIT_MAX)
+
+
+def land_marks(tg: "TimedGraphic", g: dict[str, Any], utts: list[Utterance], timemap: TimeMap) -> None:
+    """표시·오림의 at_word 를 tg 의 지금 시작·길이로 잰다 — 그래픽이 옮겨질 때마다 다시."""
+    if not (g.get("overlays") or g["template"] in PIECE_TEMPLATES):
+        return
+    key = "cutouts" if g["template"] in PIECE_TEMPLATES else "overlays"
+    tg.data[key], word_marks = (land_cutouts if key == "cutouts" else land_overlays)(g, utts, timemap, tg.start, tg.end - tg.start)
+    if key == "cutouts":
+        tg.data["credit"] = credit_line(tg.data[key]) or tg.data.get("credit", "")     # 뺀 그림의 출처를 남기지 않는다
+    if word_marks:
+        tg.data["wordMarks"] = word_marks
+    else:
+        tg.data.pop("wordMarks", None)
 
 
 def blank_graphic(template: str, seg: int) -> dict[str, Any]:
@@ -133,9 +282,10 @@ def merge_step_runs(graphics: list[dict[str, Any]]) -> int:
     return merged
 
 
-def step_times(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float) -> list[dict[str, Any]]:
-    """steps → stepAt [{t(그래픽 시작 기준 초), index}] — 그 낱말을 말하는 순간(앞 단계 낱말보다 뒤, 그래픽 발화 범위 안).
-    낱말을 못 찾으면 그 단계 발화(seg)의 시작. 2개 미만이면 []."""
+def step_times(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float,
+               min_steps: int = 2) -> list[dict[str, Any]]:
+    """steps → [{t(그래픽 시작 기준 초), index}] — 그 낱말을 말하는 순간(앞 단계 낱말보다 뒤, 그래픽 발화 범위 안).
+    낱말을 못 찾으면 그 단계 발화(seg)의 시작. 2개 미만이면 []. 그래픽이 낱말 뒤로 밀렸으면 t 는 음수다(게이트 A18 이 그 차이를 잰다)."""
     by_id = {u.id: u for u in utts}
     lo, hi = g.get("start_seg", 0), g.get("end_seg", g.get("start_seg", 0))
     span = [u for u in sorted(utts, key=lambda u: u.start) if lo <= u.id <= hi and u.kept and u.words]
@@ -159,13 +309,69 @@ def step_times(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start
         if t is None:
             continue
         last_src = hit
-        out.append({"t": round(max(0.0, t - start), 3), "index": int(st["highlight"])})
+        out.append({"t": round(t - start, 3), "index": int(st["highlight"])})
     # 시각이 거꾸로 가면(편집 순서가 바뀐 숏폼 등) 그 단계는 뺀다
     mono: list[dict[str, Any]] = []
     for x in out:
-        if not mono or x["t"] > mono[-1]["t"]:
+        if not mono or x["t"] >= mono[-1]["t"]:     # 같은 시각은 거꾸로가 아니다(글자와 밑줄이 같은 낱말에 착지)
             mono.append(x)
-    return mono if len(mono) >= 2 else []
+    return mono if len(mono) >= min_steps else []
+
+
+AT_WORD_TAG_RE = re.compile(r'<[^>]*\sdata-at-word="[^"]*"[^>]*>')
+
+
+def land_on_words(g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float) -> tuple[dict[str, Any], float]:
+    """카드의 data-at-word="낱말"(문서 순서 = 말하는 순서) → 그 낱말 0.2초 전에 도착하는 data-anim-at. 낱말을 못 찾은 표시는
+    디자이너가 쓴 data-anim-at 그대로. (시각을 넣은 카드 사본, 마지막 표시 시각)."""
+    tags = AT_WORD_TAG_RE.findall(g["card"]["html"])
+    if not tags:
+        return g["card"], 0.0
+    steps = [{"word": re.search(r'data-at-word="([^"]*)"', t).group(1), "highlight": i} for i, t in enumerate(tags)]
+    spoken = {s["index"]: s["t"] for s in step_times({**g, "steps": steps}, utts, timemap, start, min_steps=1)}
+    durs = [re.search(r'data-anim-duration="([\d.]+)"', t) for t in tags]
+    dur_of = [float(m.group(1)) if m else 0.5 for m in durs]       # card-anim.mjs 기본 0.5초 — data-anim-at 은 시작 시각이다
+    at = {i: max(0.0, t - 0.2 - dur_of[i]) for i, t in spoken.items()}
+    seen = iter(range(len(tags)))
+
+    def stamp(m: re.Match) -> str:
+        i = next(seen)
+        tag = re.sub(r'\sdata-at-word="[^"]*"', "", m.group(0))
+        if i not in at:
+            return tag
+        tag = re.sub(r'\sdata-anim-at="[^"]*"', "", tag)
+        return re.sub(r"\s*/?>$", lambda e: f' data-anim-at="{at[i]:.2f}"{e.group(0)}', tag)
+
+    # 게이트 A18: 낱말을 찾은 표시의 착지(시작 + 애니메이션 길이)와 그 낱말의 편집 시각
+    marks = [{"land": round(a + dur_of[i], 3), "spoken": round(start + spoken[i], 3)} for i, a in at.items()]
+    return {**g["card"], "html": AT_WORD_TAG_RE.sub(stamp, g["card"]["html"]), "wordMarks": marks}, max(at.values(), default=0.0)
+
+
+def land_scene_on_words(spec: dict[str, Any], g: dict[str, Any], utts: list[Utterance], timemap: TimeMap, start: float,
+                        log: Callable[[str], None]) -> float:
+    """모션 요소의 at_word(at 순서 = 말하는 순서) → 그 낱말 0.2초 전에 다 도착하도록 at 을 옮긴다. 퇴장·키프레임도 같이 민다.
+    못 찾은 요소는 디자이너의 at 그대로. spec 은 clean_spec 사본이라 제자리에서 고친다. 반환: 마지막 낱말 시각."""
+    marked = sorted((e for e in spec["elements"] if "at_word" in e), key=lambda e: e["at"])
+    if not marked:
+        return 0.0
+    words = [e.pop("at_word") for e in marked]
+    spoken = {s["index"]: s["t"] for s in step_times({**g, "steps": [{"word": w, "highlight": i} for i, w in enumerate(words)]},
+                                                     utts, timemap, start, min_steps=1)}
+    for i, e in enumerate(marked):
+        if i not in spoken:
+            log(f"🎯 모션 장면 S{g.get('start_seg')}: 낱말 '{words[i]}' 을 말에서 찾지 못해 at {e['at']:.1f}초 그대로")
+            continue
+        shift = max(-e["at"], spoken[i] - 0.2 - settle_of(e))
+        e["at"] += shift
+        if "out" in e:
+            e["out"] += shift
+        if "groupAt" in e:
+            e["groupAt"] += shift
+        for k in e.get("keys", []):
+            k["t"] += shift
+    spec["wordMarks"] = [{"land": round(settle_of(marked[i]), 3), "spoken": round(start + t, 3)}
+                         for i, t in spoken.items()]    # 게이트 A18
+    return max(spoken.values(), default=0.0)
 
 
 def _split_items(s: str) -> list[str]:
@@ -294,8 +500,18 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         out["sequence_id"] = sid
     # 템플릿별 최소 요건
     tn = out["template"]
-    if tn in ("keyword", "chapter", "stat") and not out["title"].strip():
+    if tn in ("keyword", "chapter", "stat", "lower_third") and not out["title"].strip():
         return None
+    if tn in PIECE_TEMPLATES:
+        cuts = [{k: c[k] for k in CUTOUT_KEYS if k in c} for c in g.get("cutouts") or [] if isinstance(c, dict) and c.get("image")][:4 if tn == "cutout_stack" else 5]
+        if not cuts or (tn != "cutout_stack" and len(cuts) < 2):
+            return None      # 앱이 채우는 템플릿 — 그림 없이 고른 것은 빈 층만 남는다
+        out["cutouts"] = cuts
+        for k in ("name", "name_sub", "disc"):
+            if g.get(k):
+                out[k] = str(g[k])[:40]
+        if g.get("credit"):
+            out["credit"] = str(g["credit"])[:120]
     if tn == "quote" and not out["body"].strip():
         return None
     if tn == "photo" and not out["image"].strip():
@@ -322,6 +538,8 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
         if not card:
             return None
         out["card"] = card
+        if g.get("why_not_evidence"):
+            out["why_not_evidence"] = str(g["why_not_evidence"])[:200]
         if g.get("signature"):
             out["signature"] = True     # 🛠 시그니처 장면(트리트먼트) — 겹치면 이긴다
     if g.get("sfx") in SFX_DIRECTED:
@@ -346,27 +564,33 @@ def _clean_graphic(g: dict[str, Any], valid: list[int]) -> Optional[dict[str, An
             out["subtitle"] = ""
         if out["body"] and out["body"] == stock["purpose"]:
             out["body"] = ""
-        for k in ("src", "kind", "credit", "kenburns", "stock_url", "cut", "w", "h", "treatment"):
+        for k in ("src", "kind", "credit", "kenburns", "stock_url", "cut", "w", "h", "treatment", "focus"):
             if g.get(k):
                 out[k] = g[k]
         if out.get("treatment") not in (None, "collage"):
             out.pop("treatment")
     if tn in ("broll", "evidence"):
         _keep_collage_text(g, out)
+    if tn in ("photo", "broll", "evidence"):
+        overlays = clean_overlays(g.get("overlays"))
+        if overlays:
+            out["overlays"] = overlays
+        if g.get("tone") in TONES:
+            out["tone"] = g["tone"]
     if tn == "photo" and g.get("credit"):
         out["credit"] = g["credit"]
     if tn == "photo" and g.get("wiki"):
         out["wiki"] = True   # 위키백과 전용(고유명사): 못 찾으면 스톡으로 넘기지 않고 뺀다
     if tn == "photo":
         # 고유명사의 종류(자료 리서처가 문맥으로 정함: person → 품위 있는 초상, brand → 로고)와 영어 이름(로고 찾기)
-        for k in ("entity", "name_en"):
+        for k in ("entity", "name_en", "tier"):
             if g.get(k):
                 out[k] = str(g[k])[:80]
         if g.get("logo"):
             out["logo"] = True
         if g.get("mat"):
             out["mat"] = True        # 세로 사진을 크림 종이 여백 액자에 넣은 것(로고 카드처럼 그린다)
-    if tn in ("photo", "broll", "evidence", "keyword") and isinstance(g.get("evidence"), dict):
+    if tn in ("photo", "broll", "evidence", "keyword", *PIECE_TEMPLATES) and isinstance(g.get("evidence"), dict):
         out["evidence"] = {k: v for k, v in g["evidence"].items() if isinstance(k, str)}   # 리서처의 원 요청(화면에 안 나감)
     if tn == "photo" and g.get("resolved"):
         out["resolved"] = True       # 조달 사다리가 이미 파일로 바꾼 것(image = public 기준 경로)
@@ -456,6 +680,26 @@ def fit_highlight_runs(runs: list[list[int]], kept: list[Utterance], dur_of: Cal
     return used, grown
 
 
+def clean_sound_gags(raw: Any, kept: list[int]) -> list[dict[str, Any]]:
+    """감독의 위트 소리 — 어긋남(why)이 없거나 영어 설명이 없으면 뺀다. silence_beat 만 소리 없이."""
+    out: list[dict[str, Any]] = []
+    for g in (raw if isinstance(raw, list) else [])[:8]:
+        if not isinstance(g, dict) or g.get("seg") not in kept or g.get("type") not in SOUND_GAG_TYPES or not str(g.get("why") or "").strip():
+            continue
+        idea = "" if g["type"] == "silence_beat" else str(g.get("sound_idea") or "").strip()[:120]
+        if (not idea and g["type"] != "silence_beat") or not idea.isascii():
+            continue
+        try:
+            pre = round(min(max(float(g.get("pre_silence_s") or 0.0), 0.0), 1.0), 2)
+        except (TypeError, ValueError):
+            pre = 0.0
+        out.append({"seg": g["seg"], "anchor": g.get("anchor") if g.get("anchor") in ("word", "after_seg", "graphic_landing") else "after_seg",
+                    "anchor_word": str(g.get("anchor_word") or "")[:30], "type": g["type"], "sound_idea": idea, "pre_silence_s": pre,
+                    "queries": [str(q).strip()[:40] for q in g.get("queries") or [] if str(q).strip().isascii() and str(q).strip()][:3],
+                    "why": str(g["why"]).strip()[:80]})
+    return out[:4]
+
+
 def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) -> dict[str, Any]:
     kept = [u.id for u in utts if u.kept]
     if not kept:
@@ -476,10 +720,12 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         "captions": raw.get("captions") or {},   # 🔤 자막 디자이너의 프리셋 선택
         "studio": raw.get("studio") or {},       # 🎬 스튜디오 메모(리포트용)
         "moments": [],                           # ✂️ 강조 순간(편집 문법 엔진 입력)
-        "energy_spans": [],                      # ⚡ 펀치 구간(젠틀 규칙을 잠시 푸는 특정 부분)
         "highlights": [],                        # 🎬 오프닝 하이라이트(본편 앞 콜드 오픈) 발화들
+        "argument_tags": [],                     # 논증 배지(좌상단 띠, 90~150초마다)
         "holds": [],                             # 🙂 얼굴 홀드(그래픽·보드·콜아웃·효과음 없이 얼굴만 — 고백·결론·질문 뒤)
         "pauses": [],                            # 🫁 발화 뒤 쉼(초) — 호흡 설계(studio/edit/breath.py)가 원본 무음으로 채운다
+        "silences": [],                          # 🤫 전환·정점 앞 진짜 침묵(총괄 감독) — 쉼 + 그 사이 음악·효과음 없음
+        "sound_gags": [],                        # 🔊 위트 소리(총괄 감독) — 앱이 찾아 받아 화면 사건에 맞춘다(studio/sound/fetch.py)
         "sequences": [],                         # 시퀀스(한 주장을 받치는 연속 화면 묶음) — docs/upgrade/05 2·6장
         "rhythm": [],                            # 리듬 수준(slow · steady · fast) 발화 구간
         "peak_seg": raw.get("peak_seg", -1) if raw.get("peak_seg", -1) in kept else -1,
@@ -503,6 +749,7 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
             else:
                 plan["graphics"].append(cg)
     merge_step_runs(plan["graphics"])
+    cap_cards(plan["graphics"], sum(u.end - u.start for u in utts if u.kept))
     for e in raw.get("emphasis", []) or []:
         if isinstance(e, dict) and e.get("seg") in kept and e.get("kind") in ("punch", "highlight"):
             item = {"seg": e["seg"], "word": str(e.get("word", "")), "kind": e["kind"]}
@@ -523,16 +770,11 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
                     "label": str(m.get("label", "") or "").strip()[:16]}
             if not any(x["seg"] == item["seg"] and x["kind"] == item["kind"] for x in plan["moments"]):
                 plan["moments"].append(item)
-    for e in (raw.get("energy_spans", []) or [])[:3]:
-        if not isinstance(e, dict):
-            continue
-        a, b = _nearest(kept, e.get("start_seg")), _nearest(kept, e.get("end_seg", e.get("start_seg")))
-        if a is None or b is None:
-            continue
-        if b < a:
-            a, b = b, a
-        plan["energy_spans"].append({"start_seg": a, "end_seg": b, "reason": str(e.get("reason", "") or "")[:60]})
-
+    # 논증 배지: 총괄 감독이 비트에 붙인 태그('이유 1'). studio 메모의 beats 에서 다시 뽑으므로 재정규화해도 그대로
+    for b in (raw.get("studio") or {}).get("beats") or []:
+        tag = str(b.get("argument_tag") or "").strip()[:18] if isinstance(b, dict) else ""
+        if tag:
+            plan["argument_tags"].append({"seg": _nearest(kept, b.get("start_seg")), "tag": tag})
     for h in (raw.get("holds", []) or [])[:10]:
         if not isinstance(h, dict):
             continue
@@ -554,6 +796,21 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
         if not any(x["after_seg"] == p["after_seg"] for x in plan["pauses"]):
             plan["pauses"].append({"after_seg": p["after_seg"], "sec": round(sec, 2),
                                    "reason": str(p.get("reason", "") or "")[:60]})
+    for s in (raw.get("silences", []) or [])[:8]:
+        if not isinstance(s, dict) or s.get("after_seg") not in kept or any(x["after_seg"] == s["after_seg"] for x in plan["silences"]):
+            continue
+        try:
+            sec = round(min(max(float(s.get("sec", 1.0)), EXPLICIT_RANGE[0]), EXPLICIT_RANGE[1]), 2)
+        except (TypeError, ValueError):
+            continue
+        plan["silences"].append({"after_seg": s["after_seg"], "sec": sec, "before": "peak" if s.get("before") == "peak" else "turn",
+                                 "why": str(s.get("why", "") or "")[:60]})
+        same = next((x for x in plan["pauses"] if x["after_seg"] == s["after_seg"]), None)
+        if same is not None:
+            same["sec"] = max(same["sec"], sec)
+        else:
+            plan["pauses"].append({"after_seg": s["after_seg"], "sec": sec, "reason": "침묵"})
+    plan["sound_gags"] = clean_sound_gags(((raw.get("studio") or {}).get("treatment") or {}).get("sound_gags") or raw.get("sound_gags"), kept)
     for q in (raw.get("sequences", []) or [])[:24]:
         if not isinstance(q, dict) or q.get("type") not in SEQ_TYPES or not str(q.get("id") or "").strip():
             continue
@@ -609,6 +866,16 @@ def normalize_long(raw: dict[str, Any], utts: list[Utterance], tags: list[Tag]) 
     max_drop = max(1, int(len(kept) * 0.05))
     plan["drop"] = plan["drop"][:max_drop]
     return plan
+
+
+def cap_cards(graphics: list[dict[str, Any]], sec: float) -> None:
+    """자유 카드는 실물이 보여 줄 수 없는 메커니즘에만 — 15분에 6곳까지(시그니처 포함, 최소 3곳). 넘치면 시그니처를 남기고,
+    실물 대신 쓴 이유가 없는 카드부터, 그다음 늦은 것부터 뺀다."""
+    cards = sorted((g for g in graphics if g["template"] == "card"),
+                   key=lambda g: (not g.get("signature"), not g.get("why_not_evidence"), g["start_seg"]))
+    drop = {id(g) for g in cards[max(3, round(6 * sec / 900)):]}
+    if drop:
+        graphics[:] = [g for g in graphics if id(g) not in drop]
 
 
 def enforce_tags(plan: dict[str, Any], tags: list[Tag], kept: list[int]) -> None:
@@ -841,6 +1108,31 @@ class TimedGraphic:
         return d
 
 
+BADGE_SEC = 3.0
+BADGE_GAP = 90.0        # 배지 사이 최소 간격 — 앞 배지에서 이 안이면 건너뛴다
+BADGE_SLIP = 12.0       # 전면 그래픽·홀드에 걸리면 끝난 뒤로 밀되 이만큼까지만
+
+
+def argument_badges(tags: list[dict], seg_t: dict[int, tuple[float, float]], covers: list[tuple[float, float]],
+                    total: float) -> list[TimedGraphic]:
+    """논증 배지 = 좌상단 슬롯의 lower_third(data.slot='badge'). covers(전면 그래픽·얼굴 홀드) 위에는 올리지 않는다."""
+    out: list[TimedGraphic] = []
+    last = -1e9
+    for tag in sorted(tags, key=lambda x: x["seg"]):
+        if tag["seg"] not in seg_t:
+            continue
+        said = t = seg_t[tag["seg"]][0]
+        for a, b in sorted(covers):
+            if a - 0.2 < t + BADGE_SEC and t < b:     # 배지가 떠 있는 3초 전체가 덮개 밖이어야 한다
+                t = b + 0.3
+        if t - said > BADGE_SLIP or t - last < BADGE_GAP or t + BADGE_SEC > total:
+            continue
+        out.append(TimedGraphic(f"badge{len(out)}", "lower_third", "overlay", round(t, 3), round(t + BADGE_SEC, 3),
+                                {"slot": "badge", "title": tag["tag"]}, priority=4, source="auto"))
+        last = t
+    return out
+
+
 def seg_edit_times(utts: list[Utterance], timemap: TimeMap) -> dict[int, tuple[float, float]]:
     out: dict[int, tuple[float, float]] = {}
     for u in utts:
@@ -902,11 +1194,39 @@ def time_graphics(
     reserved: list[TimedGraphic] | None = None,
     min_start: float = 1.2,
     id_prefix: str = "g",
+    log: Optional[Callable[[str], None]] = None,
 ) -> list[TimedGraphic]:
+    say = log or (lambda _m: None)
     by_id = {u.id: u for u in utts}
     seg_t = seg_edit_times(utts, timemap)
     order = sorted(seg_t.keys(), key=lambda i: seg_t[i][0])
     timed: list[TimedGraphic] = []
+
+    def land(g: dict[str, Any], data: dict[str, Any], start: float, dur: float) -> Optional[float]:
+        """모션·카드의 표시를 이 시작 시각 기준으로 낱말에 맞춘다. 반환: 마지막 낱말 시각(그릴 수 없는 장면이면 None)."""
+        if g["template"] == "motion":
+            spec = clean_spec(g.get("spec"), dur)
+            if not spec:
+                return None
+            last = land_scene_on_words(spec, g, utts, timemap, start, say)
+            if spec.get("wordMarks"):
+                data["wordMarks"] = spec.pop("wordMarks")
+            stage_first(spec["elements"])           # 낱말로 옮긴 뒤에도 0.5초 안에 무대가 서 있게
+            data["spec"] = spec
+            return last
+        data["card"], last = land_on_words(g, utts, timemap, start)
+        if data["card"].get("wordMarks"):
+            data["wordMarks"] = data["card"].pop("wordMarks")
+        return last
+
+    def land_steps(g: dict[str, Any], data: dict[str, Any], start: float) -> list[dict[str, Any]]:
+        at = step_times(g, utts, timemap, start)
+        if at:
+            data["stepAt"] = [{**s, "t": max(0.0, s["t"])} for s in at]
+            data["wordMarks"] = [{"land": max(0.0, s["t"]), "spoken": round(start + s["t"], 3)} for s in at]
+            data["highlight"] = at[0]["index"]
+        return at
+
     for i, g in enumerate(graphics):
         t = TEMPLATES[g["template"]]
         s_seg = g["start_seg"]
@@ -930,6 +1250,8 @@ def time_graphics(
             want = max(want, spec_settle_time(g["spec"]) + 2.0)
         if g["template"] == "card" and isinstance(g.get("card"), dict):
             want = max(want, card_settle_time(g["card"]) + 2.0)
+        if g["template"] in ("collage", "keyword_montage"):
+            want = max(want, 1.1 * len(g.get("cutouts") or []) + (1.2 if g["template"] == "collage" else 0.0))
         if g["template"] == "evidence":
             # 트리트먼트별 유지 + 여러 장이면 장마다 1.8초(03 문서 6-2)
             n_assets = len(g.get("assets") or [])
@@ -963,12 +1285,12 @@ def time_graphics(
                 data[k] = g[k]
         if g.get("sequence_id"):
             data["seq_id"] = g["sequence_id"]
+        if g["template"] == "lower_third":
+            data["slot"] = "super"        # 총괄·모션이 고른 인물·기관 슈퍼(앱이 넣는 '오늘의 주제'·논증 배지와 구분)
         if g.get("steps"):
             # 단계 그래픽: 강조가 그 낱말에서 바뀐다(그래픽은 하나, 끝은 마지막 단계 문장의 끝)
-            at = step_times(g, utts, timemap, start)
+            at = land_steps(g, data, start)
             if at:
-                data["stepAt"] = at
-                data["highlight"] = at[0]["index"]
                 end = max(end, start + at[-1]["t"] + 1.6)
                 if total:
                     end = min(end, total - 0.3)
@@ -976,15 +1298,14 @@ def time_graphics(
             continue  # 소재를 못 구한 B-roll 은 버린다(틀린 B-roll 보다 없는 게 낫다)
         if g["template"] == "evidence" and not (g.get("assets") or g.get("archive")):
             continue
-        if g["template"] == "motion":
-            spec = clean_spec(g.get("spec"), end - start)
-            if not spec:
+        if g["template"] in ("motion", "card"):
+            if g["template"] == "card" and not isinstance(g.get("card"), dict):
                 continue
-            data["spec"] = spec
-        if g["template"] == "card":
-            if not isinstance(g.get("card"), dict):
+            last = land(g, data, start, end - start)
+            if last is None:
+                say(f"🎨 모션 장면 S{s_seg} '{g.get('title', '')}': 그릴 수 있는 내용이 없어 뺍니다")
                 continue
-            data["card"] = g["card"]
+            end = min(max(end, start + last + 2.0), total - 0.3) if total else end
         # 증거의 역할: 근거·사례는 우선순위 그대로(8), 맥락·분위기는 6(03 문서 6-2)
         role_pen = 2 if (g.get("evidence") or {}).get("role") in ("context", "mood") else 0
         if g.get("sfx") in SFX_DIRECTED:
@@ -993,12 +1314,25 @@ def time_graphics(
                                   t.priority - role_pen + (3 if "태그" in (g.get("reason") or "") else 0)
                                   + (3 if g.get("signature") else 0),
                                   "tag" if "태그" in (g.get("reason") or "") else "director"))
-    return resolve_overlaps(timed + list(reserved or []), total=total)
+    planned = {tg.id: tg.start for tg in timed}
+    out = resolve_overlaps(timed + list(reserved or []), total=total)
+    source = {f"{id_prefix}{i}": g for i, g in enumerate(graphics)}
+    for tg in out:                # 자리를 다투다 옮겨진 그래픽도 표시는 그 낱말에 — 시작이 정해진 뒤에 잰다
+        g = source.get(tg.id)
+        if g is None:
+            continue
+        land_marks(tg, g, utts, timemap)
+        if tg.start != planned.get(tg.id):
+            if g["template"] in ("motion", "card"):
+                land(g, tg.data, tg.start, tg.end - tg.start)
+            elif g.get("steps"):
+                land_steps(g, tg.data, tg.start)
+    return out
 
 
 # (진입 선행, 퇴장 꼬리) 초 — 예전 pip −3f/+6f · split −9f/+8f · 전면 −2f/+8f 는 "말한 뒤에 뜨고 말 끝나면 사라진다"(2026-10-04)
 ENTER_EXIT = {"pip": (0.35, 0.6), "overlay": (0.35, 0.6), "split": (0.5, 0.9), "fullscreen": (0.45, 1.0)}
-EVIDENCE = ("photo", "broll", "evidence")      # 실물 자료(사진·스톡·증거) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
+EVIDENCE = ("photo", "broll", "evidence", "collage", "keyword_montage")      # 실물 자료(사진·스톡·증거) — 자리를 다투면 버리지 않고 다음 빈 자리로 옮긴다
 
 
 def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optional[float] = None,
@@ -1006,7 +1340,8 @@ def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optiona
     """시간순으로 겹침을 푼다. 더 중요한 그래픽이 오면 앞의 것을 줄이거나 버리고, 덜 중요하면 뒤로 민다.
     실물 자료(EVIDENCE)는 밀리거나 밀려나도 버리지 않고 최소 길이를 지켜 다음 빈 자리로 옮긴다 — 원래 자리에서 max_shift
     초 안에서만(10/1: 받아 둔 홍익대 사진이 타이틀 카드에 밀려 지워졌는데 바로 뒤 5초가 비어 있었다)."""
-    queue = sorted(items, key=lambda g: (g.start, -g.priority))
+    stamps = [g for g in items if g.template == "stamp"]
+    queue = sorted((g for g in items if g.template != "stamp"), key=lambda g: (g.start, -g.priority))
     orig = {id(g): g.start for g in queue}
 
     def min_dur(x: TimedGraphic) -> float:
@@ -1075,4 +1410,16 @@ def resolve_overlaps(items: list[TimedGraphic], gap: float = 0.2, total: Optiona
                     g.end = min(g.end, total - 0.3)
             if g.end - g.start >= min_g * 0.8:
                 out.append(g)
-    return out
+    return seat_stamps(out, stamps)
+
+
+def seat_stamps(placed: list[TimedGraphic], stamps: list[TimedGraphic]) -> list[TimedGraphic]:
+    """도장은 자리를 다투는 그래픽이 아니라 전면 자료 위에 찍는 층이다. 그 시각에 전면 자료가 없으면(얼굴 위) 찍지 않는다."""
+    out = list(placed)
+    for s in stamps:
+        host = next((m for m in placed if m.template in EVIDENCE and m.layout == "fullscreen"
+                     and m.start - 1.0 <= s.start and max(s.start, m.start + 0.3) + 1.5 <= m.end), None)
+        if host is not None:
+            s.start, s.end = max(s.start, host.start + 0.3), min(s.end, host.end)
+            out.append(s)
+    return sorted(out, key=lambda g: g.start)

@@ -117,13 +117,14 @@ def test_collage_fields_survive_plan_normalisation():
     assert "treatment" not in out                              # 스톡의 트리트먼트는 콜라주만 뜻이 있다
 
 
-def test_media_first_policy_thresholds():
-    assert gate.a8_face_ratio(0.15).ok and gate.a8_face_ratio(0.38).ok
-    assert not gate.a8_face_ratio(0.5).ok and gate.a8_face_ratio(0.5).repair == "fill_gaps"
-    assert not gate.a8_face_ratio(0.05).ok
-    gs = [{"id": "g", "template": "broll", "layout": "fullscreen", "start": 0, "end": 50, "data": {"src": "b.mp4"}}]
-    assert not gate.b1_media_ratio(gs, 200.0).ok                # 25% < 40%
-    gs[0]["end"] = 90                                           # 45% ≥ 40%
+def test_talkshow_policy_thresholds():
+    assert gate.a8_face_ratio(0.40).ok and gate.a8_face_ratio(0.85).ok and gate.a8_face_ratio(0.56).ok
+    assert not gate.a8_face_ratio(0.86).ok and not gate.a8_face_ratio(0.86).repair
+    assert not gate.a8_face_ratio(0.30).ok
+    gs = [{"id": "g", "template": "broll", "layout": "fullscreen", "start": 0, "end": 30, "data": {"src": "b.mp4"}}]
+    r = gate.b1_media_ratio(gs, 200.0)                          # 15% < 20%
+    assert not r.ok and r.level == "warn"
+    gs[0]["end"] = 50                                           # 25% ≥ 20%
     assert gate.b1_media_ratio(gs, 200.0).ok
 
 
@@ -136,10 +137,18 @@ def test_motion_dsl_accepts_new_serif_fonts():
     assert fonts[:2] == ["italic", "poster"] and fonts[2] is None
 
 
-def test_design_palette_defaults_to_ember_and_brand_keeps_accent():
+def test_design_palette_defaults_to_talk_and_brand_keeps_accent():
     b = Brand()
     p = brand_props(b)
-    assert b.palette == "ember" and p["accent"] == "#FC5400" and p["deep"] and p["tint"]
+    assert b.palette == "talk" and (p["accent"], p["deep"], p["tint"], p["band"]) == ("#FC5400", "#D94600", "#FFD7C4", "#1F4D3E")
     b.palette = "brand"
     p = brand_props(b)
     assert p["accent"] == b.accent and "deep" not in p
+
+
+def test_old_settings_with_screen_look_still_load_with_v5_defaults():
+    from studio.settings import Settings
+    s = Settings.from_dict({"screen_look": 1.0, "style_frame": True, "design_variants": 3, "brand": {"palette": "ember"}})
+    assert not hasattr(s, "screen_look") and s.style_frame is False and s.design_variants == 1 and s.brand.palette == "talk"
+    fresh = Settings.from_dict({"style_frame": True, "design_variants": 2})      # v5 이후 저장은 그대로
+    assert fresh.style_frame is True and fresh.design_variants == 2

@@ -75,8 +75,10 @@ def test_video_cuts_shots_and_motion(tmp_path, taste_dir):
     assert [round(a) for a, _ in m["shot_list"]] == [0, 2, 5]
     assert 2.0 <= m["shot_median_s"] <= 3.0 and m["cuts_per_min"] > 10
     assert 0.0 <= m["motion"] <= 0.3 and m["width"] == 320
-    hexes = [c["hex"] for c in m["palette"]]
-    assert any(h.upper().startswith("#F5") for h in hexes) and any(h.upper() in ("#1F1F1F", "#202020") for h in hexes)
+    # 색은 거리로 — yuv420p 왕복은 FFmpeg 빌드마다 몇 단계 흔들린다(9.0: #202020 → #1E201D)
+    rgbs = [tuple(int(c["hex"][i:i + 2], 16) for i in (1, 3, 5)) for c in m["palette"]]
+    near = (lambda want: any(max(abs(a - b) for a, b in zip(rgb, want)) <= 6 for rgb in rgbs))
+    assert near((0xF5, 0xF2, 0xEA)) and near((0x20, 0x20, 0x20)), m["palette"]
     # 저장: json + 컷 시트, 프레임 작업 폴더는 지운다
     d = R.ref_dir()
     assert (d / f"{rec['slug']}.json").exists() and (d / rec["sheet"]).stat().st_size > 1000

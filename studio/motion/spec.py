@@ -7,14 +7,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-EL_TYPES = {"text", "rect", "circle", "line", "arrow", "path", "dots", "counter", "bar", "image", "mark",
-            # 디자인 v4 모던 부품(components/modern/Modern.tsx): 자기 등장 애니메이션을 가진다(enter 기본 none)
-            "panel", "chip", "bubble", "device", "iso"}
-V4_TYPES = {"panel", "chip", "bubble", "device", "iso"}
-ICONS = {"check", "dot", "gear", "none"}
-FILLS = {"card", "tint", "accent"}
-TAILS = {"bottom", "left", "none"}
-DEVICES = {"monitor", "laptop", "phone"}
+EL_TYPES = {"text", "rect", "circle", "line", "arrow", "path", "dots", "counter", "bar", "image", "mark"}
+PLATES = {"rect", "line", "mark"}       # 혼자서는 내용이 아닌 부품(판·선·밑줄)
 COLORS = {"fg", "dim", "faint", "accent", "bg", "white", "ink"}
 # v2(docs/upgrade/06 7-1): place 붙이기 · unfold 펼치기 · write 손글씨처럼 왼→오(4프레임 스텝)
 ENTERS = {"fade", "up", "down", "left", "right", "scale", "mask", "draw", "pop", "none", "place", "unfold", "write"}
@@ -49,6 +43,8 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
         return None
     out: dict[str, Any] = {"type": t, "x": _num(el.get("x"), -20, 120, 50), "y": _num(el.get("y"), -20, 120, 50)}
     out["at"] = _num(el.get("at"), 0, max(0.0, scene_dur - 0.3), 0)
+    if isinstance(el.get("at_word"), str) and el["at_word"].strip():
+        out["at_word"] = el["at_word"].strip()[:24]      # director/plan.py time_graphics 가 at 으로 바꾼다
     if "dur" in el:
         out["dur"] = _num(el.get("dur"), 0.1, 3.0, 0.4)
     if "out" in el and el.get("out") is not None:
@@ -57,8 +53,6 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
             out["out"] = o
     if el.get("enter") in ENTERS:
         out["enter"] = el["enter"]
-    elif t in V4_TYPES:
-        out["enter"] = "none"        # 부품이 스스로 등장한다(칩은 정착, 패널은 큰 면, 말풍선은 꼬리 쪽에서)
     if el.get("ease") in EASES:
         out["ease"] = el["ease"]
     if el.get("ghost") is True and t != "mark":
@@ -163,52 +157,6 @@ def clean_element(el: dict[str, Any], scene_dur: float) -> dict[str, Any] | None
             out["tint"] = tint
         elif src.startswith(("pixabay:vector:", "pixabay:illustration:")):
             out["tint"] = "ink"
-    elif t == "panel":
-        # UI 패널(레퍼런스 'Project Pricing'): 제목 줄 + 둥근 행. rows 는 "라벨" 또는 "라벨|값"
-        rows = [str(r).strip()[:30] for r in (el.get("rows") or []) if str(r).strip()][:8]
-        if not rows and not el.get("title"):
-            return None
-        out.update(rows=rows, w=_num(el.get("w"), 12, 100, 36))
-        if el.get("title"):
-            out["title"] = str(el["title"]).strip()[:24]
-        if el.get("tilt") is True:
-            out["tilt"] = True
-        if "on" in el:
-            out["on"] = int(_num(el.get("on"), -1, 7, -1))
-        out["size"] = _num(el.get("size"), 1.6, 5, 2.6)        # 행 글자 크기(장면 높이 %)
-    elif t == "chip":
-        text = str(el.get("text", "")).strip()[:20]
-        if not text:
-            return None
-        out.update(text=text, size=_num(el.get("size"), 1.6, 6, 2.6))
-        out["icon"] = el.get("icon") if el.get("icon") in ICONS else "check"
-        out["fill"] = el.get("fill") if el.get("fill") in FILLS else "card"
-    elif t == "bubble":
-        text = str(el.get("text", "")).strip()[:24]
-        if not text:
-            return None
-        out.update(text=text, size=_num(el.get("size"), 2, 8, 3.2))
-        if el.get("sub"):
-            out["sub"] = str(el["sub"]).strip()[:30]
-        out["tail"] = el.get("tail") if el.get("tail") in TAILS else "bottom"
-        out["icon"] = el.get("icon") if el.get("icon") in ICONS else "none"
-    elif t == "device":
-        kind = el.get("kind") if el.get("kind") in DEVICES else "monitor"
-        out.update(kind=kind, w=_num(el.get("w"), 8, 100, 50))
-        src = str(el.get("src", "")).strip()
-        if src.startswith(("images/", "broll/", "pixabay:")):
-            out["src"] = src[:120]
-        rows = [str(r).strip()[:30] for r in (el.get("rows") or []) if str(r).strip()][:6]
-        if rows:
-            out["rows"] = rows
-        if el.get("title"):
-            out["title"] = str(el["title"]).strip()[:24]
-    elif t == "iso":
-        # 아이소메트릭 블록 도시(배경): 장면 전체를 덮는다 — x, y 는 무시
-        out.update(cols=int(_num(el.get("cols"), 4, 16, 11)), rows=int(_num(el.get("rows"), 3, 12, 8)),
-                   seed=int(_num(el.get("seed"), 0, 999, 1)))
-        out["road"] = el.get("road") is not False
-        out["opacity"] = _num(el.get("opacity"), 0.1, 1, 0.9)
     elif t == "mark":
         # 손으로 친 주석: 가리킬 상자(가운데 x, y · w, h %) 둘레·아래에 그린다. 강조는 색이 아니라 mark 로
         kind = el.get("kind")
@@ -243,12 +191,19 @@ def stage_first(els: list[dict[str, Any]]) -> int:
     return moved
 
 
+def no_content(els: list[dict[str, Any]]) -> bool:
+    """가장 큰 제목 글자와 판·선만 남았는가 — 내용 부품을 모두 잃은 장면은 빈 표처럼 보인다."""
+    texts = [e for e in els if e.get("type") == "text"]
+    title = max(texts, key=lambda e: _num(e.get("size"), 0, 100, 0), default=None)
+    return not any(e is not title and e.get("type") not in PLATES for e in els)
+
+
 def clean_spec(spec: Any, scene_dur: float) -> dict[str, Any] | None:
     if not isinstance(spec, dict):
         return None
-    els = [e for e in (clean_element(e, scene_dur) for e in (spec.get("elements") or [])[:MAX_ELEMENTS]
-                       if isinstance(e, dict)) if e]
-    if not els:
+    raw = [e for e in (spec.get("elements") or [])[:MAX_ELEMENTS] if isinstance(e, dict)]
+    els = [e for e in (clean_element(e, scene_dur) for e in raw) if e]
+    if not els or ((len(els) < len(raw) or spec.get("lost_parts")) and no_content(els)):
         return None
     stage_first(els)
     out: dict[str, Any] = {"elements": els}

@@ -15,7 +15,7 @@ from . import __version__, net
 
 KEEP_EXT = {".json", ".md", ".txt", ".srt", ".xml", ".log"}
 MAX_FILE = 3 * 1024 * 1024
-SECRET_KEYS = ("api_key", "access_key", "token", "secret", "password")
+SECRET_KEYS = ("_key", "token", "secret", "password")     # gemini_key·serpapi_key 처럼 'api' 가 없는 이름도 키다
 
 
 def settings_summary(settings: Any) -> list[str]:

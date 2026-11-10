@@ -12,7 +12,7 @@ from studio import gate  # noqa: E402
 from studio.director.plan import TimedGraphic  # noqa: E402
 from studio.motion import lint  # noqa: E402
 from studio.motion.spec import clean_spec  # noqa: E402
-from studio.render.props import bridge_fullscreen_gaps, bridge_split_gaps, stack_avoid_spans  # noqa: E402
+from studio.render.props import bridge_fullscreen_gaps, bridge_split_gaps  # noqa: E402
 
 EXAMPLES = json.loads((ROOT / "prompts" / "examples" / "motion_examples.json").read_text(encoding="utf-8"))
 DURS = {"sketch_first_marks": 6.5, "fixation_two_groups": 12.45, "double_diamond_front": 9.0,
@@ -94,15 +94,6 @@ def test_bridge_split_gaps_keeps_board_filled():
     assert gs[0]["end"] == 15.6 and gs[1]["end"] == 20.0 and gs[2]["end"] == 25.0
 
 
-def test_stack_avoid_includes_callouts_and_side_media():
-    """F-9: 콜아웃·얼굴 옆 사진이 떠 있는 동안 두 층 강조 자막을 쓰지 않는다(같은 순간 글자 층은 둘까지)."""
-    props = {"graphics": [{"template": "photo", "layout": "pip", "start": 30.0, "end": 34.0},
-                          {"template": "photo", "layout": "fullscreen", "start": 50.0, "end": 54.0}],
-             "callouts": [{"start": 40.0, "end": 42.5, "text": "질문"}]}
-    spans = stack_avoid_spans(props)
-    assert (30.0, 34.0) in spans and (40.0, 42.5) in spans and (50.0, 54.0) not in spans
-
-
 def test_qa_strip_times_follow_06c():
     from studio.pipeline import qa_strip_times
     g = TimedGraphic(id="g3", template="motion", layout="fullscreen", start=10.0, end=22.45, data={
@@ -118,28 +109,16 @@ def test_qa_actionable_keeps_escalations_out():
     assert [i["action"] for i in qa_actionable(issues)] == ["shorten_text"]
 
 
-def test_v4_modern_elements_clean_and_lint():
-    """디자인 v4 부품(panel·chip·bubble·device·iso): 정화가 필드를 지키고 enter 는 none, 린트가 상자를 잰다."""
-    spec = {"bg": "paper", "elements": [
-        {"type": "iso", "x": 50, "y": 50, "at": 0, "cols": 10, "rows": 7, "seed": 3},
-        {"type": "text", "text": "서로 말하지 않는 도구들", "x": 30, "y": 22, "size": 9, "at": 0.1, "font": "display"},
-        {"type": "panel", "x": 28, "y": 60, "at": 0.4, "w": 34, "title": "프로젝트 단가", "rows": ["1번가|3.8", "2번가|3.5", "3번가|4.8"], "on": 2, "tilt": True},
-        {"type": "chip", "x": 72, "y": 30, "at": 1.0, "text": "구역 확인", "icon": "check"},
-        {"type": "bubble", "x": 72, "y": 55, "at": 1.4, "text": "4.8억", "sub": "3번가", "tail": "bottom"},
-        {"type": "device", "x": 78, "y": 70, "at": 1.8, "kind": "laptop", "w": 30, "rows": ["이웃", "가격", "설계"], "title": "밴티지"},
-        {"type": "chip", "x": 50, "y": 90, "at": 2.2, "text": "", "icon": "check"},               # 빈 글 → 빠짐
-    ]}
-    out = clean_spec(spec, 8.0)
-    types = [e["type"] for e in out["elements"]]
-    assert types == ["iso", "text", "panel", "chip", "bubble", "device"]
-    panel = out["elements"][2]
-    assert panel["rows"] == ["1번가|3.8", "2번가|3.5", "3번가|4.8"] and panel["on"] == 2 and panel["tilt"] is True and panel["enter"] == "none"
-    assert out["elements"][3]["fill"] == "card" and out["elements"][4]["tail"] == "bottom" and out["elements"][5]["kind"] == "laptop"
-    issues = lint.lint(out, 8.0, [], box=lint.box_for("fullscreen"))
-    assert not [i for i in issues if i.rule in ("L01", "L02")], [str(i) for i in issues]   # 0.5초 안에 무대가 선다(iso + 제목)
-    for e in out["elements"]:
-        x0, y0, x1, y1 = lint.bbox(e, 1728, 838)
-        assert x1 > x0 and y1 > y0, e["type"]
+def test_removed_v4_parts_are_dropped_and_an_emptied_scene_goes():
+    """v5 는 가짜 UI 를 그리지 않는다(렌더러에 panel·chip·bubble·device·iso 가 없다) — 정화에서 빼고, 제목·판만 남으면 장면째 뺀다."""
+    title = {"type": "text", "text": "도구들", "x": 30, "y": 22, "size": 9, "at": 0.1}
+    plate = {"type": "rect", "x": 50, "y": 60, "w": 60, "h": 40, "at": 0.2}
+    chip = {"type": "chip", "x": 72, "y": 30, "at": 1.0, "text": "구역 확인"}
+    dots = {"type": "dots", "x": 50, "y": 60, "at": 0.5, "count": 6, "cols": 3}
+    assert [e["type"] for e in clean_spec({"elements": [title, chip, dots]}, 8.0)["elements"]] == ["text", "dots"]
+    assert clean_spec({"elements": [title, plate, chip]}, 8.0) is None
+    assert clean_spec({"elements": [title, plate]}, 8.0) is not None             # 잃은 것이 없으면 디자이너의 장면 그대로
+    assert clean_spec({"elements": [title, plate], "lost_parts": True}, 8.0) is None   # 스톡 단계에서 그림을 잃은 장면
 
 
 def test_l28_caption_zone_text_is_an_error_only_on_the_fullscreen_stage():

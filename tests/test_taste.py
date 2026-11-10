@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from studio.agents import studio as ST  # noqa: E402
+from browser_path import headless_browser  # noqa: E402
 from studio.agents import taste  # noqa: E402
 from studio.director.context import JobBrief  # noqa: E402
 from studio.motion.check import preview_images  # noqa: E402
@@ -83,14 +84,14 @@ class FakeClaude:
                                   "signature_scenes": [{"id": "sig1", "start_seg": 2, "end_seg": 3, "kind": "diagram",
                                                         "title": "근접성 도식", "brief": "점이 무리를 짓는다"}]}}
         if key == "style_frame":
-            ex = EX["statement"]
-            return {"archetype": "statement", "html": ex["html"], "timeline": ex["timeline"],
+            ex = EX["section_cut"]
+            return {"archetype": "section_cut", "html": ex["html"], "timeline": ex["timeline"],
                     "rules": {"grid": "왼쪽 150px 축", "type": "제목 150px", "color": "오렌지는 한 낱말", "shape": "모서리 28px",
                               "motif": "모이는 점", "motion": "어절 마스크 상승", "do": ["주인공 하나"], "dont": ["가운데 3단"]},
-                    "notes": "보드의 statement 결"}
+                    "notes": "단면 도식"}
         if key == "setpiece":
             k = int(re.search(r"이번 시안의 방향 \((\d)/", instruction).group(1))
-            name = ("statement", "object_callouts", "data_bars")[k - 1]
+            name = ("section_cut", "plan_mark", "flow_diagram")[k - 1]
             return {"layout": "fullscreen", "style": "editorial", "archetype": EX[name]["archetype"], "title": name,
                     "html": EX[name]["html"], "timeline": EX[name]["timeline"], "start_word": "", "notes": name}
         if key == "design_judge":
@@ -115,32 +116,31 @@ def test_style_frame_first_then_variants_judged_and_fixed(taste_dir):
     fc = FakeClaude()
     st = ST.Studio(fc, workers=4, use_stock=False)
     st.preview = _preview
-    st.house_board = lambda: b"board"
     st.variants = 3
     raw, _ = st.plan(JobBrief(title="t"), "ctx", shorts_count=0)
     keys = [c["key"] for c in fc.calls]
-    # 🎨 스타일 프레임이 모션·시그니처 장면보다 먼저 — 하우스 예시 보드(운영자 그림이 없을 때)를 보고 짓는다
+    # 🎨 스타일 프레임이 모션·시그니처 장면보다 먼저는다
     assert keys.index("style_frame") < min(keys.index("motion"), keys.index("setpiece")), keys
     sf = next(c for c in fc.calls if c["key"] == "style_frame")
-    assert sf["images"] == ["하우스 예시 보드(렌더로 확인한 카드 예시 — 이 수준이 바닥)"]
+    assert not sf["images"]                # 운영자 그림이 없으면 기준 그림도 없다(예시로 자기 채점하지 않는다)
     # 🛠 시안 셋 — 첫 안만 웹 도구, 모두 스타일 프레임 규칙 + 그림(정지·움직임) + 보드를 받는다
     sets = [c for c in fc.calls if c["key"] == "setpiece"]
     assert len(sets) == 3 and sum(1 for c in sets if c["tools"]) == 1
     for c in sets:
         assert "## 🎨 이 영상의 스타일 프레임" in c["instruction"] and "모이는 점" in c["instruction"]
-        assert c["images"][:2] == ["스타일 프레임", "스타일 프레임#seq"] and len(c["images"]) == 3
+        assert c["images"] == ["스타일 프레임", "스타일 프레임#seq"]
     motion = next(c for c in fc.calls if c["key"] == "motion")
-    assert "## 🎨 이 영상의 스타일 프레임" in motion["instruction"] and len(motion["images"]) == 3
+    assert "## 🎨 이 영상의 스타일 프레임" in motion["instruction"] and len(motion["images"]) == 2
     # 디자인 역할이 아닌 역할은 스타일 프레임을 받지 않는다(토큰)
     ed = next(c for c in fc.calls if c["key"] == "editor")
     assert "스타일 프레임" not in ed["instruction"] and not ed["images"]
     # 🧑‍⚖️ 심사: 기준 그림(3) + 시안마다 정지·움직임(6) → V2 → 지적을 카드 수정으로 반영(스타일 프레임 정지 화면 + 이긴 시안 그림)
     judge = next(c for c in fc.calls if c["key"] == "design_judge")
-    assert len(judge["images"]) == 9 and judge["images"][3:5] == ["V1", "V1#seq"], judge["images"]
+    assert len(judge["images"]) == 8 and judge["images"][2:4] == ["V1", "V1#seq"], judge["images"]
     rev = next(c for c in fc.calls if c["key"] == "card_revise")
     assert "라벨을 40px 로" in rev["instruction"] and rev["images"] == ["스타일 프레임", "V2", "V2#seq"]
     sig = [g for g in raw["graphics"] if g.get("signature")]
-    assert len(sig) == 1 and sig[0]["card"]["archetype"] == "object_callouts" and sig[0]["card"]["id"] == "card1"
+    assert len(sig) == 1 and sig[0]["card"]["archetype"] == "plan_mark" and sig[0]["card"]["id"] == "card1"
     assert "[B안/3]" in sig[0]["reason"]
     assert raw["studio"]["style_frame"]["rules"]["motif"] == "모이는 점" and raw["studio"]["style_frame"]["html"]
 
@@ -176,13 +176,13 @@ def test_failed_render_or_judge_keeps_first_variant(taste_dir):
     keys = [c["key"] for c in fc.calls]
     assert keys.count("setpiece") == 2 and "design_judge" not in keys and "card_revise" not in keys
     sig = next(g for g in raw["graphics"] if g.get("signature"))
-    assert sig["card"]["archetype"] == "statement"
+    assert sig["card"]["archetype"] == "section_cut"
 
 
 def test_saved_style_frame_is_reloaded_for_later_design_calls(taste_dir):
     fc = FakeClaude()
     st = ST.Studio(fc)
-    st.load_style({"rules": {"motif": "트레이싱지 선", "do": ["선 3px"]}, "archetype": "bento"},
+    st.load_style({"rules": {"motif": "트레이싱지 선", "do": ["선 3px"]}, "archetype": "plan_mark"},
                   [("스타일 프레임", b"x", "image/jpeg")])
     st.call("card_revise", "ctx", "고친다")
     st.call("copy", "ctx", "카피")
@@ -218,10 +218,10 @@ def test_checker_takes_auto_preview_shots(tmp_path):
     from studio.motion.card import clean_card
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
-    ex = EX["statement"]
+    ex = EX["section_cut"]
     card = clean_card({"html": ex["html"], "timeline": ex["timeline"]}, layout="fullscreen", card_id="pv1")
     res = check_cards([dict(card, shots="auto")], node=find_node(""), out_dir=tmp_path, fps=30, durations={"pv1": 7.0},
                       browser_executable=browser)
@@ -237,19 +237,19 @@ def test_checker_takes_auto_preview_shots(tmp_path):
 
 def test_preview_shots_show_the_seeked_frame_not_stale_layers(tmp_path):
     """미리보기 칸은 그 시각의 화면이어야 한다(2026-10-04: captureBeyondViewport 없이 찍어 지난 합성 레이어가 섞였다 — 1.5초 칸에
-    아직 안 나온 주석 글자·제목 유령·검은 띠. Remotion 렌더는 깨끗했다). object_callouts 의 주석은 1.8초부터 — 1.5초 칸의 그 자리는 비어 있다."""
+    아직 안 나온 주석 글자·제목 유령·검은 띠. Remotion 렌더는 깨끗했다). flow_diagram 의 '재투자'는 3초부터 — 1.5초 칸의 그 자리는 비어 있다."""
     from studio.motion.card import clean_card
     from studio.motion.check import check_cards
     from studio.render.remotion import find_node
-    browser = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell"
+    browser = headless_browser()
     if not (shutil.which("node") and Path(browser).exists() and (ROOT / "renderer" / "node_modules").exists()):
         pytest.skip("node·브라우저·renderer/node_modules 가 있어야 한다")
-    ex = EX["object_callouts"]
+    ex = EX["flow_diagram"]
     card = clean_card({"html": ex["html"], "timeline": ex["timeline"]}, layout="fullscreen", card_id="ob")
     res = check_cards([dict(card, shots=[5.6, 1.5])], node=find_node(""), out_dir=tmp_path, fps=30,   # 뒤로 돌아가며 찍는다
                       durations={"ob": 7.0}, browser_executable=browser)
     shot = next(s for s in res["ob"]["shots"] if s["t"] == 1.5)
     with Image.open(shot["path"]) as im:
-        area = im.convert("L").crop((1060, 360, 1800, 720))      # 주석 자리(제목 아래)
-        dark = sum(1 for v in area.getdata() if v < 110) / (area.width * area.height)
-    assert dark < 0.002, dark
+        area = im.convert("L").crop((1120, 296, 1440, 364))      # 뒤에 올 이름표 자리(1.5초에는 차콜 면뿐)
+        bright = sum(1 for v in area.getdata() if v > 140) / (area.width * area.height)
+    assert bright < 0.002, bright

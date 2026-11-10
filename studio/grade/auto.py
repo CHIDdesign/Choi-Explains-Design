@@ -33,7 +33,7 @@ from ..util import _popen_kwargs
 
 LUT_SIZE = 33
 # 색보정 알고리즘 판(07 문서 2-1) — grade.json · 편집 리포트에 남고 캐시 키에 들어간다(코드가 바뀌면 다시 굽는다)
-GRADE_VERSION = 3
+GRADE_VERSION = 5
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,7 @@ MATCH_CAP = 6.0                # 샷 매칭 이동량 성분마다 상한(Lab)
 MATCH_DE = 3.0                 # 원본 사이 얼굴 ΔE 가 이보다 크면 매칭(같은 사람 같은 날로 읽히는 문턱)
 CHROMA_GAIN_MAX = 1.8          # 채도 이득 상한(피부는 따로, 1.3)
 CONTRAST_MAX = 0.32            # S-커브 상한
+HL_PER_ROLLOFF = -0.1          # 룩 rolloff → 하이라이트 누름(휘도 1 에서 최대 2%). 더 누르면 흰 벽·셔츠가 회색이 된다(−0.4 는 L* 3.5~4.3 ↓)
 
 
 @dataclass
@@ -111,6 +112,7 @@ class GradeChoice:
     by: str = "rule"
     skin: tuple = ()               # 이 영상의 얼굴 평균색(원본 sRGB 0~1) — 피부 보호가 이 색 근처만 필요한 만큼 고친다
     match_lab: tuple = ()          # 원본 사이 샷 매칭(07 문서 2-6): 얼굴 기준 Lab 이동 (dL, da, db) — 중간톤 가중
+    match_wheels: tuple = ()       # 기준 프레임 맞춤(user/reference_frames 옵트인): apply_wheels 의 미지수 10개
 
     def clamp(self) -> "GradeChoice":
         c = replace(self)
@@ -122,6 +124,7 @@ class GradeChoice:
         c.saturation = float(min(1.15, max(0.85, c.saturation)))
         if c.match_lab:
             c.match_lab = tuple(float(min(MATCH_CAP, max(-MATCH_CAP, v))) for v in tuple(c.match_lab)[:3])
+        c.match_wheels = tuple(float(min(1.0, max(-1.0, v))) for v in tuple(c.match_wheels)[:10])
         return c
 
 
@@ -181,13 +184,11 @@ def _scurve(x: np.ndarray, amount: float) -> np.ndarray:
     return x + amount * (s - x)
 
 
-def _rolloff(x: np.ndarray, amount: float, knee: float = 0.82) -> np.ndarray:
-    if amount <= 0:
-        return x
-    over = np.clip(x - knee, 0, None)
-    span = 1 - knee
-    soft = knee + span * (1 - np.exp(-over / span * 1.6)) / (1 - math.exp(-1.6))
-    return np.where(x > knee, x + amount * (soft - x), x)
+def apply_tone(y: np.ndarray, hl: float) -> np.ndarray:
+    """하이라이트를 휘도 3제곱 가중으로 누르고(hl ≤ 0) 채널을 같은 비율로 스케일 — 색상이 틀어지지 않는다(입출력 감마 RGB).
+    FilmCraft effects.rs:691-699."""
+    l = _luma(y)
+    return y * (np.maximum(l + hl * 0.35 * l ** 3, 0) / np.maximum(l, 1e-5))[..., None]
 
 
 def apply_correction(x: np.ndarray, c: Correction) -> np.ndarray:
@@ -219,7 +220,7 @@ def apply_look(x: np.ndarray, look: Look, strength: float = 1.0, *, exposure: fl
     ex = look.exposure * k + exposure
     if abs(ex) > 1e-4:
         y = np.power(np.clip(y, 0, 1), 1 / (1 + 1.6 * ex))
-    y = _rolloff(np.clip(y, 0, 1), look.rolloff * k)
+    y = apply_tone(np.clip(y, 0, 1), HL_PER_ROLLOFF * look.rolloff * k)
     if look.fade:
         y = look.fade * k + y * (1 - look.fade * k)
     # 스플릿 토닝(피부는 70% 보호)
@@ -241,8 +242,12 @@ _M = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.11
 _MI = np.linalg.inv(_M).astype(np.float32)
 
 
+def _srgb_linear(x: np.ndarray) -> np.ndarray:
+    return np.where(x <= 0.04045, x / 12.92, ((np.clip(x, 0, 1) + 0.055) / 1.055) ** 2.4)
+
+
 def srgb_to_lab(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    lin = np.where(x <= 0.04045, x / 12.92, ((np.clip(x, 0, 1) + 0.055) / 1.055) ** 2.4)
+    lin = _srgb_linear(x)
     xyz = lin @ _M.T / _WP
     f = np.where(xyz > 0.008856, np.cbrt(np.clip(xyz, 0, None)), 7.787 * xyz + 16 / 116)
     return 116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])
@@ -261,21 +266,27 @@ def lab_stats(x: np.ndarray) -> tuple[float, float, float, float]:
     return float(L.mean()), float(a.mean()), float(b.mean()), float(np.hypot(a, b).mean())
 
 
-def reference_lab(folder: Optional[Path] = None) -> tuple[float, float, float, float]:
-    """user/reference_frames/ 의 이미지 평균(없으면 기본 레퍼런스)."""
+def reference_frames(folder: Optional[Path] = None) -> list[np.ndarray]:
+    """user/reference_frames/ 의 이미지(RGB 0~1, 긴 변 480) — 파일이 없으면 빈 목록(기준 프레임 맞춤의 옵트인 판정)."""
+    arrs: list[np.ndarray] = []
     if folder and folder.is_dir():
         from PIL import Image
-        arrs = []
         for f in sorted(folder.iterdir())[:24]:
             if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
                 try:
                     im = Image.open(f).convert("RGB")
                     im.thumbnail((480, 480))
-                    arrs.append(np.asarray(im, dtype=np.float32).reshape(-1, 3) / 255.0)
+                    arrs.append(np.asarray(im, dtype=np.float32) / 255.0)
                 except OSError:
                     continue
-        if arrs:
-            return lab_stats(np.concatenate(arrs))
+    return arrs
+
+
+def reference_lab(folder: Optional[Path] = None) -> tuple[float, float, float, float]:
+    """user/reference_frames/ 의 이미지 평균(없으면 기본 레퍼런스)."""
+    arrs = reference_frames(folder)
+    if arrs:
+        return lab_stats(np.concatenate([a.reshape(-1, 3) for a in arrs]))
     r = REFERENCE_LAB
     return r["L"], r["a"], r["b"], r["C"]
 
@@ -496,23 +507,26 @@ def skin_guard(x: np.ndarray, face_rgb=None) -> np.ndarray:
     return lab_to_srgb(L, a2, b2)
 
 
+def _before_guard(v: np.ndarray, c: Correction, ch: GradeChoice) -> np.ndarray:
+    v = apply_correction(v, c)
+    if ch.match > 0:
+        recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
+        # 레시피는 범위를 벗어난 만큼만 고치는 '교정'이라 룩 세기와 상관없이 다 적용한다(세기는 룩의 캐릭터에만)
+        v = enrich(v, recipe, 1.0 if ch.recipe else min(1.0, ch.match))
+    v = apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
+                   saturation=ch.saturation)
+    if ch.match_lab and any(abs(d) > 1e-3 for d in ch.match_lab):
+        v = match_shift(v, ch.match_lab)
+    if any(abs(d) > 1e-3 for d in ch.match_wheels):
+        v = apply_wheels(v, ch.match_wheels)
+    return v
+
+
 def grade(x: np.ndarray, c: Correction, choice: GradeChoice) -> np.ndarray:
     """교정 → 레시피(이 영상에 맞춘 대비·채도·온기) → 룩의 캐릭터 → 피부 보호. 픽셀마다 독립이라 LUT 으로 구울 수 있다."""
     ch = choice.clamp()
-
-    def before_guard(v: np.ndarray) -> np.ndarray:
-        v = apply_correction(v, c)
-        if ch.match > 0:
-            recipe = ch.recipe or default_recipe(tuple(ch.src_lab), tuple(ch.ref_lab) if ch.ref_lab else reference_lab())
-            # 레시피는 범위를 벗어난 만큼만 고치는 '교정'이라 룩 세기와 상관없이 다 적용한다(세기는 룩의 캐릭터에만)
-            v = enrich(v, recipe, 1.0 if ch.recipe else min(1.0, ch.match))
-        v = apply_look(v, LOOKS[ch.look], ch.strength, exposure=ch.exposure, warmth=ch.warmth,
-                       saturation=ch.saturation)
-        if ch.match_lab and any(abs(d) > 1e-3 for d in ch.match_lab):
-            v = match_shift(v, ch.match_lab)
-        return v
-    face = before_guard(np.asarray(ch.skin, np.float32).reshape(1, 3))[0] if len(ch.skin) == 3 else None
-    return skin_guard(before_guard(x), face)
+    face = _before_guard(np.asarray(ch.skin, np.float32).reshape(1, 3), c, ch)[0] if len(ch.skin) == 3 else None
+    return skin_guard(_before_guard(x, c, ch), face)
 
 
 def plan_choice(frames: list[np.ndarray], c: Correction, look: str = "warm_rich", ref: tuple = (),
@@ -734,7 +748,7 @@ def is_identity(c: Correction, choice: "GradeChoice") -> bool:
         and abs(ch.recipe.get("chroma_gain", 1) - 1) < 1e-3 and abs(ch.recipe.get("skin_gain", 1) - 1) < 1e-3
         and ch.recipe.get("warmth", 0) < 1e-3)
     no_look = ch.strength <= 0 and abs(ch.exposure) < 1e-4 and abs(ch.warmth) < 1e-4 and abs(ch.saturation - 1) < 1e-4
-    no_match = not ch.match_lab or all(abs(d) < 1e-3 for d in ch.match_lab)
+    no_match = (not ch.match_lab or all(abs(d) < 1e-3 for d in ch.match_lab)) and all(abs(d) < 1e-3 for d in ch.match_wheels)
     return is_identity_correction(c) and no_recipe and no_look and no_match
 
 
@@ -1030,3 +1044,111 @@ def match_shift(x: np.ndarray, d: tuple, k: float = 0.8) -> np.ndarray:
     L, a, b = srgb_to_lab(x)
     w = 4.0 * np.clip(L / 100.0, 0, 1) * (1.0 - np.clip(L / 100.0, 0, 1))
     return lab_to_srgb(L + k * float(d[0]) * w, a + k * float(d[1]) * w, b + k * float(d[2]) * w)
+
+
+# ---------------------------------------------------------------------------
+# 기준 프레임 맞춤(user/reference_frames 옵트인) — FilmCraft crates/render/src/color_match.rs 의 Apply Match 를 다시 구현
+# ---------------------------------------------------------------------------
+
+def _oklab(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """감마 sRGB → Oklab(선형화해서 — FilmCraft 입력은 선형광이고 우리 프레임은 감마다)."""
+    r, g, b = np.moveaxis(_srgb_linear(x), -1, 0)
+    l = np.cbrt(0.41222147 * r + 0.53633255 * g + 0.051445995 * b)
+    m = np.cbrt(0.2119035 * r + 0.6806995 * g + 0.10739696 * b)
+    s = np.cbrt(0.08830246 * r + 0.28171885 * g + 0.6299787 * b)
+    return (0.21045426 * l + 0.7936178 * m - 0.004072047 * s, 1.9779985 * l - 2.4285922 * m + 0.4505937 * s,
+            0.025904037 * l + 0.78277177 * m - 0.80867577 * s)
+
+
+def _shrink(f: np.ndarray, max_w: int = 96) -> np.ndarray:
+    while f.shape[1] > max_w:
+        h, w = f.shape[0] // 2, f.shape[1] // 2
+        f = f[: h * 2, : w * 2].reshape(h, 2, w, 2, 3).mean((1, 3))
+    return f
+
+
+def _match_stats(x: np.ndarray) -> dict[str, np.ndarray]:
+    """3톤 구간별 (비중, L, a, b) · 평균 채도 · 피부 평균 (a, b) 와 비중. 색 통계에서 피부는 ×0.2."""
+    L, a, b = _oklab(x)
+    C = np.hypot(a, b)
+    hue = np.degrees(np.arctan2(b, a))
+    sk = np.clip(1 - np.maximum(np.maximum(20 - hue, hue - 75), 0) / 10, 0, 1) * ((C >= 0.02) & (C <= 0.2) & (L >= 0.25) & (L <= 0.92))
+    cw = 1 - 0.8 * sk
+    s, h = _smooth((0.55 - L) / 0.4), _smooth((L - 0.45) / 0.4)
+    bands = np.stack([s, np.maximum(1 - s - h, 0), h])
+    w, cws = np.maximum(bands.sum(1), 1e-9), np.maximum((bands * cw).sum(1), 1e-9)
+    sw = max(float(sk.sum()), 1e-9)
+    return {"w": w / len(L), "L": (bands * L).sum(1) / w, "a": (bands * cw * a).sum(1) / cws,
+            "b": (bands * cw * b).sum(1) / cws, "C": np.array([float((cw * C).sum() / max(float(cw.sum()), 1e-9))]),
+            "skin": np.array([float((sk * a).sum() / sw), float((sk * b).sum() / sw), float(sk.sum() / len(L))])}
+
+
+def _match_residual(cur: dict, ref: dict) -> np.ndarray:
+    w = np.sqrt(np.clip(np.minimum(cur["w"], ref["w"]) * 3, 0, 1))
+    return np.concatenate([(cur["L"] - ref["L"]) * w, (cur["a"] - ref["a"]) * w * 2, (cur["b"] - ref["b"]) * w * 2,
+                           (cur["C"] - ref["C"]) * 2])
+
+
+def _wheel_rgb(wx: float, wy: float) -> np.ndarray:
+    ln, ang = min(math.hypot(wx, wy), 1.0), math.atan2(wy, wx)
+    return ln * np.array([math.cos(ang), math.cos(ang - math.tau / 3), math.cos(ang + math.tau / 3)], np.float32)
+
+
+def apply_wheels(x: np.ndarray, w: tuple) -> np.ndarray:
+    """휠 3개(x, y)·밝기 3개·채도 = (sx, sy, mx, my, hx, hy, sl, ml, hl, sat−1) — 픽셀마다 독립(LUT 에 들어간다).
+    FilmCraft effects.rs:1388-1397: wsh=(1−l)², whi=l², wmid=나머지. lift·중간·gain."""
+    l0 = _luma(x)[..., None]
+    y = l0 + (x - l0) * (1 + w[9])
+    l = np.clip(_luma(y), 0, 1)[..., None]
+    wsh, whi = (1 - l) ** 2, l * l
+    y = y + (_wheel_rgb(w[0], w[1]) * 0.3 + w[6] * 0.3) * wsh
+    y = y + (_wheel_rgb(w[2], w[3]) * 0.3 + w[7] * 0.3) * np.maximum(1 - wsh - whi, 0)
+    y = y * (1 + (_wheel_rgb(w[4], w[5]) * 0.5 + w[8] * 0.5) * whi)
+    return np.clip(y, 0, 1)
+
+
+def solve_match(frames: list[np.ndarray], ref_frames: list[np.ndarray], c: Correction, choice: GradeChoice) -> tuple[float, ...]:
+    """지금 보정 결과의 3톤 Oklab 통계가 기준 프레임에 오도록 휠 10개를 LM(12회)으로 푼다 — 통계가 이미 가까우면 작은 정규화가
+    0 에 붙잡는다. 풀이 뒤 피부 색상이 8° 넘게 돌면 색 휠을 ×0.7(최대 8회)."""
+    ch = replace(choice.clamp(), match_wheels=())
+    base = np.concatenate([_before_guard(_shrink(f), c, ch).reshape(-1, 3) for f in frames])
+    ref = _match_stats(np.concatenate([_shrink(f).reshape(-1, 3) for f in ref_frames]))
+    lam2, step = 0.02 ** 2, 1e-2
+
+    def cost(v: np.ndarray) -> tuple[np.ndarray, float]:
+        res = _match_residual(_match_stats(apply_wheels(base, tuple(v))), ref)
+        return res, float(res @ res + lam2 * (v @ v))
+    x = np.zeros(10, np.float64)
+    r, best = cost(x)
+    mu = 1e-3
+    for _ in range(12):
+        jac = np.stack([(cost(x + step * e)[0] - r) / step for e in np.eye(10)], axis=1)
+        a = jac.T @ jac
+        a[np.diag_indices(10)] += lam2 + mu * (1 + np.diag(a))
+        try:
+            dx = np.linalg.solve(a, -(jac.T @ r + lam2 * x))
+        except np.linalg.LinAlgError:
+            break
+        xn = np.clip(x + dx, -1, 1)
+        rn, cn = cost(xn)
+        if cn < best:
+            improved = best - cn
+            x, r, best = xn, rn, cn
+            mu = max(mu * 0.3, 1e-6)
+            if improved < 1e-7:
+                break
+        else:
+            mu *= 10
+            if mu > 1e4:
+                break
+    s0 = _match_stats(base)["skin"]
+    if s0[2] > 0.002:
+        hue = lambda s: math.degrees(math.atan2(s[1], s[0]))  # noqa: E731
+        k = 1.0
+        for _ in range(8):
+            s1 = _match_stats(apply_wheels(base, tuple(np.r_[x[:6] * k, x[6:]])))["skin"]
+            if abs((hue(s1) - hue(s0) + 180) % 360 - 180) <= 8.0:
+                break
+            k *= 0.7
+        x[:6] *= k
+    return tuple(round(float(v), 4) for v in x)

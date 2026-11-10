@@ -5,17 +5,20 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from studio.director.plan import (TimedGraphic, merge_step_runs, normalize_long, step_times,  # noqa: E402
+from studio import gate  # noqa: E402
+from studio.director.plan import (TimedGraphic, argument_badges, merge_step_runs, normalize_long, step_times,  # noqa: E402
                                   time_graphics)
 from studio.edit.grammar import Moment, build_long_edit  # noqa: E402
 from studio.models import Span, TimeMap, Utterance, Word  # noqa: E402
-from studio.render.props import chapter_recaps  # noqa: E402
 
 
 def _utt(uid: int, t: float, text: str, per: float = 0.45) -> Utterance:
@@ -57,6 +60,57 @@ def test_steps_change_on_spoken_words():
     assert g.end >= g.start + at[-1]["t"] + 1.0
 
 
+def test_card_marks_land_on_spoken_words():
+    from studio.motion.card import clean_card
+    utts = _utts()
+    tm = TimeMap([Span(0.0, 30.0)])
+    card = clean_card({"html": '<div class="card"><div class="root">'
+                               '<span data-anim="fade-in" data-at-word="좁혀서">가</span>'
+                               '<span data-anim="fade-in" data-anim-at="9" data-at-word="그다음에">나</span>'
+                               '<span data-anim="fade-in" data-anim-at="1" data-at-word="없는말">다</span>'
+                               '</div></div>'}, layout="fullscreen", card_id="c1")
+    gr = {"template": "card", "layout": "fullscreen", "start_seg": 1, "end_seg": 1, "start_word": "먼저", "title": "t", "card": card}
+    plan = normalize_long({"graphics": [gr]}, utts, [])
+    assert "data-at-word" in plan["graphics"][0]["card"]["html"]        # 계획에는 남아 편집이 바뀌면 다시 계산된다
+    [g] = time_graphics(plan["graphics"], utts, tm, total=30.0)
+    html = g.data["card"]["html"]
+    assert "data-at-word" not in html
+    ats = [float(x) for x in re.findall(r'data-anim-at="([^"]+)"', html)]
+    assert len(ats) == 3 and ats[2] == 1.0, ats                         # 못 찾은 낱말은 디자이너 값 그대로
+    for t, w in zip(ats, ("좁혀서", "그다음에")):
+        assert abs(g.start + t + 0.5 + 0.2 - _word_t(utts[1], w)) <= 0.05, (t, w)     # data-anim-at 은 시작, 0.5초 뒤 도착
+    assert "wordMarks" not in g.data["card"] and len(g.data["wordMarks"]) == 2
+    moved = {"start": g.start + 3.0, "data": g.data}                    # 겹침 풀기로 그래픽이 3초 밀리면 게이트 A18 이 잡는다
+    assert gate.a18_word_sync([{"start": g.start, "data": g.data}]).ok and not gate.a18_word_sync([moved]).ok
+
+
+def test_motion_at_word_lands_on_spoken_word():
+    utts = _utts()
+    tm = TimeMap([Span(0.0, 30.0)])
+    spec = {"elements": [
+        {"type": "text", "text": "제목", "x": 50, "y": 10, "size": 9, "at": 0.1},
+        {"type": "text", "text": "좁힌다", "x": 50, "y": 50, "size": 6, "enter": "fade", "dur": 0.4, "at": 0.5, "out": 2.0,
+         "at_word": "좁혀서"},
+        {"type": "mark", "kind": "underline", "x": 50, "y": 50, "w": 20, "h": 6, "dur": 0.5, "at": 0.6, "at_word": "좁혀서"},
+        {"type": "text", "text": "없음", "x": 50, "y": 70, "size": 6, "at": 3.0, "at_word": "없는말"}]}
+    gr = {"template": "motion", "layout": "fullscreen", "start_seg": 1, "end_seg": 1, "start_word": "먼저", "title": "t", "spec": spec}
+    plan = normalize_long({"graphics": [gr]}, utts, [])
+    logs: list[str] = []
+    [g] = time_graphics(plan["graphics"], utts, tm, total=30.0, log=logs.append)
+    assert plan["graphics"][0]["spec"]["elements"][1]["at_word"] == "좁혀서"    # 계획에는 남아 편집이 바뀌면 다시 계산된다
+    els = g.data["spec"]["elements"]
+    assert not any("at_word" in e for e in els)
+    word = _word_t(utts[1], "좁혀서")
+    assert abs(g.start + els[1]["at"] + 0.4 + 0.2 - word) <= 0.01
+    assert abs(g.start + els[2]["at"] + 0.5 + 0.2 - word) <= 0.01               # 같은 낱말에 둘이 착지해도 뒤의 것을 버리지 않는다
+    assert abs(els[1]["out"] - els[1]["at"] - 1.5) <= 0.01                      # 퇴장도 같이 밀린다
+    assert "wordMarks" not in g.data["spec"]
+    assert [m["spoken"] for m in g.data["wordMarks"]] == [pytest.approx(word, abs=0.01)] * 2    # 못 찾은 낱말은 잴 수 없어 빠진다
+    synced = gate.a18_word_sync([{"start": g.start, "data": g.data}])
+    assert synced.ok and synced.measured["n"] == 2 and synced.measured["max"] == pytest.approx(0.2, abs=0.01)
+    assert els[3]["at"] == 3.0 and len(logs) == 1 and "없는말" in logs[0]       # 못 찾으면 디자이너 값 + 로그
+
+
 def test_consecutive_highlight_graphics_merge_into_one_stepped_graphic():
     """AI 가 예전처럼 같은 도식을 highlight 만 바꿔 셋 이어 내도 하나로 합쳐 낱말(각 그래픽의 start_word)에서 바꾼다."""
     utts = _utts()
@@ -89,8 +143,8 @@ def test_step_words_must_move_forward():
     assert abs(at[1]["t"] - u.words[3].start) < 1e-6
 
 
-def test_hold_span_blocks_recap_and_callout():
-    """홀드(13~29.5초) 안에는 콜아웃·강조·효과음·정리 보드가 없다 — 밖의 같은 것은 그대로."""
+def test_hold_span_blocks_callout():
+    """홀드(13~29.5초) 안에는 콜아웃·효과음이 없다 — 밖의 같은 것은 그대로."""
     tm = TimeMap([Span(0.0, 120.0)])
     holds = [(13.0, 29.5)]
     moments = [Moment(t=20.0, end=21.0, kind="reveal", intensity=3, callout="거꾸로\n했다", label="고백"),
@@ -104,16 +158,9 @@ def test_hold_span_blocks_recap_and_callout():
         return 13.0 <= t <= 29.5
     assert not any(inside(c["start"]) or inside(c["end"]) for c in ed.callouts)
     assert any(abs(c["start"] - 60.0) < 2.0 for c in ed.callouts)               # 밖의 콜아웃은 그대로
-    assert not any(inside(p["t"]) for p in ed.punches) and not any(inside(x["t"]) for x in ed.sfx)
-    assert any(a <= 12.3 and b >= 13.0 for a, b in ed.bgm_dips)                 # 홀드 앞 숨(음악 비움)
+    assert not any(inside(x["t"]) for x in ed.sfx)
+    assert ed.bgm_dips == []                                                    # 비우기는 정점·챕터 끝에서만
     assert ed.stats["holds"] == 1
-    # 정리 보드는 홀드를 피한다(자리가 없으면 건너뜀)
-    gd = [{"id": "g1", "template": "keyword", "layout": "overlay", "start": 5.0, "end": 9.0, "data": {"title": "순서"}},
-          {"id": "g2", "template": "definition", "layout": "split", "start": 10.0, "end": 13.0,
-           "data": {"title": "발견", "body": "넓게 보기"}}]
-    chapters = [{"start": 0.0, "title": "순서", "number": "01"}, {"start": 30.0, "title": "다음", "number": "02"}]
-    recaps = chapter_recaps(gd, chapters, 120.0, avoid=holds)
-    assert not any(r["start"] < 29.5 and r["end"] > 13.0 for r in recaps)
 
 
 def test_pipeline_drops_graphics_inside_holds_but_keeps_script_tags():
@@ -223,21 +270,20 @@ def test_brief_sequence_schema_is_strict():
     assert {"holds", "rhythm", "peak_seg"} <= set(S.EDITOR["properties"])
 
 
-def test_rhythm_levels_cluster_emphasis_in_fast_spans():
-    """강조는 고르게 뿌리지 않고 fast 구간에 몰린다(6초 간격) — 선언이 없는 곳은 예전 간격(40초) 그대로."""
+def test_rhythm_levels_tighten_callout_gap_only_in_fast_spans():
+    """콜아웃은 fast 구간에서만 촘촘해진다(15초) — 선언이 없는 곳은 기본 간격(20초) 그대로."""
     tm = TimeMap([Span(0.0, 200.0)])
-    moments = [Moment(t=t, end=t + 1.0, kind="punchline", intensity=2) for t in (20.0, 27.0, 34.0, 120.0, 130.0)]
+    moments = [Moment(t=t, end=t + 1.0, kind="punchline", intensity=2, callout="핵심") for t in (20.0, 36.0, 120.0, 136.0)]
     cues = [{"start": t, "end": t + 1.9, "lines": [[{"text": "말", "start": t, "end": t + 0.5}]]}
             for t in range(0, 200, 2)]
     kw = dict(timemap=tm, total=200.0, speech_total=200.0, graphics=[], chapters=[], moments=moments, cues=cues,
               sentence_starts=[0.0, 60.0, 120.0])
     plain = build_long_edit(**kw)
     fast = build_long_edit(**kw, rhythm=[(15.0, 40.0, "fast")])
-    t_plain = [p["t"] for p in plain.punches]
-    t_fast = [p["t"] for p in fast.punches]
-    assert 27.0 not in t_plain and 34.0 not in t_plain                    # 40초 간격
-    assert {20.0, 27.0, 34.0} <= set(t_fast)                             # fast 구간 안에서는 6초 간격
-    assert 130.0 not in t_fast                                           # 밖은 그대로
+    t_plain = [round(c["start"] + 0.08, 2) for c in plain.callouts]
+    t_fast = [round(c["start"] + 0.08, 2) for c in fast.callouts]
+    assert t_plain == [20.0, 120.0]                                      # 20초 간격
+    assert t_fast == [20.0, 36.0, 120.0]                                 # fast 구간 안에서만 15초 간격
 
 
 def test_hold_spans_drop_holds_chained_within_hold_gap():
@@ -257,3 +303,19 @@ def test_hold_spans_drop_holds_chained_within_hold_gap():
     assert all(b2 >= a1 + PARAMS["hold_gap"] for (_, a1), (b2, _) in zip(holds, holds[1:]))
     p._respect_holds([])
     assert any("뺀 홀드 1곳" in m for m in logs)
+
+
+def test_argument_tags_survive_renormalize_and_become_badges():
+    utts = _utts()
+    raw = {"studio": {"beats": [{"start_seg": 2, "argument_tag": "이유 1"}, {"start_seg": 3, "argument_tag": ""},
+                                {"start_seg": 5, "argument_tag": "이유 2 아주아주아주아주아주아주아주아주 긴 태그"}, "bad"]}}
+    plan = normalize_long(raw, utts, [])
+    assert plan["argument_tags"][0] == {"seg": 2, "tag": "이유 1"} and len(plan["argument_tags"]) == 2
+    assert len(plan["argument_tags"][1]["tag"]) == 18
+    assert normalize_long(plan, utts, [])["argument_tags"] == plan["argument_tags"]      # 저장된 계획을 다시 정규화해도
+    seg_t = {1: (10.0, 14.0), 2: (50.0, 54.0), 3: (120.0, 124.0), 4: (216.0, 220.0), 5: (400.0, 404.0)}
+    tags = [{"seg": s, "tag": f"이유 {s}"} for s in (1, 2, 3, 4, 5)]
+    out = argument_badges(tags, seg_t, [(118.0, 125.0), (398.0, 430.0)], 500.0)
+    assert [(g.template, g.layout, g.data) for g in out[:1]] == [("lower_third", "overlay", {"slot": "badge", "title": "이유 1"})]
+    # 2 는 앞 배지에서 90초 안 · 3 은 전면 그래픽 뒤로 밀림 · 4 는 밀린 3 에서 90초 뒤 · 5 는 12초 넘게 밀려야 해서 뺌
+    assert [g.start for g in out] == [10.0, 125.3, 216.0] and all(abs(g.end - g.start - 3.0) < 1e-6 for g in out)

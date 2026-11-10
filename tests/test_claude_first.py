@@ -110,10 +110,10 @@ def test_directed_sfx_only_where_asked():
           {"template": "motion", "start": 2.0, "end": 5.0, "data": {"sfx": "whoosh_soft"}},      # 첫 3초 — 빼기
           {"template": "broll", "start": 50.0, "end": 55.0, "data": {"sfx": "whoosh_soft"}}]     # 홀드 안 — 빼기
     out = directed_sfx(gs, [(30.0, "paper"), (40.0, "none")], holds=[(48.0, 56.0)], total=120.0)
-    assert [(e["t"], e["category"]) for e in out] == [(10.0, "pop"), (30.6, "paper")]           # 단락 효과음은 그래픽 등장에 맞춤
-    assert all(e["gain_db"] <= -20 for e in out)
+    assert [(e["t"], e["category"]) for e in out] == [(10.4, "pop"), (31.0, "paper")]           # 단락 효과음은 그래픽이 닿는 순간에 맞춤
+    assert all(-20 <= e["gain_db"] <= -10 for e in out)
     many = [{"template": "card", "start": 5.0 + 3 * k, "end": 6.0 + 3 * k, "data": {"sfx": "click"}} for k in range(10)]
-    assert len(directed_sfx(many, [], total=120.0)) == 3                                       # 60초 창 3개(게이트 D5)
+    assert len(directed_sfx(many, [], total=120.0)) == 4                                       # 60초 창 4개(게이트 D5)
 
 
 def test_stationery_palette_uses_real_files(tmp_path):

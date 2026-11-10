@@ -32,6 +32,7 @@ def load_prompt(name: str) -> str:
 def system_prompt() -> str:
     parts = [
         load_prompt("system_director.md"),
+        "\n\n" + load_prompt("format_talkshow.md"),
         "\n\n# 채널 스타일 가이드\n\n" + load_prompt("style_guide.md"),
         "\n\n# 숏폼 후킹 가이드\n\n" + load_prompt("hooks.md"),
         "\n\n# 그래픽 템플릿 카탈로그\n\n" + catalog_markdown(),

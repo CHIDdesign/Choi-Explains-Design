@@ -21,6 +21,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from studio.director.images import MANY_EDGE, fit_images  # noqa: E402
 
@@ -70,11 +71,11 @@ def test_lean_system_repeated_context_and_staggered_starts(monkeypatch):
     fake = _FakeClaude()
     st = S.Studio(fake)
     st.call("colorist", "공통 자료", "색을 본다")
-    st.call("director", "공통 자료", "브리프")
+    st.call("copy", "공통 자료", "브리프")
     by = {c["label"]: c for c in fake.calls}
-    lean, full = by["🎨 컬러리스트"]["system"], by["🎬 총괄 감독"]["system"]
+    lean, full = by["🎨 컬러리스트"]["system"], by["✍️ 카피라이터"]["system"]
     assert len(lean) * 4 < len(full) and "모션" not in lean.split("# 채널 스타일 가이드")[0][-50:]
-    assert "ctx_in_system" not in by["🎬 총괄 감독"]                   # 한 번만 부르는 역할은 그대로
+    assert "ctx_in_system" not in by["✍️ 카피라이터"]                   # 한 번만 부르는 역할은 그대로
 
     fake.calls.clear()
     threads = [threading.Thread(target=st.call, args=("motion_revise", "공통 자료", f"장면 {i}")) for i in range(3)]
@@ -89,15 +90,13 @@ def test_lean_system_repeated_context_and_staggered_starts(monkeypatch):
     assert st._running.get("motion_revise") == 0
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh shim")
 def test_cli_puts_context_into_system_when_asked(tmp_path, monkeypatch):
     from test_claude_code import FAKE, SCHEMA
     from studio.director.claude_code import ClaudeCodeClient
     script = tmp_path / "fake_claude.py"
     script.write_text(FAKE, encoding="utf-8")
-    shim = tmp_path / "claude"
-    shim.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
-    shim.chmod(0o755)
+    from cli_shim import make_shim     # Windows 는 .exe 런처(sh 를 못 돌린다)
+    shim = make_shim(script, tmp_path)
     log = tmp_path / "log.jsonl"
     monkeypatch.setenv("FAKE_LOG", str(log))
     logs: list[str] = []

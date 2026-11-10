@@ -17,16 +17,15 @@ def _scores(v: int) -> dict:
     return {k: v for k in S.CRITIC_SCORES}
 
 
-def test_verdict_is_fail_closed():
+def test_verdict_rejects_only_concrete_failures():
     ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": _scores(8)})
     assert ok and why == []
     assert not ST.critic_verdict({"verdict": "pass", "hard_failures": ["네온 글로우"], "scores": _scores(9)})[0]
-    assert not ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": {**_scores(9), "motion": 5}})[0]
-    ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": _scores(6)})
-    assert not ok and any("평균" in w for w in why)                      # 모두 6 → 평균 6.0 < 7
-    assert not ST.critic_verdict({"verdict": "reject", "hard_failures": [], "scores": _scores(8)})[0]
+    # 점수만 낮은 장면은 탈락이 아니다(리포트 규칙 60 — 한 장면의 모델 점수는 사람끼리도 일치하지 않는다)
+    assert ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": {**_scores(9), "motion": 5}})[0]
+    assert ST.critic_verdict({"verdict": "reject", "hard_failures": [], "scores": _scores(3)})[0]
     ok, why = ST.critic_verdict({"verdict": "pass", "hard_failures": [], "scores": {}})
-    assert not ok and len(why) == len(S.CRITIC_SCORES)                  # 점수 칸이 비면 통과가 아니다
+    assert not ok and len(why) == len(S.CRITIC_SCORES)                  # 점수 칸이 비면 응답 모양이 틀린 것 — 통과가 아니다
 
 
 class FakeClaude:
@@ -45,7 +44,6 @@ class FakeClaude:
 def test_critique_sends_render_images_speech_and_kind():
     fc = FakeClaude()
     st = ST.Studio(fc, workers=2, use_stock=False)
-    st.house_board = lambda: None
     res = st.critique("ctx", "g3", "자유 카드", "좋은 질문이 먼저입니다", [("g3", b"still", "image/jpeg"), ("g3#seq", b"seq", "image/jpeg")])
     assert res["verdict"] == "reject"
     c = fc.calls[-1]

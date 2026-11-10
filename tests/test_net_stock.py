@@ -149,12 +149,14 @@ def test_diagnostics_zip_hides_keys(tmp_path):
     (p.work / "big.wav").write_bytes(b"0" * 10)
     p.settings = Settings()
     p.settings.pixabay_api_key = "SECRET-KEY-123"
+    p.settings.gemini_key, p.settings.serpapi_key = "AIza-SECRET-456", "SERP-SECRET-789"
     z = diag.write(p, error="boom")
     names = zipfile.ZipFile(z).namelist()
     assert "work/plan.json" in names and "work/진단.md" in names and "work/big.wav" not in names
     md = (p.work / "진단.md").read_text(encoding="utf-8")
-    assert "pixabay_api_key: 있음" in md and "SECRET-KEY-123" not in md
-    assert all(b"SECRET-KEY-123" not in zipfile.ZipFile(z).read(n) for n in names)
+    assert "pixabay_api_key: 있음" in md and "gemini_key: 있음" in md and "serpapi_key: 있음" in md
+    assert not any(s in md for s in ("SECRET-KEY-123", "AIza-SECRET-456", "SERP-SECRET-789"))
+    assert all(b"SECRET" not in zipfile.ZipFile(z).read(n) for n in names)
 
 
 class _FlakyProvider:

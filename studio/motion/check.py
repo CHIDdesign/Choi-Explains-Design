@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..paths import RENDERER_DIR
+from ..render.assets import make_textures
 from ..util import CancelToken, LogFn, noop_log, run_process, write_json
 from .card import card_settle_time
 
@@ -31,18 +32,21 @@ def problem_lines(result: dict[str, Any]) -> list[str]:
 
 def check_cards(cards: list[dict[str, Any]], *, node: str, out_dir: Path, fps: int, durations: dict[str, float],
                 browser_executable: str = "", gl: str = "", log: LogFn = noop_log,
-                cancel: Optional[CancelToken] = None) -> dict[str, dict[str, Any]]:
-    """cards: 정리된 CardSpec(id 포함) 목록. durations: id → 카드 길이(초)."""
+                cancel: Optional[CancelToken] = None, public_dir: Optional[Path] = None) -> dict[str, dict[str, Any]]:
+    """cards: 정리된 CardSpec(id 포함) 목록. durations: id → 카드 길이(초). public_dir: 카드의 images/… 가 있는 폴더(미리보기용)."""
     if not cards:
         return {}
     out_dir.mkdir(parents=True, exist_ok=True)
+    if any("data-surface" in c["html"] for c in cards):
+        make_textures(RENDERER_DIR / "public" / "fx" / "tex")      # 카드 검사는 렌더 준비(_prepare_render)보다 먼저 돈다
     job = {
         "browserExecutable": browser_executable, "gl": gl, "outDir": str(out_dir),
+        **({"publicDir": str(public_dir)} if public_dir else {}),
         "cards": [{
             "id": c["id"], "html": c["html"], "css": c["css"], "w": int(c.get("w", 1920)), "h": int(c.get("h", 1080)),
             "fps": int(fps), "duration": float(durations.get(c["id"], 8.0)),
             "settle": min(float(durations.get(c["id"], 8.0)) - 0.2, card_settle_time(c) + 0.3),
-            "layout": c.get("layout", "fullscreen"),
+            "layout": c.get("layout", "fullscreen"), "archetype": c.get("archetype", ""),
             "timeline": str(c.get("timeline") or ""),      # 직접 쓴 GSAP 타임라인(card_dsl.md 7절)
             # 미리보기 프레임: 초 목록 또는 "auto"(정착을 잰 뒤 0.5초 · 35% · 70% · 정착 · 머무는 끝)
             **({"shots": "auto" if c["shots"] == "auto" else [float(t) for t in c["shots"]][:8]} if c.get("shots") else {}),

@@ -59,7 +59,7 @@ def build_proxy(
     vf.append(f"scale=-2:{height}:flags=lanczos")
     vf += list(pre_filters or [])
     if lut:
-        vf.append(f"scale=in_color_matrix={matrix if not info.is_hdr else 'bt709'},format=gbrp")
+        vf.append(f"scale=in_color_matrix={matrix if not info.is_hdr else 'bt709'},format=gbrpf32le")
         vf.append(f"lut3d=file={_escape_filter_path(lut)}:interp=tetrahedral")
         vf.append("scale=out_color_matrix=bt709:out_range=tv")
     vf += list(post_filters or [])
@@ -78,9 +78,23 @@ class _NotPcm(Exception):
     pass
 
 
+def _rms(x: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(np.square(x)))) if len(x) else 0.0
+
+
+def _seam_ok(prev_end: int, next_start: int, handle: Optional[np.ndarray], edge_rms: float) -> bool:
+    """앞 keep 끝 뒤의 원본(handle)을 다음 keep 머리에 섞어도 되는가. 다음 keep 과 겹치는 간격(같은 소리가 두 번 더해짐),
+    원본 밖·사실상 무음(앞 keep 이 계단처럼 끝남), 가장자리보다 +6dB 넘게 큰 핸들(지운 말이 샘)이면 예전 선형 페이드로."""
+    if handle is None or abs(next_start - prev_end) < len(handle):
+        return False
+    return max(1.0, edge_rms * 0.01) <= _rms(handle) <= edge_rms * 2.0
+
+
 def _cut_wav(src: Path, keeps: list[Span], dst: Path, *, fade: float, progress: ProgressFn,
              cancel: Optional[CancelToken]) -> float:
-    """16bit PCM WAV 를 keep 대로 표본 단위로 잘라 붙인다(구간마다 선형 페이드 인·아웃, afade 기본 곡선과 같음).
+    """16bit PCM WAV 를 keep 대로 표본 단위로 잘라 붙인다. 이음새는 원본 핸들로 equal-power 크로스페이드 — 앞 keep 은 끝까지
+    그대로 두고 그 끝 뒤 원본 × cos 를 다음 keep 머리 × sin 에 더한다(출력 표본 수 불변, 룸톤이 파이지 않음). 원본에서 이어지는
+    keep(간격 0)은 그냥 잇고, 첫 시작·마지막 끝·짧은 keep·`_seam_ok` 가 거절한 이음새는 선형 페이드(afade 기본 곡선과 같음).
     원본 끝을 넘는 keep 은 무음으로 채워 길이를 영상과 맞춘다."""
     import wave
     try:
@@ -93,14 +107,17 @@ def _cut_wav(src: Path, keeps: list[Span], dst: Path, *, fade: float, progress: 
             raise _NotPcm(f"{width * 8}bit {sr}Hz {ch}ch")
         tmp = dst.with_name(dst.stem + ".part.wav")
         total = 0.0
+        spans = [(int(round(k.start * sr)), int(round(k.end * sr))) for k in keeps]
+        xf = int(round(fade * sr))
+        p = (np.arange(xf, dtype=np.float32) / max(1, xf))[:, None] * (np.pi / 2)
+        fade_in, into = True, None     # 이번 keep 머리: 선형 페이드를 거는가 · 섞을 앞 keep 의 핸들
         with wave.open(str(tmp), "wb") as w:
             w.setnchannels(ch)
             w.setsampwidth(2)
             w.setframerate(sr)
-            for i, k in enumerate(keeps):
+            for i, (a, b) in enumerate(spans):
                 if cancel and i % 50 == 0:
                     cancel.check()
-                a, b = int(round(k.start * sr)), int(round(k.end * sr))
                 n = max(0, b - a)
                 total += n / sr
                 buf = np.zeros((n, ch), np.float32)
@@ -108,11 +125,27 @@ def _cut_wav(src: Path, keeps: list[Span], dst: Path, *, fade: float, progress: 
                     r.setpos(max(0, a))
                     got = np.frombuffer(r.readframes(min(n, total_frames - a)), np.int16).reshape(-1, ch)
                     buf[:len(got)] = got
+                # 이음새 판정은 표본을 건드리기 전에(가장자리 RMS 는 원본 값으로)
+                fade_out, out = True, None
+                if i + 1 < len(spans):
+                    na, nb = spans[i + 1]
+                    if na == b:
+                        fade_out = False
+                    elif xf > 0 and min(n, nb - na) >= 4 * xf and b + xf <= total_frames:
+                        r.setpos(b)
+                        handle = np.frombuffer(r.readframes(xf), np.int16).reshape(-1, ch).astype(np.float32)
+                        if _seam_ok(b, na, handle, _rms(buf[n - xf:])):
+                            fade_out, out = False, handle
                 nf = min(int(round(min(fade, (n / sr) / 4) * sr)), n // 2)
                 if nf > 0:
                     ramp = np.linspace(0.0, 1.0, nf, dtype=np.float32)[:, None]
-                    buf[:nf] *= ramp
-                    buf[n - nf:] *= ramp[::-1]
+                    if fade_in:
+                        buf[:nf] *= ramp
+                    if fade_out:
+                        buf[n - nf:] *= ramp[::-1]
+                if into is not None:
+                    buf[:xf] = buf[:xf] * np.sin(p) + into * np.cos(p)
+                fade_in, into = fade_out, out
                 w.writeframes(np.clip(np.round(buf), -32768, 32767).astype("<i2").tobytes())
                 progress((i + 1) / len(keeps))
         tmp.replace(dst)
@@ -131,7 +164,7 @@ def cut_audio(
     progress: ProgressFn = noop_progress,
     cancel: Optional[CancelToken] = None,
 ) -> float:
-    """keep 구간대로 음성을 잘라 붙인다. 이음새마다 12ms 페이드로 '틱' 잡음을 막는다.
+    """keep 구간대로 음성을 잘라 붙인다. 이음새는 12ms 크로스페이드(또는 선형 페이드)로 '틱' 잡음을 막는다.
     보이스 트랙(48kHz 16bit WAV)은 표본을 직접 잘라 붙인다 — ffmpeg asplit 는 컷 수 × 전체 길이만큼 돌아
     컷이 많은 긴 영상에서 몇 분씩 걸렸다(20분 · 400컷 54초 → 1초 미만). 다른 형식이면 ffmpeg 로."""
     work_dir = Path(work_dir)

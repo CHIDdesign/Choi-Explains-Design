@@ -21,8 +21,8 @@ class Brand:
     ink: str = "#111111"
     paper: str = "#F4F4F2"
     year: str = "2026"
-    # 디자인 색: ember = 채널 오렌지(#FC5400, 디자인 v4 기본) · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
-    palette: str = "ember"
+    # 디자인 색: talk = 토크쇼(오렌지 표식 + 숲색 띠, 디자인 v5 기본) · ember = 채널 오렌지 · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
+    palette: str = "talk"
 
 
 @dataclass
@@ -41,7 +41,10 @@ class Settings:
     claude_code_path: str = ""        # 비우면 자동 탐색(%USERPROFILE%\.local\bin\claude.exe, PATH)
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
-    claude_effort: str = "xhigh"      # 사고 강도 하나가 모든 에이전트에(채널 주인 2026-10-03: 에이전트별 조절 대신 전역 하나)
+    claude_effort: str = "xhigh"      # 전역 사고 강도(agent_routing="global" 일 때 모든 에이전트, auto 면 표에 없는 역할만)
+    # 🏢 agentcompany(채널 주인 2026-10-27): auto = 역할마다 일의 무게에 맞는 모델·사고 강도(studio/agents/studio.py ROUTING,
+    # 긴 자료는 한 단계 더) · global = 위의 모델·강도 하나를 모두에게(2026-10-03 방식)
+    agent_routing: str = "auto"
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
@@ -60,6 +63,9 @@ class Settings:
     # Google 이미지(SerpApi — serpapi.com 가입하면 대시보드에 키, 무료 월 250회·카드 없음). 재사용 가능 라이선스만 쓰고 원문 페이지에서
     # 라이선스를 다시 확인한다. 인용(아래 allow_quote)이 켜져 있으면 그 대상 자체를 설명하는 문장에서 인용 이미지도(출처·사유 표기)
     serpapi_key: str = ""
+    # 👂 Gemini(소리 듣기, studio/sound/listen.py) — 곡·효과음 후보와 완성 믹스의 짧은 발췌를 Google 에 보내 듣게 한다.
+    # 비우면 환경 변수 GEMINI_API_KEY → ~/.config/watch/.env 순으로 찾는다
+    gemini_key: str = ""
     museum_search: bool = True       # 미술관 오픈 액세스(시카고·메트·클리블랜드, CC0) — 이름 있는 작품·제품·사물(키 없음)
     # C 등급(인용) 자료 — 웹·앱 화면 캡처, 논문 첫 화면, 비자유 대표 이미지. 그 대상을 설명하는 문장에서만 6초 이내·종이 위.
     # 기본 끔(작업지시서 WP7) — 켜면 자료 대장·검토 시트에 인용 목록이 남는다(docs/upgrade/저작권_위험등급_정책.md)
@@ -70,22 +76,21 @@ class Settings:
     # 효과음: directed = 🎬 총괄 감독(Claude)이 트리트먼트에서 고른 곳에만(기본, docs/upgrade/14) · auto = 예전 규칙(템플릿마다)
     #         · off = 없음
     sfx_mode: str = "directed"
-    music_mode: str = "mine"         # 배경음악: mine = 내 음악 폴더의 곡만 · library = 기본 라이브러리 · off = 없음
+    # 배경음악: auto = 내 음악 폴더, 비어 있으면 이 작업에 맞는 곡을 찾아 받음 · mine = 내 음악 폴더의 곡만 · library = 기본 라이브러리 · off = 없음
+    music_mode: str = "auto"
+    music_mode_v: int = 2            # 없으면 auto 가 생기기 전에 저장한 설정(from_dict)
     music_dir: str = ""              # 내 음악 폴더(비우면 user/music)
     # 🎬 AI 스튜디오(멀티 에이전트) — Claude 총괄 제작(docs/upgrade/14): 조사·기획·디자인 판단은 Claude 가 하고,
     # 같은 품질을 낼 수 있는 기계적인 일(음성 인식·얼굴 추적·색 측정·렌더·믹스)만 다른 알고리즘이 한다
     research_web: bool = True         # 🔎 주제 조사·🛠 시그니처 장면이 웹 검색·가져오기를 쓴다(끄면 기억으로만)
-    sfx_motion_auto: bool = True      # 장면 전환·모션 등장에 흔한 효과음(우시·스우시·팝·클릭·타이핑·딩)을 자동으로(감독 지정과 함께)
+    sfx_motion_auto: bool = True      # 그래픽이 들어올 때 템플릿별 효과음을 자동으로(감독 지정과 함께, 사진·문서는 무음)
     studio_workers: int = 6           # 동시에 일하는 전문 에이전트 수(전문가 여섯이 한 번에 — 줄이면 둘째 줄이 기다린다)
     # 🎨 디자인 취향(채널 주인 2026-10-04: "PPT 같다 — 디자인 taste 를 대폭 업그레이드")
-    style_frame: bool = True          # 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 먼저 확정해 모든 디자이너에게
-    design_variants: int = 3          # 🛠 시그니처 장면마다 시안 수(렌더해 🧑‍⚖️ 심사가 고름) — 1 이면 경쟁 없이 한 안
+    style_frame: bool = False         # 장면을 짓기 전에 이 영상의 룩(스타일 프레임 한 장 + 규칙)을 먼저 확정해 모든 디자이너에게
+    design_variants: int = 1          # 🛠 시그니처 장면마다 시안 수(렌더해 🧑‍⚖️ 심사가 고름) — 1 이면 경쟁 없이 한 안
     # 🧑‍⚖️ 장면 심사(2026-10-04 채널 주인: "AI 슬롭 느낌 · 불안정") — 카드·모션 장면마다 만든 역할이 아닌 심사가 렌더를 보고
     # 하드 실패(네온·가짜 UI·PPT·내레이션 되풀이 …)·점수로 거른다. 탈락 → 고쳐서 재심사 → 그래도 탈락이면 단순 카드로(fail-closed)
     design_critic: bool = True
-    # 🖥 모니터 질감(2026-10-04 채널 주인 레퍼런스 릴스): 전면 그래픽·숏폼 위 카드에 아주 약간의 흐림·개체마다 번지는 빛·
-    # 서브픽셀 격자·주사선·입자·비네트. 0 = 끔, 1 = 기본(화자·사진·스톡·자막에는 얹지 않는다)
-    screen_look: float = 1.0
     # (예전) 에이전트별 덮어쓰기 — 설정 창에서 뺐다(모델·사고 강도는 전역 하나). 파일에 남아 있으면 그 에이전트에만 적용된다
     agent_effort: dict[str, str] = field(default_factory=dict)
     agent_models: dict[str, str] = field(default_factory=dict)
@@ -123,6 +128,14 @@ class Settings:
         # 예전 기본값(4)으로 저장된 설정: 전문가 여섯 중 둘이 앞 넷을 기다려 기획이 한 바퀴 더 걸렸다 → 6
         if raw.get("studio_workers") == 4:
             s.studio_workers = 6
+        # v5 이전에 저장한 설정(지금은 없는 screen_look 이 남아 있다): 예전 기본값이 그대로 저장돼 있으므로 v5 기본으로
+        if "screen_look" in raw:
+            s.style_frame, s.design_variants = False, 1
+            if s.brand.palette == "ember":
+                s.brand.palette = "talk"
+        # auto 전의 'mine' 은 고른 값이 아니라 저장된 예전 기본값이다(채널 주인 2026-11-10: "내가 다 해줘야 돼?") — 폴더에 곡이 있으면 auto 도 그 곡을 쓴다
+        if raw.get("music_mode") == "mine" and "music_mode_v" not in raw:
+            s.music_mode = "auto"
         # 작업 폴더: 비어 있으면 기본(프로그램 폴더/projects). 프로그램 폴더를 옮기고 예전 폴더를 지웠으면(설치 안내대로
         # D:\ChoiStudio 로 옮긴 경우) 예전 절대 경로 대신 기본으로 — 꽉 찬 C: 에 예전 경로를 다시 만들지 않게
         pd = str(s.projects_dir or "")

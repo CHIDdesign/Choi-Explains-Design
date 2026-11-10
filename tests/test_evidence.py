@@ -411,7 +411,7 @@ def _tg(i, tpl, layout, a, b, **data):
     return {"id": f"g{i}", "template": tpl, "layout": layout, "start": a, "end": b, "data": data}
 
 
-def test_b_gates_measure_real_media_and_promote_hero():
+def test_b_gates_measure_real_media():
     gs = [_tg(0, "photo", "pip", 10, 14, image="images/a.jpg"), _tg(1, "keyword", "overlay", 20, 24, title="x"),
           _tg(2, "photo", "pip", 100, 104, image="images/l.svg", logo=True)]
     b1 = gate.b1_media_ratio(gs, 200.0)
@@ -420,10 +420,7 @@ def test_b_gates_measure_real_media_and_promote_hero():
     assert gate.b1_media_ratio(gs + [_tg(3, "broll", "fullscreen", 30, 115, src="b.mp4")], 200.0).ok      # 44%
     chapters = [{"start": 0.0}, {"start": 90.0}]
     b2 = gate.b2_hero_per_chapter(gs, chapters, 200.0)
-    assert not b2.ok and b2.measured["lacking"] == [[0.0, 90.0]]
-    plan = [{"template": "photo", "layout": "pip"}, {"template": "keyword", "layout": "overlay"},
-            {"template": "photo", "layout": "pip"}]
-    assert gate.promote_hero(plan, gs, b2.measured["lacking"]) == 1 and plan[0]["layout"] == "fullscreen"
+    assert not b2.ok and b2.measured["lacking"] == [[0.0, 90.0]] and b2.level == "warn" and not b2.repair
     ev = _tg(4, "evidence", "fullscreen", 40, 45, assets=[{"src": "x", "kind": "photo", "score": 1}])
     assert gate.b2_hero_per_chapter([ev], chapters, 200.0).ok
     assert not gate.b6_pick_scores([ev]).ok and gate.b6_pick_scores(gs).ok
