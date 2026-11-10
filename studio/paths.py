@@ -13,6 +13,7 @@ TOOLS_DIR = ROOT / "tools"          # setup_windows.bat 이 받은 휴대용 Nod
 USER_DIR = Path(os.environ.get("CHOI_STUDIO_USER_DIR", ROOT / "user"))
 DEFAULT_PROJECTS_DIR = ROOT / "projects"
 SETTINGS_FILE = USER_DIR / "settings.json"
+KEY_DIR = ROOT / "key"              # API 키 JSON 을 두는 폴더(이 PC 에만, 저장소에는 올리지 않는다)
 
 
 def ensure_user_dirs() -> None:

@@ -265,3 +265,23 @@ def test_parse_keys_splits_pasted_lines_into_setting_fields():
     got = parse_keys('PIXABAY_API_KEY=abc\nexport GEMINI_API_KEY="AIza-x"\nGoogle 이미지 (SerpApi): s1\nUnsplash : u1\n모르는_키=zz\n이름 없는 줄')
     assert got == {"pixabay_api_key": "abc", "gemini_key": "AIza-x", "serpapi_key": "s1", "unsplash_access_key": "u1"}
     assert all(hasattr(Settings(), f) for f in got)
+
+
+def test_key_folder_json_fills_keys_and_is_not_copied_into_settings_file(tmp_path, monkeypatch):
+    import json
+    from studio import settings as S
+    key_dir, settings_file = tmp_path / "key", tmp_path / "settings.json"
+    key_dir.mkdir()
+    (key_dir / "keys.json").write_text(json.dumps({"PIXABAY_API_KEY": "dummy-p", "gemini": " dummy-g ", "serpapi_key": "dummy-s",
+                                                   "unsplash": {"access_key": "dummy-u"}, "pexels": "", "모르는": "zz"}), encoding="utf-8-sig")
+    (key_dir / "broken.json").write_text("{", encoding="utf-8")
+    settings_file.write_text(json.dumps({"pixabay_api_key": "old", "coverr_api_key": "kept"}), encoding="utf-8")
+    monkeypatch.setattr(S, "KEY_DIR", key_dir)
+    monkeypatch.setattr(S, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(S, "ensure_user_dirs", lambda: None)
+    s = S.Settings.load()
+    assert (s.pixabay_api_key, s.gemini_key, s.serpapi_key, s.unsplash_access_key) == ("dummy-p", "dummy-g", "dummy-s", "dummy-u")
+    assert (s.coverr_api_key, s.pexels_api_key) == ("kept", "")
+    s.save()
+    saved = json.loads(settings_file.read_text(encoding="utf-8"))
+    assert saved["pixabay_api_key"] == "" and saved["gemini_key"] == "" and saved["coverr_api_key"] == "kept"

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from .paths import DEFAULT_PROJECTS_DIR, SETTINGS_FILE, USER_DIR, ensure_user_dirs
+from .paths import DEFAULT_PROJECTS_DIR, KEY_DIR, SETTINGS_FILE, USER_DIR, ensure_user_dirs
 
 
 @dataclass
@@ -106,13 +106,13 @@ class Settings:
     # ------------------------------------------------------------------
     @classmethod
     def load(cls) -> "Settings":
-        if not SETTINGS_FILE.exists():
-            return cls()
         try:
-            raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return cls()
-        return cls.from_dict(raw)
+            s = cls.from_dict(json.loads(SETTINGS_FILE.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):     # 파일이 없어도 OSError
+            s = cls()
+        for name, value in key_dir_keys().items():  # key 폴더가 설정 파일을 이긴다
+            setattr(s, name, value)
+        return s
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Settings":
@@ -149,6 +149,9 @@ class Settings:
         d = asdict(self)
         if Path(d.get("projects_dir") or "") == DEFAULT_PROJECTS_DIR:
             d["projects_dir"] = ""          # 기본 폴더는 비워 저장 → 프로그램 폴더를 옮겨도 따라간다
+        for name, value in key_dir_keys().items():
+            if d.get(name) == value:
+                d[name] = ""                # key 폴더에서 온 키는 설정 파일에 또 적지 않는다(키는 한 곳에만)
         SETTINGS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +171,25 @@ def parse_keys(text: str) -> dict[str, str]:
         field_name = next((f for k, f in KEY_FIELDS.items() if k in name), None)
         if m and field_name:
             out[field_name] = m[2]
+    return out
+
+
+def key_dir_keys() -> dict[str, str]:
+    """key 폴더의 *.json({"이름": "값"}) → {설정 칸 이름: 값}. 이름은 설정 칸 이름 그대로이거나 제공처 이름이 들어 있으면 된다
+    (PIXABAY_API_KEY · gemini · {"pixabay": {"api_key": "…"}}). 저장소에는 올리지 않는다(.gitignore key/)."""
+    out: dict[str, str] = {}
+    for p in sorted(KEY_DIR.glob("*.json")):
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8-sig"))     # 메모장 BOM
+        except (OSError, ValueError):
+            continue
+        for name, value in (raw.items() if isinstance(raw, dict) else ()):
+            if isinstance(value, dict):
+                value = next((v for v in value.values() if isinstance(v, str)), "")
+            n = str(name).lower().replace(" ", "")
+            field_name = n if n in KEY_FIELDS.values() else next((f for k, f in KEY_FIELDS.items() if k in n), None)
+            if field_name and isinstance(value, str) and value.strip():
+                out[field_name] = value.strip()
     return out
 
 
