@@ -17,6 +17,8 @@ renderer/.remotion/
 user/
 projects/
 *.log
+.env
+.env.*
 
 # 에이전트 실행 기록(인수인계·감사 결과) — 프로젝트 스킬만 저장소에 둔다
 .omc/*

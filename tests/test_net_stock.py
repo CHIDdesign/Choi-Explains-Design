@@ -258,3 +258,10 @@ def test_openverse_filters_nc_nd_and_uses_attribution(monkeypatch):
     assert got[1].credit == "Public Domain · smithsonian via Openverse"
     assert not any(license_ok(c) for c in ("by-nc", "by-nd", "by-nc-sa", "by-nc-nd", "sampling+", "", "nc-sampling+"))
     assert all(license_ok(c) for c in ("by", "by-sa", "cc0", "pdm"))
+
+
+def test_parse_keys_splits_pasted_lines_into_setting_fields():
+    from studio.settings import Settings, parse_keys
+    got = parse_keys('PIXABAY_API_KEY=abc\nexport GEMINI_API_KEY="AIza-x"\nGoogle 이미지 (SerpApi): s1\nUnsplash : u1\n모르는_키=zz\n이름 없는 줄')
+    assert got == {"pixabay_api_key": "abc", "gemini_key": "AIza-x", "serpapi_key": "s1", "unsplash_access_key": "u1"}
+    assert all(hasattr(Settings(), f) for f in got)

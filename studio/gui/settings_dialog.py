@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
 
 from ..director.claude_code import auth_status, claude_version, describe_auth, find_claude, format_quota, open_login, probe_quota
 from ..settings import save_quota, usage_summary
-from ..settings import Settings
+from ..settings import Settings, parse_keys
 from ..stock.providers import StockHub
 from ..stock.sources import status as source_status
 from .widgets import hint
@@ -252,6 +252,23 @@ class SettingsDialog(QDialog):
         fs.addRow("Pexels", self.pexels)
         self.stock_keys = {"pixabay_api_key": self.pixabay, "unsplash_access_key": self.unsplash, "coverr_api_key": self.coverr,
                            "pexels_api_key": self.pexels, "serpapi_key": self.serpapi}
+        self.key_paste = QPlainTextEdit()
+        self.key_paste.setPlaceholderText("여러 키를 한 번에: 줄마다 이름=값 (예: PIXABAY_API_KEY=… / GEMINI_API_KEY=… / Unsplash: …)")
+        self.key_paste.setFixedHeight(70)
+        key_fill = QPushButton("칸에 나눠 넣기")
+        key_note = QLabel("")
+
+        def fill_keys() -> None:
+            boxes = {**self.stock_keys, "gemini_key": self.gemini, "anthropic_api_key": self.key}
+            got = parse_keys(self.key_paste.toPlainText())
+            for name, value in got.items():
+                boxes[name].setText(value)
+            self.key_paste.clear()              # 키가 화면에 남지 않게
+            key_note.setText(f"{len(got)}개 칸에 넣었습니다 — 저장을 눌러야 적용됩니다" if got else "알아본 키가 없습니다 — 줄마다 이름=값")
+
+        key_fill.clicked.connect(fill_keys)
+        fs.addRow("키 한 번에 넣기", self.key_paste)
+        fs.addRow(key_fill, key_note)
         table = QGridLayout()
         for c, head in enumerate(["제공처", "상태", "여는 것", "비용", "알아 둘 것"]):
             table.addWidget(QLabel(f"<b>{head}</b>"), 0, c)

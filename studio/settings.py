@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,22 @@ class Settings:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+KEY_FIELDS = {"pixabay": "pixabay_api_key", "unsplash": "unsplash_access_key", "coverr": "coverr_api_key", "pexels": "pexels_api_key",
+              "serpapi": "serpapi_key", "gemini": "gemini_key", "anthropic": "anthropic_api_key"}
+
+
+def parse_keys(text: str) -> dict[str, str]:
+    """'PIXABAY_API_KEY=값'·'Gemini: 값' 여러 줄 → {설정 칸 이름: 값}. 제공처 이름이 없는 줄은 버린다."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*(?:export\s+)?([^=:]+?)\s*[=:]\s*[\"']?([^\s\"']+)", line)
+        name = m[1].lower().replace(" ", "") if m else ""
+        field_name = next((f for k, f in KEY_FIELDS.items() if k in name), None)
+        if m and field_name:
+            out[field_name] = m[2]
+    return out
 
 
 def _merge(obj, raw: dict[str, Any]):

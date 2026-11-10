@@ -318,8 +318,8 @@ class Fetcher:
                 blocked["mixkit.co"] = time.time()
                 return []
             if r.ok:
-                out = parse_mixkit(r.text, f"{MIXKIT}{slug}/", JUNK - _words(q))
-            if out:
+                out += [c for c in parse_mixkit(r.text, f"{MIXKIT}{slug}/", JUNK - _words(q)) if c["id"] not in {x["id"] for x in out}]
+            if len(out) >= 8:                       # 'soft-whoosh' 1건으로 멈추면 'whoosh' 의 맞는 소리를 못 본다
                 break
         self.index["search"][key] = {"t": time.time(), "r": out}
         return out
