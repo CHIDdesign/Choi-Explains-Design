@@ -9,4 +9,4 @@
 지적: {{problem}}
 수정 방향: {{direction}}
 
-지적을 해결한 새 MotionSpec 을 `spec_json`(JSON 문자열)으로, 무엇을 바꿨는지 `changes` 에 한 줄로 내세요.
+지적을 해결한 새 MotionSpec 을 `spec_json`(JSON 문자열)으로, 무엇을 바꿨는지 `changes` 에 한 줄로 내세요. `at_word` 는 유지합니다 — 그 요소의 `at` 은 앱이 낱말에 맞춰 덮어쓰므로, 시각을 바꾸려면 어절을 바꿉니다.
