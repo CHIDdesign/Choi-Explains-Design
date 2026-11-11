@@ -133,6 +133,7 @@ export const GraphicLayer: React.FC<Props> = ({g, frame, dur, fps, theme, brand,
         <div style={{position: 'absolute', left: m, top: 80, width: box.w, height: box.h}}>
           <Comp {...common} surface={mkSurface(theme, 'modern')} frame={frame} dur={dur} box={box} />
         </div>
+        <CornerCredit text={g.data.credit || ''} />
       </AbsoluteFill>
     );
   }

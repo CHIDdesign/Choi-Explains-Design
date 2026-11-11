@@ -481,10 +481,13 @@ class StockResearcher:
                 continue
             got[ref] = self._download_image(ref, cands[ref][idx])
         n = 0
-        for _, spec, el in refs:
+        for g, spec, el in refs:
             ref = el["src"]
             res = got.get(ref)
             if res:
+                if res.get("credit"):   # API 로 받은 그림은 모두 화면 출처(Unsplash 가이드라인·채널 원칙) — 장면 우하단에
+                    had = [c for c in str(g.get("credit") or "").split(" · ") if c]
+                    g["credit"] = " · ".join(dict.fromkeys(had + [res["credit"]]))[:120]
                 # 하우스 트리트먼트(07b 7절): 클립아트(vector·illustration)는 언제나 잉크 한 색 선화, 사진은 듀오톤 —
                 # 칠판·크림 화면 위 원색 클립아트(10/1 커피컵·책 더미)가 '붙여 넣은 것'으로 보이던 것
                 kind = self._parse_ref(ref)[0]

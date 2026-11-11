@@ -564,7 +564,7 @@ def test_slot_px_reads_the_constants_the_renderer_uses():
     used = "".join(p.read_text(encoding="utf-8") for p in (ROOT / "renderer" / "src" / "components").rglob("*.tsx"))
     assert keys and all(f"SLOT_TYPE.{k}" in used for k in keys)             # 표를 안 쓰는 자리가 생기면 게이트가 다른 것을 재게 된다
     px = gate.slot_px()
-    assert px["자막"] == 40 and px["출처"] == 24 and px["인용"] == pytest.approx(64.8)
+    assert px["자막"] == 40 and px["출처"] == 18 and px["인용"] == pytest.approx(64.8)
 
 
 def test_d11_duration_blocks_over_one_frame():

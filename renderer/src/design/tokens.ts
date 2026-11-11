@@ -228,7 +228,7 @@ export const TYPE_MIN = {
 
 /** 고정 자리 글자(1080p px · 비율은 그 자리 크기에 곱함). 렌더러와 게이트 P1(studio/gate.py slot_px)이 같이 읽는다. */
 export const SLOT_TYPE = {
-  caption: 40, band: 34, bandBody: 0.783, definition: 46, superName: 42, superSub: 28, credit: 24,
+  caption: 40, band: 34, bandBody: 0.783, definition: 46, superName: 42, superSub: 28, credit: 18,
   keywordMin: 44, keywordSub: 0.46, keywordSubMin: 28, quote: 0.06, quoteWho: 0.52, statSub: 28,
 } as const;
 

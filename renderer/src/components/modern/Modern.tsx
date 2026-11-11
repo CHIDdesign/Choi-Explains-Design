@@ -213,13 +213,14 @@ export const QuoteSlot: React.FC<{text: string; who?: string; W: number; H: numb
 /** 조각 전환 중에는 LongForm 이 출처를 대신 쓴다 — 두 장이 함께 보일 때 어느 기관을 쓸지는 화면 점유율로 정한다 */
 export const CreditOn = React.createContext(true);
 
-/** 우하단 출처: 자료 위에 늘, 어디서나 같은 종이 칩(맨글자는 그림 톤에 따라 읽히다 말다 한다). 세로형은 자막 아래. inFrame = 액자 아래 여백에 잉크색으로 */
+/** 우하단 출처: 자료 위에 늘, 어디서나 같은 종이 칩(맨글자는 그림 톤에 따라 읽히다 말다 한다). 세로형은 자막 아래. inFrame = 액자 아래 여백에 잉크색으로.
+ *  아주 작고 옅게(채널 주인 2026-11-11: "출처가 아주 작고 얕게나마") — 읽으려면 읽히되 그림을 가리지 않는다 */
 export const CornerCredit: React.FC<{text: string; tall?: boolean; bottom?: number; inFrame?: boolean}> = ({text, tall = false, bottom = tall ? 260 : 40, inFrame = false}) => {
   const on = React.useContext(CreditOn);
   if (!text || !on) return null;
   const line = text.startsWith('출처') ? text : `출처: ${text}`;
   return (
-    <div style={{position: 'absolute', right: inFrame ? 24 : 40, bottom, fontFamily: FONT.sans, fontWeight: 500, fontSize: tall ? 26 : SLOT_TYPE.credit, letterSpacing: '-0.01em', color: MAT.ink,
-      ...(inFrame ? {lineHeight: 1, whiteSpace: 'nowrap'} : {lineHeight: 1.15, wordBreak: 'keep-all', textAlign: 'right', boxSizing: 'border-box', maxWidth: 'calc(100% - 80px)', background: 'rgba(251,249,243,0.92)', padding: '7px 12px 8px'})}}>{line}</div>
+    <div style={{position: 'absolute', right: inFrame ? 24 : 32, bottom: inFrame ? bottom : Math.round(bottom * 0.6), fontFamily: FONT.sans, fontWeight: 500, fontSize: tall ? 20 : SLOT_TYPE.credit, letterSpacing: '-0.01em', color: MAT.ink, opacity: 0.72,
+      ...(inFrame ? {lineHeight: 1, whiteSpace: 'nowrap'} : {lineHeight: 1.15, wordBreak: 'keep-all', textAlign: 'right', boxSizing: 'border-box', maxWidth: 'calc(100% - 64px)', background: 'rgba(251,249,243,0.6)', padding: '3px 8px 4px'})}}>{line}</div>
   );
 };

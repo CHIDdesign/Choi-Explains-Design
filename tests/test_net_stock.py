@@ -213,6 +213,7 @@ def test_motion_scene_pixabay_images_are_downloaded_and_rewritten(tmp_path):
     el = spec["elements"][0]
     assert el["src"].startswith("broll/img_") and el["src"].endswith(".png")      # 투명 PNG 는 PNG 로
     assert (tmp_path / "public" / el["src"]).exists() and res.credits[0]["origin"] == "Pixabay"
+    assert lists[0][0]["credit"] == res.credits[0]["credit"]                    # 장면 우하단에 그 그림의 출처
 
 
 def test_query_shortening_keeps_what_must_be_seen():
