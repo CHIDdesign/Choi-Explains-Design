@@ -2,6 +2,8 @@
 
 ┌ 헤더: 로고 · 최근 작업 · AI 연결 상태 · ⚙ ─────────────────────────────────────────┐
 │ ① 주제          │ ② 원본 영상(끌어다 놓기·클릭·Ctrl+V) │ ③ 대본(붙여넣기·파일)          │
+│ ④ 자료 폴더(선택)                                                                     │
+│ 이번 영상 → [음성 언어▾][주제 조사▾][효과음▾][배경음악▾][장면 심사▾][시안▾][스타일 프레임▾][👂] │
 │                          [ 영상 만들기 ▶ ]                                            │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 → 진행 화면(남은 시간 · 단계 체크리스트 · AI 팀 작업 기록 · 실시간 미리보기)
@@ -19,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QActionGroup, QDesktopServices, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
                                QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
@@ -44,6 +46,23 @@ LAST_INPUTS = USER_DIR / "last_inputs.json"
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".m4v", ".avi", ".mts", ".m2ts", ".webm", ".mxf")
 VIDEO_FILTER = "영상 (" + " ".join("*" + e for e in VIDEO_EXTS) + ");;모든 파일 (*)"
 TEXT_FILTER = "대본 (*.txt *.md *.docx *.hwpx);;모든 파일 (*)"
+
+# '이번 영상' 칩 줄 — 설정 창 안쪽에 묻혀 있던 것 중 영상마다 바꿀 만한 것을 메인 화면에(고르면 바로 settings.json 에 저장)
+OPTIONS: list[tuple[str, str, list[tuple[object, str]]]] = [
+    ("whisper_language", "음성 언어", [("ko", "한국어"), ("en", "영어"), ("ja", "일본어"), ("zh", "중국어")]),
+    ("research_web", "🔎 주제 조사", [(True, "웹까지"), (False, "기억으로만")]),
+    ("sfx_mode", "효과음", [("directed", "감독 지정"), ("auto", "그래픽마다"), ("off", "끔")]),
+    ("music_mode", "배경음악", [("auto", "자동 조달"), ("mine", "내 폴더만"), ("library", "기본 라이브러리"), ("off", "없음")]),
+    ("design_critic", "🧑‍⚖️ 장면 심사", [(True, "켬"), (False, "끔")]),
+    ("design_variants", "시안 경쟁", [(1, "1안"), (2, "2안"), (3, "3안")]),
+    ("style_frame", "스타일 프레임", [(True, "켬"), (False, "끔")]),
+]
+
+
+def option_value(s: Settings, key: str):
+    if key == "sfx_mode" and getattr(s, "sfx_enabled", False):     # 예전 설정의 '효과음 켜기' = auto
+        return "auto"
+    return getattr(s, key)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +305,34 @@ class VideoDrop(QFrame):
         self._fit()
 
 
+class OptionChip(QToolButton):
+    """'이번 영상' 칩 하나: '머리말 · 값 ▾' — 누르면 고를 수 있는 값 메뉴."""
+
+    def __init__(self, key: str, head: str, choices: list[tuple[object, str]], on_pick):
+        super().__init__()
+        self.setObjectName("option")
+        self.setPopupMode(QToolButton.InstantPopup)
+        self.setCursor(Qt.PointingHandCursor)
+        self.key, self.head, self.choices = key, head, choices
+        menu = QMenu(self)
+        group = QActionGroup(menu)
+        self.by_value = {}
+        for value, label in choices:
+            a = menu.addAction(label, lambda v=value: on_pick(key, v))
+            a.setCheckable(True)
+            group.addAction(a)
+            self.by_value[value] = a
+        self.setMenu(menu)
+
+    def show_value(self, value) -> None:
+        self.setText(f"{self.head} · {dict(self.choices).get(value, str(value))} ▾")
+        if value in self.by_value:
+            self.by_value[value].setChecked(True)
+        self.setProperty("off", value in (False, "off"))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
 class ResultCard(QFrame):
     def __init__(self, title: str, path: str, vertical: bool):
         super().__init__()
@@ -392,7 +439,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         self.recent_btn.setMenu(self.recent_menu)
         h.addWidget(self.recent_btn)
-        ref_btn = QPushButton("🎯 레퍼런스")
+        ref_btn = QPushButton("🎯 레퍼런스 보드")
         ref_btn.setObjectName("chip")
         ref_btn.setToolTip("레퍼런스 분석 — 좋다고 느낀 사진·영상을 끌어다 놓으면 재고 Claude 가 디자인 규칙으로 옮겨 모든 디자이너·심사가 매번 봅니다")
         ref_btn.clicked.connect(self._open_reference)
@@ -403,7 +450,7 @@ class MainWindow(QMainWindow):
         h.addWidget(self.ai_chip)
         gear = QToolButton()
         gear.setText("⚙")
-        gear.setToolTip("고급 설정(AI 연결 · 스톡 키 · 브랜드 · 경로) — 보통은 만질 필요 없습니다")
+        gear.setToolTip("설정 — AI·팀 · 기획·디자인 · 소리 · 자료 · 음성 인식 · 브랜드·화자 · 경로")
         gear.clicked.connect(self._open_settings)
         h.addWidget(gear)
         return w
@@ -456,6 +503,20 @@ class MainWindow(QMainWindow):
         outer.addLayout(mat)
         self.materials_dir = ""
         self._set_materials("")
+        opts = QHBoxLayout()
+        opts.setSpacing(8)
+        opts.addWidget(_label("이번 영상 →", "optionHead"))
+        self.option_chips = [OptionChip(k, h, c, self._pick_option) for k, h, c in OPTIONS]
+        for chip in self.option_chips:
+            opts.addWidget(chip)
+        self.listen_chip = QPushButton()
+        self.listen_chip.setObjectName("chip")
+        self.listen_chip.setToolTip("👂 소리 듣기 — Gemini 키가 있으면 곡·효과음 후보와 완성 믹스를 실제로 듣고 고릅니다(설정 › 소리)")
+        self.listen_chip.clicked.connect(lambda: self._open_settings(tab="소리"))
+        opts.addWidget(self.listen_chip)
+        opts.addStretch(1)
+        outer.addLayout(opts)
+        self._refresh_options()
         bar = QHBoxLayout()
         self.summary = _label("", "stepHint", wrap=True)
         bar.addWidget(self.summary, 1)
@@ -573,6 +634,15 @@ class MainWindow(QMainWindow):
         self.r_upload.clicked.connect(lambda: self._open(self.results.get("upload_info", "")))
         self.r_folder = QPushButton("결과 폴더 열기")
         self.r_folder.clicked.connect(lambda: self._open(self.results.get("output", "")))
+        self.r_notes = QPushButton("조사 노트")
+        self.r_notes.setToolTip("🔎 주제 조사 결과(사실·출처) — 부가자료/조사노트.md")
+        self.r_notes.clicked.connect(lambda: self._open(self._extra("조사노트.md")))
+        self.r_report = QPushButton("편집 리포트")
+        self.r_report.setToolTip("품질 게이트·컷·소리 판단 기록 — 검토가 필요하면 ⚠검토필요.md 를 엽니다")
+        self.r_report.clicked.connect(lambda: self._open(self._report_file()))
+        self.r_bench = QPushButton("🧪 디자인만 다시")
+        self.r_bench.setToolTip("디자인 벤치 — 음성 인식·컷·자료는 그대로 두고 기획(디자인)만 새로 지어 장면 시트까지(렌더 없이)")
+        self.r_bench.clicked.connect(lambda: self._bench(Path(self.results["output"]).parent))
         self.r_rate = QPushButton("장면 평가 👍/👎")
         self.r_rate.setToolTip("장면마다 좋다/별로를 남기면 다음 작업부터 디자이너와 심사가 이 취향을 봅니다")
         self.r_rate.clicked.connect(self._rate_scenes)
@@ -581,7 +651,10 @@ class MainWindow(QMainWindow):
         again.clicked.connect(self._new)
         row.addWidget(self.r_upload)
         row.addWidget(self.r_folder)
+        row.addWidget(self.r_notes)
+        row.addWidget(self.r_report)
         row.addWidget(self.r_rate)
+        row.addWidget(self.r_bench)
         row.addStretch(1)
         row.addWidget(again)
         v.addLayout(row)
@@ -941,6 +1014,9 @@ class MainWindow(QMainWindow):
         self.r_grid.setColumnStretch(len(cards) + 1, 1)
         self.r_upload.setEnabled(bool(res.get("upload_info")))
         self.r_rate.setEnabled(bool(self._rate_file(res)))
+        self.r_notes.setEnabled(bool(self._extra("조사노트.md")))
+        self.r_report.setEnabled(bool(self._report_file()))
+        self.r_bench.setEnabled(bool(res.get("output")))
         self.pages.setCurrentIndex(2)
 
     @staticmethod
@@ -957,6 +1033,25 @@ class MainWindow(QMainWindow):
         if not path:
             return
         RateDialog(path, Path(path).parent.parent.name, self).exec()      # work/rate.json → 작업 폴더 이름
+
+    def _extras_dir(self) -> Optional[Path]:
+        out = self.results.get("output", "")
+        extras = self.results.get("extras") or (str(Path(out) / EXTRAS) if out else "")
+        return Path(extras) if extras else None
+
+    def _extra(self, name: str) -> str:
+        """결과의 부가자료 폴더 안 파일 — 없으면 ""."""
+        d = self._extras_dir()
+        return str(d / name) if d and (d / name).exists() else ""
+
+    def _report_file(self) -> str:
+        """⚠검토필요.md 가 있으면 그것, 아니면 부가자료의 편집 리포트."""
+        out = self.results.get("output", "")
+        if out and (Path(out) / "⚠검토필요.md").exists():
+            return str(Path(out) / "⚠검토필요.md")
+        d = self._extras_dir()
+        found = sorted(d.glob("편집리포트*")) if d and d.exists() else []
+        return str(found[0]) if found else ""
 
     def _new(self) -> None:
         self.pages.setCurrentIndex(0)
@@ -1038,11 +1133,32 @@ class MainWindow(QMainWindow):
         else:
             self._open_settings()
 
-    def _open_settings(self) -> None:
+    def _open_settings(self, tab: str = "") -> None:
         dlg = SettingsDialog(self.settings, self)
+        if tab:
+            dlg.show_tab(tab)
         if dlg.exec():
             self.settings = Settings.load()
             self._probe_ai()
+        self._refresh_options()
+
+    def _pick_option(self, key: str, value) -> None:
+        """'이번 영상' 칩에서 고른 값 — 바로 저장(다음 '영상 만들기'부터)."""
+        self.settings = Settings.load()
+        setattr(self.settings, key, value)
+        if key == "sfx_mode":
+            self.settings.sfx_enabled = False
+        self.settings.save()
+        self._refresh_options()
+
+    def _refresh_options(self) -> None:
+        from ..sound.listen import api_key
+        for chip in self.option_chips:
+            chip.show_value(option_value(self.settings, chip.key))
+        has = bool(api_key(self.settings))
+        self.listen_chip.setText("👂 소리 듣기 · " + ("Gemini 키 있음" if has else "키 없음"))
+        self.listen_chip.setProperty("ok", has)
+        self._restyle(self.listen_chip)
 
     def closeEvent(self, e):  # noqa: N802
         if self.thread is not None:

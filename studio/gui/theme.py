@@ -198,4 +198,11 @@ def qss(accent: str, fam: str = UI_FONT) -> str:
     QLabel#resultTitle {{ font-size: 16px; font-weight: 800; }}
     QLabel#hint {{ color: {TEXT3}; font-size: 11px; }}
     QLabel#fieldLabel {{ color: {TEXT2}; }}
+    QToolButton#option {{ background: {BG2}; border: 1px solid {LINE}; border-radius: 13px; padding: 5px 12px; color: {TEXT}; }}
+    QToolButton#option:hover {{ border-color: {accent}; }}
+    QToolButton#option[off="true"] {{ color: {TEXT3}; }}
+    QToolButton#option::menu-indicator {{ image: none; width: 0; }}
+    QLabel#optionHead {{ color: {TEXT2}; font-weight: 700; }}
+    QLabel#sectionTitle {{ font-size: 13px; font-weight: 800; color: {TEXT}; padding-top: 6px; }}
+    QLabel#warn {{ color: #FFB199; font-size: 11px; font-weight: 700; }}
     """

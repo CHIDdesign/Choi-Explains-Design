@@ -284,4 +284,31 @@ def test_key_folder_json_fills_keys_and_is_not_copied_into_settings_file(tmp_pat
     assert (s.coverr_api_key, s.pexels_api_key) == ("kept", "")
     s.save()
     saved = json.loads(settings_file.read_text(encoding="utf-8"))
-    assert saved["pixabay_api_key"] == "" and saved["gemini_key"] == "" and saved["coverr_api_key"] == "kept"
+    # key 폴더가 있으면 키는 거기 하나 — 설정 파일에만 있던 키(coverr)도 key 폴더로 옮겨 적는다
+    assert saved["pixabay_api_key"] == "" and saved["gemini_key"] == "" and saved["coverr_api_key"] == ""
+    keys = json.loads((key_dir / "keys.json").read_text(encoding="utf-8-sig"))
+    assert keys["coverr"] == "kept" and keys["모르는"] == "zz" and (key_dir / "broken.json").read_text(encoding="utf-8") == "{"
+    assert S.Settings.load().coverr_api_key == "kept"
+
+
+def test_key_edited_in_settings_window_survives_restart(tmp_path, monkeypatch):
+    """설정 창에서 고친 키는 key 폴더 JSON 에 쓴다 — 예전엔 설정 파일에만 써서 다음 실행 때 key 폴더 값이 덮어 사라졌다.
+    빈 값은 쓰지 않는다(새 Settings() 를 저장해도 키가 지워지지 않게)."""
+    import json
+    from studio import settings as S
+    key_dir, settings_file = tmp_path / "key", tmp_path / "settings.json"
+    key_dir.mkdir()
+    (key_dir / "a.json").write_text(json.dumps({"pixabay": "old-p", "unsplash": {"access_key": "old-u"}}), encoding="utf-8-sig")
+    monkeypatch.setattr(S, "KEY_DIR", key_dir)
+    monkeypatch.setattr(S, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr(S, "ensure_user_dirs", lambda: None)
+    s = S.Settings.load()
+    s.pixabay_api_key, s.unsplash_access_key, s.gemini_key = "new-p", "new-u", "new-g"
+    s.save()
+    again = S.Settings.load()
+    assert (again.pixabay_api_key, again.unsplash_access_key, again.gemini_key) == ("new-p", "new-u", "new-g")
+    raw = json.loads((key_dir / "a.json").read_text(encoding="utf-8"))
+    assert raw == {"pixabay": "new-p", "unsplash": {"access_key": "new-u"}, "gemini": "new-g"}
+    assert json.loads(settings_file.read_text(encoding="utf-8"))["pixabay_api_key"] == ""
+    S.Settings().save()                                  # 빈 설정을 저장해도 key 폴더는 그대로
+    assert S.Settings.load().pixabay_api_key == "new-p"

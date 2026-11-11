@@ -1434,7 +1434,8 @@ class Pipeline:
         return JobBrief(title=self.title, notes=self.spec.topic_text, episode=self.spec.episode,
                         subtitle=self.spec.subtitle or str(owner.get("subtitle") or ""), local_images=local,
                         shorts_count=self.spec.shorts_count, short_max_sec=self.spec.short_max_sec,
-                        presenter=self.settings.brand.presenter, brand=self.settings.brand.name, owner=owner)
+                        presenter=self.settings.brand.presenter, presenter_profile=self.settings.brand.profile(),
+                        brand=self.settings.brand.name, owner=owner)
 
     def _pace(self):
         return PACES.get(self.spec.pace, PACES["calm"])

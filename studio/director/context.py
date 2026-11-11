@@ -20,6 +20,7 @@ class JobBrief:
     shorts_count: int = 2
     short_max_sec: int = 60
     presenter: str = ""
+    presenter_profile: str = ""                 # Brand.profile() — 비면 넣지 않는다
     brand: str = ""
     owner: dict = field(default_factory=dict)   # 주제 설명에 라벨로 적은 것(제목·부제·키워드 …, studio/text/topic.py)
 
@@ -88,6 +89,9 @@ def shared_context(brief: JobBrief, utts: list[Utterance], tags: list[Tag], time
         parts.append("- 사용 가능한 로컬 이미지 파일(파일명이 곧 설명): " + ", ".join(brief.local_images[:80]))
     else:
         parts.append("- 로컬 이미지 없음 → photo 템플릿의 image 에는 위키미디어 검색용 영어 검색어를 적는다")
+    if brief.presenter_profile:
+        parts.append("\n# 화자 프로필(설명 수준·예시·말투를 이 사람의 전문성과 채널 톤에 맞춘다 — 화면에 쓰지 않는다)\n")
+        parts.append(brief.presenter_profile)
     parts.append("\n# 화자의 메모(주제·주요 장면·의도)\n")
     parts.append(brief.notes.strip() or "(없음)")
     parts.append("\n# 전사본 (S번호 = 발화 ID. 이미 NG/리테이크/무음은 제거된 상태. '대본' = 대본에 있는 문장 — 절대 빼지 않는다)\n")

@@ -229,10 +229,90 @@ def test_main_window_has_reference_button_and_bench_mode(app, tmp_path):
     from studio.gui.app import MainWindow, Worker
     import inspect
     w = MainWindow()
-    assert any(b.text() == "🎯 레퍼런스" for b in w.findChildren(type(w.ai_chip)))
+    assert any(b.text() == "🎯 레퍼런스 보드" for b in w.findChildren(type(w.ai_chip)))
     assert "until" in inspect.signature(Worker.__init__).parameters and "until" in inspect.signature(w._start).parameters
     w._until = "design"
     shown = []
     w._show_bench = lambda res: shown.append(res)     # 메시지 상자 대신
     w._on_done({"output": str(tmp_path / "out"), "job_dir": str(tmp_path), "critic": {"scenes": 3, "rejected": 1, "fixed": 1, "replaced": 0}})
     assert shown and shown[0]["critic"]["scenes"] == 3
+
+
+def test_option_chips_save_settings(app, tmp_path, monkeypatch):
+    """'이번 영상' 칩 줄: 묻혀 있던 설정(음성 언어·주제 조사·효과음·배경음악·심사·시안·스타일 프레임)을 메인 화면에서 바로 바꾸고 저장."""
+    monkeypatch.setattr("studio.settings.SETTINGS_FILE", tmp_path / "settings.json")
+    from studio.gui.app import OPTIONS, MainWindow
+    from studio.settings import Settings
+    w = MainWindow()
+    keys = [c.key for c in w.option_chips]
+    assert keys == [k for k, _, _ in OPTIONS] and "whisper_language" in keys and "music_mode" in keys
+    lang = next(c for c in w.option_chips if c.key == "whisper_language")
+    assert "한국어" in lang.text()
+    w._pick_option("whisper_language", "en")
+    w._pick_option("sfx_mode", "off")
+    s = Settings.load()
+    assert s.whisper_language == "en" and s.sfx_mode == "off" and not s.sfx_enabled
+    assert "영어" in lang.text()
+    assert next(c for c in w.option_chips if c.key == "sfx_mode").property("off") is True
+    w.close()
+
+
+def test_settings_dialog_tabs_language_and_presenter_profile(app, tmp_path, monkeypatch):
+    """설정 창: 기획·디자인 탭 분리 · 음성 인식 언어 · 소리 탭의 Gemini 키 · 화자 프로필(이름 자막 미리보기·길이 경고) 저장."""
+    monkeypatch.setattr("studio.settings.SETTINGS_FILE", tmp_path / "settings.json")
+    from studio.gui.settings_dialog import SUPER_EDGE, SettingsDialog, super_preview
+    from studio.settings import Settings
+    monkeypatch.setattr(SettingsDialog, "_probe", lambda self: None)   # 진짜 Claude CLI 확인 스레드가 남으면 종료 때 죽는다
+    d = SettingsDialog(Settings())
+    names = [d.tabs.tabText(i) for i in range(d.tabs.count())]
+    assert names == ["AI · 팀", "API 키", "기획 · 디자인", "음성 인식", "자료(스톡)", "소리", "브랜드 · 화자", "경로 · 렌더"]
+    d.show_tab("소리")
+    assert d.tabs.tabText(d.tabs.currentIndex()) == "소리"
+    assert "총괄 감독" in d.routing_table.text()                    # 실제 ROUTING 표
+    d.language.setCurrentIndex(d.language.findData("en"))
+    d.b_bio.setPlainText("제품디자인 10년\n가전 회사 인하우스 출신")
+    d.b_tone.setText("차분한 해설")
+    d.sfx_motion.setChecked(False)
+    assert "기본 곡" in d.music.itemText(d.music.findData("library"))
+    d.b_ptitle.setText("짧은 소개")
+    assert "한 줄로" in d.b_warn.text()
+    d.b_ptitle.setText("아주 긴 소개 " * 12)
+    assert "⚠" in d.b_warn.text()
+    _, _, right = super_preview("최은준", "아주 긴 소개 " * 30, "#FC5400")
+    assert right > SUPER_EDGE
+    d.b_ptitle.setText("홍익대 산업디자인")
+    d._save()
+    s = Settings.load()
+    assert s.whisper_language == "en" and s.brand.presenter_tone == "차분한 해설" and s.sfx_motion_auto is False
+    assert "가전 회사" in s.brand.profile() and "홍익대 산업디자인" in s.brand.profile()
+
+
+def test_presenter_profile_goes_to_shared_context_only_when_filled():
+    """화자 프로필은 이력·톤이 있을 때만 AI 공유 컨텍스트에 — 비면 예전과 글자 하나 다르지 않다(계획 캐시 키 그대로)."""
+    from studio.director.context import JobBrief, shared_context
+    from studio.settings import Brand
+    b = Brand()
+    assert b.profile() == ""
+    base = shared_context(JobBrief(title="t", presenter=b.presenter, presenter_profile=b.profile()), [], [], None, 0.0)
+    assert "화자 프로필" not in base
+    assert base == shared_context(JobBrief(title="t", presenter=b.presenter), [], [], None, 0.0)
+    b.presenter_bio = "제품디자이너 10년"
+    ctx = shared_context(JobBrief(title="t", presenter=b.presenter, presenter_profile=b.profile()), [], [], None, 0.0)
+    assert "# 화자 프로필" in ctx and "제품디자이너 10년" in ctx and ctx.index("화자 프로필") < ctx.index("화자의 메모")
+
+
+def test_result_page_links_notes_report_and_bench(app, tmp_path):
+    """결과 화면: 조사 노트 · 편집 리포트(검토 필요면 그것) · 🧪 디자인만 다시."""
+    from studio.gui.app import MainWindow
+    out = tmp_path / "job" / "output"
+    (out / "부가자료").mkdir(parents=True)
+    w = MainWindow()
+    w._show_results({"title": "t", "output": str(out)})
+    assert not w.r_notes.isEnabled() and not w.r_report.isEnabled() and w.r_bench.isEnabled()
+    (out / "부가자료" / "조사노트.md").write_text("x", encoding="utf-8")
+    (out / "부가자료" / "편집리포트.md").write_text("x", encoding="utf-8")
+    w._show_results({"title": "t", "output": str(out)})
+    assert w.r_notes.isEnabled() and w._report_file().endswith("편집리포트.md")
+    (out / "⚠검토필요.md").write_text("x", encoding="utf-8")
+    assert w._report_file().endswith("⚠검토필요.md")
+    w.close()

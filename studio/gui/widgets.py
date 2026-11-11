@@ -82,3 +82,10 @@ def hint(text: str) -> QLabel:
     lab.setObjectName("hint")
     lab.setWordWrap(True)
     return lab
+
+
+def section(text: str) -> QLabel:
+    """설정 창 안의 소제목(잉크 밑줄 한 줄)."""
+    lab = QLabel(text)
+    lab.setObjectName("sectionTitle")
+    return lab

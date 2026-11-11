@@ -17,13 +17,24 @@ class Brand:
     short_name: str = "CHOI"
     handle: str = ""
     presenter: str = "최은준"
-    presenter_title: str = "홍익대학교 산업디자인 · 제품디자인"
+    presenter_title: str = "홍익대학교 산업디자인 · 제품디자인"   # 한 줄 소개 — 롱폼 앞 이름 자막(슈퍼) 둘째 줄
+    # 화자 프로필(채널 주인 2026-11-11: 한 줄 칸은 "너무 짜치다") — 화면에는 안 나오고 AI 기획의 공유 컨텍스트로만(profile())
+    presenter_bio: str = ""          # 전문 분야·이력(여러 줄)
+    presenter_tone: str = ""         # 채널 톤(말투·태도)
     accent: str = "#F93107"   # Musicbed 2026 리포트 표지의 시그널 레드-오렌지
     ink: str = "#111111"
     paper: str = "#F4F4F2"
     year: str = "2026"
     # 디자인 색: talk = 토크쇼(오렌지 표식 + 숲색 띠, 디자인 v5 기본) · ember = 채널 오렌지 · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
     palette: str = "talk"
+
+    def profile(self) -> str:
+        """AI 기획에 넘길 화자 프로필. 이력·톤이 비면 "" — 공유 컨텍스트(계획 캐시 키)가 예전과 같다."""
+        if not (self.presenter_bio.strip() or self.presenter_tone.strip()):
+            return ""
+        rows = [("이름", self.presenter), ("한 줄 소개", self.presenter_title),
+                ("전문 분야·이력", self.presenter_bio), ("채널 톤", self.presenter_tone)]
+        return "\n".join(f"- {k}: {v.strip()}" for k, v in rows if v.strip())
 
 
 @dataclass
@@ -150,6 +161,8 @@ class Settings:
         d = asdict(self)
         if Path(d.get("projects_dir") or "") == DEFAULT_PROJECTS_DIR:
             d["projects_dir"] = ""          # 기본 폴더는 비워 저장 → 프로그램 폴더를 옮겨도 따라간다
+        # key 폴더가 있으면 키의 자리는 거기 하나 — 설정 창에서 고친 키를 설정 파일에만 쓰면 다음 실행 때 key 폴더 값이 덮어 사라졌다
+        write_key_dir({name: str(d.get(name) or "") for name in KEY_FIELDS.values()})
         for name, value in key_dir_keys().items():
             if d.get(name) == value:
                 d[name] = ""                # key 폴더에서 온 키는 설정 파일에 또 적지 않는다(키는 한 곳에만)
@@ -192,6 +205,51 @@ def key_dir_keys() -> dict[str, str]:
             if field_name and isinstance(value, str) and value.strip():
                 out[field_name] = value.strip()
     return out
+
+
+def write_key_dir(values: dict[str, str]) -> list[str]:
+    """바뀐 키를 key 폴더 JSON 에 쓴다 → 바꾼 칸 이름들. key 폴더(*.json)가 없으면 아무것도 안 한다(설정 파일에 남는다).
+    빈 값은 쓰지 않는다 — 새 Settings() 를 저장해도 키가 지워지지 않게(지우려면 파일에서). 그 키가 적힌 파일·이름을 그대로 고치고,
+    없던 키는 첫 파일에 제공처 이름(pixabay·gemini …)으로 더한다."""
+    files = sorted(KEY_DIR.glob("*.json"))
+    current = key_dir_keys()
+    changed = {f: v.strip() for f, v in values.items() if v and v.strip() and current.get(f) != v.strip()}
+    if not files or not changed:
+        return []
+    docs: list[tuple[Path, dict]] = []
+    for p in files:
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8-sig"))     # 메모장 BOM
+        except (OSError, ValueError):
+            continue                                                # 못 읽는 파일은 건드리지 않는다
+        if isinstance(raw, dict):
+            docs.append((p, raw))
+    if not docs:
+        return []
+    done: set[str] = set()
+    dirty: set[Path] = set()
+    for p, raw in docs:
+        for name, value in raw.items():
+            n = str(name).lower().replace(" ", "")
+            field_name = n if n in KEY_FIELDS.values() else next((f for k, f in KEY_FIELDS.items() if k in n), None)
+            if field_name not in changed:
+                continue
+            if isinstance(value, dict):          # {"pixabay": {"api_key": "…"}} — 안의 첫 글자 값을 바꾼다
+                value[next((k for k, v in value.items() if isinstance(v, str)), "api_key")] = changed[field_name]
+            else:
+                raw[name] = changed[field_name]
+            done.add(field_name)
+            dirty.add(p)
+    short = {f: k for k, f in KEY_FIELDS.items()}
+    first_p, first = docs[0]
+    for field_name in sorted(changed.keys() - done):
+        first[short[field_name]] = changed[field_name]
+        done.add(field_name)
+        dirty.add(first_p)
+    for p, raw in docs:
+        if p in dirty:
+            p.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sorted(done)
 
 
 def _merge(obj, raw: dict[str, Any]):
