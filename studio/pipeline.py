@@ -889,7 +889,7 @@ class Pipeline:
         for n, (model, device, compute, batch) in enumerate(tries):
             try:
                 res = transcribe(self.work / "asr16k.wav", model_name=model, device=device, compute_type=compute,
-                                 batch_size=batch, hint_terms=hints, duration=self.info.duration,
+                                 language=s.whisper_language, batch_size=batch, hint_terms=hints, duration=self.info.duration,
                                  log=self.log, progress=self._sp("asr"), cancel=self.cancel)
                 break
             except Cancelled:
@@ -2681,7 +2681,7 @@ class Pipeline:
             self.ff.extract_audio(self.media / "long_voice.wav", wav, rate=16000, mono=True, cancel=self.cancel)
             res = transcribe(wav, model_name=self.settings.whisper_model, device=self.settings.whisper_device,
                              compute_type=self.settings.whisper_compute, batch_size=self.settings.whisper_batch,
-                             hint_terms=hints,
+                             language=self.settings.whisper_language, hint_terms=hints,
                              duration=self.timemap.duration, log=lambda m: None,
                              progress=lambda f, r=rnd: self._stage("verify", (r - 1) * 0.5 + 0.45 * f),
                              cancel=self.cancel)

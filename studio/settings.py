@@ -49,6 +49,7 @@ class Settings:
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
+    whisper_language: str = "ko"     # 음성 인식 언어(원본이 다른 말이면 en 등)
     whisper_batch: int = 8            # 배치 추론 크기(GPU 약 3~4배·CPU 약 2배 빠름, 메모리가 모자라면 자동으로 줄임). 1 = 순차
     ffmpeg_path: str = ""
     ffprobe_path: str = ""
