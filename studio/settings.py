@@ -14,7 +14,7 @@ from .paths import DEFAULT_PROJECTS_DIR, KEY_DIR, SETTINGS_FILE, USER_DIR, ensur
 class Brand:
     # 채널 브랜딩. 디자인 시스템의 모든 그래픽이 이 값을 사용한다.
     name: str = "CHOI EXPLAINS DESIGN"
-    short_name: str = "CHOI"
+    short_name: str = "CED"   # 화면에 나가는 채널 표기는 약어만(전체 이름은 업로드 정보에만)
     handle: str = ""
     presenter: str = "최은준"
     presenter_title: str = "홍익대학교 산업디자인 · 제품디자인"   # 한 줄 소개 — 롱폼 앞 이름 자막(슈퍼) 둘째 줄
@@ -60,7 +60,7 @@ class Settings:
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"      # auto | cuda | cpu
     whisper_compute: str = "auto"     # auto | float16 | int8_float16 | int8
-    whisper_language: str = "ko"     # 음성 인식 언어(원본이 다른 말이면 en 등)
+    whisper_language: str = "auto"   # 음성 인식 언어: auto = 앞 1분으로 감지(자막은 말한 언어 그대로) · ko · en …
     whisper_batch: int = 8            # 배치 추론 크기(GPU 약 3~4배·CPU 약 2배 빠름, 메모리가 모자라면 자동으로 줄임). 1 = 순차
     ffmpeg_path: str = ""
     ffprobe_path: str = ""

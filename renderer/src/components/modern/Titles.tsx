@@ -52,7 +52,7 @@ export const ModernTitle: React.FC<{data: GraphicData; theme: Theme; W: number; 
       <Scrap step={step} at={0} seed={11} x={840} y={-60} w={1160} h={720} tex="blueprint" rot={-2.2} torn={{left: true, bottom: true}} amp={16} />
       <Scrap step={step} at={1} seed={23} x={-50} y={-50} w={960} h={920} tex="newsprint" rot={1.5} torn={{right: true, bottom: true}} amp={15}>
         <div style={{position: 'absolute', left: 104, top: 96, width: 720, color: '#23211C'}}>
-          <div style={{fontFamily: FONT.quote, fontWeight: 700, fontSize: 66, lineHeight: 1.05, letterSpacing: '-0.02em', whiteSpace: 'nowrap'}}>{brand.name}</div>
+          <div style={{fontFamily: FONT.quote, fontWeight: 700, fontSize: 66, lineHeight: 1.05, letterSpacing: '-0.02em', whiteSpace: 'nowrap'}}>{brand.shortName}</div>
           <div style={{height: 3, background: '#23211C', margin: '16px 0 4px'}} />
           <div style={{height: 1, background: '#23211C', marginBottom: 18}} />
           <div style={{columnCount: 3, columnGap: 22, fontFamily: FONT.quote, fontSize: 17, lineHeight: 1.62, textAlign: 'justify', wordBreak: 'break-all', height: 620, overflow: 'hidden', color: 'rgba(35,33,28,0.86)'}}>{NEWS_COPY.repeat(5)}</div>
@@ -160,7 +160,7 @@ export const ModernEndCard: React.FC<{brand: Brand; W: number; H: number}> = ({b
     <div style={{position: 'absolute', left: 0, top: (H - 1080 * k) / 2, width: 1920, height: 1080, scale: `${k}`, transformOrigin: '0 0', overflow: 'hidden', ...texFill('desk')}}>
       <GrainLayer opacity={0.1} />
       <Sheet x={110} y={170} w={760} h={640} tex="memo" seed={5} rotate={-1.5} liftLevel={2.6} torn={{bottom: true}} amp={15}>
-        <div style={{position: 'absolute', left: 70, top: 76, fontFamily: FONT.quote, fontWeight: 700, fontSize: 42, letterSpacing: '-0.02em', color: MAT.forest, whiteSpace: 'nowrap'}}>{brand.name}</div>
+        <div style={{position: 'absolute', left: 70, top: 76, fontFamily: FONT.quote, fontWeight: 700, fontSize: 42, letterSpacing: '-0.02em', color: MAT.forest, whiteSpace: 'nowrap'}}>{brand.shortName}</div>
         <div style={{position: 'absolute', left: 70, top: 170, fontFamily: FONT.sans, fontWeight: 900, fontSize: 104, lineHeight: 1.16, letterSpacing: '-0.02em', color: MAT.ink}}>
           <div>다음 이야기에서</div>
           <div>만나요</div>

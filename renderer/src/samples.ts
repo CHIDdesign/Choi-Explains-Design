@@ -3,7 +3,7 @@ import type {Brand, Episode, LongFormProps, ShortProps, ThumbnailProps} from './
 
 export const SAMPLE_BRAND: Brand = {
   name: 'CHOI EXPLAINS DESIGN',
-  shortName: 'CHOI',
+  shortName: 'CED',
   handle: '',
   presenter: '최은준',
   presenterTitle: '홍익대학교 산업디자인 · 제품디자인',

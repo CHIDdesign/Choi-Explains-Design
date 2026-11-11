@@ -134,7 +134,7 @@ const ClassicShort: React.FC<ShortProps> = (props) => {
         </div>
         <div style={{position: 'absolute', left: 0, width: W, top: 1522, textAlign: 'center', fontFamily: FONT.display,
           fontWeight: 800, fontSize: 44, letterSpacing: '-0.02em', color: '#fff'}}>
-          {props.brand.shortName || props.brand.name}
+          {props.brand.shortName}
         </div>
         {props.progressBar ? (
           <div style={{position: 'absolute', left: 0, top: WINDOW.y + WINDOW.h, height: 6,

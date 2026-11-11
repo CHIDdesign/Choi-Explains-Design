@@ -247,7 +247,7 @@ def test_option_chips_save_settings(app, tmp_path, monkeypatch):
     keys = [c.key for c in w.option_chips]
     assert keys == [k for k, _, _ in OPTIONS] and "whisper_language" in keys and "music_mode" in keys
     lang = next(c for c in w.option_chips if c.key == "whisper_language")
-    assert "한국어" in lang.text()
+    assert "자동 감지" in lang.text()                                 # 기본은 말한 언어 그대로
     w._pick_option("whisper_language", "en")
     w._pick_option("sfx_mode", "off")
     s = Settings.load()

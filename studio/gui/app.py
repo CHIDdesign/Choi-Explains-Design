@@ -49,7 +49,7 @@ TEXT_FILTER = "대본 (*.txt *.md *.docx *.hwpx);;모든 파일 (*)"
 
 # '이번 영상' 칩 줄 — 설정 창 안쪽에 묻혀 있던 것 중 영상마다 바꿀 만한 것을 메인 화면에(고르면 바로 settings.json 에 저장)
 OPTIONS: list[tuple[str, str, list[tuple[object, str]]]] = [
-    ("whisper_language", "음성 언어", [("ko", "한국어"), ("en", "영어"), ("ja", "일본어"), ("zh", "중국어")]),
+    ("whisper_language", "음성 언어", [("auto", "자동 감지"), ("ko", "한국어"), ("en", "영어"), ("ja", "일본어"), ("zh", "중국어")]),
     ("research_web", "🔎 주제 조사", [(True, "웹까지"), (False, "기억으로만")]),
     ("sfx_mode", "효과음", [("directed", "감독 지정"), ("auto", "그래픽마다"), ("off", "끔")]),
     ("music_mode", "배경음악", [("auto", "자동 조달"), ("mine", "내 폴더만"), ("library", "기본 라이브러리"), ("off", "없음")]),

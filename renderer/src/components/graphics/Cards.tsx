@@ -205,7 +205,7 @@ export const TitleCard: React.FC<TemplateProps> = ({data, frame, dur, surface, b
   return (
     <div style={{position: 'absolute', inset: 0, opacity: out}}>
       <div style={{...edgeStyle, top: 30, left: 0, right: 0, fontWeight: 500, fontSize: 18}}>
-        {brand.name} {episode.series ? `· ${episode.series}` : ''}
+        {brand.shortName} {episode.series ? `· ${episode.series}` : ''}
       </div>
       <div style={{...edgeStyle, bottom: 30, left: 0, right: 0, fontWeight: 500, fontSize: 18}}>
         {episode.subtitle || 'design theory, explained'}

@@ -180,10 +180,19 @@ def transcribe(
         _MODELS[(model_name, device, compute_type)] = model
         log(f"모델 로드 {time.time() - t0:.1f}s")
 
+    audio = load_audio_16k(wav16k)   # 경로 대신 배열 — PyAV 디코딩을 거치지 않는다
+    if language in ("auto", "", None):
+        # 말한 언어 그대로 받아 적는다(채널 주인 2026-11-11: "영어면 영어로, 한국어면 한국어로") — 앞 1분으로 언어를 정한다
+        try:
+            language = model.detect_language(audio[:16000 * 60])[0]
+        except Exception as e:  # noqa: BLE001 — 오래된 faster-whisper 는 detect_language 가 없다
+            log(f"(언어 감지 실패 → 한국어로: {e})")
+            language = "ko"
+        log(f"음성 언어: {language}")
     hot = ", ".join(hint_terms or [])[:400]
     # 추임새·되풀이까지 받아 적게 하는 말투의 프롬프트(Whisper 는 프롬프트 문체를 따라 한다) — 그래야 잘라낼 수 있다
-    filler = ("음, 어… 오늘은, 어, 디자인 이론을 설명하는 한국어 강의입니다. 그러니까, 음, 다시 말하면… " if language == "ko"
-              else "Um, uh... so, you know, I mean, it's, it's like... ")
+    filler = {"ko": "음, 어… 오늘은, 어, 디자인 이론을 설명하는 한국어 강의입니다. 그러니까, 음, 다시 말하면… ",
+              "en": "Um, uh... so, you know, I mean, it's, it's like... "}.get(language, "")
     prompt = initial_prompt or (filler + (hot[:200] if hot else ""))
     kwargs = dict(
         language=language,
@@ -207,7 +216,6 @@ def transcribe(
         kwargs.pop(k)
     if dropped:
         log(f"(이 faster-whisper 버전이 지원하지 않는 옵션 생략: {', '.join(dropped)})")
-    audio = load_audio_16k(wav16k)   # 경로 대신 배열 — PyAV 디코딩을 거치지 않는다
     batch = max(1, int(batch_size or 1))
     gpu = gpu_memory() if device == "cuda" else None
     if gpu is not None:

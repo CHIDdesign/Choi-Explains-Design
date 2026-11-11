@@ -379,9 +379,9 @@ class SettingsDialog(QDialog):
         asr = QWidget()
         fa = QFormLayout(asr)
         self.language = QComboBox()
-        for code, label in (("ko", "한국어"), ("en", "영어"), ("ja", "일본어"), ("zh", "중국어")):
+        for code, label in (("auto", "자동 감지"), ("ko", "한국어"), ("en", "영어"), ("ja", "일본어"), ("zh", "중국어")):
             self.language.addItem(f"{label} ({code})", code)
-        _pick(self.language, getattr(s, "whisper_language", "ko"), "ko")
+        _pick(self.language, getattr(s, "whisper_language", "auto"), "auto")
         fa.addRow("말하는 언어", self.language)
         fa.addRow("", hint("원본 영상에서 말하는 언어. 다른 언어 인터뷰를 쓸 때만 바꾸세요(자막·컷 판단이 이 언어로)."))
         self.whisper = QComboBox()
@@ -705,7 +705,7 @@ class SettingsDialog(QDialog):
         s.museum_search = self.museums.isChecked()
         s.whisper_model = self.whisper.currentText().strip()
         s.whisper_device = self.device.currentText()
-        s.whisper_language = str(self.language.currentData() or "ko")
+        s.whisper_language = str(self.language.currentData() or "auto")
         s.brand.name = self.b_name.text().strip()
         s.brand.short_name = self.b_short.text().strip()
         s.brand.presenter = self.b_presenter.text().strip()

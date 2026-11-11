@@ -41,7 +41,7 @@ export const Thumbnail: React.FC<ThumbnailProps> = (props) => {
         ) : null}
         <div style={{position: 'absolute', left: 0, top: 0, width: panelW, height: H, background: theme.band}} />
         <div style={{position: 'absolute', left: 48, top: 30, fontFamily: FONT.sans, fontSize: 20, fontWeight: 600,
-          color: 'rgba(255,255,255,0.86)'}}>{brand.name}</div>
+          color: 'rgba(255,255,255,0.86)'}}>{brand.shortName}</div>
         <div style={{position: 'absolute', left: 44, top: 0, bottom: 0, width: panelW - 70, display: 'flex',
           flexDirection: 'column', justifyContent: 'center'}}>
           {fit.lines.map((l, i) => (
