@@ -144,7 +144,7 @@ def super_preview(name: str, sub: str, accent: str) -> tuple[QPixmap, QPixmap, f
     name_h, sub_h = 42 * 1.2, (4 + 28 * 1.3) if sub else 0.0
     top = H - 150 - (name_h + sub_h + 4)
     right = 90 + max(QFontMetrics(fn).horizontalAdvance(name), QFontMetrics(fs).horizontalAdvance(sub) if sub else 0)
-    p.setBrush(QColor(accent or "#F93107"))
+    p.setBrush(QColor(accent or "#B08D57"))
     p.drawRect(QRectF(64, top, 6, name_h + sub_h + 4))
 
     def text(font: QFont, y: float, h: float, s: str, alpha: int) -> None:

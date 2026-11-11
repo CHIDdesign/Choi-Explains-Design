@@ -31,7 +31,7 @@ export const makeTheme = (brand: Brand) => ({
   // 표지처럼 같은 색 위에 올리는 짙은 강조색(디자인 팔레트가 정해 주면 그 값 — 레퍼런스의 짙은 초록 큰 글자)
   accentDeep: brand.deep || mix(brand.accent, '#000000', 0.32),
   // 디자인 v5: 띠(챕터 배지·용어·아이덴트)의 짙은 숲색 — 채널 오렌지(accent)는 작은 표식과 밑줄에만
-  band: brand.band || '#1F4D3E',
+  band: brand.band || '#1E2A3A',
   // 형광펜·바닥 타원·이름표(디자인 v3 종이 콜라주 — 레퍼런스의 민트)
   accentTint: brand.tint || mix(brand.accent, '#ffffff', 0.5),
   // 어두운 배경에서 읽히는 밝은 강조색
@@ -65,9 +65,10 @@ export const MODERN = {
   darkInk: '#F4F3EE',
   darkSoft: 'rgba(244,243,238,0.66)',
 } as const;
-/** 재질 키트 색(디자인 v5.1). 오렌지는 테이프·표식·형광 밑줄에만 — 넓은 면을 채우지 않는다. */
-export const MAT = {forest: '#1F4D3E', mint: '#8FC7A8', eggshell: '#F4F3EE', parchment: '#EFE9DC', memo: '#FBF9F3', kraft: '#B89B72', charcoal: '#1E2124',
-  ink: '#22211E', inkSoft: 'rgba(34,33,30,0.68)', orange: '#FC5400', graphite: '#3C3B38', stamp: '#C43A14', fibre: '#EFE6D2'} as const;
+/** 재질 키트 색(디자인 v5.1, 팔레트 B 2026-11-11). 이름은 역할이다 — forest = 띠(잉크 네이비), mint = 머리표(옅은 골드),
+ *  orange = 표식(바랜 골드: 테이프·표식·형광 밑줄에만, 넓은 면을 채우지 않는다). */
+export const MAT = {forest: '#1E2A3A', mint: '#D8C49A', eggshell: '#F4F3EE', parchment: '#EFE9DC', memo: '#FBF9F3', kraft: '#B89B72', charcoal: '#1E2124',
+  ink: '#22211E', inkSoft: 'rgba(34,33,30,0.68)', orange: '#B08D57', graphite: '#3C3B38', stamp: '#8E3B2E', fibre: '#EFE6D2'} as const;
 
 export const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.55), 0 0 18px rgba(0,0,0,0.35)';
 

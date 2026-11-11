@@ -7,7 +7,7 @@ export const SAMPLE_BRAND: Brand = {
   handle: '',
   presenter: '최은준',
   presenterTitle: '홍익대학교 산업디자인 · 제품디자인',
-  accent: '#F93107',
+  accent: '#B08D57',
   ink: '#111111',
   paper: '#F4F4F2',
   year: '2026',

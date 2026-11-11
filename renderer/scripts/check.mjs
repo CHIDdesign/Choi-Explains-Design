@@ -38,9 +38,9 @@ const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const ITALIC = '"Instrument Serif", "Playfair Display", serif';
 const vars = {
   '--bg': '#F4F3EE', '--paper': '#F4F3EE', '--paper-line': 'rgba(30,33,36,0.14)', '--ink': '#1E2124', '--ink-soft': '#2B2E31',
-  '--muted': 'rgba(30, 33, 36, 0.7)', '--accent': '#FC5400', '--accent-deep': '#D94600', '--accent-light': '#FD732E',
-  '--accent-soft': 'rgba(252, 84, 0, 0.32)', '--board': '#1E2124', '--board-edge': '#2B2E31', '--chalk': '#F4F3EE',
-  '--chalk-dim': 'rgba(244, 243, 238, 0.6)', '--white': '#F4F3EE', '--band': '#1F4D3E',
+  '--muted': 'rgba(30, 33, 36, 0.7)', '--accent': '#B08D57', '--accent-deep': '#8A6A3A', '--accent-light': '#C4A576',
+  '--accent-soft': 'rgba(176, 141, 87, 0.32)', '--board': '#1E2124', '--board-edge': '#2B2E31', '--chalk': '#F4F3EE',
+  '--chalk-dim': 'rgba(244, 243, 238, 0.6)', '--white': '#F4F3EE', '--band': '#1E2A3A',
   '--font-head': SANS, '--font-body': SANS, '--font-serif': SANS, '--font-latin': SANS, '--font-editorial': SANS,
   '--font-poster': SANS, '--font-italic': ITALIC, '--font-heavy': SANS, '--font-round': SANS, '--font-hand': SANS,
   '--font-numeral': SANS, '--font-mono': SANS,

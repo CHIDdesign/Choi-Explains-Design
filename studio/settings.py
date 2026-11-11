@@ -21,11 +21,11 @@ class Brand:
     # 화자 프로필(채널 주인 2026-11-11: 한 줄 칸은 "너무 짜치다") — 화면에는 안 나오고 AI 기획의 공유 컨텍스트로만(profile())
     presenter_bio: str = ""          # 전문 분야·이력(여러 줄)
     presenter_tone: str = ""         # 채널 톤(말투·태도)
-    accent: str = "#F93107"   # Musicbed 2026 리포트 표지의 시그널 레드-오렌지
+    accent: str = "#B08D57"   # 바랜 골드(팔레트 B — 2026-11-11 오렌지에서 바꿈)
     ink: str = "#111111"
     paper: str = "#F4F4F2"
     year: str = "2026"
-    # 디자인 색: talk = 토크쇼(오렌지 표식 + 숲색 띠, 디자인 v5 기본) · ember = 채널 오렌지 · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
+    # 디자인 색: talk = 토크쇼(골드 표식 + 잉크 네이비 띠, 기본) · ember = 채널 오렌지 · forest = v3 레퍼런스의 짙은 초록 + 민트 · brand = 위 강조색에서 계산
     palette: str = "talk"
 
     def profile(self) -> str:

@@ -140,7 +140,7 @@ def test_motion_dsl_accepts_new_serif_fonts():
 def test_design_palette_defaults_to_talk_and_brand_keeps_accent():
     b = Brand()
     p = brand_props(b)
-    assert b.palette == "talk" and (p["accent"], p["deep"], p["tint"], p["band"]) == ("#FC5400", "#D94600", "#FFD7C4", "#1F4D3E")
+    assert b.palette == "talk" and (p["accent"], p["deep"], p["tint"], p["band"]) == ("#B08D57", "#8A6A3A", "#EADFC8", "#1E2A3A")
     b.palette = "brand"
     p = brand_props(b)
     assert p["accent"] == b.accent and "deep" not in p

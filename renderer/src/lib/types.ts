@@ -287,7 +287,7 @@ export type Brand = {
   ink: string;
   paper: string;
   year: string;
-  band?: string; // 디자인 v5 띠 색(없으면 #1F4D3E)
+  band?: string; // 디자인 v5 띠 색(없으면 #1E2A3A)
   deep?: string; // 디자인 팔레트의 짙은 색(큰 글자·연도) — 없으면 accent 에서
   tint?: string; // 디자인 팔레트의 옅은 색(형광펜·바닥 타원·이름표) — 없으면 accent 에서
 };

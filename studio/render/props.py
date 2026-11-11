@@ -24,7 +24,8 @@ SHORT_PRESETS = ("paper", "kinetic", "clean", "boxed", "bar")
 # 디자인 v3 팔레트(운영자 레퍼런스 프레임에서 잰 색): 중간 · 짙은(큰 글자·연도) · 옅은(형광펜·바닥 타원·이름표)
 # 디자인 색: ember = 채널 주인의 오렌지(2026-10-02 레퍼런스 실측 #FC5400 — 짙은 톤은 흰 바탕 글자용, 옅은 톤은 칩·행·형광)
 #            forest = 디자인 v3 레퍼런스의 짙은 초록 + 민트
-PALETTES = {"talk": {"accent": "#FC5400", "deep": "#D94600", "tint": "#FFD7C4", "band": "#1F4D3E"},
+#            talk = 기본(채널 주인 2026-11-11 "더 차분하고 고급진 색" → B 잉크 네이비 띠 + 바랜 골드 표식)
+PALETTES = {"talk": {"accent": "#B08D57", "deep": "#8A6A3A", "tint": "#EADFC8", "band": "#1E2A3A"},
             "ember": {"accent": "#FC5400", "deep": "#D94600", "tint": "#FFD7C4"},
             "forest": {"accent": "#2B8A64", "deep": "#1E6B4F", "tint": "#86D9B5"}}
 

@@ -8,7 +8,7 @@ export type TexName = 'eggshell' | 'parchment' | 'memo' | 'kraft' | 'gray' | 'gr
 
 /** 파일을 못 읽었을 때의 평면색 — 텍스처 하나 때문에 렌더가 멈추지 않는다 */
 const FLAT: Record<TexName, string> = {eggshell: '#F4F3EE', parchment: '#EFE9DC', memo: '#FBF9F3', kraft: '#B89B72', gray: '#CDC9C3', graph: '#F2F2EA',
-  newsprint: '#DED6C2', newsblur: '#D2CAB8', print: '#F0EDE5', forest: '#1F4D3E', blueprint: '#2B4A5E', desk: '#3A352E'};
+  newsprint: '#DED6C2', newsblur: '#D2CAB8', print: '#F0EDE5', forest: '#1E2A3A', blueprint: '#2B4A5E', desk: '#3A352E'};
 const NAMES = Object.keys(FLAT) as TexName[];
 const TW = 1920;
 const TH = 1080;
