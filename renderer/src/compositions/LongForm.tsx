@@ -51,7 +51,6 @@ export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: numb
   const i = lastIndexAtOrBefore(shots, t, (s) => s.start);
   if (i < 0) return {zoom: 1, x: 0, framed: 0};
   const s = shots[i];
-  if (s.cut) return {zoom: s.zoom, x: s.x ?? 0, framed: 0};
   const fr = s.framed ? 1 : 0;
   if (t > s.end) return {zoom: s.zoomEnd, x: s.x ?? 0, framed: fr};
   const f = s.end > s.start ? (t - s.start) / (s.end - s.start) : 0;
@@ -59,7 +58,7 @@ export const cameraAt = (shots: CameraShot[], t: number): {zoom: number; x: numb
   const cur = {zoom: s.zoom + (s.zoomEnd - s.zoom) * EASE.inOutCubic(f), x: s.x ?? 0, framed: fr};
   const g = s.glide ?? 0;
   if (g > 0 && i > 0 && t < s.start + g) {
-    // 컷 대신 앞 샷의 마지막 프레이밍에서 천천히 옮겨 온다(교육 영상용 젠틀 리프레이밍)
+    // 컷 대신 앞 샷의 마지막 프레이밍에서 천천히 옮겨 온다 — 화자 젠틀 줌(push_in·pull_out, 되튐 없음)
     const p = shots[i - 1];
     const k = EASE.inOutCubic(Math.max(0, (t - s.start) / g));
     const pf = p.framed ? 1 : 0;

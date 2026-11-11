@@ -23,9 +23,10 @@ def _dbfs(x: np.ndarray) -> float:
 
 
 def vocal_events(audio16k: np.ndarray, vad: list[tuple[float, float]], words: list[Word], *, min_dur: float = 0.16,
-                 max_dur: float = 2.5, min_dbfs: float = -40.0, margin: float = 0.10) -> list[dict[str, Any]]:
+                 max_dur: float = 8.0, min_dbfs: float = -40.0, margin: float = 0.10) -> list[dict[str, Any]]:
     """VAD 말소리 안에서 인식 단어가 덮지 않는 토막 → [{id, start, end, dur, dbfs, kind, prev, next, gap_prev, gap_next}].
-    kind: burst(짧고 큰 소리 — 기침·헛기침·입소리) · soft(숨·웅얼거림). margin: 단어 앞뒤로 더 덮어 주는 여유(초)."""
+    kind: burst(짧고 큰 소리 — 기침·헛기침·입소리) · soft(숨·웅얼거림) · speech(2.5초 넘는 토막 — 인식기가 놓친 말일 가능성이
+    크다; 예전엔 아예 빼서 컷 총괄이 정할 수 없었고 '긴 틈' 규칙이 잘랐다, 2026-11-11). margin: 단어 앞뒤로 더 덮어 주는 여유(초)."""
     ws = sorted(words, key=lambda w: w.start)
     starts = np.array([w.start for w in ws]) if ws else np.zeros(0)
     ends = np.array([w.end for w in ws]) if ws else np.zeros(0)
@@ -59,7 +60,7 @@ def vocal_events(audio16k: np.ndarray, vad: list[tuple[float, float]], words: li
             ni = int(np.searchsorted(starts, e, side="left")) if ws else -1
             prev = ws[pi] if 0 <= pi < len(ws) else None
             nxt = ws[ni] if ws and 0 <= ni < len(ws) else None
-            kind = "burst" if (db >= -30.0 and dur <= 0.9) else "soft"
+            kind = "burst" if (db >= -30.0 and dur <= 0.9) else "speech" if dur > 2.5 else "soft"
             out.append({"id": len(out), "start": round(s, 3), "end": round(e, 3), "dur": round(dur, 3), "dbfs": round(db, 1),
                         "kind": kind, "prev": prev.text if prev else "", "next": nxt.text if nxt else "",
                         "gap_prev": round(s - prev.end, 2) if prev else 9.9, "gap_next": round(nxt.start - e, 2) if nxt else 9.9})

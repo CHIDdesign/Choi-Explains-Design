@@ -47,13 +47,13 @@ def test_camera_alternates_and_never_flickers():
     tm, total, ed = _long_case()
     zooms = [c["zoom"] for c in ed.camera]
     assert set(zooms) == {PARAMS["wide"], PARAMS["medium"]}
-    assert all(c["end"] - c["start"] >= 0.99 for c in ed.camera[:-1])
-    assert PARAMS["medium"] == 1.12                             # 점프컷은 크롭을 12% 바꾼 하드 컷
-    cuts = {round(c, 3) for c in tm.cut_points()} | {100.1}
-    covers_end = {17.4, 48.0, 75.0, 102.6, 140.0}
-    assert all(not c.get("glide") and c["zoomEnd"] == c["zoom"] for c in ed.camera)   # 슬로우 줌·글라이드 없음
-    sentences = {float(t) for t in range(0, int(total), 7)}
-    assert all(any(abs(c["start"] - x) < 0.01 for x in cuts | covers_end | sentences) for c in ed.camera[1:])
+    assert PARAMS["medium"] <= 1.10                              # 작은 줌(2026-11-11 젠틀 줌)
+    for a, b in zip(ed.camera, ed.camera[1:]):
+        assert b["start"] - a["start"] >= PARAMS["zoom_min_gap"]  # 핑퐁 없음
+        assert b["zoom"] != a["zoom"] and b["glide"] in (PARAMS["push_in"], PARAMS["pull_out"])   # 크기는 천천히만 바뀐다
+        assert b["glide"] == (PARAMS["push_in"] if b["zoom"] > a["zoom"] else PARAMS["pull_out"])
+    sentences = {float(t) for t in range(0, int(total), 7)} | {100.1}
+    assert all(any(abs(c["start"] - x) < 0.01 for x in sentences) for c in ed.camera[1:])   # 점프컷이 아니라 문장 시작에서
 
 
 def test_no_ppt_stage_transitions():
@@ -92,11 +92,11 @@ def test_callouts_keep_20s_gap_and_count_in_stats():
 
 
 def test_long_face_only_stretch_changes_crop_at_sentence():
-    """얼굴만 max_shot(20초) 넘게 이어지면 문장 시작에서 크롭을 한 번 바꾼다(글라이드 없음)."""
+    """얼굴만 max_shot(20초) 넘게 이어지면 문장 시작에서 천천히 줌."""
     tm = TimeMap([Span(0, 70)])
     shots = camera_plan(tm, 70.0, chapter_starts=[], covers=[], sentence_starts=list(range(0, 70, 5)))
     assert len(shots) >= 2 and all(s["end"] - s["start"] <= PARAMS["max_shot"] + 1e-6 for s in shots)
-    assert all("glide" not in s for s in shots)
+    assert all(s.get("glide") for s in shots[1:]) and all(s["x"] == 0 for s in shots)   # 하드 컷 없음 · 얼굴 가운데
 
 
 def test_camera_plan_merges_micro_shots():
@@ -115,8 +115,8 @@ def test_short_edit_is_fast_but_sparse():
                                                              {"start": 25.0, "end": 28.0, "template": "keyword"}],
                           cues=cues, moments=[Moment(t=20.0, end=22.0, intensity=3)])
     assert len(ed.transitions) == 1 and ed.transitions[0]["type"] == "zoom"       # 되감기 이음새 하나(디졸브 대신 줌스루)
-    assert {c["zoom"] for c in ed.camera} <= {1.0, 1.12} and all(c["zoom"] == c["zoomEnd"] for c in ed.camera)      # 디자인 v5: 하드 컷 크롭만
-    assert all(c["end"] - c["start"] >= 3.4 for c in ed.camera[:-1])
+    assert {c["zoom"] for c in ed.camera} <= {1.0, PARAMS["medium"]} and all(c.get("glide") for c in ed.camera[1:])  # 젠틀 줌만
+    assert all(c["end"] - c["start"] >= PARAMS["zoom_min_gap"] for c in ed.camera[:-1])
     assert ed.punches == []
     assert 2 <= len(ed.sfx) <= 6 and {s["category"] for s in ed.sfx} <= {"paper_place", "paper_slide"}
     # 컷·이음새·강조 글라이드·사진에는 소리 없음 — 글자·도식이 놓일 때만
@@ -497,7 +497,8 @@ def test_camera_plan_uses_framed_shots_gently():
     tm = TimeMap([Span(0, 12), Span(14, 30), Span(32, 50), Span(52, 70), Span(72, 90)])
     # 기본은 끔(10/1: 화자 화면 전체에 찢어진 테두리 — docs/upgrade/06 F-5). 렌더러·엔진의 장치는 남아 있다
     assert not any(s.get("framed") for s in camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[]))
-    shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[], P={**PARAMS, "framed_every": 2})
+    shots = camera_plan(tm, tm.duration, chapter_starts=[], covers=[], sentence_starts=[],
+                        P={**PARAMS, "framed_every": 2, "max_shot": 8.0})
     framed = [s for s in shots if s.get("framed")]
     assert framed and all(s["end"] - s["start"] >= PARAMS["framed_min"] for s in framed)
     for i, s in enumerate(shots):

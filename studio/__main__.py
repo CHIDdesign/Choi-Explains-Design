@@ -40,6 +40,28 @@ def _run(pipe, until: str) -> int:
     return 0
 
 
+def _board(job: Path) -> int:
+    """대화형 스튜디오의 감독(Claude Code)이 한눈에 보는 판: 고칠 대상(work/plan.json long.graphics[번호])과 그 근거."""
+    from .export.events import event_list
+    from .util import fmt_ts, read_json
+    plan = read_json(job / "work" / "plan.json", {})
+    utts = {u["id"]: u for u in read_json(job / "work" / "align.json", {}).get("utterances", [])}
+    gs = plan.get("long", {}).get("graphics", [])
+    print(f"# 계획 그래픽 {len(gs)}개 — 고칠 곳: {job / 'work' / 'plan.json'} 의 long.graphics[번호]")
+    for i, g in enumerate(gs):
+        u = utts.get(g.get("start_seg"), {})
+        shown = " / ".join(str(g[k]) for k in ("title", "subtitle", "body") if g.get(k))
+        items = " ; ".join(str(x) for x in g.get("items") or [])
+        print(f"[{i}] seg {g.get('start_seg')} @{fmt_ts(float(u.get('start', 0)))} {g.get('template')}/{g.get('layout')} "
+              f"\"{shown}\"" + (f" [{items}]" if items else ""))
+        print(f"     말: {str(u.get('text', ''))[:100]}")
+        print(f"     이유: {g.get('reason', '')} · 그림: {g.get('image') or g.get('source') or '-'}")
+    props = read_json(job / "render" / "props_long.json", {})
+    if props:
+        print("\n# 완성 타임라인(편집 시각)\n" + event_list(props))
+    return 0
+
+
 def cli(argv: list[str]) -> int:
     from .pipeline import JobSpec, Pipeline, new_job_dir
     from .settings import Settings
@@ -74,6 +96,12 @@ def cli(argv: list[str]) -> int:
     rr.add_argument("--until", default="all", choices=["all", "plan", "design"])
     rr.add_argument("--replan", action="store_true", help="저장된 기획을 쓰지 않고 새로 짓는다(🧪 디자인 벤치)")
     rr.add_argument("--force-render", action="store_true", help=force_help)
+    sc = sub.add_parser("script", help="✍ 대본 생성기: 아이디어(글 또는 파일) → 훅 + 사람 말투 대본(.md)")
+    sc.add_argument("--idea", required=True, help="아이디어·메모 글 또는 파일(.txt/.md/.docx/.hwpx)")
+    sc.add_argument("--minutes", type=float, default=0.0, help="(선택) 목표 길이(분)")
+    sc.add_argument("--out", default="", help="(선택) 저장할 .md 경로")
+    bd = sub.add_parser("board", help="🎬 감독용 전체 보기: 계획의 모든 그래픽(번호·발화·이유·출처) + 완성 타임라인")
+    bd.add_argument("job_dir")
     ref = sub.add_parser("reference", help="🎯 레퍼런스 분석(사진·영상 → 디자인 규칙). 파일이 없으면 창을 연다")
     ref.add_argument("files", nargs="*", help="사진·영상·폴더")
     ref.add_argument("--note", default="", help="(선택) 무엇이 좋은지 한 줄")
@@ -115,6 +143,12 @@ def cli(argv: list[str]) -> int:
             spec.reuse_plan = False
         return _run(Pipeline(spec, settings, job_dir, log=log, progress=progress, force_render=args.force_render),
                     args.until)
+    if args.cmd == "script":
+        from .agents.scriptwriter import run as write_script
+        print(f"✍ 대본 → {write_script(args.idea, settings, minutes=args.minutes, out=args.out, log=log)}", flush=True)
+        return 0
+    if args.cmd == "board":
+        return _board(Path(args.job_dir))
     if args.cmd == "reference":
         from .agents import reference
         if args.export is not None:

@@ -2,8 +2,8 @@
 
 입력: 편집 타임라인(컷), 시간이 정해진 그래픽, 챕터, AI 가 표시한 강조 순간(moments), 자막 큐.
 출력(렌더 props 에 그대로 들어감):
-  - camera      : 점프컷 프레이밍 — 와이드 1.00 ↔ 미디엄 1.12 를 NG 를 잘라낸 큰 점프·챕터 시작·전체화면 그래픽 복귀에서
-                  바꾸는 하드 크롭 컷(디자인 v5). 샷 안에서 카메라는 움직이지 않는다. 종이 스킨은 액자 샷(framed)도.
+  - camera      : 젠틀 줌 — 컷에서는 크기 그대로, 같은 크기가 오래 이어지면 문장 시작에서 1.00 ↔ 1.10 을 3~4초에 걸쳐
+                  천천히 밀고 뺀다(glide). 종이 스킨은 액자 샷(framed)도.
   - callouts    : 핵심어 콜아웃(편집 감독이 문구를 쓴 강도 2 이상 순간)
   - sfx         : 그래픽이 말에 닿는 순간의 효과음
   - bgm_swells  : 배경음악을 올릴 구간 · bgm_dips(정점·챕터 끝 비우기) · bgm_anchors(곡이 끝났을 때 다시 시작할 자리)
@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -23,12 +22,17 @@ from ..util import text_hash
 FPS_BASE = 30.0
 
 PARAMS: dict[str, Any] = {
-    # 카메라(점프컷 프레이밍): 크롭을 12% 바꾼 하드 컷으로 점프를 가린다. 슬로우 줌·글라이드 없음(디자인 v5)
+    # 카메라(2026-11-11 채널 주인: '확대해 잘라 붙이지 말고 젠틀하게 줌인 — 자연스러운 흐름과 호흡'): 화자 크기는 컷에서
+    # 바뀌지 않는다. 같은 크기가 max_shot 넘게 이어지면 문장 시작에서 천천히 밀고(push_in) 다음엔 천천히 뺀다(pull_out).
+    # 렌더러 cameraAt 이 glide 초 동안 inOutCubic(되튐 없음)으로 옮긴다. 초점은 얼굴 추적 그대로(옆 치우침 없음)
     "wide": 1.0,
-    "medium": 1.12,
-    "medium_x": 0.03,
-    "min_shot": 6.0,            # 긴 얼굴 구간을 문장 시작에서 나눌 때 앞뒤로 남길 최소 길이(초)
-    # 같은 프레이밍이 이보다 길게 이어지면 문장 시작에서 크롭을 한 번 바꾼다
+    "medium": 1.10,
+    "medium_x": 0.0,
+    "push_in": 3.2,             # 밀어 들어가는 시간(초)
+    "pull_out": 4.0,            # 넓게 돌아가는 시간(초) — 들어갈 때보다 느리게
+    "zoom_min_gap": 8.0,        # 줌 움직임 사이 최소 간격(초) — 숏폼은 이 간격으로 번갈아
+    "min_shot": 6.0,            # 줌이 시작된 뒤 영상 끝까지 남아야 할 최소 길이(초)
+    # 같은 크기가 이보다 길게 이어지면 문장 시작에서 천천히 줌
     "max_shot": 20.0,
     # 리듬 수준별 콜아웃 최소 간격(편집 감독의 rhythm 이 있는 곳만 — 없으면 callout_min_gap)
     "rhythm_gap": {"slow": 40.0, "steady": 20.0, "fast": 15.0},
@@ -36,7 +40,6 @@ PARAMS: dict[str, Any] = {
     "hold_max": 25.0,         # 홀드 한 곳의 최대 길이(게이트 A7 과 같은 값)
     "hold_gap": 20.0,         # 홀드 사이 최소 간격 — 앞 홀드 끝에서 이 안에 시작하는 홀드는 뺀다(2026-10-03: 홀드 셋이 9~12초
                               # 간격으로 이어져 얼굴만 71초 → A7 block, 보충 카드는 홀드를 피하므로 메울 수 없었다)
-    "big_jump": 1.2,            # 원본에서 이만큼 이상 건너뛴 컷(NG 제거)은 프레이밍 전환으로 가린다
     # 종이 스킨의 세 번째 '앵글': 화자를 찢어진 액자에 담아 종이 위에(사용자 레퍼런스 2). 와이드↔미디엄 사이사이,
     # 8초 이상인 샷만, 0.6초에 걸쳐 천천히 들어가고 나온다. classic 스킨은 파이프라인이 framed_every=0 으로 끈다.
     # 액자 샷은 끈다(10/1: 화자 화면 전체에 찢어진 흰 테두리가 생겼다 사라짐 — docs/upgrade/06 F-5). 렌더러 코드는 남겨 둔다
@@ -308,81 +311,51 @@ def camera_plan(timemap: TimeMap, total: float, *, chapter_starts: list[float], 
                 framed_ranges: Optional[list[tuple[float, float]]] = None,
                 angle_cuts: Optional[list[float]] = None,
                 holds: Optional[list[tuple[float, float]]] = None) -> list[dict]:
-    """점프컷 프레이밍. 컷 지점에서만 와이드(1.00)/미디엄(1.12)을 번갈아 바꾼다 — 챕터 시작·전체화면 그래픽 복귀·NG 를 잘라낸
-    큰 점프(≥big_jump). 얼굴만 max_shot 넘게 이어지면 문장 시작에서 한 번 더. 샷 안에서는 움직이지 않는다.
-    framed_every > 0(종이 스킨)이면 전환 몇 번에 한 번은 액자 샷. angle_cuts(다시점 앵글이 바뀌는 편집 시각)는 새 샷 — 앵글
-    자체가 컷을 가리므로 그 샷은 와이드에서 시작하고, 그 가까이(2초)에서는 프레이밍을 따로 바꾸지 않는다."""
-    rnd = random.Random(seed)
-    cuts = timemap.cut_points()
-    big: set[float] = set()
-    for i in range(1, len(timemap.keeps)):
-        if timemap.keeps[i].start - timemap.keeps[i - 1].end >= P["big_jump"]:
-            big.add(round(timemap.edit_span_of(i).start, 3))
-    chapter_set = {round(c, 3) for c in chapter_starts}
-    cover_ends = [round(b, 3) for _, b, _ in covers]
+    """젠틀 줌 프레이밍. 점프컷(NG·말 지운 곳)·그래픽 복귀에서는 크기를 바꾸지 않는다. 같은 크기가 max_shot 넘게 이어지면
+    문장 시작(없으면 컷 지점)에서 와이드 ↔ 미디엄으로 천천히 옮긴다(glide = push_in·pull_out). 챕터 시작은 미디엄이면 천천히
+    넓게. 움직임 사이는 zoom_min_gap 이상, 그래픽·🙂 홀드 안에서는 시작하지 않는다. angle_cuts(다시점 앵글이 바뀌는 편집
+    시각)는 앵글이 컷을 가리므로 와이드로 바로(글라이드 없음), 그 가까이(2초)에서는 줌하지 않는다.
+    framed_every > 0(종이 스킨)이면 미디엄 몇 번에 한 번은 액자 샷."""
     angle_set = {round(c, 3) for c in angle_cuts or []}
-    cands = sorted({round(c, 3) for c in cuts} | chapter_set | set(cover_ends) | angle_set)
-    bounds = [0.0]
+    chapter_set = {round(c, 3) for c in chapter_starts}
+    sent_set = {round(c, 3) for c in sentence_starts}
+    cands = sorted(sent_set | {round(c, 3) for c in timemap.cut_points()} | chapter_set | angle_set)
+    moves: list[tuple[float, str]] = [(0.0, "wide")]          # (시각, 'wide'|'medium'|'angle')
+    level, last = "wide", 0.0
     for c in cands:
-        if c <= 0.05 or c >= total - 0.3:
+        if c in angle_set:
+            if 0.05 < c < total - 0.3:
+                moves.append((c, "angle"))
+                level, last = "wide", c
             continue
-        since = c - bounds[-1]
-        near_angle = any(abs(c - x) < 2.0 for x in angle_set) and c not in angle_set
-        must = c in chapter_set or c in cover_ends or c in angle_set or (c in big and since >= 1.2 and not near_angle)
-        if must:
-            bounds.append(c)
-    # 얼굴만 너무 오래 이어지면 문장 경계에서 한 번 더
-    filled = [bounds[0]]
-    extra = sorted(s for s in sentence_starts if 0.5 < s < total - 1.0)
-    for b in bounds[1:] + [total]:
-        while b - filled[-1] > P["max_shot"]:
-            mid = [s for s in extra if filled[-1] + P["min_shot"] <= s <= b - P["min_shot"]
-                   and not _inside(s, covers) and not any(a0 <= s <= b0 for a0, b0 in holds or [])]
-            if not mid:
-                break
-            target = filled[-1] + P["max_shot"] * 0.6
-            pick = min(mid, key=lambda s: abs(s - target))
-            filled.append(pick)
-        if b < total:
-            filled.append(b)
-    # 너무 가까운 경계(1초 미만)는 하나로 — 0.1초짜리 샷은 튀어 보인다(앞 경계를 남김, 챕터 경계 우선)
-    merged: list[float] = []
-    for b in sorted(set(round(b, 3) for b in filled)):
-        if merged and b - merged[-1] < 1.0:
-            if b in chapter_set or b in angle_set:
-                merged[-1] = b
+        if c <= 0.5 or c > total - P["min_shot"] or c - last < P["zoom_min_gap"]                 or any(abs(c - x) < 2.0 for x in angle_set) or _inside(c, covers)                 or any(a0 <= c <= b0 for a0, b0 in holds or []):
             continue
-        merged.append(b)
-    bounds = merged + [total]
-    shots: list[dict] = []
-    level = "wide"
-    side = 1 if rnd.random() > 0.5 else -1
-    switches = 0
-    for i in range(len(bounds) - 1):
-        a, b = bounds[i], bounds[i + 1]
-        if b - a < 0.05:
-            continue
-        if i == 0 or round(a, 3) in chapter_set or round(a, 3) in angle_set:
+        if c in chapter_set and level != "wide":
             level = "wide"
-        elif level != "wide":
-            level = "wide"
+        elif c - last >= P["max_shot"] and (c in chapter_set or c in sent_set or not sent_set):
+            level = "wide" if level != "wide" else "medium"
         else:
+            continue
+        moves.append((c, level))
+        last = c
+    shots: list[dict] = []
+    switches = 0
+    every = int(P.get("framed_every", 0) or 0)
+    for (a, kind), (b, _) in zip(moves, moves[1:] + [(total, "")]):
+        framed = False
+        if kind == "medium":
             switches += 1
-            every = int(P.get("framed_every", 0) or 0)
             framed_ok = framed_ranges is None or any(x <= a < y for x, y in framed_ranges)   # 하이브리드: 종이 챕터만
-            level = "framed" if every and framed_ok and switches % every == 0 and b - a >= P.get("framed_min", 8.0) \
-                else "medium"
-        zoom = P["wide"] if level == "framed" else P[level]
-        x = 0.0
-        if level == "medium":
-            side = -side
-            x = side * P["medium_x"]
-        shot = {"start": round(a, 3), "end": round(b, 3), "zoom": round(zoom, 4), "zoomEnd": round(zoom, 4), "x": round(x, 4)}
-        if level == "framed":
+            framed = bool(every and framed_ok and switches % every == 0 and b - a >= P.get("framed_min", 8.0))
+        zoom = P["medium"] if kind == "medium" and not framed else P["wide"]
+        shot = {"start": round(a, 3), "end": round(b, 3), "zoom": zoom, "zoomEnd": zoom,
+                "x": P["medium_x"] if kind == "medium" else 0.0}
+        if framed or (shots and shots[-1].get("framed")):
+            shot["glide"] = P["framed_glide"]          # 액자 들어가고 나올 때도 천천히
+        elif shots and kind != "angle" and zoom != shots[-1]["zoomEnd"]:
+            shot["glide"] = P["push_in"] if zoom > shots[-1]["zoomEnd"] else P["pull_out"]
+        if framed:
             shot["framed"] = True
-            shot["glide"] = P["framed_glide"]
-        elif shots and shots[-1].get("framed"):
-            shot["glide"] = P["framed_glide"]          # 액자에서 나올 때도 천천히
         shots.append(shot)
     return shots
 
@@ -529,33 +502,12 @@ def build_long_edit(*, timemap: TimeMap, total: float, speech_total: float, grap
 def build_short_edit(*, timemap: TimeMap, total: float, graphics: list[dict], cues: list[dict],
                      moments: list[Moment], P: dict = PARAMS, seed: int = 2,
                      angle_cuts: Optional[list[float]] = None) -> EditDecisions:
-    """숏폼: 프레이밍은 컷 지점에서만 크롭을 바꾼 하드 컷(1.00↔1.12), 화자에게 슬로우 줌·글라이드 없음(디자인 v5).
+    """숏폼: 화자 크기는 컷에서 바뀌지 않고, zoom_min_gap 마다 천천히 밀고 뺀다(camera_plan).
     다시점 앵글이 바뀌는 곳은 새 샷(1.00부터)."""
     ed = EditDecisions()
-    rnd = random.Random(seed)
-    # 1) 카메라: 컷 지점에서만 1.00 ↔ 1.12 교차(샷 최소 3.5초). 샷 안에서는 움직이지 않는다.
-    angle_set = {round(c, 3) for c in angle_cuts or []}
-    marks = sorted({round(c, 3) for c in timemap.cut_points()} | angle_set)
-    bounds = [0.0]
-    for m in marks:
-        if m >= total - 1.0:
-            continue
-        if m in angle_set:
-            if m - bounds[-1] < 1.0 and len(bounds) > 1:
-                bounds[-1] = m
-            elif m - bounds[-1] >= 0.05:
-                bounds.append(m)
-        elif m - bounds[-1] >= 3.5 and not any(abs(m - x) < 2.0 for x in angle_set):
-            bounds.append(m)
-    bounds.append(total)
-    level = rnd.choice([0, 1])
-    for i in range(len(bounds) - 1):
-        a, b = bounds[i], bounds[i + 1]
-        if round(a, 3) in angle_set:
-            level = 0
-        z = 1.12 if level else 1.0
-        level ^= 1
-        ed.camera.append({"start": round(a, 3), "end": round(b, 3), "zoom": z, "zoomEnd": z})
+    # 1) 카메라: 컷에서는 크기를 바꾸지 않고, zoom_min_gap 마다 컷 지점에서 천천히 밀고 뺀다(롱폼과 같은 젠틀 줌)
+    ed.camera = camera_plan(timemap, total, chapter_starts=[], covers=[], sentence_starts=[],
+                            P={**P, "max_shot": P["zoom_min_gap"], "framed_every": 0}, angle_cuts=angle_cuts)
     # 2) 전환: 콜드 오픈 → 본론으로 되감는 이음새 하나만(블러 디졸브 9프레임 = '되감기' 신호). 나머지는 컷
     keeps = timemap.keeps
     for i in range(1, len(keeps)):

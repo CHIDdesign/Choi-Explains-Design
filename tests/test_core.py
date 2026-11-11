@@ -365,7 +365,7 @@ def test_shorts_coherence_repairs_stitched_segments_and_prefers_one_good_short()
     out = normalize_shorts(raw, utts, count=2, max_sec=60, log=logs.append)
     assert len(out) == 1, [(s["title"], s["score"], s["coherence"]) for s in out]      # 둘째는 7점·겹침 → 만들지 않음
     a = out[0]
-    assert a["segments"] == [5, 2, 3, 4] and a["coherence"] >= 0.7, a["segments"]   # 콜드 오픈 + 연속 구간으로 고침
+    assert a["segments"] == [2, 3, 4] and a["coherence"] >= 0.7, a["segments"]   # 연속 구간으로 고침(콜드 오픈은 끔 — 2026-11-11)
     assert a["viewer_takeaway"] == "형태가 사용법을 말한다" and "연속 구간으로 고침" in a["why"]
     assert any("연속 구간" in m for m in logs) and any("만들지 않음" in m for m in logs)
 
@@ -511,3 +511,33 @@ def test_long_form_captions_are_one_breath_up_to_24_chars():
     texts = [" ".join(x["text"] for x in c["lines"][0]) for c in cues]
     assert 2 <= len(texts) <= 4 and all(len(x) <= 24 for x in texts) and all(len(c["lines"]) == 1 for c in cues)
     assert all(c["end"] - c["start"] <= 4.2 for c in cues)
+
+
+def test_calm_keeps_pauses_the_pace_allows():
+    """2026-11-11 채널 주인: "말과 말 사이 간격이 너무 짧아" — calm 은 1.4초까지의 쉼을 남기고 더 긴 쉼도 0.75초(앞 0.45 + 뒤 0.3)는
+    남긴다는데, 남긴 발화 사이 1.14초 넘는 쉼은 패딩 0.34초(앞 0.12 + 뒤 0.22)로 잘렸다."""
+    from studio.models import Utterance
+
+    def u(i, t0, text):
+        ws = [Word(w, t0 + k * 0.3, t0 + k * 0.3 + 0.25, 0.9) for k, w in enumerate(text.split())]
+        return Utterance(i, ws[0].start, ws[-1].end, text, text, ws)
+    a, b, c = u(0, 1.0, "첫 문장입니다."), u(1, 2.8, "둘째 문장입니다."), u(2, 6.6, "셋째 문장입니다.")
+    keeps = build_keeps([a, b, c], pace=PACES["calm"], vad=[], media_duration=10, fps=30)
+    # a → b 쉼 1.25초는 그대로(한 구간), b → c 쉼 3.25초는 0.75초 넘게 남긴다
+    assert len(keeps) == 2 and keeps[0].start <= a.start and keeps[0].end >= b.end
+    heard = (keeps[0].end - b.end) + (c.start - keeps[1].start)
+    assert 0.74 <= heard < 3.0
+
+
+def test_sound_the_cut_editor_kept_bridges_a_long_gap():
+    """2026-11-11 다리오 인터뷰 03:22.6–03:25.7: 인식 못 한 3.1초 말소리를 컷 총괄이 '트림 금지'라 했는데 '긴 틈은 끊는다' 규칙이
+    잘랐다. 자르지 않기로 한 소리(bridges)가 낀 틈은 길어도 끊지 않는다."""
+    from studio.models import Utterance
+
+    def u(i, t0, text):
+        ws = [Word(w, t0 + k * 0.3, t0 + k * 0.3 + 0.25, 0.9) for k, w in enumerate(text.split())]
+        return Utterance(i, ws[0].start, ws[-1].end, text, text, ws)
+    a, b = u(0, 1.0, "of the"), u(1, 5.1, "industry is")
+    assert len(build_keeps([a, b], pace=PACES["calm"], vad=[], media_duration=10, fps=30)) == 2
+    keeps = build_keeps([a, b], pace=PACES["calm"], vad=[], media_duration=10, fps=30, bridges=[Span(1.7, 4.8)])
+    assert len(keeps) == 1 and keeps[0].start <= a.start and keeps[0].end >= b.end

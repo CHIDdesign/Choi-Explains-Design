@@ -9,6 +9,9 @@
      앞의 시도(갈라진 꼬리까지)를 지운다 — 마지막 시도가 남는다. 여러 번이면 차례로.
      단, 앞의 시도 안에서 문장이 끝났고 NG 말('다시 할게' 등)이 없으면 완성된 다른 문장이라 남긴다.
      '첫 번째 다이아몬드는 … / 두 번째 다이아몬드는'처럼 문장 중간부터 같은 말은 의도적 반복이라 건드리지 않는다.
+     대본에 그대로 있는 반복은 남기고, 편집 검사(strict)는 같은 말 뒤에 서로 다른 내용(3어절 이상)이 이어지는 병렬 구문
+     ('when you feel that you can't trust someone, when you feel that their values …')도 남긴다(2026-11-11 다리오 인터뷰:
+     컷 총괄이 되살린 아나포라를 편집 검사가 다시 지워 약 16초가 사라졌다).
   2) 추임새: 따로 떨어진 '어·음·아' 등.
 결과는 남길 단어와 지운 구간 목록(이유 포함) — 편집 리포트·진단에 그대로 남는다.
 """
@@ -103,11 +106,13 @@ def default_pause(a: Word, b: Word) -> float:
 
 
 def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], float]] = None,
-                fillers: bool = True, strict: bool = False) -> tuple[list[Word], list[Removal]]:
+                fillers: bool = True, strict: bool = False, script: str = "") -> tuple[list[Word], list[Removal]]:
     """되풀이한 앞부분과 추임새를 지운 단어 목록과 지운 구간들.
     strict: 편집 검사(2차) 용 — 확실한 되풀이(3어절·8글자 이상, 또는 NG 말이 낀 것)만 지운다. 잘라 붙인 결과물에서 다시
-    받아 적은 전사는 문맥이 끊겨 있어 약한 증거로 지우면 대본 문장을 잃는다."""
+    받아 적은 전사는 문맥이 끊겨 있어 약한 증거로 지우면 대본 문장을 잃는다.
+    script: 대본 — 지울 앞 시도와 그 뒤 두 어절이 대본에 그대로 이어져 있으면 대본에 쓰인 반복이라 지우지 않는다."""
     pause = pause or default_pause
+    script_norm = ntok(script)
     toks = [ntok(w.text) for w in words]
     drop = [False] * len(words)
     reason: dict[int, str] = {}
@@ -189,6 +194,23 @@ def clean_words(words: list[Word], *, pause: Optional[Callable[[Word, Word], flo
             if (open_final and not ng_tail) or len(tail) > MAX_TAIL_OPEN:
                 continue
             if strict and not (strong or ng_tail or stutter):
+                continue
+            # 병렬 구문(아나포라): 앞 시도의 꼬리(3어절 이상)가 다음 시도에서 다시 나오지 않으면 버린 시도가 아니라 다른 내용
+            # — 'when you feel that [you can't trust someone] / when you feel that [their values are …]'. 편집 검사(strict)만:
+            # 1차는 '혼자 알고 끝내지 말. / 혼자 말고 끝.'처럼 꼬리가 다른 재시작도 지우고 컷 총괄이 아나포라를 되살린다
+            if strict and tail and not ng_tail and not stutter:
+                h0, h1 = toks[live[kj]], toks[live[kj + 1]]
+                if any(same_word(toks[x], h0) and same_word(toks[y], h1) for x, y in zip(tail, tail[1:])):
+                    continue        # 사이에 같은 말로 시작한 더 가까운 시도가 있다 — 그 짝이 정한다
+                nxt = [toks[live[x]] for x in range(kj + k, min(len(live), kj + k + len(tail) + 3))]
+                if 3 * sum(any(same_word(toks[x], t) for t in nxt) for x in tail) < len(tail):
+                    continue
+                # 앞 시도가 문장·절을 맺었다(결과물을 다시 받아 적은 전사의 구두점) — 'People here have had disagreements with
+                # me. / People here have disagreements with each other.' · 'trust someone, when you feel …'
+                if any(re.search(r"[.?!,;]$", words[x].text.strip()) for x in tail):
+                    continue
+            said = "".join(toks[live[x]] for x in range(ki, min(len(live), kj + 2)))
+            if len(said) >= 8 and said in script_norm:
                 continue
             cand = (k, chars, -ki)
             if best is None or cand > best[0]:

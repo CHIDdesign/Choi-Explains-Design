@@ -250,13 +250,12 @@ export type Clip = {
 };
 
 export type FaceSample = {t: number; x: number; y: number; s: number};
-// 점프컷 프레이밍: 컷 지점에서 와이드(1.00) ↔ 미디엄(1.06)(콜아웃 자리 만들기는 1.10), zoom→zoomEnd 는 샷 안 느린 드리프트,
+// 화자 프레이밍: 와이드(1.00) ↔ 미디엄(1.10)을 glide 초에 걸쳐 천천히(컷에서 크기를 바꾸지 않는다), zoom→zoomEnd 는 샷 안 드리프트,
 // x 는 얼굴을 옆으로 옮길 비율(-0.1~0.1)
 // glide: 이 샷이 시작할 때 앞 샷의 프레이밍에서 이 초만큼 천천히 옮겨 온다(없으면 컷)
 // framed: 종이 스킨에서 화자를 찢어진 액자에 담아 종이 위에(레퍼런스 2)
-// cut: 크롭을 바꾼 하드 컷(100 ↔ 112%) — 그 샷 안에서는 움직이지 않는다
 export type CameraShot = {start: number; end: number; zoom: number; zoomEnd: number; x?: number; glide?: number;
-  framed?: boolean; cut?: boolean};
+  framed?: boolean};
 // 강조 줌: t ~ end 동안 카메라를 당김. style glide 일 때만 from·in·out(초)으로 천천히, 그 밖에는 한 프레임에 점프(크롭 하드 컷)
 export type Punch = {t: number; end: number; amount: number; style?: 'cut' | 'ease' | 'glide'; from?: number; in?: number; out?: number};
 

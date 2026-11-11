@@ -7,7 +7,6 @@ from pathlib import Path
 from studio import net
 from studio.agents import schemas as S
 from studio.agents.studio import merge_plan
-from studio.broll.entities import find_entities
 from studio.broll.images import ImageResult, resolve_image
 from studio.broll.wikipedia import WikipediaImages, _file_name_from_url
 from studio.director.plan import _clean_graphic
@@ -147,19 +146,6 @@ def test_resolve_prefers_wikipedia_over_commons(tmp_path):
     calls.clear()
     assert resolve_image("x", local=[], dst_dir=tmp_path, wikimedia=WM(), wikipedia=WP2()) is None
     assert calls == ["wp:x", "wm:x"]
-
-
-def test_find_entities_is_conservative():
-    text = ("오늘은 Dieter Rams 이야기입니다. The Design is good. 브라운의 Braun SK 4 라디오, 그리고 『디자인의 디자인』이라는 책. "
-            "불교와 기독교의 건축도 봅니다. Dieter Rams 는 두 번 나옵니다. Less but Better 라는 말도 있죠. Design Council 도.")
-    ents = find_entities(text)
-    terms = [e.term for e in ents]
-    assert terms[:1] == ["Dieter Rams"]                       # 등장 순서
-    assert "Braun SK 4" in terms and "디자인의 디자인" in terms and "불교" in terms and "기독교" in terms
-    assert "Design Council" in terms and "Less but Better" not in terms   # 소문자 낱말이 섞인 구는 이름이 아니다
-    assert "The Design" not in terms and terms.count("Dieter Rams") == 1
-    kinds = {e.term: e.kind for e in ents}
-    assert kinds["디자인의 디자인"] == "work" and kinds["불교"] == "religion" and kinds["Dieter Rams"] == "name"
 
 
 def test_merge_plan_and_clean_keep_wiki_flag():

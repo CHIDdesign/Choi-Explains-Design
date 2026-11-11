@@ -274,3 +274,39 @@ def test_stutter_rule_does_not_eat_a_clause_before_a_comma_pause():
     assert text(kept) == "우리가 디자인을 배울 때 디자인을 공부하는 이유는 하나입니다."
     kept, _ = clean_words(say("네", 0.4, "네 맞습니다."))
     assert text(kept) == "네 네 맞습니다."
+
+
+# 2026-11-11 다리오 아모데이 인터뷰: 컷 총괄이 '열거(anaphora)지 다시 말한 앞부분이 아님'이라며 되살린 문장을 편집 검사(strict)가
+# 다시 받아 적고 되풀이로 지웠다(약 16초). 아래는 그 편집 검사의 실제 전사.
+DARIO_WHEN = ("when you feel that you can't trust someone", 0.1,
+              "when you feel that their values are not what they say they are", 0.2,
+              "when you feel that they're not honest", 0.6,
+              "when you feel that they're not in it for the reasons that they say")
+DARIO_DAYS = ("you wake up in two days have gone by on earth", 0.3, "deal with one day then sleep continue to accelerate", 0.3,
+              "three days have gone by on earth and then the next day and four days have gone by")
+
+
+DARIO_PUNCT = ("That's the experience of the world.", 0.2, "That's the experience of the scale of the company", 1.0,
+               "People here have had disagreements with me.", 0.1, "People here have disagreements with each other.", 0.4,
+               "But when you feel that you can't trust someone,", 0.2, "when you feel that they're not honest,", 0.5,
+               "when you feel that they're not in it for the reasons that they say,")
+
+
+def test_verify_pass_keeps_anaphora():
+    for parts in (DARIO_WHEN, DARIO_DAYS, DARIO_PUNCT):
+        ws = say(*parts)
+        kept, rem = clean_words(ws, strict=True)
+        assert text(kept) == text(ws), rem
+
+
+def test_repetition_written_in_the_script_is_never_cut():
+    script = ("But when you feel that you can't trust someone, when you feel that their values are not what they say "
+              "they are, when you feel that they're not honest, when you feel that they're not in it for the reasons "
+              "that they say.")
+    ws = say(*DARIO_WHEN)
+    for strict in (False, True):
+        kept, rem = clean_words(ws, strict=strict, script=script)
+        assert text(kept) == text(ws), (strict, rem)
+    # 대본에 없는 반복(진짜 다시 시작)은 대본이 있어도 지운다
+    kept, _ = clean_words(say("좋은 디자인은", 0.8, "좋은 디자인은 설명이 필요 없습니다."), script="좋은 디자인은 설명이 필요 없습니다.")
+    assert text(kept) == "좋은 디자인은 설명이 필요 없습니다."

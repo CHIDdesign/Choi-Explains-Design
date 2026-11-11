@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from studio.edit.breath import BREATHS, breathe, ends_sentence, join_kinds  # noqa: E402
+from studio.edit.breath import BREATHS, breathe, ends_sentence, join_kinds, snap_cuts  # noqa: E402
 from studio.models import Span, Utterance, Word  # noqa: E402
 
 
@@ -170,10 +170,37 @@ def test_pipeline_breathe_on_two_reads_reassembled_in_script_order():
                          plan_long={"pauses": [], "peak_seg": -1, "payoff_seg": -1}, utts=utts,
                          vad=[(w.start, w.end) for u in utts for w in u.words], smap=SimpleNamespace(single=True),
                          fps=30, _raw_words=lambda: [], _removed_spans=lambda: [])
-    out, rep2 = Pipeline._breathe(me, keeps, "calm", [])
+    out, rep2 = Pipeline._breathe(me, keeps, "calm")
     assert len(out) == len(keeps) and len(rep2.joins) == len(keeps) - 1
     assert all(j.before < 0.4 for j in rep2.joins)
     assert all(j.after >= BREATHS["calm"].sentence - 0.05 for j in rep2.joins)
     # 다른 회차(지운 테이크)의 말소리로 넘어가지 않는다
     dropped = [w for u in utts if not u.kept for w in u.words]
     assert not any(k.start < w.end and w.start < k.end for k in out for w in dropped)
+
+
+def test_stutter_removal_keeps_the_breath_around_it():
+    """2026-11-11 채널 주인: "말과 말 사이의 간격이 너무 짧아" — 'we … I, I … think' 에서 더듬은 'I, I' 를 지운 곳이 0.00초로
+    붙었다(지운 구간 전체가 벽). 지운 말의 소리만 벽이고, 그 앞뒤 원본 쉼(0.4초)은 숨으로 남는다 — 지운 말은 새지 않는다."""
+    words = [Word("we", 1.0, 1.3, 0.9), Word("I,", 1.7, 1.9, 0.9), Word("I,", 2.2, 2.4, 0.9), Word("think", 2.8, 3.1, 0.9)]
+    speech = [(w.start, w.end) for w in words]
+    keeps = [Span(0.9, 1.45), Span(2.7, 3.3)]          # build_keeps 가 'I, I' 를 뺀 결과(패딩 0.15 · 0.1)
+    out, rep = breathe(keeps, speech=speech, kind_of=lambda i: ("inner", None), breath=BREATHS["calm"],
+                       media_duration=5.0)
+    assert rep.joins[0].after >= 0.38                # 원본 쉼만큼(예전: 문장 안 목표 0.28)
+    assert out[0].end <= 1.7 - 0.06 + 1e-6 and out[1].start >= 2.4 + 0.06 - 1e-6
+
+
+def test_snap_cuts_moves_cut_out_of_a_word_into_the_real_gap():
+    """'I [0.5초 쉼] don't, I don't get it' — Whisper 는 지운 'don't' 를 0.1초 늦게 찍어 keep 끝이 그 말 한가운데였고, 다음
+    keep 은 지운 'I' 한가운데서 시작했다(이전 말 끝이 잘리고 지운 말 토막이 들어감). 소리 골짜기로 옮긴다."""
+    import numpy as np
+    db = np.full(400, -60.0)                          # 10ms 간격 4초
+    for a, b in ((100, 149), (200, 223), (232, 262), (264, 300)):   # I · don't(지움) · I don't · get it
+        db[a:b] = -15.0
+    out = snap_cuts([Span(0.5, 2.116), Span(2.366, 3.2)], db, fps=30)
+    assert 1.5 <= out[0].end <= 1.99                  # 지운 'don't' 앞 쉼에서 끝
+    assert 2.23 <= out[1].start <= 2.32               # 다음 말 앞 골짜기에서 시작
+    # 이미 조용한 곳의 컷과 거의 붙은 이웃은 그대로
+    same = snap_cuts([Span(0.5, 1.7), Span(1.7, 2.28)], db, fps=30)
+    assert same == [Span(0.5, 1.7), Span(1.7, 2.28)]

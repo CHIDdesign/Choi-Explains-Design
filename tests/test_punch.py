@@ -27,13 +27,14 @@ def _long(moments=(), graphics=(), chapters=(), total=120.0, **kw):
                            moments=list(moments), cues=_cues(total), sentence_starts=[float(t) for t in range(0, int(total), 10)], **kw)
 
 
-def test_jump_cut_is_hard_crop_and_speaker_never_drifts():
-    tm = TimeMap([Span(0, 20), Span(25, 60), Span(70, 130)])        # NG 를 잘라낸 큰 점프 둘
+def test_jump_cut_keeps_scale_and_zoom_is_gentle():
+    """2026-11-11 채널 주인: 확대해 잘라 붙이지 말고 젠틀한 줌인. 점프컷에서는 크기 그대로."""
+    tm = TimeMap([Span(0, 23), Span(28, 62), Span(72, 130)])        # NG 를 잘라낸 큰 점프 둘(편집 시각 23·57)
     ed = _long(tm=tm, total=115.0, moments=[Moment(t=30.0, end=31.0, kind="reveal", intensity=3)])
     assert ed.punches == []
-    assert {s["zoom"] for s in ed.camera} == {1.0, PARAMS["medium"]} and PARAMS["medium"] == 1.12
-    assert all(s["zoom"] == s["zoomEnd"] and "glide" not in s for s in ed.camera)
-    assert max(s["end"] - s["start"] for s in ed.camera) <= PARAMS["max_shot"] + PARAMS["min_shot"]
+    assert {s["zoom"] for s in ed.camera} == {1.0, PARAMS["medium"]}
+    assert not any(abs(s["start"] - c) < 0.01 for s in ed.camera for c in (23.0, 57.0))   # 점프컷은 프레이밍 경계가 아니다
+    assert all(s["zoom"] == s["zoomEnd"] and s["glide"] >= 2.5 for s in ed.camera[1:])   # 크기는 2.5초 넘게 걸쳐서만
 
 
 def test_callout_lasts_three_seconds_and_keeps_gap():

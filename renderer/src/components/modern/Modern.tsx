@@ -155,7 +155,7 @@ export const Super: React.FC<{name: string; sub?: string; theme: Theme; box: {w:
       <div style={{width: 6, background: theme.accent, boxShadow: white ? '1px 2px 5px rgba(0,0,0,0.45)' : undefined}} />
       <div style={{padding: '2px 0'}}>
         <div style={{fontFamily: FONT.sans, fontWeight: 700, fontSize: SLOT_TYPE.superName, lineHeight: 1.2, letterSpacing: '-0.02em', color: white ? '#FFFFFF' : ink, whiteSpace: 'nowrap'}}>{name}</div>
-        {sub ? <div style={{marginTop: 4, fontFamily: FONT.sans, fontWeight: 500, fontSize: SLOT_TYPE.superSub, lineHeight: 1.3, color: white ? 'rgba(255,255,255,0.94)' : ink, whiteSpace: 'nowrap'}}>{sub}</div> : null}
+        {sub ? <div style={{marginTop: 4, fontFamily: FONT.sans, fontWeight: 500, fontSize: SLOT_TYPE.superSub, lineHeight: 1.3, color: white ? 'rgba(255,255,255,0.94)' : ink, whiteSpace: 'pre-line'}}>{sub}</div> : null}
       </div>
     </div>
   );

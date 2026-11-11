@@ -192,7 +192,8 @@ def transcribe(
     hot = ", ".join(hint_terms or [])[:400]
     # 추임새·되풀이까지 받아 적게 하는 말투의 프롬프트(Whisper 는 프롬프트 문체를 따라 한다) — 그래야 잘라낼 수 있다
     filler = {"ko": "음, 어… 오늘은, 어, 디자인 이론을 설명하는 한국어 강의입니다. 그러니까, 음, 다시 말하면… ",
-              "en": "Um, uh... so, you know, I mean, it's, it's like... "}.get(language, "")
+              # 영어 프롬프트는 보통 문장 부호로 — Whisper 는 프롬프트의 쉼표 습관을 따라 해 낱말마다 쉼표를 찍었다(2026-11-11)
+              "en": "Um, so I think the thing is, uh, we just kept going. And that's, you know, the hard part. "}.get(language, "")
     prompt = initial_prompt or (filler + (hot[:200] if hot else ""))
     kwargs = dict(
         language=language,

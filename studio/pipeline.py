@@ -34,7 +34,6 @@ from rapidfuzz import fuzz
 from . import diag, gate, storage
 from .agents.studio import Studio
 from .asr.transcribe import gpu_expected, load_audio_16k, speech_regions, transcribe
-from .broll.entities import find_entities
 from .broll.images import Wikimedia, list_local_images
 from .broll.logos import SimpleIcons
 from .broll.mat import mat_tall
@@ -199,7 +198,8 @@ class JobSpec:
     make_long: bool = True
     shorts_count: int = 2               # 최대 편수 — 제대로 된 1편이 우선, 둘째는 다른 아이디어·8점 이상일 때만
     short_max_sec: int = 55
-    opening_highlight: bool = True      # 롱폼 맨 앞에 영상의 알맹이 조각 2~4개(20~30초)를 붙이고 처음부터 시작
+    # 기본 끔(채널 주인 2026-11-11: "맨 처음에 하이라이트 장면 제대로 못 넣을 거 같으면 아예 빼버려") — 켜면 알맹이 조각 2~4개(20~30초)를 맨 앞에
+    opening_highlight: bool = False
     highlight_max_sec: int = 30         # 2026-10-04 채널 주인: "10초대라 너무 압축돼 알맹이 없이 잘린다 — 20~30초"
     highlight_min_sec: int = 20
     out_height: int = 1080
@@ -951,7 +951,7 @@ class Pipeline:
         audio = load_audio_16k(self.work / "asr16k.wav")
         self.vad = speech_regions(audio)
         # 단어 단위 정리: 다시 말한 앞부분·추임새(쉼은 VAD 로 잰다 — Whisper 단어 시간이 쉼을 덮어도 잡힘)
-        words, removed = clean_words(words, pause=vad_pause(self.vad))
+        words, removed = clean_words(words, pause=vad_pause(self.vad), script=self.spec.script)
         self.removed = [r.to_dict() for r in removed]
         n_re = sum(1 for r in removed if r.reason.startswith("되풀이"))
         self.log(f"✂️ 단어 정리: 다시 말한 앞부분 {n_re}곳 · 추임새 {len(removed) - n_re}곳 삭제")
@@ -1033,6 +1033,7 @@ class Pipeline:
         studio = self._ensure_studio()
         if studio is None:
             ids = default_cuts(events)
+            self._keep_sounds(events, ids)
             if ids:
                 self.removed += as_removals(events, ids)
                 self.log(f"✂️ 비언어 소리 {len(events)}곳 중 또렷이 떨어진 파열음 {len(ids)}곳 삭제(AI 없음 — 나머지는 둠)")
@@ -1058,6 +1059,7 @@ class Pipeline:
             write_json(self.work / "cut_review.json", {"key": key, "result": res})
         rv, self.removed = cut_review.apply(res, self.utts, self.removed, raw)
         ids, reasons = cut_review.event_cuts(res, events)
+        self._keep_sounds(events, ids)
         if ids:
             self.removed += as_removals(events, ids, reasons)
         issues = fidelity.apply_script_issues(self._script_sents(), rv.script_issues)
@@ -1068,6 +1070,18 @@ class Pipeline:
                                            "script_issues": rv.script_issues}
         self.log(f"✂️ 컷 편집 총괄: {rv.summary()}" + (f" · 비언어 소리 {len(ids)}/{len(events)}곳 삭제" if events else "")
                  + (f" — {rv.notes}" if rv.notes and rv.notes != rv.summary() else ""))
+
+    def _keep_sounds(self, events: list[dict], cut_ids: list[int]) -> None:
+        """자르지 않기로 한 비언어 소리·인식 못 한 말소리 — build_keeps 가 그 앞뒤 발화 사이를 끊지 않는다(총괄 결정이 이긴다:
+        2026-11-11 다리오 인터뷰 03:22.6–03:25.7 '트림 금지' 말소리가 '긴 틈' 규칙으로 잘렸다)."""
+        cut = set(cut_ids)
+        self.align_report["kept_sounds"] = [[e["start"], e["end"]] for e in events if e["id"] not in cut]
+
+    def _kept_sounds(self) -> list[Span]:
+        rep = getattr(self, "align_report", None)
+        if not isinstance(rep, dict) or "kept_sounds" not in rep:
+            rep = read_json(self.work / "align.json", {}).get("report") or {}
+        return [Span(a, b) for a, b in rep.get("kept_sounds", [])]
 
     def _cut_view_images(self, views, audio, raw: list[Word]) -> list[tuple[str, bytes, str]]:
         """✂️ 애매한 컷 경계 그림(studio/text/cut_view.py) — 화면은 원본에서 바로(프록시는 아직 만드는 중일 수 있다).
@@ -1674,7 +1688,6 @@ class Pipeline:
         # 검수 캐시까지 깨진다(재실행마다 모션 디자이너·아트 디렉터를 다시 부르던 것). 검사만 다시 하고 기록한다.
         self._check_cards(tm0, revise=not reused)
         self._lint_motion(tm0, revise=not reused)
-        self._auto_photos()
         if saved.get("key") == key and saved.get("long", {}).get("qa"):
             self.plan_long["qa"] = saved["long"]["qa"]
         self.plan_shorts = normalize_shorts(raw_shorts, self.utts, count=self.spec.shorts_count,
@@ -1742,38 +1755,6 @@ class Pipeline:
         return capture_refs(slugs, node=find_node(self.settings.node_path), browser_executable=rs.browser_executable,
                             gl=rs.gl, work=self.work, log=self.log, cancel=self.cancel,
                             ignore_cert_errors=os.environ.get("CHOI_IGNORE_CERT") == "1")   # 프록시 인증서 시험 환경용
-
-    def _auto_photos(self) -> None:
-        """대본·전사의 고유명사(라틴 문자 이름 · 『』《》 제목 · 종교)를 규칙으로 찾아 photo 그래픽(wiki=True)으로 더한다 —
-        AI 가 놓친 것의 안전망. 그 문장에 이미 그래픽이 있으면 건너뛰고, 위키백과에 이미지가 없으면 자료 사진 단계에서 빠진다."""
-        if not self.spec.fetch_broll:
-            return
-        kept = [u for u in self.utts if u.kept]
-        text = "\n".join(u.text for u in kept)
-        ents = find_entities(text)
-        if not ents:
-            return
-        used = {g.get("start_seg") for g in self.plan_long.get("graphics", [])}
-        have = {norm(g.get("image") or g.get("title") or "") for g in self.plan_long.get("graphics", [])
-                if g.get("template") in ("photo", "broll")}
-        added = []
-        for e in ents:
-            key = norm(e.term)
-            if not key or key in have:
-                continue
-            seg = next((u.id for u in kept if key in norm(u.text)), None)
-            if seg is None or seg in used:
-                continue
-            g = blank_graphic("photo", seg)
-            g.update({"layout": "pip", "start_word": e.term.split()[0], "title": e.term, "image": e.term,
-                      "body": {"name": "인물·고유명사", "work": "작품", "religion": "종교"}.get(e.kind, ""),
-                      "reason": f"고유명사 자동({e.kind}) — 위키백과", "wiki": True})
-            self.plan_long["graphics"].append(g)
-            used.add(seg)
-            have.add(key)
-            added.append(e.term)
-        if added:
-            self.log("📷 고유명사 자료 사진(위키백과) 후보: " + " · ".join(added[:8]))
 
     def _check_cards(self, tm: TimeMap, revise: bool = True) -> None:
         """🃏 자유 HTML 카드의 렌더 전 검사(renderer/scripts/check.mjs — 글꼴·넘침·크기·대비·런타임 오류).
@@ -1991,7 +1972,7 @@ class Pipeline:
         self._ensure_script_utts()
         self.base_keeps = self.smap.clamp_keeps(
             build_keeps(self.utts, pace=self._pace(), vad=self.vad, media_duration=self.info.duration, fps=self.fps,
-                        exclude=self._removed_spans()), self.fps)
+                        exclude=self._removed_spans(), bridges=self._kept_sounds()), self.fps)
         ver = read_json(self.work / "verify.json", {})
         self.edit_drops = [Span(a, b) for a, b in ver.get("drops", [])] \
             if ver.get("base") == self._keeps_key(self.base_keeps) else []
@@ -2492,7 +2473,7 @@ class Pipeline:
         multipass = len(self.align_report.get("passes") or []) > 1
         if multipass:
             keeps = self._order_by_script(keeps)
-        keeps, rep = self._breathe(keeps, self.spec.pace, drops)
+        keeps, rep = self._breathe(keeps, self.spec.pace)
         self.breath_long = rep
         if rep.joins:
             self.align_report["breath"] = rep.to_dict()
@@ -2510,13 +2491,14 @@ class Pipeline:
         space = self._shorts_pace()
         for i, s in enumerate(self.plan_shorts, 1):
             keeps = keeps_for_segments(self.utts, s["segments"], pace=PACES[space], vad=self.vad,
-                                       media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
+                                       media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans(),
+                                       bridges=self._kept_sounds())
             if drops:   # 롱폼처럼 다시 프레임 격자에 맞춘다(안 맞추면 클립마다 반 프레임까지 어긋남)
                 keeps = quantize(subtract(keeps, drops), self.fps, self.info.duration)
             keeps = self.smap.clamp_keeps(keeps, self.fps)
             # 숏폼도 숨은 남긴다(채널 주인 2026-10-04: 릴스 포함 호흡 빠른 편집은 아니다) — 길이 상한 안에서만
             room = float(self.spec.short_max_sec) + 3.0 - sum(k.dur for k in keeps)
-            keeps, _ = self._breathe(keeps, space, drops, budget=max(0.0, room), explicit=False)
+            keeps, _ = self._breathe(keeps, space, budget=max(0.0, room), explicit=False)
             keeps = self._limit_short(keeps)
             tm = TimeMap(keeps, preserve_order=True)
             s["duration"] = tm.duration
@@ -2536,12 +2518,12 @@ class Pipeline:
         """숏폼 컷 템포: 기본 shorts_calm(짧은 숨은 남김) — JobSpec.shorts_pace 로 예전 'shorts'(데드에어 제거)를 고를 수 있다."""
         return self.spec.shorts_pace if self.spec.shorts_pace in PACES else "shorts_calm"
 
-    def _breathe(self, keeps: list[Span], pace: str, drops: list[Span], *, budget: Optional[float] = None,
+    def _breathe(self, keeps: list[Span], pace: str, *, budget: Optional[float] = None,
                  explicit: bool = True) -> tuple[list[Span], Any]:
         """🫁 호흡 설계(studio/edit/breath.py): 재생 순서의 keep 사이마다 경계(문장 안 · 문장 · 문단 · 여운)에 맞는 쉼을
         원본의 실제 무음으로 채운다 — 이어 붙인 곳의 쉼이 경계와 상관없이 0.34초로 같던 것(2026-10-04 '훅훅 넘어간다').
         explicit: 편집 감독의 pauses(발화 뒤 쉼 지정)와 정점·답(peak_seg · payoff_seg) 뒤 여운을 쓴다(롱폼만)."""
-        from .edit.breath import BREATHS, BreathReport, breathe, join_kinds
+        from .edit.breath import BREATHS, BreathReport, breathe, join_kinds, snap_cuts
         from .edit.cuts import quantize
         br = BREATHS.get(pace)
         if br is None or len(keeps) < 2 or not self.info:
@@ -2559,18 +2541,37 @@ class Pipeline:
                 except (KeyError, TypeError, ValueError):
                     continue
             beats = [int(x) for x in (plan.get("peak_seg", -1), plan.get("payoff_seg", -1)) if isinstance(x, int) and x >= 0]
-        kind_of = join_kinds(keeps, self.utts, clean=clean, sentence_spans=sents, explicit_after=pauses, beat_after=beats)
-        speech = [(float(a), float(b)) for a, b in (self.vad or [])]
-        speech += [(w.start, w.end) for u in self.utts for w in u.words]
-        try:
-            speech += [(w.start, w.end) for w in self._raw_words()]      # 단어 정리로 지운 말도 말소리다
-        except Exception:  # noqa: BLE001 - 전사 파일이 없으면 남은 단어만
-            pass
-        blocked = [(x.start, x.end) for x in self._removed_spans()] + [(d.start, d.end) for d in drops]
         bounds = [(0.0, self.info.duration)] if self.smap.single else [(g.start, g.end) for g in self.smap.groups]
-        out, rep = breathe(keeps, speech=speech, blocked=blocked, kind_of=kind_of, breath=br,
+        env = Pipeline._voice_env(self)
+        if env:
+            # 실제 소리로: 컷 지점은 소리 골짜기로, 숨 자리는 조용한 곳(지운 구간 안이라도) — Silero VAD 는 쉼을 덮어
+            # 107초짜리 한 덩어리도 나온다(2026-11-11 다리오 인터뷰: 이어 붙인 곳 6곳 모두 쉼 0.00초)
+            db, speech = env
+            keeps = snap_cuts(keeps, db, fps=self.fps, bounds=bounds)
+        else:
+            speech = [(float(a), float(b)) for a, b in (self.vad or [])]
+            speech += [(w.start, w.end) for u in self.utts for w in u.words]
+            try:
+                speech += [(w.start, w.end) for w in self._raw_words()]      # 단어 정리로 지운 말도 말소리다
+            except Exception:  # noqa: BLE001 - 전사 파일이 없으면 남은 단어만
+                pass
+        kind_of = join_kinds(keeps, self.utts, clean=clean, sentence_spans=sents, explicit_after=pauses, beat_after=beats)
+        out, rep = breathe(keeps, speech=speech, kind_of=kind_of, breath=br,
                            media_duration=self.info.duration, bounds=bounds, budget=budget)
         return quantize(out, self.fps, self.info.duration), rep
+
+    def _voice_env(self) -> Optional[tuple[Any, list[tuple[float, float]]]]:
+        """asr16k.wav(단어·VAD 와 같은 시간)의 10ms 음량(dB)과 소리 나는 구간(60ms 넘는 쉼으로 나눔) — 없으면 None."""
+        if getattr(self, "_env", None) is None:
+            from .asr.transcribe import energy_regions
+            wav = self.work / "asr16k.wav" if getattr(self, "work", None) else None
+            self._env = ()
+            if wav is not None and wav.exists():
+                audio = load_audio_16k(wav)
+                n = len(audio) // 160
+                rms = np.sqrt((audio[: n * 160].reshape(n, 160) ** 2).mean(axis=1) + 1e-12)
+                self._env = (20 * np.log10(rms), energy_regions(audio, hop_s=0.01, min_silence_s=0.06))
+        return self._env or None
 
     def _verify_silence(self) -> float:
         """편집 검사의 '긴 무음' 기준 — 호흡 설계가 일부러 둔 쉼(문단 · 편집 감독 지정)을 다시 자르지 않게."""
@@ -2630,7 +2631,8 @@ class Pipeline:
 
         def piece(run: list[int]) -> list[Span]:
             ks = keeps_for_segments(self.utts, run, pace=PACES["highlight"], vad=self.vad,
-                                    media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans())
+                                    media_duration=self.info.duration, fps=self.fps, exclude=self._removed_spans(),
+                                    bridges=self._kept_sounds())
             if drops:
                 ks = quantize(subtract(ks, drops), self.fps, self.info.duration)
             return self.smap.clamp_keeps(ks, self.fps)
@@ -2649,7 +2651,7 @@ class Pipeline:
         total = sum(k.dur for k in keeps)
         if len(used) < 2:
             return
-        keeps, _ = self._breathe(keeps, "highlight", drops, budget=max(1.0, hi + 2.0 - total), explicit=False)
+        keeps, _ = self._breathe(keeps, "highlight", budget=max(1.0, hi + 2.0 - total), explicit=False)
         self.hl_map = TimeMap(keeps, preserve_order=True)
         self.hl_segs = [sid for r in used for sid in r]
         self.hl_runs = used
@@ -2688,7 +2690,8 @@ class Pipeline:
                              cancel=self.cancel)
             words = [Word.from_dict(w) for w in res.get("words", [])]
             vad = speech_regions(load_audio_16k(wav))
-            issues = find_issues(words, vad, max_silence=self._verify_silence(), duration=self.timemap.duration)
+            issues = find_issues(words, vad, max_silence=self._verify_silence(), duration=self.timemap.duration,
+                                 script=self.spec.script)
             rounds.append({"round": rnd, "words": len(words), "issues": [i.to_dict() for i in issues]})
             if not issues:
                 self.log(f"🔎 편집 검사 {rnd}차: 남은 되풀이·추임새·긴 무음 없음")
@@ -3862,7 +3865,7 @@ class Pipeline:
         # 편집 감독이 콜아웃을 붙인 강조 순간은 '오늘의 주제'보다 우선 — 그 자리를 비워 둔다(같은 빈 자리를 다툰다)
         callouts = [(m.t - 0.5, m.end + 0.5) for m in self._moments(tm)
                     if m.callout and m.intensity >= 2]
-        lower = self._lower_third(graphics, after=min(total, t_title + 3.4), total=total,
+        lower = self._lower_third(graphics, after=0.0, within=8.0, total=total,   # 이름 자막은 맨 처음에만(아니면 뺀다)
                                   avoid=callouts + self._hold_spans())
         if lower is not None:
             graphics = sorted(graphics + [lower], key=lambda g: g.start)
@@ -3979,7 +3982,7 @@ class Pipeline:
         return sorted(out, key=lambda g: g.start)
 
     def _lower_third(self, graphics: list[TimedGraphic], *, after: float, total: float,
-                     avoid: Optional[list[tuple[float, float]]] = None) -> Optional[TimedGraphic]:
+                     avoid: Optional[list[tuple[float, float]]] = None, within: float = 60.0) -> Optional[TimedGraphic]:
         """타이틀 뒤 화자 이름 + '오늘의 주제'(이 영상이 답할 질문을 3~4초 한 줄로 — 총괄 감독의 논지).
         얼굴만 보이는 첫 빈 자리(타이틀 뒤 60초 안, 4초 이상)에 둔다 — 예전엔 자리를 미리 잡아 두었다가 바로 뒤 그래픽에 밀려
         대개 빠졌다. 말에 맞춘 그래픽과 콜아웃 강조 순간(avoid)을 밀어내지 않으므로 빈 자리가 없으면 넣지 않는다."""
@@ -3988,7 +3991,7 @@ class Pipeline:
         t = after + 0.8
         for a, b in sorted([(g.start, g.end) for g in graphics if g.end > after] + [(total - 0.3, total)]
                            + [(x, y) for x, y in (avoid or []) if y > after]):
-            if t > after + 60.0:
+            if t > after + within:
                 return None
             if a - 0.3 - t >= need:
                 return TimedGraphic("lower", "lower_third", "overlay", round(t, 3), round(min(t + want, a - 0.3), 3),
@@ -5046,7 +5049,7 @@ def short_retype(g: dict) -> Optional[dict]:
             # 세로 화면에 cover 로 넣으면 가로 자료는 가운데 1/3 만 남는다 — 글을 읽는 자료·세로 자료는 통째로(책상 위 인쇄물), 사진은 비전이 잡은 초점 쪽으로
             whole = a.get("kind") in ("screen", "document") or bool(a.get("mat_src"))
             c.update(template="photo", layout="pip", image=a["src"], credit=a.get("credit", ""),
-                     title=(g.get("title") or "")[:14], body=(g.get("caption") or g.get("body") or "")[:24], resolved=True, tier=a.get("tier", ""))
+                     title=(g.get("title") or "")[:14], body=(g.get("caption") or g.get("body") or "")[:64], resolved=True, tier=a.get("tier", ""))
             if whole:
                 c.update(fit="contain", w=a.get("w"), h=a.get("h"))
             elif a.get("focus"):

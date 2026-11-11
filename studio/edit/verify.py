@@ -28,9 +28,9 @@ class Issue:
 
 
 def find_issues(words: list[Word], vad: list[tuple[float, float]], *, max_silence: float,
-                duration: float) -> list[Issue]:
-    """편집된 목소리의 단어·VAD → 남은 문제들(편집 시간)."""
-    _, removed = clean_words(words, pause=vad_pause(vad), strict=True)
+                duration: float, script: str = "") -> list[Issue]:
+    """편집된 목소리의 단어·VAD → 남은 문제들(편집 시간). script: 대본(대본에 그대로 있는 반복은 자르지 않는다)."""
+    _, removed = clean_words(words, pause=vad_pause(vad), strict=True, script=script)
     issues = [Issue(r.start - 0.03, r.end + 0.05, r.reason, r.text) for r in removed]
     vad = sorted(vad)
     for (a, b), (c, d) in zip(vad, vad[1:]):

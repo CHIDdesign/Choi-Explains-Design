@@ -121,11 +121,13 @@ def build_keeps(
     include_all: bool = False,
     exclude: list[Span] | None = None,
     context: list[Utterance] | None = None,
+    bridges: list[Span] | None = None,
 ) -> list[Span]:
     """남길 발화들의 단어 시간으로 keep 구간을 만든다.
     exclude: 지운 되풀이·추임새 구간 — 늘릴 때 넘어가지 않고, 마지막에 한 번 더 빼서 소리가 새지 않게.
     context: 전체 발화(없으면 utts). 남기지 않는 발화(다시 말한 테이크·NG·숏폼에 넣지 않은 이웃 문장)는 경계로도 쓰고
-    exclude 에도 넣는다 — 패딩·짧은 틈 합치기로 되살아나거나(“다시.”가 남음), 숏폼이 옆 문장 첫 단어까지 늘어나지 않게."""
+    exclude 에도 넣는다 — 패딩·짧은 틈 합치기로 되살아나거나(“다시.”가 남음), 숏폼이 옆 문장 첫 단어까지 늘어나지 않게.
+    bridges: 컷 총괄이 자르지 않기로 한 소리(인식 못 한 말소리 등) — 그 소리가 낀 틈은 길어도 끊지 않는다."""
     vad = sorted(vad or [])
     starts = [r[0] for r in vad]
     ctx = context if context is not None else utts
@@ -163,12 +165,25 @@ def build_keeps(
         spans.append(Span(max(0.0, a - pace.pre_pad), min(media_duration, b + pace.post_pad)))
     spans.sort(key=lambda s: s.start)
 
+    # 페이스가 남기는 쉼(max_silence 까지)은 자르지 않는다 — 예전엔 패딩 뒤 keep_gap(calm 0.8 = 실제 1.14초)을 넘는 쉼을
+    # 0.34초(앞 0.12 + 뒤 0.22)로 잘랐다. 그보다 긴 쉼도 trim_dead_air 처럼 앞말 뒤 pause_after · 뒷말 앞 pause_before 는 남긴다
+    join_gap = max(pace.keep_gap, pace.max_silence - pace.pre_pad - pace.post_pad)
     merged: list[Span] = []
     for s in spans:
-        if merged and s.start - merged[-1].end <= pace.keep_gap:
+        if merged and (s.start - merged[-1].end <= join_gap
+                       or any(x.start < s.start and x.end > merged[-1].end for x in bridges or ())):
             merged[-1] = Span(merged[-1].start, max(merged[-1].end, s.end))
-        else:
-            merged.append(s)
+            continue
+        if merged:
+            p = merged[-1]
+            j = bisect.bisect_left(bounds_start, p.end)
+            cap = bounds_start[j] - 0.03 if j < len(bounds_start) else media_duration
+            e = max(p.end, min(p.end + max(0.0, pace.pause_after - pace.post_pad), cap, s.start))
+            merged[-1] = Span(p.start, e)
+            j = bisect.bisect_right(bounds_end, s.start) - 1
+            floor = bounds_end[j] + 0.03 if j >= 0 else 0.0
+            s = Span(min(s.start, max(s.start - max(0.0, pace.pause_before - pace.pre_pad), floor, e)), s.end)
+        merged.append(s)
     if exclude:
         from .verify import subtract
         # 지운 되풀이·추임새: Whisper 단어 시각(±0.2초) 대신 실제 쉼 속에서 자른다 — 지운 말의 꼬리가 새지 않고,
@@ -257,7 +272,7 @@ def quantize(spans: list[Span], fps: float, media_duration: float) -> list[Span]
 
 
 def keeps_for_segments(utts: list[Utterance], ids: list[int], *, pace: Pace, vad, media_duration: float,
-                       fps: float, exclude: list[Span] | None = None) -> list[Span]:
+                       fps: float, exclude: list[Span] | None = None, bridges: list[Span] | None = None) -> list[Span]:
     """숏폼: 지정한 발화 순서대로(재배치 허용) keep 구간 생성. 연속 발화는 합친다."""
     by_id = {u.id: u for u in utts}
     groups: list[list[int]] = []
@@ -273,6 +288,6 @@ def keeps_for_segments(utts: list[Utterance], ids: list[int], *, pace: Pace, vad
         sub = [by_id[i] for i in g]
         # 이웃 문장(숏폼에 넣지 않은 발화)까지 알려 줘야 말소리 끝까지 늘릴 때 그 문장으로 넘어가지 않는다
         spans = build_keeps(sub, pace=pace, vad=vad, media_duration=media_duration, fps=fps,
-                            include_all=True, exclude=exclude, context=utts)
+                            include_all=True, exclude=exclude, context=utts, bridges=bridges)
         out.extend(spans)
     return out

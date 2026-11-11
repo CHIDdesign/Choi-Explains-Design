@@ -10,8 +10,11 @@
    ✂️ 편집 감독이 `pauses` 로 지정한 곳)
 2. 지금 들리는 쉼(A 의 마지막 말소리 뒤 + B 의 첫 말소리 앞)을 재고
 3. 목표보다 짧으면 원본의 실제 무음 속으로 A 의 끝을 늘리고(생각이 내려앉는 쪽 먼저) 모자라면 B 의 시작을 당긴다.
-   말소리(VAD)·다른 단어·지운 구간·다른 keep·원본 파일 경계는 넘지 않는다 — 무음을 지어내지 않으므로 영상과 소리는 그대로 맞고,
-   화면에는 말을 마친 화자의 얼굴이 잠깐 머문다(편집자들이 말하는 '숨 쉴 틈').
+   말소리(VAD·단어, 소리 크기를 알면 실제 소리)·다른 keep·원본 파일 경계는 넘지 않는다 — 무음을 지어내지 않으므로 영상과
+   소리는 그대로 맞고, 화면에는 말을 마친 화자의 얼굴이 잠깐 머문다(편집자들이 말하는 '숨 쉴 틈'). 지운 구간(되풀이·더듬은 말)의
+   조용한 부분은 숨 자리로 쓴다 — 원본에서 바로 이어지는 A → B(사이를 지운 곳)는 원본에서 그 말 앞뒤에 쉬던 만큼(문단 쉼까지)
+   쉰다(2026-11-11 채널 주인: "말과 말 사이 간격이 너무 짧아 … 자연스러운 흐름과 어느 정도의 호흡" — 더듬은 말을 지운 곳이
+   0.00초로 붙었다).
 목표보다 긴 쉼은 건드리지 않는다(긴 무음은 cuts.trim_dead_air 가 줄인다).
 """
 from __future__ import annotations
@@ -157,12 +160,13 @@ def _room_before(t: float, walls: list[tuple[float, float]], floor: float) -> fl
     return max(0.0, t - prv)
 
 
-def breathe(keeps: list[Span], *, speech: Sequence[tuple[float, float]], blocked: Sequence[tuple[float, float]] = (),
+def breathe(keeps: list[Span], *, speech: Sequence[tuple[float, float]],
             kind_of: Callable[[int], tuple[str, Optional[float]]], breath: Breath, media_duration: float,
             bounds: Sequence[tuple[float, float]] = (), budget: Optional[float] = None) -> tuple[list[Span], BreathReport]:
     """재생 순서의 keeps → 이어 붙인 곳마다 경계에 맞는 쉼을 둔 keeps(순서 그대로) + 기록.
 
-    speech: 원본의 말소리 구간(VAD ∪ 모든 단어 — 남기지 않는 말도 벽이다). blocked: 지운 구간(되풀이·기침·편집 검사 drop).
+    speech: 원본의 소리 구간(말소리 · 기침 — 남기지 않는 말도 벽이다). 지운 구간은 벽이 아니다: 그 안의 소리는 speech 가 막고,
+    조용한 부분은 숨 자리다.
     kind_of(i): keeps[i-1] → keeps[i] 경계의 (종류, 지정 초 또는 None). bounds: 원본 파일(묶음) 구간 — 넘지 않는다.
     budget: 늘릴 수 있는 총 시간(숏폼 길이 상한) — 넘으면 문단 > 여운 > 문장 > 문장 안 순서로 나눠 준다."""
     report = BreathReport()
@@ -188,6 +192,12 @@ def breathe(keeps: list[Span], *, speech: Sequence[tuple[float, float]], blocked
         explicit = sec is not None
         target = min(max(float(sec), EXPLICIT_RANGE[0]), EXPLICIT_RANGE[1]) if explicit else breath.target(kind)
         now = (a.end - _speech_end(a, sp, sp_starts)) + (_speech_start(b, sp, sp_starts) - b.start)
+        if not explicit and b.start >= a.end - 1e-6 and grp(b.start) == grp(a.end):
+            # 사이를 지운 곳(더듬은 말·되풀이): 원본에서 A 의 말 뒤 · B 의 말 앞에 쉬던 쉼(긴 쪽, 문단 쉼까지)을 남긴다
+            ga, gb = grp(a.end)
+            se, ss = _speech_end(a, sp, sp_starts), _speech_start(b, sp, sp_starts)
+            natural = max(_room_after(se, sp, gb), _room_before(ss, sp, ga))
+            target = max(target, min(natural, breath.paragraph))
         plans.append((i, kind, target, max(0.0, now), explicit))
     need = {i: max(0.0, t - now) for i, _, t, now, _ in plans}
     if budget is not None:
@@ -201,7 +211,7 @@ def breathe(keeps: list[Span], *, speech: Sequence[tuple[float, float]], blocked
         need = grant
 
     # 2) 늘리기 — 벽: 말소리 · 지운 구간 · 다른 keep(앞에서 늘린 값으로)
-    base_walls = merge_spans(list(sp) + [(float(a), float(b)) for a, b in blocked])
+    base_walls = sp
     for i, kind, target, now, explicit in plans:
         a, b = out[i - 1], out[i]
         want = need.get(i, 0.0)
@@ -230,6 +240,56 @@ def breathe(keeps: list[Span], *, speech: Sequence[tuple[float, float]], blocked
         after = now + (out[i - 1].end - a.end) + (b.start - out[i].start)
         report.joins.append(Join(i, kind, target, now, after, explicit))
     return out, report
+
+
+def snap_cuts(keeps: list[Span], db: "np.ndarray", *, fps: float, bounds: Sequence[tuple[float, float]] = (),
+              win: float = 0.2, gain: float = 6.0, hop: float = 0.01, per_sec: float = 100.0) -> list[Span]:
+    """컷 지점을 가까운 소리 골짜기(가장 조용한 프레임 경계)로 옮긴다. Whisper 단어 시각(±0.1~0.3초)으로 자르면 남길 말의
+    끝소리가 잘리거나 지운 말의 꼬리가 새어 들어간다(2026-11-11 채널 주인: "이전 말이 제대로 안 끝나고 … 소리가 끊겨서 들어가").
+    db: 원본(asr16k)의 hop 초 간격 음량(dB). 지금 자리가 소리 속(조용한 기준 = 하위 10% + 12dB 위)이면 ±win 안의 프레임 경계 중 '음량 +
+    거리×per_sec(dB/초)'가 가장 작은 곳으로, gain dB 이상 조용해질 때만 옮긴다 — 가장 가까운 골짜기가 아니라 조용함과 가까움을
+    같이 본다(더듬은 'don't' 를 지운 곳: 뒤의 얕은 골짜기 대신 앞의 0.5초 쉼). 원본 시간에서 이웃 keep·파일 묶음 경계를 넘지 않고, 거의 붙은 이웃(2프레임 미만)은
+    원래 이어지는 소리라 두 끝 모두 그대로 둔다."""
+    import math
+
+    import numpy as np
+    if len(keeps) == 0 or len(db) == 0:
+        return list(keeps)
+    quiet = float(np.percentile(db, 10)) + 12.0
+    groups = [(float(a), float(b)) for a, b in bounds] or [(0.0, len(db) * hop)]
+
+    def level(t: float) -> float:
+        i = int(round(t / hop))
+        return float(db[max(0, i - 1): i + 2].max()) if 0 <= i < len(db) else -120.0
+
+    def grp(t: float) -> tuple[float, float]:
+        return next(((a, b) for a, b in groups if a - 1e-6 <= t <= b + 1e-6), groups[0])
+
+    def best(t: float, lo: float, hi: float) -> float:
+        lt = level(t)
+        if lt <= quiet:
+            return t
+        cands = [f / fps for f in range(math.ceil(max(lo, t - win) * fps), math.floor(min(hi, t + win) * fps) + 1)]
+        if not cands:
+            return t
+        c = min(cands, key=lambda c: level(c) + per_sec * abs(c - t))
+        return c if lt - level(c) >= gain else t
+
+    order = sorted(range(len(keeps)), key=lambda i: keeps[i].start)
+    out = list(keeps)
+    prev_end = -math.inf
+    for n, i in enumerate(order):
+        k = keeps[i]
+        ga, gb = grp(k.start)
+        nxt = keeps[order[n + 1]].start if n + 1 < len(order) else math.inf
+        s, e = k.start, k.end
+        if k.start - prev_end >= 2 / fps and k.start > ga + 1e-6:
+            s = best(k.start, max(prev_end, ga), k.end - 0.1)
+        if nxt - k.end >= 2 / fps and k.end < gb - 1e-6:
+            e = best(k.end, s + 0.1, min(nxt, gb))
+        out[i] = Span(s, e)
+        prev_end = max(prev_end, e)
+    return out
 
 
 def join_kinds(keeps: list[Span], utts: list[Utterance], *, clean: str = "",

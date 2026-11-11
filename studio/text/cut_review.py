@@ -71,7 +71,7 @@ def draft_text(sentences: list[tuple[int, int, str]], utts: list[Utterance], rem
                      "'의심 단어'는 인식기가 단어로 적었지만 홀로 떨어진 추임새·헛기침일 수 있는 토막)")
         for e in events:
             kind = ("파열음" if e["kind"] == "burst" else f"의심 단어 「{e.get('text', '')}」(확신 {e.get('prob', 0):.2f})"
-                    if e["kind"] == "word" else "약한 소리")
+                    if e["kind"] == "word" else "긴 소리(인식 못 한 말일 수 있음)" if e["kind"] == "speech" else "약한 소리")
             lines.append(f"A{e['id']} {fmt_ts(e['start'], True)} {e['dur']:.2f}초 {e['dbfs']:.0f}dBFS "
                          f"{kind} (앞 말: {e.get('prev', '')} {e.get('gap_prev', 0):.2f}초 전 / "
                          f"뒤 말: {e.get('next', '')} {e.get('gap_next', 0):.2f}초 뒤)")

@@ -1021,7 +1021,8 @@ def normalize_shorts(raw: dict[str, Any], utts: list[Utterance], *, count: int, 
         for x in s.get("segments", []) or []:
             if x in kept and x not in segs:
                 segs.append(x)
-        cold = s.get("cold_open_seg", -1)
+        # 콜드 오픈(뒤 문장을 맨 앞으로 끌어오기)은 끔 — 채널 주인 2026-11-11: 제대로 못 할 거면 빼라(롱폼 하이라이트와 같이)
+        cold = -1
         if cold in kept:
             if cold in segs:
                 segs.remove(cold)

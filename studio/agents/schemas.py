@@ -551,3 +551,16 @@ TIMELINE_QA = _obj({
     })},
     "summary": STR,
 })
+
+
+# ✍ 대본 생성기(studio/agents/scriptwriter.py) — 아이디어 → 말로 하는 대본
+SCRIPT = _obj({
+    "title": STR,                 # 영상 제목 후보(한 줄)
+    "hooks": {"type": "array", "items": _obj({"type": STR, "line": STR, "why": STR})},   # 첫 3초 훅 후보 3개(유형·문장·왜 붙잡는가)
+    "chosen_hook": INT,           # hooks 중 대본에 쓴 것(0부터)
+    "script": STR,                # 말로 읽는 대본 전문 — 문단 = 한 호흡, 빈 줄로 구분
+    "beats": STR_LIST,            # 문단마다 한 줄: 이 문단이 하는 일(훅·맥락·증거·반전·결론 …)
+    "visual_notes": STR_LIST,     # 문단마다 보여 줄 실물·장면 제안(표현 팔레트 기준, 없으면 "")
+    "fact_checks": {"type": "array", "items": _obj({"claim": STR, "source": STR})},     # 대본 속 사실과 확인한 출처
+    "open_questions": STR_LIST,   # 채널 주인이 정해야 할 것·확인이 필요한 것
+})
