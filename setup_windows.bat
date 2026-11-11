@@ -184,7 +184,8 @@ echo [설치] 효과음·배경음악^(Pixabay 등^)과 목소리 잡음 제거 
 
 rem ---------- (선택) Pixabay 키: 스톡 '영상' B-roll ----------
 "%VPY%" -c "from studio.settings import Settings; import sys; sys.exit(0 if Settings.load().pixabay_api_key else 1)" >nul 2>nul
-if errorlevel 1 (
+rem ChoiStudio.exe 가 부르면(CHOI_SETUP_AUTO) 묻지 않는다 — 키는 key 폴더의 JSON 으로
+if errorlevel 1 if not defined CHOI_SETUP_AUTO (
   echo.
   echo [선택] Pixabay API 키가 있으면 스톡 '영상' B-roll 도 자동으로 가져옵니다.
   echo        없어도 사진 B-roll·효과음·음악은 동작합니다. https://pixabay.com/api/docs/ 에서 무료 가입 후 키 확인.
@@ -195,12 +196,18 @@ if errorlevel 1 (
 
 rem ---------- 바탕화면 바로가기(항상 관리자 권한으로 실행) ----------
 "%VPY%" -m studio.gui.icon "%CD%\assets\choi_studio.ico" >nul 2>nul
-%PS% -Shortcut -Target "%CD%\run_studio.bat" -Icon "%CD%\assets\choi_studio.ico"
+set "LNK_TARGET=%CD%\run_studio.bat"
+if exist "%CD%\ChoiStudio.exe" set "LNK_TARGET=%CD%\ChoiStudio.exe"
+%PS% -Shortcut -Target "%LNK_TARGET%" -Icon "%CD%\assets\choi_studio.ico"
 
-rem ---------- Whisper 모델 미리 받기 ----------
+rem ---------- Whisper 모델 미리 받기(자동 설치는 묻지 않고 받음 — 이미 있으면 바로 끝남) ----------
 echo.
-choice /c YN /m "Whisper large-v3 음성인식 모델 약 3GB 를 지금 미리 받을까요"
-if %errorlevel%==1 (
+set "WANT_MODEL=Y"
+if not defined CHOI_SETUP_AUTO (
+  choice /c YN /m "Whisper large-v3 음성인식 모델 약 3GB 를 지금 미리 받을까요"
+  if errorlevel 2 set "WANT_MODEL=N"
+)
+if "%WANT_MODEL%"=="Y" (
   echo   약 3GB 를 받습니다^(몇 분~20분^). 'HF_TOKEN' 경고가 나와도 정상이며 토큰은 필요 없습니다.
   "%VPY%" -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8'); print('모델 준비 완료')"
 )
@@ -209,7 +216,7 @@ echo.
 echo ==============================================================
 echo   설치 완료!  바탕화면의 'Choi Studio' 또는 run_studio.bat 을 더블클릭하면 창이 열립니다.
 echo ==============================================================
-pause
+if not defined CHOI_SETUP_AUTO pause
 exit /b 0
 
 rem ---------------------------------------------------------------

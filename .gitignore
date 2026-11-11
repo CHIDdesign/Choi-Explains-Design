@@ -42,3 +42,7 @@ assets/choi_studio.ico
 # 조사 원자료(릴스 계정 이름·출처 목록) — 완성 보고서만 docs/research/ 에 둔다
 research_notes/
 reports/
+
+# ChoiStudio.exe 가 설치 폴더에 두는 것(배포용 exe 는 installer/ 에)
+/ChoiStudio.exe
+.choi_version
